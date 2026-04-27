@@ -1,0 +1,14 @@
+[synthetic.attention]
+name = "attention_128h4_s32"
+family = "Attention"
+description = "128-dim 4-head self-attention, seq_len=32"
+embed_dim = 128
+num_heads = 4
+seq_len = 32
+batch_size = 1
+dtype = "fp16"
+
+[measurement]
+warmup_iterations = 5
+measured_iterations = 20
+metrics = ["Latency"]

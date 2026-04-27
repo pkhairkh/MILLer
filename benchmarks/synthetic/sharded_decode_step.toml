@@ -1,0 +1,15 @@
+[synthetic.sharded_decode_step]
+name = "sharded_decode_128h4"
+family = "ShardedDecodeStep"
+description = "Sharded decode step: 3-shard QKV/attention/output-projection decomposition at micro scale (128-dim, 4 heads, 32-token KV cache)"
+
+embed_dim = 128
+num_heads = 4
+kv_len = 32
+batch_size = 1
+dtype = "fp16"
+
+[measurement]
+warmup_iterations = 3
+measured_iterations = 10
+metrics = ["Latency"]

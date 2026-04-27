@@ -1,0 +1,9 @@
+[package]
+name = "ane-passes"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ane-ir = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }

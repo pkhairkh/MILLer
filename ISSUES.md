@@ -1,0 +1,170 @@
+# ISSUES
+
+Current high-signal issues after the Sprint 56 code audit.
+
+## Verified Snapshot
+
+- `cargo test --workspace --quiet` passes on this host with **437 passing** and **1 ignored**.
+- `python3 -m py_compile python/*.py scripts/*.py` passes on this host.
+- All eight task families are real `TaskFamilyTrait` implementations and are reachable from `ane-cli generate-tasks --family`.
+- `HandoffKind::StateWriteRead` is active on the decode-step Interior → Exit shard boundary.
+- `compile-sharded --proto-direct` and `compile-full-sharded --proto-direct` do reach `RoleMirBuilder` for sharded decode-step emission.
+- All five declared `ElementWiseOp` variants (Add, Mul, Abs, Maximum, Minimum) now have AIR→MIR lowering paths (Sprint 55).
+- AIR decompositions for AttentionBlock and DecodeStep now carry real task dimensions via `DecompositionContext` when available (Sprint 56).
+- The current MIR surface exposes **37** `MirOp` variants. A simple exact-name diff against `MIL_OPS.md` still leaves **133** documented MIL op names uncovered; that raw count includes a few alias-like overlaps such as `Const` vs `MILConst` and `select` vs `MILWhere`.
+
+## Current Priorities
+
+### 1. Unify shard emission around one source of truth
+
+The project still has two parallel role-specific shard emission descriptions:
+
+- Rust-side `RoleMirBuilder` in `crates/passes/src/role_mir.rs`
+- Python-side shard-role logic in `python/mil_emitter.py`
+
+This is the highest-value cleanup because it affects compiler truth directly. Right now:
+
+- `--proto-direct` for sharded decode-step uses `RoleMirBuilder`
+- the default Python bridge path still uses its own independent role-specific logic
+
+Proceed by making one representation authoritative and letting the other path consume it as a backend adapter, not as a second semantic source.
+
+### 2. Make the active proto-direct shard path semantically honest
+
+The active proto-direct shard CLI path is structurally real but still loses two important pieces of truth:
+
+- `emit_role_shard_proto_direct()` and `emit_mir_graph_proto_direct()` currently use `EmptyWeightResolver`
+- `RoleMirBuilder` defaults every node to `CPUAndNE` instead of consuming the shard's actual `compute_units`
+
+So the Rust-only shard path currently preserves role-specific structure, but not real compile-time weights or real per-shard compute-unit intent.
+
+Sprint 57 update: real shard compute-unit choices now thread into `RoleMirBuilder` via `compute_units_to_hint()`. The remaining gap is real compile-time weights into proto-direct emission (EmptyWeightResolver still used in `emit_role_shard_proto_direct()`).
+
+Proceed by threading real compile-time weights into proto-direct emission.
+
+### 3. Carry real shapes all the way into MIR and proto-direct artifacts
+
+The AIR decomposition surface is no longer missing major ops, and placeholder shapes are now resolved when `DecompositionContext` is available (Sprint 56):
+
+- `decompose_attention_block()` in `crates/passes/src/legality_rewrite.rs` now uses real dimensions from `DecompositionContext` for SliceByIndex bounds (e.g., Q=[0:batch, 0:seq, 0:embed]) and Reshape target shapes (e.g., [batch, seq, heads, head_dim])
+- `decompose_decode_step()` now uses real dimensions for SliceByIndex bounds, Reshape target shapes, and StateReadFixed shapes
+- When `DecompositionContext` is `None` (e.g., in tests or non-task compilation), placeholder zeros are still used for backward compatibility
+- The CLI constructs `DecompositionContext` from the task spec for Attention, DecodeStep, and ShardedDecodeStep tasks
+
+Sprint 57 update: `MirNode.shape` is now populated during AIR→MIR lowering via `infer_shape()`. `RoleMirBuilder` nodes also derive shapes from `spec.output_specs` when available.
+
+**Remaining gaps:**
+
+- some `RoleMirBuilder` stateful nodes (e.g., AttentionComputation read_state) still use hardcoded shape vectors
+- proto-direct model construction still fills function input/output shapes with `vec![]` in some paths
+
+Proceed by threading shape information from AIR through MIR lowering and into proto-direct model I/O metadata, so downstream consumers do not have to infer basic tensor structure from names alone.
+
+### 4. Turn profiling into frontier exploration
+
+The repo now has the right family surface for sweeps:
+
+- `ShapeHostileFamily`
+- `OpRemapFamily`
+- `ShardSurvivalFamily`
+
+But the CLI still treats profiling as single-package timing:
+
+- `profile` in `crates/cli/src/main.rs` / `python/bridge.py` times one emitted package
+- there is no built-in sweep/search/report path for failure boundaries, placement cliffs, or formulation comparisons
+
+Proceed by adding a first-class frontier-search workflow that drives `compile`, `verify`, `profile`, and optionally `compute_plan_harvest` across generated families.
+
+### 5. Integrate offline placement proof into verification on non-Apple hosts
+
+The repo already has two placement-evidence mechanisms:
+
+- online/macOS: `MLComputePlan` via `python/compute_plan.py`
+- offline/host-side: `ComputePlanVerifier` in `crates/knowledge/src/compute_plan_verify.rs`
+
+But `python/verify.py` only uses the first one and otherwise reports placement unavailable.
+
+Sprint 57 update: Python verification now falls back to `predict_placement_from_ops()` when MLComputePlan is unavailable, using the same known op→device mappings as the Rust ComputePlanVerifier. `PlacementResult` includes `verification_method` and `prediction_confidence` fields to distinguish observed vs. predicted placement.
+
+Proceed by validating the predicted placement against real MLComputePlan data when Apple hardware is available, to calibrate the prediction confidence scores.
+
+### 6. Close the remaining declared lowering hole for `StaticLUTProjection`
+
+One active declared lowering gap remains in compiler code:
+
+- `AirOp::StaticLUTProjection` still errors with `StaticLUTProjection lowering not yet implemented`
+
+This is now documented as a scope boundary in `AirOp::StaticLUTProjection`, but it is still an honest open gap:
+
+- either add proper SIR→AIR→MIR/compiler ownership for LUT
+- or remove this AIR variant if LUT will stay a dedicated Python/task-family path
+
+Sprint 57 update: `StaticLUTProjection` now lowers to `MILGather` as a de-scoped approximation. The op is not used by any active SIR/task path; LUT projection has a dedicated Python emission path. This is the "de-scope" direction: the AIR variant remains for serializability and compat layer coverage, but the lowering is an approximation, not a faithful grouped-LUT implementation.
+
+No further action needed unless LUT semantics need to be brought into the Rust compiler path.
+
+### 7. Close op-surface reachability gaps inside the current compiler
+
+The repo now has a second class of op problem besides fully missing ops: ops that are declared and even serialized, but are not reachable from the active SIR/task path.
+
+Examples:
+
+- MIR-only / effectively unreachable today: `MILSub`, `MILConv`, `MILStateWrite`, `MILCast`
+- AIR+MIR, but no active SIR producer or task path: `SliceUpdate`, `Where`, `Exp`, `Sigmoid`, `Tanh`
+
+These ops mostly exist in tests, compat conversion, or proto serialization, which is useful scaffolding, but still leaves a truth gap between “represented” and “compiler-reachable”.
+
+Proceed by making each of these ops either:
+
+- reachable from a real SIR/task path, or
+- explicitly de-scoped from the current compiler surface and removed from coverage claims
+
+### 8. Add an explicit MIL op coverage backlog from `MIL_OPS.md`
+
+The current MIR surface covers 37 operations. The broader documented MIL space is much larger.
+
+High-value missing groups include:
+
+- activation/elementwise: `relu6`, `sigmoid_hard`, `thresholded_relu`, `clamped_relu`, `leaky_relu`, `linear_activation`, `prelu`, `softsign`, `silu`, `scaled_tanh`, `elu`, `softplus`, `softplus_parametric`, `clip`
+- comparison/masking: `select`, `equal`, `greater`, `greater_equal`, `less`, `less_equal`, `not_equal`, `logical_and`, `logical_or`, `logical_xor`, `logical_not`
+- reductions/norm/pooling: `reduce_max`, `reduce_min`, `reduce_prod`, `reduce_sum_square`, `reduce_l2_norm`, `reduce_l1_norm`, `reduce_log_sum_exp`, `reduce_log_sum`, `batch_norm`, `instance_norm`, `l2_norm`, `local_response_norm`, `max_pool`, `avg_pool`, `l2_pool`
+- unary math/transcendentals: `sqrt`, `inverse`, `ceil`, `floor`, `round`, `log`, `sign`, `exp2`, `atan`, `erf`, `acos`, `asin`, `cosh`, `sinh`, `mod`, `pow`, `atanh`, `tan`
+- tensor/view/shape ops: `expand_dims`, `squeeze`, `reverse`, `reverse_sequence`, `slice_by_size`, `sliding_windows`, `reshape_like`, `pad`, `tile`, `stack`, `flatten2d`, `shape`, `range_1d`, `fill`, `fill_like`, `identity`
+- resize/space/image ops: `resize`, `resize_nearest_neighbor`, `resize_bilinear`, `upsample_nearest_neighbor`, `upsample_bilinear`, `crop`, `crop_resize`, `affine`, `resample`, `depth_to_space`, `space_to_depth`, `pixel_shuffle`, `pixel_unshuffle`, `batch_to_space`, `space_to_batch`
+- gather/scatter/index ops: `gather_along_axis`, `gather_nd`, `scatter`, `scatter_along_axis`, `scatter_nd`, `argsort`, `reduce_argmax`, `reduce_argmin`, `band_part`, `cumsum`, `one_hot`, `non_zero`, `non_maximum_suppression`
+- quantization/constexpr: `quantize`, `dequantize`, `constexpr_affine_dequantize`, `constexpr_blockwise_shift_scale`, `constexpr_lut_to_dense`, `constexpr_sparse_to_dense`, `constexpr_cast`, `constexpr_lut_to_sparse`, `constexpr_sparse_blockwise_shift_scale`
+- recurrent/control/random/container: `rnn`, `gru`, `lstm`, `cond`, `while_loop`, `make_list`, `list_length`, `list_write`, `list_read`, `list_gather`, `list_scatter`, `random_bernoulli`, `random_normal`, `random_uniform`, `random_categorical`, `classify`
+
+Proceed by tracking this as a grouped backlog, not as an unbounded “more ops later” bucket.
+
+### 9. Add a generic mechanism for equivalent-formulation choice
+
+The compiler can now represent alternatives such as:
+
+- `MILSliceUpdate`
+- `MILWhere`
+
+But it still does not choose among semantically equivalent formulations using evidence. The current path hard-codes one formulation and stops there.
+
+Proceed on this only after shard-emission unification, proto-direct realism, and stronger frontier/profiling evidence, because a formulation-choice mechanism needs trustworthy evidence and fewer duplicate semantic paths.
+
+### 10. Expose the multi-function path through the Rust CLI/artifact flow
+
+Multi-function support is real:
+
+- Python bridge has `emit_multifunction`, `emit_multifunction_shared_weights`, and `validate_multifunction`
+- proto-direct has `emit_proto_direct_multifunction`
+
+But the Rust CLI still has no first-class multi-function compile/package/report command.
+
+Proceed by adding one narrow CLI path that emits and validates the existing embedding + decode-step package, then records function-level provenance in manifests and reports.
+
+### 11. Consolidate stale truth-facing documentation
+
+The top of `TASKS.md` and this file are now aligned with code reality, but `STATUS.md` still contains stale feature-matrix and residual statements such as:
+
+- multi-function reported as seam-only in older sections
+- stateful models reported as schema-only in older sections
+- older sharded/runtime residuals that conflict with the current code
+
+Proceed by collapsing or rewriting the stale sections so the project has one truth-facing status layer instead of a current summary plus contradictory historical fragments.

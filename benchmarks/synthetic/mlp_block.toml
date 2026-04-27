@@ -1,0 +1,10 @@
+[synthetic.mlp_block]
+name = "mlp_block_128_512_128"
+family = "MlpBlock"
+description = "128-dim MLP block with GELU activation"
+input_dim = 128
+hidden_dim = 512
+output_dim = 128
+activation = "gelu"
+batch_size = 1
+dtype = "fp16"

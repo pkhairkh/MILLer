@@ -1,0 +1,97 @@
+// Core ML Model — Top-level specification
+// Based on Apple's public Core ML specification format
+// Reference: https://developer.apple.com/documentation/coreml
+
+syntax = "proto3";
+package coreml;
+
+import "coreml/DataStructures.proto";
+import "coreml/MIL.proto";
+
+// Specification version
+// 1-4: NeuralNetwork (legacy)
+// 5:   NeuralNetwork with newer ops
+// 6:   NeuralNetwork with even newer ops
+// 7:   ML Program (introduced in coremltools 5.0)
+// 8+:  ML Program with state support (iOS 18+)
+enum SpecificationVersion {
+    SPECIFICATION_VERSION_UNKNOWN = 0;
+    SPECIFICATION_VERSION_1 = 1;
+    SPECIFICATION_VERSION_4 = 4;
+    SPECIFICATION_VERSION_5 = 5;
+    SPECIFICATION_VERSION_6 = 6;
+    SPECIFICATION_VERSION_7 = 7;  // ML Program
+    SPECIFICATION_VERSION_8 = 8;  // ML Program with state (iOS 18+)
+}
+
+// Compute unit preference
+enum ComputeUnit {
+    COMPUTE_UNIT_UNKNOWN = 0;
+    COMPUTE_UNIT_CPU_ONLY = 1;
+    COMPUTE_UNIT_CPU_AND_GPU = 2;
+    COMPUTE_UNIT_CPU_AND_NE = 3;
+    COMPUTE_UNIT_ALL = 4;
+}
+
+// Deployment target platform
+message DeploymentTarget {
+    message Ios {
+        int32 major = 1;
+        int32 minor = 2;
+    }
+    message Macos {
+        int32 major = 1;
+        int32 minor = 2;
+    }
+    message Tvos {
+        int32 major = 1;
+        int32 minor = 2;
+    }
+    message Watchos {
+        int32 major = 1;
+        int32 minor = 2;
+    }
+
+    oneof target {
+        Ios ios = 1;
+        Macos macos = 2;
+        Tvos tvos = 3;
+        Watchos watchos = 4;
+    }
+}
+
+// Optimization hints
+message OptimizationHints {
+    // Hint for which compute unit to prefer
+    ComputeUnit preferred_compute_unit = 1;
+    // Whether to allow fp16 accumulation on the ANE
+    bool allow_fp16_accumulation = 2;
+}
+
+// ─── Top-level Model ────────────────────────────────────────────────────────
+
+message Model {
+    // Specification version
+    SpecificationVersion specification_version = 1;
+
+    // Model description: inputs, outputs, state, functions
+    ModelDescription description = 2;
+
+    // ML Program (the modern MIL-based format, iOS 15+/macOS 12+)
+    MLProgram ml_program = 20;
+
+    // User-defined metadata
+    map<string, string> user_defined_metadata = 30;
+
+    // Deployment target
+    DeploymentTarget deployment_target = 31;
+
+    // Optimization hints
+    OptimizationHints optimization_hints = 32;
+
+    // Model authoring metadata
+    string author = 40;
+    string short_description = 41;
+    string license = 42;
+    string version_string = 43;
+}

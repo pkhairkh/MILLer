@@ -1,0 +1,15 @@
+[package]
+name = "ane-bridge"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ane-ir = { workspace = true }
+ane-passes = { workspace = true }
+ane-coreml-emit = { path = "../coreml-emit" }
+ane-coreml-proto = { path = "../coreml-proto" }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+tempfile = "3"

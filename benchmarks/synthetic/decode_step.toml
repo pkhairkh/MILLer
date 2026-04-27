@@ -1,0 +1,20 @@
+# Decode Step Benchmark
+#
+# Autoregressive decode step with KV-cache.
+# Models the dominant LLM inference pattern on Apple Silicon.
+# Exercises QKV projection + attention + output projection.
+
+[synthetic.decode_step]
+name = "decode_e128_h4_kv32"
+family = "DecodeStep"
+description = "128-dim decode step with 4 heads and 32-token KV cache"
+embed_dim = 128
+num_heads = 4
+kv_len = 32
+batch_size = 1
+dtype = "fp16"
+
+[measurement]
+warmup_iterations = 5
+measured_iterations = 20
+metrics = ["Latency", "Drift"]

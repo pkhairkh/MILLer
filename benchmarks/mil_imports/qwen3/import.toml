@@ -1,0 +1,5 @@
+[mil_import.qwen3]
+name = "qwen3_mil_import"
+source = "pkhairkh/qwen3-coreml-palettized"
+mil_dir = "mil/"
+components = ["io_model", "decoder_shard_left", "decoder_shard_mid", "decoder_shard_right", "sampler_model"]

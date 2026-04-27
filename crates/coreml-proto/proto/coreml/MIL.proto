@@ -1,0 +1,357 @@
+// Core ML MIL (Model Intermediate Language) — ML Program Operations
+// Subset for MILLer: covers the 36 MIR ops
+// Based on Apple's public Core ML specification format
+
+syntax = "proto3";
+package coreml;
+
+import "coreml/DataStructures.proto";
+
+// ─── Operand Reference ──────────────────────────────────────────────────────
+// References a named value in the SSA graph (input, const, or op output)
+
+message OperandRef {
+    string name = 1;
+}
+
+// ─── MIL Operation (one-of all supported ops) ───────────────────────────────
+
+message MilOperation {
+    string name = 1;  // Output name in the SSA graph
+    oneof operation {
+        // Constants
+        MilConstOp const_op = 10;
+
+        // Linear / FC
+        MilMatMulOp matmul_op = 11;
+        MilLinearOp linear_op = 12;
+
+        // Convolution
+        MilConvOp conv_op = 13;
+
+        // Elementwise
+        MilAddOp add_op = 20;
+        MilMulOp mul_op = 21;
+        MilSubOp sub_op = 22;
+        MilAbsOp abs_op = 23;
+        MilMaximumOp maximum_op = 24;
+        MilMinimumOp minimum_op = 25;
+
+        // Shape
+        MilReshapeOp reshape_op = 30;
+        MilTransposeOp transpose_op = 31;
+        MilSplitOp split_op = 32;
+        MilConcatOp concat_op = 33;
+        MilSliceByIndexOp slice_by_index_op = 34;
+        MilSliceUpdateOp slice_update_op = 35;
+        MilGatherOp gather_op = 36;
+
+        // Activation
+        MilGeluOp gelu_op = 40;
+        MilSoftmaxOp softmax_op = 41;
+        MilReluOp relu_op = 42;
+
+        // Attention
+        MilScaledDotProductAttentionOp scaled_dot_product_attention_op = 50;
+
+        // Reduction
+        MilReduceSumOp reduce_sum_op = 60;
+        MilReduceMeanOp reduce_mean_op = 61;
+
+        // Normalization
+        MilRsqrtOp rsqrt_op = 70;
+        MilRealDivOp real_div_op = 71;
+        MilLayerNormOp layer_norm_op = 72;
+
+        // Sampling
+        MilTopkOp topk_op = 80;
+
+        // Trigonometric
+        MilCosOp cos_op = 90;
+        MilSinOp sin_op = 91;
+
+        // State
+        MilReadStateOp read_state_op = 100;
+        MilCoremlUpdateStateOp coreml_update_state_op = 101;
+        MilStateWriteOp state_write_op = 102;  // Sprint 54: generic state write
+
+        // Cast
+        MilCastOp cast_op = 110;
+
+        // Sprint 50: P2 ops — math, activation, conditional
+        MilExpOp exp_op = 120;
+        MilSigmoidOp sigmoid_op = 121;
+        MilTanhOp tanh_op = 122;
+        MilWhereOp where_op = 123;
+
+        // Identity / passthrough (for unsupported op preservation)
+        MilIdentityOp identity_op = 200;
+    }
+}
+
+// ─── Constant ────────────────────────────────────────────────────────────────
+
+message MilConstOp {
+    WeightData value = 1;
+}
+
+// ─── Linear / FC ────────────────────────────────────────────────────────────
+
+message MilMatMulOp {
+    OperandRef x = 1;
+    OperandRef y = 2;
+}
+
+message MilLinearOp {
+    OperandRef x = 1;
+    WeightData weight = 2;
+    WeightData bias = 3;  // Optional
+    bool has_bias = 4;
+}
+
+// ─── Convolution ────────────────────────────────────────────────────────────
+
+message MilConvOp {
+    OperandRef x = 1;
+    WeightData weight = 2;
+    string pad_type = 3;  // "valid", "same", "custom"
+    int64 groups = 4;
+}
+
+// ─── Elementwise ────────────────────────────────────────────────────────────
+
+message MilAddOp {
+    OperandRef x = 1;
+    OperandRef y = 2;
+}
+
+message MilMulOp {
+    OperandRef x = 1;
+    OperandRef y = 2;
+}
+
+message MilSubOp {
+    OperandRef x = 1;
+    OperandRef y = 2;
+}
+
+message MilAbsOp {
+    OperandRef x = 1;
+}
+
+message MilMaximumOp {
+    OperandRef x = 1;
+    OperandRef y = 2;
+}
+
+message MilMinimumOp {
+    OperandRef x = 1;
+    OperandRef y = 2;
+}
+
+// ─── Shape ──────────────────────────────────────────────────────────────────
+
+message MilReshapeOp {
+    OperandRef x = 1;
+    repeated int64 shape = 2;
+}
+
+message MilTransposeOp {
+    OperandRef x = 1;
+    repeated int64 perm = 2;
+}
+
+message MilSplitOp {
+    OperandRef x = 1;
+    int64 axis = 2;
+    int64 num_splits = 3;
+}
+
+message MilConcatOp {
+    repeated OperandRef values = 1;
+    int64 axis = 2;
+}
+
+message MilSliceByIndexOp {
+    OperandRef x = 1;
+    repeated int64 begin = 2;
+    repeated int64 end = 3;
+    repeated int64 stride = 4;  // Optional, defaults to 1
+    int64 begin_mask = 5;       // Bitmask
+    int64 end_mask = 6;         // Bitmask
+}
+
+message MilSliceUpdateOp {
+    OperandRef x = 1;
+    OperandRef update = 2;
+    repeated int64 begin = 3;
+    repeated int64 end = 4;
+}
+
+message MilGatherOp {
+    OperandRef x = 1;
+    OperandRef indices = 2;
+    int64 axis = 3;
+}
+
+// ─── Activation ─────────────────────────────────────────────────────────────
+
+message MilGeluOp {
+    OperandRef x = 1;
+    string mode = 2;  // "EXACT" or "TANH_APPROXIMATION"
+}
+
+message MilSoftmaxOp {
+    OperandRef x = 1;
+    int64 axis = 2;
+}
+
+message MilReluOp {
+    OperandRef x = 1;
+}
+
+// ─── Attention ──────────────────────────────────────────────────────────────
+
+message MilScaledDotProductAttentionOp {
+    OperandRef query = 1;
+    OperandRef key = 2;
+    OperandRef value = 3;
+    OperandRef attn_mask = 4;   // Optional
+    bool has_attn_mask = 5;
+    bool causal = 6;            // If true, generates causal mask internally
+}
+
+// ─── Reduction ──────────────────────────────────────────────────────────────
+
+message MilReduceSumOp {
+    OperandRef x = 1;
+    repeated int64 axes = 2;
+    bool keep_dims = 3;
+}
+
+message MilReduceMeanOp {
+    OperandRef x = 1;
+    repeated int64 axes = 2;
+    bool keep_dims = 3;
+}
+
+// ─── Normalization ──────────────────────────────────────────────────────────
+
+message MilRsqrtOp {
+    OperandRef x = 1;
+}
+
+message MilRealDivOp {
+    OperandRef x = 1;
+    OperandRef y = 2;
+}
+
+message MilLayerNormOp {
+    OperandRef x = 1;
+    WeightData weight = 2;
+    WeightData bias = 3;    // Optional
+    bool has_bias = 4;
+    float epsilon = 5;
+    repeated int64 axes = 6;
+}
+
+// ─── Sampling ───────────────────────────────────────────────────────────────
+
+message MilTopkOp {
+    OperandRef x = 1;
+    int64 k = 2;
+    int64 axis = 3;         // Can be negative
+}
+
+// ─── Trigonometric ──────────────────────────────────────────────────────────
+
+message MilCosOp {
+    OperandRef x = 1;
+}
+
+message MilSinOp {
+    OperandRef x = 1;
+}
+
+// ─── State ──────────────────────────────────────────────────────────────────
+
+message MilReadStateOp {
+    string state_id = 1;
+    ArrayShape shape = 2;
+    ArrayDataType dtype = 3;
+}
+
+message MilCoremlUpdateStateOp {
+    string state_id = 1;
+    OperandRef value = 2;
+}
+
+// Sprint 54: Generic state write (distinct from CoremlUpdateState which is iOS 18+ specific)
+message MilStateWriteOp {
+    string state_ref = 1;
+    OperandRef value = 2;
+}
+
+// ─── Cast ────────────────────────────────────────────────────────────────────
+
+message MilCastOp {
+    OperandRef x = 1;
+    ArrayDataType dtype = 2;
+}
+
+// ─── Math (Sprint 50) ────────────────────────────────────────────────────
+
+message MilExpOp {
+    OperandRef x = 1;
+}
+
+// ─── Activation (Sprint 50) ──────────────────────────────────────────────
+
+message MilSigmoidOp {
+    OperandRef x = 1;
+}
+
+message MilTanhOp {
+    OperandRef x = 1;
+}
+
+// ─── Conditional (Sprint 50) ─────────────────────────────────────────────
+
+message MilWhereOp {
+    OperandRef condition = 1;
+    OperandRef x = 2;
+    OperandRef y = 3;
+}
+
+// ─── Identity (passthrough for unsupported ops) ──────────────────────────
+
+message MilIdentityOp {
+    OperandRef x = 1;
+}
+
+// ─── Block — a sequence of operations ───────────────────────────────────────
+
+message MilBlock {
+    repeated MilOperation operations = 1;
+    // Input names for this block
+    repeated string input_names = 2;
+    // Output names for this block
+    repeated string output_names = 3;
+}
+
+// ─── Function — a named function with one or more blocks ────────────────────
+
+message MilFunction {
+    MilBlock block = 1;
+    // Optional: additional blocks for control flow (not used in v1)
+    repeated MilBlock additional_blocks = 2;
+}
+
+// ─── ML Program — top-level program with named functions ────────────────────
+
+message MLProgram {
+    // Map of function name -> MilFunction
+    map<string, MilFunction> functions = 1;
+    // Default function name
+    string default_function_name = 2;
+}

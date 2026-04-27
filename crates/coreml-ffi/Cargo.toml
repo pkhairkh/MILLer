@@ -1,0 +1,12 @@
+[package]
+name = "ane-coreml-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "FFI bindings for Core ML C API — strategic foundation for on-device work (Sprint 41)"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+ane-coreml-proto = { path = "../coreml-proto" }
+prost = "0.12"

@@ -1,0 +1,18 @@
+# LUT Projection benchmark: 4-bit grouped scalar-LUT palettized projection
+# This exercises the constexpr_lut-to-gather pattern used in ANE palettized inference.
+
+[synthetic.lut_projection]
+name = "lut_proj_4bit_128"
+family = "LutProjection"
+description = "4-bit LUT projection: 16-entry LUTs, 128-dim embedding, 16 groups"
+vocab_size = 16
+embed_dim = 128
+num_groups = 16
+lut_bitwidth = 4
+batch_size = 1
+dtype = "fp16"
+
+[measurement]
+warmup_iterations = 5
+measured_iterations = 20
+metrics = ["Latency", "Drift"]

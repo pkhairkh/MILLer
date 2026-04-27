@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "description": "Qwen3 three-shard template from pkhairkh/qwen3-coreml-palettized",
+  "entries": [
+    {
+      "id": "shard_qwen3_three_shard_v1",
+      "knowledge_type": "ShardTemplateKnowledge",
+      "template_id": "qwen3-three-shard-v1",
+      "partition_spec": [
+        { "role": "Entry", "layers": [0, 10], "compute_units": "CPU_AND_NE" },
+        { "role": "Interior", "layers": [11, 19], "compute_units": "CPU_AND_NE" },
+        { "role": "Exit", "layers": [20, 27], "compute_units": "CPU_AND_NE" }
+      ],
+      "io_model": { "compute_units": "CPU_AND_GPU" },
+      "sampler": { "compute_units": "CPU_AND_GPU" },
+      "state_config": "per_shard_kv_reverse_ring_buffer",
+      "context_length": 4096,
+      "known_good": true,
+      "quality_delta": { "perplexity_delta": -0.57 },
+      "confidence": 0.92,
+      "evidence_source": "RealModelRun",
+      "evidence_count": 15,
+      "scope": {
+        "device_classes": ["M2", "M2_Pro", "M3"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      }
+    }
+  ]
+}

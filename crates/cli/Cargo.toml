@@ -1,0 +1,19 @@
+[package]
+name = "ane-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ane-ir = { workspace = true }
+ane-passes = { workspace = true }
+ane-bridge = { workspace = true }
+ane-artifacts = { workspace = true }
+ane-report = { workspace = true }
+ane-lab = { workspace = true }
+ane-knowledge = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+chrono = { workspace = true }

@@ -1,0 +1,98 @@
+// Core ML Data Structures — Subset for ML Program models
+// Based on Apple's public Core ML specification format
+// Reference: https://developer.apple.com/documentation/coreml
+
+syntax = "proto3";
+package coreml;
+
+// Dimension value — can be fixed or variable (dynamic)
+message DimensionValue {
+    oneof dimension_value {
+        int64 fixed = 1;
+        string variable = 2;  // Named dynamic dimension
+    }
+}
+
+// Array shape — list of dimension values
+message ArrayShape {
+    repeated DimensionValue dimensions = 1;
+}
+
+// Data type for tensor elements
+enum ArrayDataType {
+    ARRAY_DATA_TYPE_UNKNOWN = 0;
+    ARRAY_DATA_TYPE_FLOAT32 = 1;
+    ARRAY_DATA_TYPE_FLOAT16 = 2;
+    ARRAY_DATA_TYPE_DOUBLE = 3;
+    ARRAY_DATA_TYPE_INT32 = 4;
+    ARRAY_DATA_TYPE_UINT8 = 5;
+    ARRAY_DATA_TYPE_INT8 = 6;
+    ARRAY_DATA_TYPE_BOOL = 7;
+}
+
+// Tensor feature description — describes a single tensor input/output
+message TensorFeatureDescription {
+    ArrayShape shape = 1;
+    ArrayDataType data_type = 2;
+    string short_description = 3;
+}
+
+// State feature description — describes a state tensor (iOS 18+)
+message StateFeatureDescription {
+    repeated TensorFeatureDescription wrapped_types = 1;
+}
+
+// Feature description — union of possible feature types
+message FeatureDescription {
+    string name = 1;
+    string short_description = 2;
+    oneof feature_type {
+        TensorFeatureDescription tensor = 3;
+        StateFeatureDescription state = 4;
+        // Other types (image, dictionary, etc.) omitted for scope
+    }
+}
+
+// Model description — describes all inputs, outputs, and state
+message ModelDescription {
+    repeated FeatureDescription input = 1;
+    repeated FeatureDescription output = 2;
+    repeated FeatureDescription state = 3;
+    string default_function_name = 4;
+    // Map of function name -> FunctionDescription
+    map<string, FunctionDescription> functions = 5;
+}
+
+// Function description — describes a single function's I/O
+message FunctionDescription {
+    repeated FeatureDescription input = 1;
+    repeated FeatureDescription output = 2;
+    repeated FeatureDescription state = 3;
+}
+
+// Weight value — for inline weight data
+message WeightValue {
+    oneof value {
+        bytes float_value = 1;   // Raw float data (fp16 or fp32)
+        bytes int_value = 2;     // Raw integer data
+        bytes uint8_value = 3;   // Raw uint8 data
+    }
+    ArrayDataType data_type = 4;
+    ArrayShape shape = 5;
+}
+
+// File reference — for weights stored in weight.bin
+message FileReference {
+    // Offset into the weights file (weight.bin)
+    int64 offset = 1;
+    // Size in bytes
+    int64 size = 2;
+}
+
+// Weight data — either inline or file-referenced
+message WeightData {
+    oneof weight_data {
+        WeightValue value = 1;
+        FileReference file_ref = 2;
+    }
+}

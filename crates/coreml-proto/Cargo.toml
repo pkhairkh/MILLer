@@ -1,0 +1,14 @@
+[package]
+name = "ane-coreml-proto"
+version = "0.1.0"
+edition = "2021"
+description = "Core ML protobuf definitions for direct mlpackage emission (Sprint 41)"
+
+[dependencies]
+prost = "0.12"
+prost-types = "0.12"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[build-dependencies]
+prost-build = "0.12"

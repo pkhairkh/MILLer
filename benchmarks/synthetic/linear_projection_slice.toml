@@ -1,0 +1,15 @@
+[synthetic.linear_projection]
+name = "linear_proj_slice"
+family = "LinearProjection"
+description = "Vertical slice: minimal linear projection for end-to-end pipeline proof"
+
+[[synthetic.linear_projection.cases]]
+name = "64x32"
+input_shape = [1, 64]
+weight_shape = [64, 32]
+dtype = "fp16"
+
+[measurement]
+warmup_iterations = 3
+measured_iterations = 10
+metrics = ["Latency"]

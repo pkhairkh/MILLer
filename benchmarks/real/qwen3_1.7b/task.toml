@@ -1,0 +1,24 @@
+[real.qwen3_1.7b]
+name = "qwen3_1.7b_coreml"
+model_id = "Qwen/Qwen3-1.7B"
+source = "pkhairkh/qwen3-coreml-palettized"
+
+[real.qwen3_1.7b.shard_template]
+template_id = "qwen3-three-shard-v1"
+packages = [
+    { name = "io_model", role = "IO", compute_units = "CPU_AND_GPU" },
+    { name = "decoder_shard_left", role = "Entry", layers = "0-10", compute_units = "CPU_AND_NE" },
+    { name = "decoder_shard_mid", role = "Interior", layers = "11-19", compute_units = "CPU_AND_NE" },
+    { name = "decoder_shard_right", role = "Exit", layers = "20-27", compute_units = "CPU_AND_NE" },
+    { name = "sampler_model", role = "Sampler", compute_units = "CPU_AND_GPU" },
+]
+
+[real.qwen3_1.7b.state]
+kv_cache_type = "reverse_ring_buffer"
+context_length = 4096
+batch_size = 1
+
+[real.qwen3_1.7b.palettization]
+default_bitwidth = 6
+projection_lut_group_size = 128
+projection_lut_granularity = "per_grouped_channel"

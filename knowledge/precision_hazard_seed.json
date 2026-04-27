@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "description": "Initial precision hazards from Qwen3 palettization evidence",
+  "entries": [
+    {
+      "id": "hazard_wq_4bit_deep_layers",
+      "knowledge_type": "PrecisionHazard",
+      "op": "LinearProjection",
+      "weight_type": "W_Q",
+      "bitwidth": 4,
+      "granularity": "per_grouped_channel",
+      "layer_range": [24, 27],
+      "quality_impact": "high",
+      "confidence": 0.7,
+      "evidence_source": "RealModelRun",
+      "evidence_count": 3,
+      "scope": {
+        "device_classes": ["M2", "M2_Pro", "M3"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "note": "Qwen3 uses 8-bit for W_Q in layers 24-27, suggesting 4-bit is insufficient for deep attention projections."
+    },
+    {
+      "id": "hazard_wk_4bit_deep_layers",
+      "knowledge_type": "PrecisionHazard",
+      "op": "LinearProjection",
+      "weight_type": "W_K",
+      "bitwidth": 4,
+      "granularity": "per_grouped_channel",
+      "layer_range": [24, 27],
+      "quality_impact": "high",
+      "confidence": 0.7,
+      "evidence_source": "RealModelRun",
+      "evidence_count": 3,
+      "scope": {
+        "device_classes": ["M2", "M2_Pro", "M3"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "note": "Symmetric with W_Q hazard. Key projections in deep layers require higher precision."
+    },
+    {
+      "id": "safe_wd_6bit_all_layers",
+      "knowledge_type": "PrecisionHazard",
+      "op": "LinearProjection",
+      "weight_type": "W_D",
+      "bitwidth": 6,
+      "granularity": "per_grouped_channel",
+      "layer_range": [0, 27],
+      "quality_impact": "none",
+      "confidence": 0.8,
+      "evidence_source": "RealModelRun",
+      "evidence_count": 5,
+      "scope": {
+        "device_classes": ["M2", "M2_Pro", "M3"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "note": "Down projection is uniformly 6-bit in Qwen3 with no quality loss observed."
+    },
+    {
+      "id": "safe_gate_up_4bit_early_layers",
+      "knowledge_type": "PrecisionHazard",
+      "op": "LinearProjection",
+      "weight_type": "W_G",
+      "bitwidth": 4,
+      "granularity": "per_grouped_channel",
+      "layer_range": [0, 11],
+      "quality_impact": "low",
+      "confidence": 0.75,
+      "evidence_source": "RealModelRun",
+      "evidence_count": 4,
+      "scope": {
+        "device_classes": ["M2", "M2_Pro", "M3"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "note": "Gate/up projections in early layers can tolerate 4-bit per Qwen3 evidence."
+    }
+  ]
+}

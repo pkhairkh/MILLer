@@ -1,0 +1,21 @@
+[synthetic.linear_projection]
+name = "linear_projection_benchmark"
+family = "LinearProjection"
+description = "Single matmul at various sizes for ANE survival testing"
+
+[[synthetic.linear_projection.cases]]
+name = "4096x4096"
+input_shape = [1, 4096]
+weight_shape = [4096, 4096]
+dtype = "fp16"
+
+[[synthetic.linear_projection.cases]]
+name = "4096x11008"
+input_shape = [1, 4096]
+weight_shape = [4096, 11008]
+dtype = "fp16"
+
+[measurement]
+warmup_iterations = 5
+measured_iterations = 20
+metrics = ["Latency", "CosineDistance", "MaxAbsoluteError"]

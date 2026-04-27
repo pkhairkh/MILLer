@@ -1,0 +1,15 @@
+[synthetic.sharded_linear_pipeline]
+name = "sharded_linear_3shard"
+family = "ShardedLinearPipeline"
+description = "Shard-aware synthetic pipeline: 3-shard Entry/Interior/Exit decomposition mimicking Qwen3 pattern at micro scale"
+
+input_dim = 64
+hidden_dim = 48
+output_dim = 32
+batch_size = 1
+dtype = "fp16"
+
+[measurement]
+warmup_iterations = 3
+measured_iterations = 10
+metrics = ["Latency"]

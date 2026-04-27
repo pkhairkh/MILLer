@@ -1,0 +1,5 @@
+[baseline]
+method = "reference_artifact"
+reference_source = "pkhairkh/qwen3-coreml-palettized"
+perplexity_dataset = "wikitext-103-raw-v1"
+expected_perplexity_delta = 0.6
