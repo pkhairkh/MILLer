@@ -1,7 +1,7 @@
 //! Hard CPU_ONLY op list — ops that NEVER land on ANE.
 //! Source: ane-constraints-docs/04-operation-support/per-op-per-family-support-matrix.md Section 2.2
 //!
-//! These ops have no ANEC converter and will always execute on CPU/GPU.
+//! These ops have no ANE converter and will always execute on CPU/GPU.
 //! This list acts as a hard gate in the legality pass — no soft scoring overrides CPU_ONLY.
 
 use std::collections::HashSet;

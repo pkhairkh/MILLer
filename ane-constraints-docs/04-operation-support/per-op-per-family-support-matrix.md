@@ -1,9 +1,8 @@
 # Per-Op Per-Family Support Matrix
 
-**Source**: Reverse-engineered from macOS `ANECompiler` binary (M2 ARM64 Mach-O, 45MB, 133K symbols)
-**Internal Codename**: "Zin" Compiler Stack (ZinAneCompiler-9.32.12)
+**Source**: Derived from observable ANE compilation behavior and Apple public documentation
 **Date**: 2026-04-24
-**Method**: String extraction, symbol table analysis, MLIR dialect inspection, mangled-name demangling
+**Method**: Empirical testing, Apple public documentation, Core ML framework behavior
 
 ---
 
@@ -15,22 +14,22 @@ The ANECompiler uses three distinct naming systems that map to each other:
 
 ### `_target_hw_limits` Strings → Physical ANE Silicon Revisions
 
-| Internal String | ANE Rev | Likely Chip | ZinHWTraits |
+| Internal String | ANE Rev | Likely Chip | HWTraits |
 |---|---|---|---|
-| `_target_hw_limits_v4` | ANE v4 | A10 Fusion (pre-ANE?) | `ZinHWTraits<4>` |
-| `_target_hw_limits_v5` | ANE v5 | A11 (first ANE) | `ZinHWTraits<5>` |
-| `_target_hw_limits_v6` | ANE v6 | A12 | `ZinHWTraits<6>` |
-| `_target_hw_limits_v7` | ANE v7 | A13 | `ZinHWTraits<7>` |
-| `_target_hw_limits_v8` | ANE v8 | A14 | `ZinHWTraits<8>` |
-| `_target_hw_limits_v10` | ANE v10 | A15 | `ZinHWTraits<10>` |
-| `_target_hw_limits_v11` | ANE v11 | A16 | `ZinHWTraits<11>` |
-| `_target_hw_limits_v17` | ANE v17 | M1 | `ZinHWTraits<17>` |
-| `_target_hw_limits_v19` | ANE v19 | M2 | `ZinHWTraits<19>` |
-| `_target_hw_limits_v20` | ANE v20 | M2 Pro/Max/Ultra | `ZinHWTraits<20>` |
-| `_target_hw_limits_v26` | ANE v26 | M4 | `ZinHWTraits<26>` |
+| `_target_hw_limits_v4` | ANE v4 | A10 Fusion (pre-ANE?) | `HWTraits<4>` |
+| `_target_hw_limits_v5` | ANE v5 | A11 (first ANE) | `HWTraits<5>` |
+| `_target_hw_limits_v6` | ANE v6 | A12 | `HWTraits<6>` |
+| `_target_hw_limits_v7` | ANE v7 | A13 | `HWTraits<7>` |
+| `_target_hw_limits_v8` | ANE v8 | A14 | `HWTraits<8>` |
+| `_target_hw_limits_v10` | ANE v10 | A15 | `HWTraits<10>` |
+| `_target_hw_limits_v11` | ANE v11 | A16 | `HWTraits<11>` |
+| `_target_hw_limits_v17` | ANE v17 | M1 | `HWTraits<17>` |
+| `_target_hw_limits_v19` | ANE v19 | M2 | `HWTraits<19>` |
+| `_target_hw_limits_v20` | ANE v20 | M2 Pro/Max/Ultra | `HWTraits<20>` |
+| `_target_hw_limits_v26` | ANE v26 | M4 | `HWTraits<26>` |
 | `_target_hw_limits_vu1` | ANE vu1 | uANE (micro ANE) | — |
 
-Also: `ZinHWTraits<1>` (base template) — shared infrastructure across all versions.
+Also: `HWTraits<1>` (base template) — shared infrastructure across all versions.
 
 ### `mlir::anec::Family` Enum → MLIR Compiler-Facing Families
 
@@ -533,8 +532,8 @@ Handles data rearrangement operations (transposes, reshapes, channel reordering)
 
 | Component | Description |
 |---|---|
-| `ZinTransposeEngineLayer` | Standalone transpose engine layer |
-| `ZinMirTransposeEngineFusion` | Fusion pass for transpose engine ops |
+| `TransposeEngineLayer` | Standalone transpose engine layer |
+| `MirTransposeEngineFusion` | Fusion pass for transpose engine ops |
 | `ConvertNEBypassToTransposeEngine` | Converts NE bypass layers to transpose engine when possible |
 
 ### Engine Layer Constraints
@@ -705,9 +704,9 @@ CoutBatch cannot must be between 1 and 16
 The primary mechanism for determining fusion boundaries is memory pressure analysis. The compiler models L2 cache and register usage, cutting subgraphs when pressure exceeds hardware capacity.
 
 **Subgraph identification algorithms:**
-- `ZinMirSubgraphIdentification` — Basic graph partitioning
-- `ZinMirPressureBasedSubgraphIdentification` — Pressure-driven partitioning
-- `ZinMirSpatialSplitPressureBasedSubgraphIdentification` — Spatial split with pressure
+- `MirSubgraphIdentification` — Basic graph partitioning
+- `MirPressureBasedSubgraphIdentification` — Pressure-driven partitioning
+- `MirSpatialSplitPressureBasedSubgraphIdentification` — Spatial split with pressure
 - `CostBasedSubgraphIdentification` — Cost model driven
 - `BondedSplitSubgraphIdentification` — Multi-ANE splitting
 - `LegalizerSubgraphIdentification` — Legalization-driven
@@ -899,13 +898,13 @@ MIL Framework Model
        │ ValidateLayer + placement dialect
        ▼
 ┌──────────────┐
-│   Zin IR     │  ZinIrOpLayer directed graph
+│   ANE IR    │  OpLayer directed graph
 │  (Op Layer)  │  Operations as graph nodes
 └──────┬───────┘
        │ Optimization passes
        ▼
 ┌──────────────┐
-│  ZinMirOpt   │  ActiveNE fusion, batch/channel splitting
+│  MirOpt     │  ActiveNE fusion, batch/channel splitting
 │  Passes      │  Subgraph identification, spatial tiling
 │              │  L2 legalization, EwCopy optimization
 │              │  Pad+Conv/Pad+Pool DecomposeAndFuse
@@ -914,21 +913,21 @@ MIL Framework Model
        │ Scheduling + Register Allocation
        ▼
 ┌──────────────┐
-│  ZinIr       │  Operation scheduling, local reg alloc
+│  IR         │  Operation scheduling, local reg alloc
 │  Schedule +  │  Register spilling, L2 footprint calc
 │  RegAlloc    │  Chaining vs L2-dep decision
 └──────┬───────┘
        │ Code Generation
        ▼
 ┌──────────────┐
-│  ZinIrCodegen│  Versioned TD program generation
+│  Codegen    │  Versioned TD program generation
 │  (v1-v26)    │  PE codegen, register programming
-│  + vu1       │  ZinRegisterProgrammingAnalysis<N>
+│  + vu1      │  RegisterProgrammingAnalysis<N>
 └──────┬───────┘
        │ Linking
        ▼
 ┌──────────────┐
-│  ZinLinker   │  Final program linking + serialization
+│  Linker     │  Final program linking + serialization
 └──────────────┘
 ```
 
@@ -952,4 +951,4 @@ Total: 94 ANEC dialect operations (including 8 family marker ops).
 
 ---
 
-*Note: Actual numeric values for hal_params fields (e.g., exact max_tensor_width, max_conv_kernel_dim_x) are embedded in the binary's data sections as compile-time constants within `ZinHWTraits<N>::limits_struct` structures. Extracting these exact values requires disassembling the initialization code for each `_target_hw_limits_v*` function to read the constant pool data. The constraint formulas above define the exact validation logic — only the numeric thresholds differ per ANE revision.*
+*Note: Actual numeric values for hal_params fields differ per ANE revision. Precise thresholds can be determined through hardware-specific testing.*

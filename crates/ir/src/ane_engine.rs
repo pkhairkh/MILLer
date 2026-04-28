@@ -1,4 +1,4 @@
-//! ANE execution engine types modeled from ANECompiler fusion boundaries.
+//! ANE execution engine types modeled after observed ANE fusion behavior.
 //! Source: ane-constraints-docs/03-placement-and-compiler/fusion-boundaries-and-resource-allocation.md
 
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,7 @@ pub enum AneEngine {
 }
 
 impl AneEngine {
-    /// Returns the engine name as used in ANECompiler fusion atoms.
+    /// Returns the engine name as used in ANE fusion atoms.
     pub fn fusion_prefix(&self) -> &'static str {
         match self {
             AneEngine::NE => "NEFUSED",

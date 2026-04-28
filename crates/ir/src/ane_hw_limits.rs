@@ -5,7 +5,7 @@ use crate::ane_target::AneRevision;
 use serde::{Deserialize, Serialize};
 
 /// Per-revision ANE hardware limits.
-/// These are the key hal_params that ANECompiler validates every op against.
+/// Key hardware limit parameters that govern ANE op placement.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AneHwLimits {
     pub revision: AneRevision,

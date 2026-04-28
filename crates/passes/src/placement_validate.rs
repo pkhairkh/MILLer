@@ -24,7 +24,7 @@ pub enum PlacementDecision {
 /// shapes, the target family, and whether dynamic shapes are present.
 ///
 /// This function checks **hard** constraints only — violations that
-/// guarantee ANECompiler will reject the op or produce incorrect results.
+/// guarantee the ANE will reject the op or produce incorrect results.
 /// Soft constraints (performance, resource pressure) are handled by the
 /// scoring pass.
 pub fn validate_placement(

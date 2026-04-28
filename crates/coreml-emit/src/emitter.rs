@@ -88,7 +88,8 @@ impl ProtoEmitter {
     ///
     /// This is the key use case for proto-direct emission: multiple
     /// functions can share weight tensors, producing a smaller mlpackage
-    /// than coremltools 9.0's `add_function()` which duplicates constants.
+    /// than coremltools 9.0's `add_function()` + `ct.convert()` which duplicates
+    /// constants (note: `save_multifunction()` does perform cross-function dedup).
     pub fn emit_multifunction_with_shared_weights(
         &self,
         graphs: &[MirGraphCompat],

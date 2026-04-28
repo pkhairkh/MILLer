@@ -43,7 +43,7 @@ impl AneFamily {
 }
 
 /// ANE hardware revision — corresponds to specific silicon versions.
-/// Maps directly to the hal_params revision numbers used by ANECompiler.
+/// Maps to hardware revision numbers consistent with ANE behavior across chip generations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AneRevision {
     V4,  // A11 (M1)

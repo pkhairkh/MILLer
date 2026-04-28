@@ -2508,13 +2508,17 @@ def build_multifunction_program_with_shared_weights(command: dict):
       - Reference the same named constants in the second function
 
     **VERIFIED LIMITATION (Sprint 42)**: coremltools 9.0's add_function()
-    does NOT deduplicate constants across function boundaries. When two
-    functions reference mb.const nodes with the same name and value, each
-    function gets its own copy in the serialized weight.bin. The shared-weight
-    variant is therefore NOT smaller than the independent-weights variant.
+    + ct.convert() does NOT deduplicate constants across function boundaries.
+    When two functions reference mb.const nodes with the same name and value,
+    each function gets its own copy in the serialized weight.bin. Note:
+    coremltools provides cross-function dedup via the save_multifunction() API
+    (which assigns shared weight_id values), but the direct add_function() +
+    ct.convert() path does not perform this deduplication. The shared-weight
+    variant via add_function() is therefore NOT smaller than the
+    independent-weights variant.
 
-    This is a structural constraint of the current coremltools multi-function
-    API. True weight sharing across functions may require:
+    This is a structural constraint of the coremltools add_function() +
+    ct.convert() path. True weight sharing across functions may require:
       (a) A future coremltools API for program-level constant pools
       (b) Direct protobuf manipulation to share weight tensor references
       (c) A Core ML C API / FFI approach that bypasses coremltools serialization

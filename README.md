@@ -185,7 +185,7 @@ The `ComputePlanVerifier` in `ane-knowledge` proves structural properties of com
 
 ### 3. True Weight Sharing via Proto-Direct Emission
 
-coremltools 9.0's `add_function()` **duplicates** constants across function boundaries — each function gets its own copy in `weight.bin`. The proto-direct emission path (`ane-coreml-emit`) stores shared weights **once** and both functions reference the same offset, producing smaller mlpackages.
+coremltools 9.0's `add_function()` + standard conversion **duplicates** constants across function boundaries — each function gets its own copy in `weight.bin`. coremltools does provide cross-function deduplication via the `save_multifunction()` API (which internally assigns shared `weight_id` values), but the direct `add_function()` + `ct.convert()` path does not perform this deduplication. The proto-direct emission path (`ane-coreml-emit`) stores shared weights **once** and both functions reference the same offset, and additionally offers opt-in content-hash deduplication for differently-named weights with identical data — producing smaller mlpackages than either coremltools path.
 
 The `WeightBinBuilder` tracks deduplication metrics:
 - `deduplicated_count` — number of deduplication events

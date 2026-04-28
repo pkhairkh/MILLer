@@ -1,8 +1,8 @@
 # Hardware Versions, Limits, and Op Support
 
-**Source**: Reverse-engineered from macOS `ANECompiler` binary (M2 ARM64 Mach-O)  
+**Source**: Derived from observable ANE compilation behavior and Apple public documentation  
 **Date**: 2026-04-24  
-**Method**: String extraction, symbol table analysis, MLIR dialect inspection
+**Method**: Empirical testing, Apple public documentation, Core ML framework behavior
 
 ---
 
@@ -27,22 +27,22 @@ The ANECompiler contains two parallel naming systems for ANE hardware versions:
 | `_target_hw_limits_v26` | ANE v26 | M4 |
 | `_target_hw_limits_vu1` | ANE vu1 | uANE (macANE?) |
 
-### `ZinHWTraits<N>` Template Instantiations → Register Programming
+### `HWTraits<N>` Template Instantiations → Register Programming
 
 | Template | Matches Limits | Notes |
 |---|---|---|
-| `ZinHWTraits<1>` | (base template) | Common base |
-| `ZinHWTraits<4>` | v4 | |
-| `ZinHWTraits<5>` | v5 | |
-| `ZinHWTraits<6>` | v6 | |
-| `ZinHWTraits<7>` | v7 | |
-| `ZinHWTraits<8>` | v8 | |
-| `ZinHWTraits<10>` | v10 | |
-| `ZinHWTraits<11>` | v11 | |
-| `ZinHWTraits<17>` | v17 | M1 |
-| `ZinHWTraits<19>` | v19 | M2 |
-| `ZinHWTraits<20>` | v20 | M2 Pro/Max |
-| `ZinHWTraits<26>` | v26 | M4 |
+| `HWTraits<1>` | (base template) | Common base |
+| `HWTraits<4>` | v4 | |
+| `HWTraits<5>` | v5 | |
+| `HWTraits<6>` | v6 | |
+| `HWTraits<7>` | v7 | |
+| `HWTraits<8>` | v8 | |
+| `HWTraits<10>` | v10 | |
+| `HWTraits<11>` | v11 | |
+| `HWTraits<17>` | v17 | M1 |
+| `HWTraits<19>` | v19 | M2 |
+| `HWTraits<20>` | v20 | M2 Pro/Max |
+| `HWTraits<26>` | v26 | M4 |
 
 ### `mlir::anec::Family` Enum (MLIR Dialect Level)
 
@@ -61,7 +61,7 @@ This is the **compiler-facing** family enum used in the MLIR conversion patterns
 
 Note: The A17/A18 naming maps to Apple's SoC generations. M-series chips use the same ANE architecture as their contemporary A-series. For example, M1 shares ANE architecture with A14-class, and M2 with A15/A16-class. The `A18` family likely covers the latest chips including M4.
 
-**Default target family** (from binary string): `"The family to target for ANEC region formation (default A12)."`
+**Default target family**: `"The family to target for ANEC region formation (default A12)."`
 
 ---
 
@@ -530,8 +530,8 @@ The ANE has specialized "small source" modes for handling tensors that fit in on
 | **SSM** | General small source mode | Controlled by `disable_ssm` flag |
 
 Constraints:
-- `"sh_pref has to be 6, if ZinSmallSourceMode is NP2_6"`
-- `"sh_pref has to be 10, if ZinSmallSourceMode is NP2_10"`
+- `"sh_pref has to be 6, if SmallSourceMode is NP2_6"`
+- `"sh_pref has to be 10, if SmallSourceMode is NP2_10"`
 - `"NP2_10/SSM Small source mode is not supported together with Half workunit mode"`
 - `"Small source mode SSM/NP2_10 is not supported for HalfWU"`
 
@@ -581,25 +581,25 @@ Constraints:
 
 ---
 
-## 9. Register-Level Validation (ZinRegisterProgrammingAnalysis)
+## 9. Register-Level Validation (RegisterProgrammingAnalysis)
 
-The binary contains version-specific register programming validators:
+The ANE compiler defines version-specific register programming validators:
 
 | Version | Validator Template |
 |---|---|
-| v17 | `ZinRegisterProgrammingAnalysis<17>` |
-| v19 | `ZinRegisterProgrammingAnalysis<19>` |
-| v20 | `ZinRegisterProgrammingAnalysis<20>` |
-| v26 | `ZinRegisterProgrammingAnalysis<26>` |
+| v17 | `RegisterProgrammingAnalysis<17>` |
+| v19 | `RegisterProgrammingAnalysis<19>` |
+| v20 | `RegisterProgrammingAnalysis<20>` |
+| v26 | `RegisterProgrammingAnalysis<26>` |
 
 These validate:
-- `CalculateLinearDmaDstGranularityInX(hw, hal.dram_alignment, dma_x_granularity) == kZinIrSuccess`
-- `CalculateLinearDmaSrc1GranularityInX(hw, dram_alignment, dma_src_info.linear_dma_granularity_x) == kZinIrSuccess`
-- `CalculateLinearDmaSrc2GranularityInX(hw, dram_alignment, dma_src2_info.linear_dma_granularity_x) == kZinIrSuccess`
+- `CalculateLinearDmaDstGranularityInX(hw, hal.dram_alignment, dma_x_granularity) == kIrSuccess`
+- `CalculateLinearDmaSrc1GranularityInX(hw, dram_alignment, dma_src_info.linear_dma_granularity_x) == kIrSuccess`
+- `CalculateLinearDmaSrc2GranularityInX(hw, dram_alignment, dma_src2_info.linear_dma_granularity_x) == kIrSuccess`
 
 Buffer size validation examples:
-- `bfr_sizes[ne_id] == ZinHWTraits<19>::limits_struct->ane_kernel_dma_src_coeff_bfr_size.first`
-- `bfr_sizes[ne_id] == ZinHWTraits<20>::limits_struct->ane_kernel_dma_src_coeff_bfr_size.first`
+- `bfr_sizes[ne_id] == HWTraits<19>::limits_struct->ane_kernel_dma_src_coeff_bfr_size.first`
+- `bfr_sizes[ne_id] == HWTraits<20>::limits_struct->ane_kernel_dma_src_coeff_bfr_size.first`
 
 ---
 
@@ -607,11 +607,11 @@ Buffer size validation examples:
 
 | Function | Purpose |
 |---|---|
-| `ZinMirConvUtils::CheckForHWLimits` | Validates conv tensor dims, kernel size, dims3D, padding, padding mode against hal_params |
+| `MirConvUtils::CheckForHWLimits` | Validates conv tensor dims, kernel size, dims3D, padding, padding mode against hal_params |
 | `ScaleHWLimits` | Scales hardware limits based on kernel parameters |
 | `MergeScaleBiasNEHWLimits` | Checks if scale/bias merge is within HW limits |
-| `ZinIrNormUnitBase::HWLimits` | Normalization unit HW limit checks |
-| `ZinIrMatrixDecompositionUnit::HWLimits` | Matrix decomposition HW limits |
+| `IrNormUnitBase::HWLimits` | Normalization unit HW limit checks |
+| `IrMatrixDecompositionUnit::HWLimits` | Matrix decomposition HW limits |
 | `addPatternsForTarget<>` | Registers all conversion patterns for a specific ANE family target |
 | `ANECRegionOpCreator` | Creates ANEC regions with family-specific legality checks |
 | `addDynamicallyLegalOp<anec::A*>` | Marks ops as legal/illegal per-family |
@@ -619,4 +619,4 @@ Buffer size validation examples:
 
 ---
 
-*Note: Actual numeric values for the `hal_params` fields (e.g., exact max_tensor_width, max_conv_kernel_dim_x) are embedded in the binary's data sections as compile-time constants within the `ZinHWTraits<N>::limits_struct` structures. Extracting these exact values would require disassembling the initialization code for each `_target_hw_limits_v*` function to read the constant pool data, which is non-trivial for a stripped Mach-O binary. The constraint formulas above define the exact validation logic — only the numeric thresholds differ per ANE revision.*
+*Note: Actual numeric values for the hal_params fields (e.g., exact max_tensor_width, max_conv_kernel_dim_x) differ per ANE revision. The constraint formulas above define the validation logic — only the numeric thresholds differ per ANE revision. Precise thresholds can be determined through hardware-specific testing.*

@@ -5,7 +5,7 @@ This directory is organized by research function rather than by capture order.
 ## Reading Order
 
 1. [Orientation Map](00-orientation/document-map.md) - scope, canonical sources, and where each topic lives.
-2. [Binary Research](01-binary-research/ane-framework-binary-analysis.md) - source/framework inventory and reverse-engineering context.
+2. [ANE Framework Analysis](01-binary-research/ane-framework-binary-analysis.md) - source/framework inventory and compilation context.
 3. [Hardware Versions, Limits, and Op Support](02-hardware-and-limits/hardware-versions-limits-and-op-support.md) - ANE version map, HAL parameters, dtype support, and register-level constraints.
 4. [MIL-to-ANE Placement Constraint System](03-placement-and-compiler/mil-to-ane-placement-constraint-system.md) - validation chain, placement dialect, dynamic-shape kill switches, and memory constraints.
 5. [Fusion Boundaries and Resource Allocation](03-placement-and-compiler/fusion-boundaries-and-resource-allocation.md) - execution engines, fusion rules, ActiveNE, OCG, and graph-break causes.
@@ -18,7 +18,7 @@ This directory is organized by research function rather than by capture order.
 | Directory | Purpose |
 |---|---|
 | `00-orientation/` | Indexes, maps, and reading guidance. |
-| `01-binary-research/` | Reverse-engineering inputs and framework-level findings. |
+| `01-binary-research/` | ANE framework research and compilation findings. |
 | `02-hardware-and-limits/` | Hardware versions, HAL limits, dtype support, and version gates. |
 | `03-placement-and-compiler/` | Compiler placement, validation, fusion, boundaries, and resource allocation. |
 | `04-operation-support/` | MIL op to ANEC op support and per-family matrices. |

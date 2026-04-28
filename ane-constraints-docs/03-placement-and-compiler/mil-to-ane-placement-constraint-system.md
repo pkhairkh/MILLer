@@ -1,26 +1,23 @@
 # MIL-to-ANE Placement Constraint System
 
-**Target:** Apple Neural Engine Compiler (ANECompiler) Binary  
-**Architecture:** Mach-O 64-bit ARM64e (Apple Silicon M2)  
-**Binary Size:** 45,797,376 bytes | 133,164 symbols  
-**Internal Codename:** "Zin" Compiler Stack (ZinAneCompiler-9.32.12)  
+**Target:** Apple Neural Engine (ANE) Compiler  
 **Analysis Date:** 2026-04-24  
 
 ---
 
 ## 1. Executive Summary
 
-This report provides the deepest possible analysis of how Apple's MIL (Machine Intermediate Language) operations get placed on the Apple Neural Engine (ANE) — the specific constraints on dimensions, sizes, ordering, formats, quantization, and the exact boundary conditions that determine whether an op lands on the ANE or falls back to CPU/GPU. Every finding is sourced directly from error strings, validation symbols, MLIR dialect constraints, and hardware limit structures extracted from the ANECompiler binary.
+This report characterizes the specific constraints on dimensions, sizes, ordering, formats, quantization, and the exact boundary conditions that determine whether an op lands on the ANE or falls back to CPU/GPU.
 
 The analysis reveals a **5-layer constraint system** that gates ANE placement:
 
 1. **MIL Validation Layer** — The `ValidateLayer` template system checks each MIL op against a `ANEC*LayerDesc` descriptor with `ANECTensorDesc` constraints before the op even enters the compiler pipeline.
 2. **MLIR Placement Dialect** — The `mlir::placement` dialect assigns ops to `region_type` (ANE vs Host), with `force-ane-placement` / `force-host-placement` overrides and `ANEIOCast` boundary ops.
-3. **Zin Unit Validation** — `ZinUnitValidator` enforces per-op HW limits (dimensions, channels, kernel sizes) using versioned `_target_hw_limits_v*` structures.
+3. **ANE Unit Validation** — The ANE Unit Validator enforces per-op HW limits (dimensions, channels, kernel sizes) using versioned `_target_hw_limits_v*` structures.
 4. **Fusability Checks** — `IsFusable*()` methods determine if ops can be merged into engine layers; failed fusability forces graph breaks and DMA round-trips.
 5. **Memory Pressure & Legalization** — Even if an op passes all prior checks, L2 cache pressure, DRAM limits, and spatial split feasibility determine final ANE residency.
 
-**The single most important finding:** The binary contains **40+ distinct `ValidateLayer` instantiations**, each templated on a specific `ANEC*LayerDesc` type with `ANECTensorDesc` parameters. These are the gatekeepers — if validation fails for any layer, it cannot be placed on ANE. Period.
+**The single most important finding:** The ANE compiler contains **40+ distinct `ValidateLayer` instantiations**, each templated on a specific `ANEC*LayerDesc` type with `ANECTensorDesc` parameters. These are the gatekeepers — if validation fails for any layer, it cannot be placed on ANE. Period.
 
 ---
 
@@ -28,58 +25,58 @@ The analysis reveals a **5-layer constraint system** that gates ANE placement:
 
 ### 2.1 The ValidateLayer Template System
 
-Every MIL operation that wants to run on the ANE must pass through a `ValidateLayer` instantiation. The binary contains a comprehensive set of these, each specific to an operation type:
+Every MIL operation that wants to run on the ANE must pass through a `ValidateLayer` instantiation. The ANE compiler provides a comprehensive set of these, each specific to an operation type:
 
 | ANEC Layer Descriptor | MIL Operation | Validator Class |
 |---|---|---|
-| `ANECConvLayerDesc` | Convolution | `ZinConvValidator<ANECConvLayerDesc, ANECTensorDesc>` |
-| `ANECConcatLayerDesc` | Concatenation | `ZinConcatValidator<ANECConcatLayerDesc, ANECTensorDesc>` |
-| `ANECGOCLayerDesc` | Generic Operation Compute | `ZinGOCValidator<ANECGOCLayerDesc, ANECTensorDesc>` |
-| `ANECElementWiseLayerDesc` | Element-wise ops | `ValidateLayer<ANECTensorDesc, ZinIrEWUnit, ZinIrEWUnitInfo, ANECElementWiseLayerDescAlternate>` |
-| `ANECNeuronLayerDesc` | Activation functions | `ValidateLayer<ANECTensorDesc, ZinIrNeuronUnit, ZinIrNeuronUnitInfo, ANECNeuronLayerDescAlternate>` |
-| `ANECPoolLayerDesc` | Pooling | `ValidateLayer<ANECTensorDesc, ZinIrPoolUnit, ZinIrPoolUnitInfo, ANECPoolLayerDescAlternate>` |
-| `ANECReductionLayerDesc` | Reduction | `ValidateLayer<ANECTensorDesc, ZinIrReductionUnit, ZinIrReductionUnitInfo, ANECReductionLayerDescAlternate>` |
-| `ANECMatrixMultLayerDesc` | MatMul | `ValidateLayer<ANECTensorDesc, ZinIrMatrixMultUnit, ZinIrMatrixMultUnitInfo, ANECMatrixMultLayerDescAlternate>` |
-| `ANECTransposeLayerDesc` | Transpose | `ValidateLayer<ANECTensorDesc, ZinIrTransposeUnit, ZinIrTransposeUnitInfo, ANECTransposeLayerDescAlternate>` |
-| `ANECReshapeLayerDesc` | Reshape | `ValidateLayer<ANECTensorDesc, ZinIrReshapeUnit, ZinIrReshapeUnitInfo, ANECReshapeLayerDescAlternate>` |
-| `ANECSoftmaxLayerDesc` | Softmax | `ValidateLayer<ANECTensorDesc, ZinIrSoftmaxUnit, ZinIrSoftmaxUnitInfo, ANECSoftmaxLayerDescAlternate>` |
-| `ANECLayerNormLayerDesc` | Layer Normalization | `ValidateLayer<ANECTensorDesc, ZinIrLayerNormUnit, ZinIrLayerNormUnitInfo, ANECLayerNormLayerDescAlternate>` |
-| `ANECInstanceNormLayerDesc` | Instance Norm | `ValidateLayer<ANECTensorDesc, ZinIrInstanceNormUnit, ZinIrInstanceNormUnitInfo, ANECInstanceNormLayerDescAlternate>` |
-| `ANECLinearLayerDesc` | Linear/Fully Connected | `ValidateLayer<ANECTensorDesc, ZinIrLinearUnit, ZinIrLinearUnitInfo, ANECLinearLayerDescAlternate>` |
-| `ANECBroadcastLayerDesc` (alt) | Broadcast | `ValidateLayer<ANECTensorDesc, ZinIrBroadcastUnit, ZinIrBroadcastUnitInfo, ANECBroadcastLayerDescAlternate>` |
-| `ANECScaledElementWiseLayerDesc` | Scaled Element-Wise | `ValidateLayer<ANECTensorDesc, ZinIrScaledEWUnit, ZinIrScaledEWUnitInfo, ANECScaledElementWiseLayerDescAlternate>` |
-| `ANECSDPALayerDesc` | Scaled Dot-Product Attention | `ValidateLayer<ANECTensorDesc, ZinIrSDPAUnit, ZinIrSDPAUnitInfo, ANECSDPALayerDescAlternate>` |
-| `ANECResampleLayerDesc` | Resample/Resize | `ValidateLayer<ANECTensorDesc, ZinIrResampleUnit, ZinIrResampleUnitInfo, ANECResampleLayerDescAlternate>` |
-| `ANECArgMinMaxLayerDesc` | ArgMin/ArgMax | `ValidateLayer<ANECTensorDesc, ZinIrArgMinMaxUnit, ZinIrArgMinMaxUnitInfo, ANECArgMinMaxLayerDescAlternate>` |
-| `ANECGlobalArgMinMaxLayerDesc` | Global ArgMin/ArgMax | `ValidateLayer<ANECTensorDesc, ZinIrGlobalArgMinMaxUnit, ZinIrGlobalArgMinMaxUnitInfo, ANECGlobalArgMinMaxLayerDescAlternate>` |
-| `ANECGatherLayerDesc` | Gather | `ValidateLayer<ANECTensorDesc, ZinIrGatherUnit, ZinIrGatherUnitInfo, ANECGatherLayerDescAlternate>` |
-| `ANECDynamicSliceLayerDesc` | Dynamic Slice | `ValidateLayer<ANECTensorDesc, ZinIrDynamicSliceUnit, ZinIrDynamicSliceUnitInfo, ANECDynamicSliceLayerDescAlternate>` |
-| `ANECInputViewLayerDesc` | Input View / Slice | `ValidateLayer<ANECTensorDesc, ZinIrInputViewUnit, ZinIrInputViewUnitInfo, ANECInputViewLayerDescAlternate>` |
-| `ANECPadLayerDesc` | Padding | `ValidateLayer<ANECTensorDesc, ZinIrPadUnit, ZinIrPadUnitInfo, ANECPadLayerDescAlternate>` |
-| `ANECNMSLayerDesc` | Non-Maximum Suppression | `ValidateLayer<ANECTensorDesc, ZinIrNMSUnit, ZinIrNMSUnitInfo, ANECNMSLayerDescAlternate>` |
-| `ANECLRNLayerDesc` | Local Response Norm | `ValidateLayer<ANECTensorDesc, ZinIrLRNUnit, ZinIrLRNUnitInfo, ANECLRNLayerDescAlternate>` |
-| `ANECL2NormLayerDesc` | L2 Normalization | `ValidateLayer<ANECTensorDesc, ZinIrL2NormUnit, ZinIrL2NormUnitInfo, ANECL2NormLayerDescAlternate>` |
-| `ANECMinMaxNormLayerDesc` | Min/Max Normalization | `ValidateLayer<ANECTensorDesc, ZinIrMinMaxNormUnit, ZinIrMinMaxNormUnitInfo, ANECMinMaxNormLayerDescAlternate>` |
-| `ANECPixelShuffleLayerDesc` | Pixel Shuffle | `ValidateLayer<ANECTensorDesc, ZinIrPixelShuffleUnit, ZinIrPixelShuffleUnitInfo, ANECPixelShuffleLayerDescAlternate>` |
-| `ANECPixelUnshuffleLayerDesc` | Pixel Unshuffle | `ValidateLayer<ANECTensorDesc, ZinIrPixelUnshuffleUnit, ZinIrPixelUnshuffleUnitInfo, ANECPixelUnshuffleLayerDescAlternate>` |
-| `ANECChannelToSpaceLayerDesc` | Channel-to-Space | `ValidateLayer<ANECTensorDesc, ZinIrChannelToSpaceUnit, ZinIrChannelToSpaceUnitInfo, ANECChannelToSpaceLayerDescAlternate>` |
-| `ANECSpaceToChannelLayerDesc` | Space-to-Channel | `ValidateLayer<ANECTensorDesc, ZinIrSpaceToChannelUnit, ZinIrSpaceToChannelUnitInfo, ANECSpaceToChannelLayerDescAlternate>` |
-| `ANECBatchToSpaceLayerDesc` | Batch-to-Space | `ValidateLayer<ANECTensorDesc, ZinIrBatchToSpaceUnit, ZinIrBatchToSpaceUnitInfo, ANECBatchToSpaceLayerDescAlternate>` |
-| `ANECSpaceToBatchLayerDesc` | Space-to-Batch | `ValidateLayer<ANECTensorDesc, ZinIrSpaceToBatchUnit, ZinIrSpaceToBatchUnitInfo, ANECSpaceToBatchLayerDescAlternate>` |
-| `ANECCropResizeLayerDesc` | Crop-Resize | `ValidateLayer<ANECTensorDesc, ZinIrCropResizeUnit, ZinIrCropResizeUnitInfo, ANECCropResizeLayerDescAlternate>` |
-| `ANECCrossCorrelationLayerDesc` | Cross Correlation | `ValidateLayer<ANECTensorDesc, ZinIrCrossCorrelationUnit, ZinIrCrossCorrelationUnitInfo, ANECCrossCorrelationLayerDescAlternate>` |
-| `ANECRingBufferWriterLayerDesc` | Ring Buffer Writer | `ValidateLayer<ANECTensorDesc, ZinIrRingBufferWriterUnit, ZinIrRingBufferUnitInfo, ANECRingBufferWriterLayerDescAlternate>` |
-| `ANECDynamicGOCLayerDesc` | Dynamic GOC | `ValidateLayer<ANECTensorDesc, ZinIrDynamicGOCUnit, ZinIrDynamicGOCUnitInfo, ANECDynamicGOCLayerDescAlternate>` |
-| `ANECSortLayerDesc` | Sort | `ValidateLayer<ANECTensorDesc, ZinIrSortUnit, ZinIrSortUnitInfo, ANECSortLayerDescAlternate>` |
-| `ANECTileLayerDesc` | Tile | `ValidateLayer<ANECTensorDesc, ZinIrTileUnit, ZinIrTileUnitInfo, ANECTileLayerDescAlternate>` |
-| `ANECTopKLayerDesc` | Top-K | `ValidateLayer<ANECTensorDesc, ZinIrTopKUnit, ZinIrTopKUnitInfo, ANECTopKLayerDescAlternate>` |
-| `ANECDropoutLayerDesc` | Dropout | `ValidateLayer<ANECTensorDesc, ZinIrDropoutUnit, ZinIrDropoutUnitInfo, ANECDropoutLayerDescAlternate>` |
-| `ANECFlattenLayerDesc` | Flatten | `ValidateLayer<ANECTensorDesc, ZinIrFlattenUnit, ZinIrFlattenUnitInfo, ANECFlattenLayerDescAlternate>` |
-| `ANECUnflattenLayerDesc` | Unflatten | `ValidateLayer<ANECTensorDesc, ZinIrUnflattenUnit, ZinIrUnflattenUnitInfo, ANECUnflattenLayerDescAlternate>` |
-| `ANECAffineTransformLayerDesc` | Affine Transform | `ValidateLayer<ANECTensorDesc, ZinIrAffineTransformUnit, ZinIrAffineTransformUnitInfo, ANECAffineTransformLayerDescAlternate>` |
-| `ANECCrossProductLayerDesc` | Cross Product | `ValidateLayer<ANECTensorDesc, ZinIrCrossProductUnit, ZinIrUnitInfo, ANECCrossProductLayerDescAlternate>` |
-| `ANECRandomLayerDesc` | Random | `ValidateLayer<ANECTensorDesc, ZinIrRandomUnit, ZinIrRandomUnitInfo, ANECRandomLayerDescAlternate>` |
-| `ANECResizeLayerDesc` | Resize | `ValidateLayer<ANECTensorDesc, ZinIrResizeUnit, ZinIrResizeUnitInfo, ANECResizeLayerDescAlternate>` |
+| `ANECConvLayerDesc` | Convolution | `ANEConvValidator<ANECConvLayerDesc, ANECTensorDesc>` |
+| `ANECConcatLayerDesc` | Concatenation | `ANEConcatValidator<ANECConcatLayerDesc, ANECTensorDesc>` |
+| `ANECGOCLayerDesc` | Generic Operation Compute | `ANEGOCValidator<ANECGOCLayerDesc, ANECTensorDesc>` |
+| `ANECElementWiseLayerDesc` | Element-wise ops | `ValidateLayer<ANECTensorDesc, IrEWUnit, IrEWUnitInfo, ANECElementWiseLayerDescAlternate>` |
+| `ANECNeuronLayerDesc` | Activation functions | `ValidateLayer<ANECTensorDesc, IrNeuronUnit, IrNeuronUnitInfo, ANECNeuronLayerDescAlternate>` |
+| `ANECPoolLayerDesc` | Pooling | `ValidateLayer<ANECTensorDesc, IrPoolUnit, IrPoolUnitInfo, ANECPoolLayerDescAlternate>` |
+| `ANECReductionLayerDesc` | Reduction | `ValidateLayer<ANECTensorDesc, IrReductionUnit, IrReductionUnitInfo, ANECReductionLayerDescAlternate>` |
+| `ANECMatrixMultLayerDesc` | MatMul | `ValidateLayer<ANECTensorDesc, IrMatrixMultUnit, IrMatrixMultUnitInfo, ANECMatrixMultLayerDescAlternate>` |
+| `ANECTransposeLayerDesc` | Transpose | `ValidateLayer<ANECTensorDesc, IrTransposeUnit, IrTransposeUnitInfo, ANECTransposeLayerDescAlternate>` |
+| `ANECReshapeLayerDesc` | Reshape | `ValidateLayer<ANECTensorDesc, IrReshapeUnit, IrReshapeUnitInfo, ANECReshapeLayerDescAlternate>` |
+| `ANECSoftmaxLayerDesc` | Softmax | `ValidateLayer<ANECTensorDesc, IrSoftmaxUnit, IrSoftmaxUnitInfo, ANECSoftmaxLayerDescAlternate>` |
+| `ANECLayerNormLayerDesc` | Layer Normalization | `ValidateLayer<ANECTensorDesc, IrLayerNormUnit, IrLayerNormUnitInfo, ANECLayerNormLayerDescAlternate>` |
+| `ANECInstanceNormLayerDesc` | Instance Norm | `ValidateLayer<ANECTensorDesc, IrInstanceNormUnit, IrInstanceNormUnitInfo, ANECInstanceNormLayerDescAlternate>` |
+| `ANECLinearLayerDesc` | Linear/Fully Connected | `ValidateLayer<ANECTensorDesc, IrLinearUnit, IrLinearUnitInfo, ANECLinearLayerDescAlternate>` |
+| `ANECBroadcastLayerDesc` (alt) | Broadcast | `ValidateLayer<ANECTensorDesc, IrBroadcastUnit, IrBroadcastUnitInfo, ANECBroadcastLayerDescAlternate>` |
+| `ANECScaledElementWiseLayerDesc` | Scaled Element-Wise | `ValidateLayer<ANECTensorDesc, IrScaledEWUnit, IrScaledEWUnitInfo, ANECScaledElementWiseLayerDescAlternate>` |
+| `ANECSDPALayerDesc` | Scaled Dot-Product Attention | `ValidateLayer<ANECTensorDesc, IrSDPAUnit, IrSDPAUnitInfo, ANECSDPALayerDescAlternate>` |
+| `ANECResampleLayerDesc` | Resample/Resize | `ValidateLayer<ANECTensorDesc, IrResampleUnit, IrResampleUnitInfo, ANECResampleLayerDescAlternate>` |
+| `ANECArgMinMaxLayerDesc` | ArgMin/ArgMax | `ValidateLayer<ANECTensorDesc, IrArgMinMaxUnit, IrArgMinMaxUnitInfo, ANECArgMinMaxLayerDescAlternate>` |
+| `ANECGlobalArgMinMaxLayerDesc` | Global ArgMin/ArgMax | `ValidateLayer<ANECTensorDesc, IrGlobalArgMinMaxUnit, IrGlobalArgMinMaxUnitInfo, ANECGlobalArgMinMaxLayerDescAlternate>` |
+| `ANECGatherLayerDesc` | Gather | `ValidateLayer<ANECTensorDesc, IrGatherUnit, IrGatherUnitInfo, ANECGatherLayerDescAlternate>` |
+| `ANECDynamicSliceLayerDesc` | Dynamic Slice | `ValidateLayer<ANECTensorDesc, IrDynamicSliceUnit, IrDynamicSliceUnitInfo, ANECDynamicSliceLayerDescAlternate>` |
+| `ANECInputViewLayerDesc` | Input View / Slice | `ValidateLayer<ANECTensorDesc, IrInputViewUnit, IrInputViewUnitInfo, ANECInputViewLayerDescAlternate>` |
+| `ANECPadLayerDesc` | Padding | `ValidateLayer<ANECTensorDesc, IrPadUnit, IrPadUnitInfo, ANECPadLayerDescAlternate>` |
+| `ANECNMSLayerDesc` | Non-Maximum Suppression | `ValidateLayer<ANECTensorDesc, IrNMSUnit, IrNMSUnitInfo, ANECNMSLayerDescAlternate>` |
+| `ANECLRNLayerDesc` | Local Response Norm | `ValidateLayer<ANECTensorDesc, IrLRNUnit, IrLRNUnitInfo, ANECLRNLayerDescAlternate>` |
+| `ANECL2NormLayerDesc` | L2 Normalization | `ValidateLayer<ANECTensorDesc, IrL2NormUnit, IrL2NormUnitInfo, ANECL2NormLayerDescAlternate>` |
+| `ANECMinMaxNormLayerDesc` | Min/Max Normalization | `ValidateLayer<ANECTensorDesc, IrMinMaxNormUnit, IrMinMaxNormUnitInfo, ANECMinMaxNormLayerDescAlternate>` |
+| `ANECPixelShuffleLayerDesc` | Pixel Shuffle | `ValidateLayer<ANECTensorDesc, IrPixelShuffleUnit, IrPixelShuffleUnitInfo, ANECPixelShuffleLayerDescAlternate>` |
+| `ANECPixelUnshuffleLayerDesc` | Pixel Unshuffle | `ValidateLayer<ANECTensorDesc, IrPixelUnshuffleUnit, IrPixelUnshuffleUnitInfo, ANECPixelUnshuffleLayerDescAlternate>` |
+| `ANECChannelToSpaceLayerDesc` | Channel-to-Space | `ValidateLayer<ANECTensorDesc, IrChannelToSpaceUnit, IrChannelToSpaceUnitInfo, ANECChannelToSpaceLayerDescAlternate>` |
+| `ANECSpaceToChannelLayerDesc` | Space-to-Channel | `ValidateLayer<ANECTensorDesc, IrSpaceToChannelUnit, IrSpaceToChannelUnitInfo, ANECSpaceToChannelLayerDescAlternate>` |
+| `ANECBatchToSpaceLayerDesc` | Batch-to-Space | `ValidateLayer<ANECTensorDesc, IrBatchToSpaceUnit, IrBatchToSpaceUnitInfo, ANECBatchToSpaceLayerDescAlternate>` |
+| `ANECSpaceToBatchLayerDesc` | Space-to-Batch | `ValidateLayer<ANECTensorDesc, IrSpaceToBatchUnit, IrSpaceToBatchUnitInfo, ANECSpaceToBatchLayerDescAlternate>` |
+| `ANECCropResizeLayerDesc` | Crop-Resize | `ValidateLayer<ANECTensorDesc, IrCropResizeUnit, IrCropResizeUnitInfo, ANECCropResizeLayerDescAlternate>` |
+| `ANECCrossCorrelationLayerDesc` | Cross Correlation | `ValidateLayer<ANECTensorDesc, IrCrossCorrelationUnit, IrCrossCorrelationUnitInfo, ANECCrossCorrelationLayerDescAlternate>` |
+| `ANECRingBufferWriterLayerDesc` | Ring Buffer Writer | `ValidateLayer<ANECTensorDesc, IrRingBufferWriterUnit, IrRingBufferUnitInfo, ANECRingBufferWriterLayerDescAlternate>` |
+| `ANECDynamicGOCLayerDesc` | Dynamic GOC | `ValidateLayer<ANECTensorDesc, IrDynamicGOCUnit, IrDynamicGOCUnitInfo, ANECDynamicGOCLayerDescAlternate>` |
+| `ANECSortLayerDesc` | Sort | `ValidateLayer<ANECTensorDesc, IrSortUnit, IrSortUnitInfo, ANECSortLayerDescAlternate>` |
+| `ANECTileLayerDesc` | Tile | `ValidateLayer<ANECTensorDesc, IrTileUnit, IrTileUnitInfo, ANECTileLayerDescAlternate>` |
+| `ANECTopKLayerDesc` | Top-K | `ValidateLayer<ANECTensorDesc, IrTopKUnit, IrTopKUnitInfo, ANECTopKLayerDescAlternate>` |
+| `ANECDropoutLayerDesc` | Dropout | `ValidateLayer<ANECTensorDesc, IrDropoutUnit, IrDropoutUnitInfo, ANECDropoutLayerDescAlternate>` |
+| `ANECFlattenLayerDesc` | Flatten | `ValidateLayer<ANECTensorDesc, IrFlattenUnit, IrFlattenUnitInfo, ANECFlattenLayerDescAlternate>` |
+| `ANECUnflattenLayerDesc` | Unflatten | `ValidateLayer<ANECTensorDesc, IrUnflattenUnit, IrUnflattenUnitInfo, ANECUnflattenLayerDescAlternate>` |
+| `ANECAffineTransformLayerDesc` | Affine Transform | `ValidateLayer<ANECTensorDesc, IrAffineTransformUnit, IrAffineTransformUnitInfo, ANECAffineTransformLayerDescAlternate>` |
+| `ANECCrossProductLayerDesc` | Cross Product | `ValidateLayer<ANECTensorDesc, IrCrossProductUnit, IrUnitInfo, ANECCrossProductLayerDescAlternate>` |
+| `ANECRandomLayerDesc` | Random | `ValidateLayer<ANECTensorDesc, IrRandomUnit, IrRandomUnitInfo, ANECRandomLayerDescAlternate>` |
+| `ANECResizeLayerDesc` | Resize | `ValidateLayer<ANECTensorDesc, IrResizeUnit, IrResizeUnitInfo, ANECResizeLayerDescAlternate>` |
 
 Each `ValidateLayer` call takes: the layer descriptor, a vector of `ANECTensorDesc` (input tensor descriptions), and a vector of `ANECTensorValueDesc` (input tensor values/constants). The validation is a two-phase check: `ValidateLayer` (outer) calls `ValidateLayer_Impl` (inner), and if validation fails, execution branches to a `.cold.1` error path.
 
@@ -89,7 +86,7 @@ The `ANECTensorDesc` describes the shape and format of every tensor entering and
 
 - **Rank must be in [0, 7]**: `Invalid tensor rank (%lu), must be between [0,7]`
 - **Tensor dimension element count**: `Tensor dimension exceeds max number of elements ANECTensorValueDesc can hold`
-- **Tensor format must be valid**: A `ZinTensorFormat` enum determines layout; `packed10` is explicitly rejected
+- **Tensor format must be valid**: An ANE tensor format enum determines layout; `packed10` is explicitly rejected
 - **Interleave factor must be valid**: `Error: invalid input interleave factor:%zd; The valid interleave factor should be 1, 2, 3, 4, or 8`
 - **Int4 format must have interleave 8**: `Tensor with the int4 format must have an interleave factor of 8`
 
@@ -99,7 +96,7 @@ The `ANECTensorDesc` describes the shape and format of every tensor entering and
 
 ### 3.1 The `mlir::placement` Dialect
 
-The binary contains a complete MLIR dialect called `mlir::placement` that governs whether ops execute on the ANE or on the host (CPU/GPU). This is the **second gate** in the constraint system.
+The ANE compiler includes a complete MLIR dialect called `mlir::placement` that governs whether ops execute on the ANE or on the host (CPU/GPU). This is the **second gate** in the constraint system.
 
 **Key placement operations:**
 
@@ -263,7 +260,7 @@ These limits apply to ALL operations on the ANE. They are derived from `hal_para
 **NE Element-Wise:**
 - `NEElementWise can only have input activation mode as Relu` — Only ReLU as input activation
 - `NEElementWise must contain ew_` — Must have EW prefix
-- `In ZinNEElementWiseLayer, input channel count must be a multiple of output channel count` — Cin must be multiple of Cout
+- `In ANE NE ElementWise Layer, input channel count must be a multiple of output channel count` — Cin must be multiple of Cout
 - `For NE Elementwise, input channel must be divisible by programmed output channel`
 - `NEElementWise must have only 2 bottoms` — Exactly 2 inputs for NE EW
 
@@ -392,7 +389,7 @@ These limits apply to ALL operations on the ANE. They are derived from `hal_para
 
 **ChannelToSpace:**
 - `ChannelToSpace in z dimension is not supported`
-- `ZinChannelToSpaceLargeFactorCompositeLayer input must be unique`
+- `ANEChannelToSpaceLargeFactorCompositeLayer input must be unique`
 
 **SpaceToChannel:**
 - `SpaceToChannel layer must have only one input`
@@ -664,7 +661,7 @@ This ordering is **not negotiable**. The compiler will not reorder atoms to enab
 
 ### 9.3 Failed Fusion Patterns
 
-The binary explicitly calls out these impossible fusion combinations:
+The ANE compiler explicitly calls out these impossible fusion combinations:
 
 - `Error: Unable to fuse clamped relu` — Clamped ReLU cannot fuse into NE/PE
 - `Error: Unable to fuse leaky relu` — Leaky ReLU cannot fuse
@@ -682,7 +679,7 @@ The binary explicitly calls out these impossible fusion combinations:
 
 ## 10. Versioned Hardware Limits
 
-The binary contains per-architecture hardware limit structures:
+The ANE compiler defines per-architecture hardware limit structures:
 
 | Symbol | Target |
 |---|---|
@@ -708,7 +705,7 @@ Each version has different values for:
 - `ew_limit_64`, `ew_limit_128`, `ew_limit_256`
 - `cache_prefetch_max_outstanding_requests`
 
-The `ZinUnitValidator::limits<T>()` template function enforces these per-version bounds at validation time, taking a value, min, max, and a CFString error key.
+The ANE Unit Validator `limits<T>()` template function enforces these per-version bounds at validation time, taking a value, min, max, and a CFString error key.
 
 ---
 
@@ -726,7 +723,7 @@ Even after passing all validation, an op can still be rejected from ANE due to m
 | Object Count | `The next object ID hits the max limit` |
 | Tensor Count | `tensor id is over limit` |
 
-The `ZinIrOpLayer::EnforceDimensionsLimits()` method is the last line of defense, checking that all dimensions are within the hardware's capacity after all transformations.
+The `OpLayer::EnforceDimensionsLimits()` method is the last line of defense, checking that all dimensions are within the hardware's capacity after all transformations.
 
 ---
 
@@ -747,7 +744,7 @@ MIL Op
   │     ├── Check force-ane-placement / force-host-placement
   │     └── Insert ANEIOCast at boundaries
   │
-  ├── 3. ZinUnitValidator::limits() ─── FAIL → Host placement
+  ├── 3. ANE Unit Validator::limits() ─── FAIL → Host placement
   │     ├── Enforce _target_hw_limits_v* bounds
   │     ├── Check max_tensor_channels/height/width/depth
   │     ├── Check OCG size, ActiveNE constraints

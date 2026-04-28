@@ -2,16 +2,16 @@
 
 ## TL;DR
 
-1. **Palette128 (7-bit, 128-entry LUT) does NOT exist** — Neither in ANECompiler binary nor coremltools. Exhaustive search of both codebases confirms this. The supported palette bit widths are strictly **1, 2, 3, 4, 6, 8** (no 5-bit or 7-bit).
+1. **Palette128 (7-bit, 128-entry LUT) does NOT exist** — Not found in coremltools or observable ANE compilation behavior. The supported palette bit widths are strictly **1, 2, 3, 4, 6, 8** (no 5-bit or 7-bit).
 2. **"128" in palette context = group_size, NOT LUT entries** — The `128` you see is the `group_size` parameter for **per-grouped-channel palettization** (coremltools default=32, user-specified, common values: 32, 64, 128). This controls how output channels are grouped for separate LUTs, NOT the number of LUT entries. A 4-bit palette with group_size=128 still has 16 LUT entries per group.
 3. **bf16 is NOT supported in CoreML** — Neither at the ANE kernel format level, nor in the CoreML model format. `constexpr_lut_to_dense` only supports `fp16` and `fp32` as LUT entry types. bf16 is used only on the PyTorch training side (fake_palettize) and raises `KeyError` during CoreML conversion.
 4. **1-bit palettes (Palette2) ARE real** — They work for non-conv ops on all hardware versions. The "4-bit minimum" only applies to convolution kernels specifically.
 
 ---
 
-## 1. Complete ZinKernelFormat Palette Enum (ANECompiler Binary)
+## 1. Complete ANE Kernel Format Palette Enum
 
-The binary contains these **exact** palette format string literals — no more, no less:
+The ANE compiler defines these **exact** palette format string literals — no more, no less:
 
 | Format Name | LUT Entries | Index Bit Width | Sparse Variant |
 |---|---|---|---|
@@ -26,34 +26,34 @@ The binary contains these **exact** palette format string literals — no more, 
 
 ### Evidence from C++ template instantiations
 
-The `ZinIrWeightDataBitStream<N>` template is instantiated for N = **1, 2, 3, 4, 6** only (no 5 or 7):
+The `IrWeightDataBitStream<N>` template is instantiated for N = **1, 2, 3, 4, 6** only (no 5 or 7):
 
 ```
-ZinIrWeightDataBitStream1  (1-bit indices)
-ZinIrWeightDataBitStream2  (2-bit indices)
-ZinIrWeightDataBitStream3  (3-bit indices)
-ZinIrWeightDataBitStream4  (4-bit indices)
-ZinIrWeightDataBitStream6  (6-bit indices)
+IrWeightDataBitStream1  (1-bit indices)
+IrWeightDataBitStream2  (2-bit indices)
+IrWeightDataBitStream3  (3-bit indices)
+IrWeightDataBitStream4  (4-bit indices)
+IrWeightDataBitStream6  (6-bit indices)
 ```
 
-The `ZinIrCompressedConstData_specialization<T, LhN>` template is instantiated for index widths **1, 2, 3, 4, 6, 8** with LUT entry types `h` (uint8), `a` (int8), `Dh` (bf16), `f` (fp32), `e4m3_t` (fp8):
+The `IrCompressedConstData_specialization<T, LhN>` template is instantiated for index widths **1, 2, 3, 4, 6, 8** with LUT entry types `h` (uint8), `a` (int8), `Dh` (bf16), `f` (fp32), `e4m3_t` (fp8):
 
 ```
-ZinIrCompressedConstData_specializationIhLh1EE   (uint8 LUT entries, 1-bit indices)
-ZinIrCompressedConstData_specializationIhLh2EE   (uint8 LUT entries, 2-bit indices)
-ZinIrCompressedConstData_specializationIhLh3EE   (uint8 LUT entries, 3-bit indices)
-ZinIrCompressedConstData_specializationIhLh4EE   (uint8 LUT entries, 4-bit indices)
-ZinIrCompressedConstData_specializationIhLh6EE   (uint8 LUT entries, 6-bit indices)
-ZinIrCompressedConstData_specializationIhLh8EE   (uint8 LUT entries, 8-bit indices)
-ZinIrCompressedConstData_specializationIDhLh16EE  (bf16 LUT entries, 16-byte aligned)
-ZinIrCompressedConstData_specializationIaLh8EE    (int8 LUT entries, 8-byte aligned)
-ZinIrCompressedConstData_specializationIfLh32EE   (fp32 LUT entries, 32-byte aligned)
-ZinIrCompressedConstData_specializationI6e4m3_tLh8EE  (fp8 e4m3 LUT entries, 8-byte aligned)
+IrCompressedConstData_specializationIhLh1EE   (uint8 LUT entries, 1-bit indices)
+IrCompressedConstData_specializationIhLh2EE   (uint8 LUT entries, 2-bit indices)
+IrCompressedConstData_specializationIhLh3EE   (uint8 LUT entries, 3-bit indices)
+IrCompressedConstData_specializationIhLh4EE   (uint8 LUT entries, 4-bit indices)
+IrCompressedConstData_specializationIhLh6EE   (uint8 LUT entries, 6-bit indices)
+IrCompressedConstData_specializationIhLh8EE   (uint8 LUT entries, 8-bit indices)
+IrCompressedConstData_specializationIDhLh16EE  (bf16 LUT entries, 16-byte aligned)
+IrCompressedConstData_specializationIaLh8EE    (int8 LUT entries, 8-byte aligned)
+IrCompressedConstData_specializationIfLh32EE   (fp32 LUT entries, 32-byte aligned)
+IrCompressedConstData_specializationI6e4m3_tLh8EE  (fp8 e4m3 LUT entries, 8-byte aligned)
 ```
 
 **No Lh5 or Lh7 specializations exist.** No 5-bit or 7-bit index storage.
 
-### Non-palette ZinKernelFormat values
+### Non-palette ANE kernel format values
 
 `Float16`, `Float32`, `Int4`, `Int8`, `Int16`, `Int32`, `Int64`, `UInt8`, `UInt16`, `UInt32`, `UInt64`, `Sparse`, `Palettized`, `Quantized`, `QuantizedSparse`, `QuantizedPalettized`, `SparsePalettized`, `QuantizedSparsePalettized`
 
@@ -137,7 +137,7 @@ When `granularity=CompressionGranularity.PER_GROUPED_CHANNEL`, the `group_size` 
 
 The group_size is completely independent of the palette bit width. It's the number of channels per group, not the number of LUT entries.
 
-### In ANECompiler: palette_group_size is a hardware register field
+### In the ANE compiler: palette_group_size is a hardware register field
 
 The ANE hardware has a `palette_group_size` field in the kernel config register:
 
@@ -167,15 +167,15 @@ This is the number of weight columns processed together during GPTQ compression.
 
 ---
 
-## 4. ANECompiler: The MIL-Level Palette Bit Width Constraint
+## 4. The MIL-Level Palette Bit Width Constraint
 
-The single most authoritative string in the binary:
+The single most authoritative constraint string:
 
 ```
 MIL conversion error: unknown data format. Only UInt1, 2, 3, 4, 6, 8 are supported
 ```
 
-This is the MIL-to-ZinIR conversion gate. No UInt7, no 7-bit indices, no 128-entry LUT.
+This is the MIL-to-ANE IR conversion gate. No UInt7, no 7-bit indices, no 128-entry LUT.
 
 Additionally, the ANEC MLIR dialect constraint:
 
@@ -192,7 +192,7 @@ At the ANEC dialect level, kernel weights can be: fp32, fp16, int8, uint8, or **
 
 Two separate error paths, BOTH conv-specific:
 
-1. **`Error: 1 and 2 bit palettes not supported.`** — From `ZinConvValidator::ValidateKernelFormat`. Convolution kernels reject 1-bit and 2-bit palette indices.
+1. **`Error: 1 and 2 bit palettes not supported.`** — From the ANE Conv Validator `ValidateKernelFormat`. Convolution kernels reject 1-bit and 2-bit palette indices.
 
 2. **`Only 2-bit, 4-bit, 6-bit and 8-bit palettization for conv are supported!`** — From a different conv path that supports 2-bit as minimum.
 
@@ -203,9 +203,9 @@ Two separate error paths, BOTH conv-specific:
 ## 6. The 3-bit Palette Upcasting System
 
 Functions found in binary:
-- `Is3bitPaletteKernelFormat(ZinKernelFormat)` — checks if format is 3-bit palette
-- `NeedsUpcastingFrom3bitPaletteTo4bitPalette(ZinIrHalParameters, ZinKernelFormat)` — checks if current HW needs upcast
-- `GetUpcasted4bitPaletteFormatFrom3bitPaletteFormat(ZinKernelFormat)` — returns the 4-bit equivalent
+- `Is3bitPaletteKernelFormat(ANEPaletteFormat)` — checks if format is 3-bit palette
+- `NeedsUpcastingFrom3bitPaletteTo4bitPalette(ANEHalParameters, ANEPaletteFormat)` — checks if current HW needs upcast
+- `GetUpcasted4bitPaletteFormatFrom3bitPaletteFormat(ANEPaletteFormat)` — returns the 4-bit equivalent
 
 On hardware that doesn't natively support 3-bit indices:
 - Palette8 (3-bit, 8 LUT entries) → Palette16 (4-bit, 16 LUT entries)
@@ -237,7 +237,7 @@ failed to downgrade: requested target version is {0}, but uint6 data is only sup
 ### Key functions
 
 ```
-CanUseMultiPaletteMode(ZinIrHalParameters, bool, ZinIrKernel)
+CanUseMultiPaletteMode(ANEHalParameters, bool, ANEKernel)
 EnableKernelSplitForMultiPaletteLUT
 SetMultiPaletteEnable()            — v4, v5, v6, v7, v8, v10, v11, v17, v19, v20, v26
 SetMultiPaletteSizeOneLut(size_t)  — v4, v5, v6, v7, v8, v10, v11, v17, v19, v20, v26
@@ -310,7 +310,7 @@ num_luts_per_ocg << size_one_lut <= hal_params.ne_palette_lut_size_in_bytes
 
 ---
 
-## 10. LUT Entry Data Types (ANECompiler Binary)
+## 10. LUT Entry Data Types
 
 The palette LUT can store entries in multiple formats:
 
@@ -365,7 +365,7 @@ After (ANE-friendly):
 
 ---
 
-## 13. Version-Specific Palette Validation (ZinValidateTd)
+## 13. Version-Specific Palette Validation (ValidateTd)
 
 | Version | Chip | ValidatePaletteBlockSize | SetPaletteBlockSize | SetPaletteGroupSize | SetMultiPalette* |
 |---|---|---|---|---|---|
@@ -387,7 +387,7 @@ All versions from v4 through v26 have `SetPaletteBlockSize`, `SetPaletteGroupSiz
 
 ## 14. Resolving the "Palette128" Claim
 
-You mentioned having "Palette128 which works on even 4-bit." After exhaustive analysis of both the ANECompiler binary and coremltools source, here are the possible explanations:
+You mentioned having "Palette128 which works on even 4-bit." After exhaustive analysis of coremltools source and observable ANE behavior, here are the possible explanations:
 
 ### Most likely: Confusion between group_size and LUT entries
 
@@ -397,9 +397,7 @@ In a CoreML model, the per-grouped-channel LUT has shape `[num_groups, 16, vecto
 
 ### Less likely but possible: Newer ANECompiler version
 
-If you're running a macOS version newer than what this binary was extracted from, Apple may have added Palette128/UInt7 support. This binary might be from an older macOS. To verify:
-- Check your ANECompiler binary version: `strings ANECompiler | grep -i "version\|build"`
-- Search YOUR binary for `Palette128`: `strings ANECompiler | grep -i "palette128"`
+Apple may add Palette128/UInt7 support in future ANE compiler versions. To verify on your system, check the ANE compiler version and palette support through the Core ML framework.
 
 ### Unlikely: Palette256 with 128 used entries
 
@@ -413,8 +411,8 @@ CoreML could encode a 128-entry palette as Palette256 (8-bit indices) where only
 |---|---|---|
 | **CoreML model format** | ❌ NOT supported | `constexpr_lut_to_dense` type_domains only has `(int8, uint8, fp16, fp32)` |
 | **CoreML conversion** | ❌ Raises KeyError | `test_weight_only_quantization_bfloat16_not_support` |
-| **ANE kernel format** | ❌ NOT a format | No bf16 in ZinKernelFormat enum |
-| **ANE LUT entry type** | ✅ Supported | `__bf16` / `Dh` in ZinIrCompressedConstData |
+| **ANE kernel format** | ❌ NOT a format | No bf16 in ANE kernel format enum |
+| **ANE LUT entry type** | ✅ Supported | `__bf16` / `Dh` in IrCompressedConstData |
 | **ANE channel config** | ✅ Present | `ane_common_ch_cfg_in_fmt_bf16` for v17, v19, v20, v26 |
 | **PyTorch training** | ✅ Fake palettize | `lut_dtype="b16"` for training simulation |
 | **MIL IR type system** | ⚠️ Reserved name | `"bf16"` is reserved but has no type definition |

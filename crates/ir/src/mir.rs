@@ -1048,7 +1048,7 @@ pub enum MirOp {
 impl MirOp {
     /// Returns the default ANE execution engine for this op.
     ///
-    /// Based on ANECompiler fusion boundaries:
+    /// Based on observed ANE fusion boundaries:
     /// - **NE**: conv/pool/matmul/attention pipeline
     /// - **PE**: elementwise/reduction/scaled-EW pipeline
     /// - **TransposeEngine**: data rearrangement

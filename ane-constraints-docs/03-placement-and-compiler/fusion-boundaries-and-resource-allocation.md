@@ -1,28 +1,25 @@
 # Fusion Boundaries and Resource Allocation
 
-**Target:** Apple Neural Engine (ANE) Private Frameworks — ANECompiler Binary  
-**Architecture:** Mach-O 64-bit ARM64e (Apple Silicon M2)  
+**Target:** Apple Neural Engine (ANE) Compiler  
 **Analysis Date:** 2026-04-24  
-**Binary Size:** 45,797,376 bytes | 133,164 symbols  
-**Internal Codename:** "Zin" Compiler Stack  
 
 ---
 
 ## 1. Executive Summary
 
-This report provides a deep-dive analysis of how the Apple Neural Engine Compiler (ANEC) fuses operations and what boundaries, constraints, and special circumstances determine whether operations land on the ANE or fall back to other compute units. The analysis is based on comprehensive string extraction, symbol table analysis, and mangled name demangling from the ANECompiler binary — the 44 MB shared library that implements Apple's proprietary "Zin" compiler infrastructure.
+This report describes how the ANE compiler fuses operations and what boundaries, constraints, and special circumstances determine whether operations land on the ANE or fall back to other compute units.
 
 The key findings are:
 
 1. **ANEC uses a multi-engine fusion architecture** with three distinct execution engines: NE (Neural Engine convolution/math), PE (Processing Element for element-wise/reduction), and TransposeEngine (for data rearrangement). Each engine has its own fused op categories.
 
-2. **Fusion is pattern-based and atom-driven** — the compiler uses a `ZinFusionPatterns` system organized by `FusionPatternType`, where individual "atoms" (conv atom, GOC atom, activation atom, etc.) are matched against operation graphs. There are separate pattern sets for NE, PE, SNE, and TransposeEngine.
+2. **Fusion is pattern-based and atom-driven** — the compiler uses a `FusionPatterns` system organized by `FusionPatternType`, where individual "atoms" (conv atom, GOC atom, activation atom, etc.) are matched against operation graphs. There are separate pattern sets for NE, PE, SNE, and TransposeEngine.
 
-3. **Fusion occurs in multiple pipeline stages** — from initial layer fusion (`ZinMirLayerFusion`) through NE transpose fusion, PE transpose fusion, transpose-engine fusion, and hoisting optimizations that enable further fusion.
+3. **Fusion occurs in multiple pipeline stages** — from initial layer fusion (`MirLayerFusion`) through NE transpose fusion, PE transpose fusion, transpose-engine fusion, and hoisting optimizations that enable further fusion.
 
 4. **The primary fusion boundary mechanism is memory pressure** — when L2 cache or register pressure exceeds hardware limits, the compiler cuts clusters, splits subgraphs, and spatially tiles operations to fit within hardware constraints.
 
-5. **Many operations cannot land on ANE** due to hard constraints on quantization formats, palettization, dilation, kernel sizes, data types, and dimension limitations. These are documented exhaustively in the binary's error strings.
+5. **Many operations cannot land on ANE** due to hard constraints on quantization formats, palettization, dilation, kernel sizes, data types, and dimension limitations. These constraints are reflected in the ANE compiler's error strings.
 
 ---
 
@@ -63,13 +60,13 @@ The TransposeEngine handles data rearrangement operations (transposes, reshapes,
 
 | Component | Description |
 |---|---|
-| `ZinTransposeEngineLayer` | Standalone transpose engine layer |
-| `ZinMirTransposeEngineFusion` | Fusion pass for transpose engine ops |
+| `TransposeEngineLayer` | Standalone transpose engine layer |
+| `MirTransposeEngineFusion` | Fusion pass for transpose engine ops |
 | `ConvertNEBypassToTransposeEngine` | Converts NE bypass layers to transpose engine when possible |
 
 ### 2.4 Engine Layer Constraints
 
-The binary reveals strict rules about which engine layers can interact:
+The ANE compiler enforces strict rules about which engine layers can interact:
 
 ```
 Only NE and PE engine layers are supported
@@ -88,24 +85,24 @@ This means the compiler strictly partitions the world into NE, PE, and Transpose
 
 ## 3. Fusion Pattern Architecture
 
-### 3.1 The ZinFusionPatterns System
+### 3.1 The FusionPatterns System
 
-The core fusion mechanism is implemented through the `ZinFusionPatterns` class, which initializes pattern sets for each engine type:
+The core fusion mechanism is implemented through the `FusionPatterns` class, which initializes pattern sets for each engine type:
 
 ```
-ZinFusionPatterns::InitializeNEPatterns()      — 13 cold-path error branches
-ZinFusionPatterns::InitializePEPatterns()      — 17 cold-path error branches
-ZinFusionPatterns::InitializeSNEPatterns()     — 3 cold-path error branches
-ZinFusionPatterns::InitializeTransposeEnginePatterns()
+FusionPatterns::InitializeNEPatterns()      — 13 cold-path error branches
+FusionPatterns::InitializePEPatterns()      — 17 cold-path error branches
+FusionPatterns::InitializeSNEPatterns()     — 3 cold-path error branches
+FusionPatterns::InitializeTransposeEnginePatterns()
 ```
 
 The high number of cold-path (error) branches in NE and PE pattern initialization indicates extensive validation logic — many combinations of operations are checked for fusability, and many are rejected.
 
 ### 3.2 Fusion Atoms (Building Blocks)
 
-Fusion atoms are the indivisible units that get matched and grouped into fused engine layers. The binary reveals a rich taxonomy organized by engine:
+Fusion atoms are the indivisible units that get matched and grouped into fused engine layers. The ANE compiler defines a rich taxonomy organized by engine:
 
-#### NE Atoms (ZinNEAtoms)
+#### NE Atoms
 
 | Atom | Purpose |
 |---|---|
@@ -139,7 +136,7 @@ Fusion atoms are the indivisible units that get matched and grouped into fused e
 | `KernelRasterizerAtom` | Kernel rasterization |
 | `CrossCorrelationAtom` | Cross-correlation |
 
-#### PE Atoms (ZinPEAtoms)
+#### PE Atoms
 
 | Atom | Purpose |
 |---|---|
@@ -172,7 +169,7 @@ Fusion atoms are the indivisible units that get matched and grouped into fused e
 
 ### 3.3 Atom Fusability Checks
 
-Each atom has an `IsFusable` method that determines whether it can be fused with adjacent operations. Key fusability checks discovered in the symbol table:
+Each atom has an `IsFusable` method that determines whether it can be fused with adjacent operations. Key fusability checks:
 
 | Check Function | Purpose |
 |---|---|
@@ -196,28 +193,28 @@ Each atom has an `IsFusable` method that determines whether it can be fused with
 The fusion process follows a clear sequence:
 
 ```
-1. ZinMirLayerFusion::Run()
-   ├── ZinMirLayerFusion::Group()   — Groups layers into fusion candidates
-   └── ZinMirLayerFusion::Commit()  — Commits fused groups to graph
+1. MirLayerFusion::Run()
+   ├── MirLayerFusion::Group()   — Groups layers into fusion candidates
+   └── MirLayerFusion::Commit()  — Commits fused groups to graph
 
 2. Transpose Fusion Passes
-   ├── ZinMirNETransposeFusion       — Fuses transposes into NE layers
-   ├── ZinMirPETransposeFusion       — Fuses CW transposes into PE layers
+   ├── MirNETransposeFusion       — Fuses transposes into NE layers
+   ├── MirPETransposeFusion       — Fuses CW transposes into PE layers
    │   ├── FuseCWTransposeToPEAsInput()
    │   └── FuseCWTransposeToPEAsOutput()
-   ├── ZinMirTransposeEngineFusion   — Fuses into transpose engine layers
-   └── ZinMirPETransposeFusionWithSinglePatchReduction
+   ├── MirTransposeEngineFusion   — Fuses into transpose engine layers
+   └── MirPETransposeFusionWithSinglePatchReduction
 
 3. Hoisting Passes (Enable Further Fusion)
-   ├── ZinMirHoistGOCsForEWFusion          — Hoist GOCs for EW fusion
-   ├── ZinMirHoistGOCEWAbsForPEEWFusion    — Hoist GOC/EW-Abs for PE-EW fusion
-   ├── ZinMirHoistInputTypecastForFusion   — Hoist input typecasts for fusion
-   ├── ZinMirHoistOutputTypecastForFusion  — Hoist output typecasts for fusion
-   ├── ZinMirHoistGOCorActivationForConvFusion     — Hoist for conv fusion
-   ├── ZinMirHoistSEWActivationForGOCConvFusion    — Hoist SEW activation for GOC+Conv
-   ├── ZinMirHoistGOCorActivationForMatMultFusion  — Hoist for matmul fusion
-   ├── ZinMirHoistInputNEByPassToEnableEngineLayerDMA   — Hoist NE bypass for DMA
-   └── ZinMirHoistOutputNEByPassToEnableEngineLayerDMA  — Hoist NE bypass for DMA
+   ├── MirHoistGOCsForEWFusion          — Hoist GOCs for EW fusion
+   ├── MirHoistGOCEWAbsForPEEWFusion    — Hoist GOC/EW-Abs for PE-EW fusion
+   ├── MirHoistInputTypecastForFusion   — Hoist input typecasts for fusion
+   ├── MirHoistOutputTypecastForFusion  — Hoist output typecasts for fusion
+   ├── MirHoistGOCorActivationForConvFusion     — Hoist for conv fusion
+   ├── MirHoistSEWActivationForGOCConvFusion    — Hoist SEW activation for GOC+Conv
+   ├── MirHoistGOCorActivationForMatMultFusion  — Hoist for matmul fusion
+   ├── MirHoistInputNEByPassToEnableEngineLayerDMA   — Hoist NE bypass for DMA
+   └── MirHoistOutputNEByPassToEnableEngineLayerDMA  — Hoist NE bypass for DMA
 
 4. Post-Fusion
    ├── PostFusionTransposeHoisting
@@ -235,15 +232,15 @@ The NE convolution fusion is the most complex fusion pattern. A fused convolutio
 - **Input-side:** Dequantization, Input ReLU, PreScale, Transpose (CW), Texture operations
 - **Output-side:** Activation (ReLU variants, sigmoid, tanh, etc.), GOC, PostScale, Quantization, Bias+Scale fusion
 
-**Key fusion API (from symbol demangling):**
+**Key fusion API:**
 
 ```
-ZinIrKernel::FuseScaleBiasWithBottom()      — Fuses scale+bias into conv kernel
-ZinIrKernel::FuseScaleWithBottom()          — Fuses scale only
-ZinIrKernel::FuseBiasWithBottom()           — Fuses bias only
-ZinActivationLayer::FuseIntoPostScale()     — Fuses activation into post-scale
-ZinPadLayerUtils::FuseConvWithConsumer()    — Fuses padding into conv consumer
-ZinPadLayerUtils::FusePadWithConsumer()     — Fuses pad layer with consumer
+IrKernel::FuseScaleBiasWithBottom()      — Fuses scale+bias into conv kernel
+IrKernel::FuseScaleWithBottom()          — Fuses scale only
+IrKernel::FuseBiasWithBottom()           — Fuses bias only
+ActivationLayer::FuseIntoPostScale()     — Fuses activation into post-scale
+PadLayerUtils::FuseConvWithConsumer()    — Fuses padding into conv consumer
+PadLayerUtils::FusePadWithConsumer()     — Fuses pad layer with consumer
 ```
 
 **Conv fusion boundaries:**
@@ -279,12 +276,12 @@ Element-wise operations are split between NE and PE engines:
 
 **PE Element-Wise (PEFUSED_ELEMENTWISE):**
 - More flexible than NE-EW; supports scaled EW, GOC, and reduction fusion
-- ScaledEW (SEW) operations: `ZinScaledElementWiseLayer` with `ZinIrScaledEWInfo`
+- ScaledEW (SEW) operations: `ScaledElementWiseLayer` with `IrScaledEWInfo`
 - PE-EW supports: input dequant, input ReLU, input/output transpose, output GOC, output ReLU, post-scale, per-channel GOC, per-channel quant, reduction
 - `PEEW with uint16 input must have only one dma src` — uint16 limits DMA sources
 
 **PE-EW Fusion Hoisting:**
-The `ZinMirHoistGOCsForEWFusion` and related passes restructure the graph to enable PE-EW fusion by moving GOC and activation operations to positions where they can be absorbed into the PE-EW engine layer.
+The `MirHoistGOCsForEWFusion` and related passes restructure the graph to enable PE-EW fusion by moving GOC and activation operations to positions where they can be absorbed into the PE-EW engine layer.
 
 **Failed PE-EW fusion conditions:**
 - `Error: Unable to fuse GOC, GOC and EW_MAX` — Cannot fuse two GOCs and EW max together
@@ -297,7 +294,7 @@ Activations can be fused into both NE and PE layers, but specific conditions app
 
 **Successful fusion patterns:**
 - ReLU fusing into conv output (via `SetPEOutputReLU`)
-- Activation fusing into post-scale (`ZinActivationLayer::FuseIntoPostScale`)
+- Activation fusing into post-scale (`ActivationLayer::FuseIntoPostScale`)
 - Hard swish detection via `SwishHardActivationDetection` pattern matching
 - Quantization scale fused into activation post-scale (`FuseQuantScaleIntoActivationPostScale`)
 
@@ -363,21 +360,21 @@ Palettized (LUT-based) weight compression has its own fusion rules and constrain
 
 Three separate transpose fusion passes handle different scenarios:
 
-**ZinMirNETransposeFusion:**
+**MirNETransposeFusion:**
 Fuses transposes into NE engine layers. Uses a `ConcatHandler` for transposes adjacent to concat operations:
 - `ConcatHandler::NEIncomingHandler()` — Handles transposes incoming to NE
 - `ConcatHandler::BuildNewConcat()` — Builds new concat with fused transpose
 - `ConcatHandler::UpdateFusedNELayerMirInfo()` — Updates MIR info after fusion
 - `IsFusableBasedOnFormatOCGSizeAndActiveNE()` — Checks if transpose can be fused based on tensor format, OCG size, and ActiveNE count
 
-**ZinMirPETransposeFusion:**
+**MirPETransposeFusion:**
 Fuses channel-width (CW) transposes into PE layers:
 - `FuseCWTransposeToPEAsInput()` — Fuse CW transpose as PE input
 - `FuseCWTransposeToPEAsOutput()` — Fuse CW transpose as PE output
 - `ConvertToNEBypass()` — Convert unfusable transposes to NE bypass layers
 - Also has a `SinglePatchReduction` variant for single-patch scenarios
 
-**ZinMirTransposeEngineFusion:**
+**MirTransposeEngineFusion:**
 - `FuseCWTransposeToEngineLayer()` — Fuses CW transposes into engine layers
 - TransposeEngine-based graphs should not need DMA buffers or chain buffers
 
@@ -417,20 +414,20 @@ ne_info_.active_ne cannot be zero
 
 ### 5.3 SetActiveNE Process
 
-The `ZinMirSetActiveNE` pass determines the active NE count for each layer in the control flow graph. If it fails, the error message states: `A newly created layer in the latency legalizer could not set active NE`.
+The `MirSetActiveNE` pass determines the active NE count for each layer in the control flow graph. If it fails, the error message states: `A newly created layer in the latency legalizer could not set active NE`.
 
 For standalone activations (not fused with conv/pool), only the first NE generates data: `For standalone Activations, we only generate the first NE data.`
 
 ### 5.4 NEBypass: When Data Doesn't Need Compute
 
-When data needs to pass through the NE without computation (e.g., for format conversion, transpose, or routing), a `ZinNEBypassLayer` is used. NEBypass layers:
+When data needs to pass through the NE without computation (e.g., for format conversion, transpose, or routing), a `NEBypassLayer` is used. NEBypass layers:
 
 - Can optionally contain: Texture, Broadcast, Activation, GOC, Transpose, Quant, and Copy sub-operations
 - `NEBYPASS-GOC should not have bias`
 - `NEBypass does not support Espresso weight format`
 - Can be converted to TransposeEngine when no compute is needed: `ConvertNEBypassToTransposeEngine`
 - `NEBypass cannot have tensor kernel`
-- Are used to hoist operations to enable DMA: `ZinMirHoistInputNEByPassToEnableEngineLayerDMA`
+- Are used to hoist operations to enable DMA: `MirHoistInputNEByPassToEnableEngineLayerDMA`
 
 ---
 
@@ -444,9 +441,9 @@ The primary mechanism for determining fusion boundaries is memory pressure analy
 
 | Algorithm | Source File |
 |---|---|
-| `ZinMirSubgraphIdentification` | ZinMirSubgraphIdentification.cpp |
-| `ZinMirPressureBasedSubgraphIdentification` | ZinMirPressureBasedSubgraphIdentification.cpp |
-| `ZinMirSpatialSplitPressureBasedSubgraphIdentification` | ZinMirSpatialSplitPressureBasedSubgraphIdentification.cpp |
+| `MirSubgraphIdentification` | MirSubgraphIdentification.cpp |
+| `MirPressureBasedSubgraphIdentification` | MirPressureBasedSubgraphIdentification.cpp |
+| `MirSpatialSplitPressureBasedSubgraphIdentification` | MirSpatialSplitPressureBasedSubgraphIdentification.cpp |
 | `BatchOrChannelSplitPressureBasedSubgraphIdentification` | — |
 | `BondedSplitSubgraphIdentification` | — |
 | `LegalizerSubgraphIdentification` | — |
@@ -505,7 +502,7 @@ When a subgraph is too large for the ANE's L2 cache, the compiler spatially spli
 
 ### 6.4 L2 Legalization
 
-The `ZinMirL2Legalizer` pass ensures that all operations fit within the L2 cache budget:
+The `MirL2Legalizer` pass ensures that all operations fit within the L2 cache budget:
 
 - `L2-Legalizer: splitting layer: %s` — When a layer must be split
 - `L2-Legalizer: failed splitting layer: %s` — When splitting fails
@@ -536,7 +533,7 @@ Two mechanisms reduce DRAM traffic between consecutive TDs (tile-data programs):
 
 ## 7. Complete Inventory of Operations That Cannot Land on ANE
 
-Based on exhaustive analysis of error strings and constraint messages in the binary, the following operations or conditions prevent an op from landing on the ANE:
+Based on exhaustive analysis of error strings and constraint messages, the following operations or conditions prevent an op from landing on the ANE:
 
 ### 7.1 Hard "Cannot Land on ANE" Conditions
 
@@ -600,7 +597,7 @@ Based on exhaustive analysis of error strings and constraint messages in the bin
 
 ### 7.2 Tensor Dimension Constraints
 
-The binary reveals hardware limits on tensor dimensions that act as fusion/ANE-placement boundaries:
+The ANE compiler enforces hardware limits on tensor dimensions that act as fusion/ANE-placement boundaries:
 
 ```
 (ox * oy * cout * num_groups) <= hal_params.max_tensor_channels
@@ -627,7 +624,7 @@ Interleave is a critical parameter for ANE data layout. Valid interleave factors
 
 ## 8. Compiler Flags Controlling Fusion and Boundaries
 
-The `ZinIrCompilerParameters` class exposes numerous flags that control fusion behavior. These can be set via the compiler options dictionary:
+The `IrCompilerParameters` class exposes numerous flags that control fusion behavior. These can be set via the compiler options dictionary:
 
 ### 8.1 Fusion Control Flags
 
@@ -679,9 +676,9 @@ MLIR ANEC Dialect Frontend
     │  (Converts MIL ops to ANEC IR ops with FusionType attribute)
     │  (Validates constraints: FusionType, groups, kernel formats)
     ▼
-Zin IR Builder (ZinIrOpLayer directed graph)
+ANE IR Builder (IrOpLayer directed graph)
     │
-    ├─── ZinIrOpt Passes (Pre-fusion)
+    ├─── IrOpt Passes (Pre-fusion)
     │    ├── CollapseReshape
     │    ├── CollapseTranspose
     │    ├── WidthConcatCanonicalizer
@@ -707,39 +704,39 @@ Zin IR Builder (ZinIrOpLayer directed graph)
     │    └── Tensor-based Context Switch Legalization
     │
     ├─── MirOpt Passes (Optimization)
-    │    ├── ZinMirActiveNE
-    │    ├── ZinMirLayerFusion (Group + Commit)
-    │    ├── ZinMirPadOptimization (DecomposePadAndFindFusionCandidates)
-    │    ├── ZinMirEwCopyOptimizer
-    │    ├── ZinMirOptMergeDeconvConv
-    │    ├── ZinMirOptFullyConnectedLayer
+    │    ├── MirActiveNE
+    │    ├── MirLayerFusion (Group + Commit)
+    │    ├── MirPadOptimization (DecomposePadAndFindFusionCandidates)
+    │    ├── MirEwCopyOptimizer
+    │    ├── MirOptMergeDeconvConv
+    │    ├── MirOptFullyConnectedLayer
     │    ├── PadAndConv / PadAndPool DecomposeAndFuse
-    │    ├── ZinMirBatchOrChannelSplitter
-    │    ├── ZinMirSubgraphIdentification / PressureBased
-    │    ├── ZinMirSpatialSplitter
-    │    ├── ZinMirL2Legalizer
-    │    ├── ZinMirMultiSegmentLegalizer
+    │    ├── MirBatchOrChannelSplitter
+    │    ├── MirSubgraphIdentification / PressureBased
+    │    ├── MirSpatialSplitter
+    │    ├── MirL2Legalizer
+    │    ├── MirMultiSegmentLegalizer
     │    ├── Hoisting passes (6 different hoisters for enabling fusion)
     │    ├── MergeConvolutions / MergeFanoutConvolutions
     │    └── PostFusionTransposeHoisting
     │
     ├─── Scheduling + Register Allocation
-    │    ├── ZinIrOpLayerGraphScheduler
-    │    ├── ZinCpBasedAllocator (copy-based allocation)
-    │    ├── ZinIrLocalRegAlloc (with spill support)
-    │    ├── ZinL2FootprintCalculator
+    │    ├── IrOpLayerGraphScheduler
+    │    ├── CpBasedAllocator (copy-based allocation)
+    │    ├── IrLocalRegAlloc (with spill support)
+    │    ├── L2FootprintCalculator
     │    ├── Chaining vs L2-dep decision
     │    └── Active NE optimization (OptimizePoolActiveNEs)
     │
     └─── Code Generation
-         ├── ZinIrCodegen (v1 through v26, plus vu1)
+         ├── IrCodegen (v1 through v26, plus vu1)
          │    ├── PE Codegen
          │    ├── NE Config + Kernel programming
          │    ├── L2 register programming
          │    ├── Chain/L2-dep buffer allocation
          │    └── Remote dependency handling
-         ├── ZinLinker (program linking)
-         └── ZinSerial (serialization to binary)
+         ├── Linker (program linking)
+         └── Serial (serialization to binary)
 ```
 
 ---
@@ -764,7 +761,7 @@ Dynamic shapes create significant constraints on what can be fused or placed on 
 
 When multiple ANE instances are available:
 
-- `ZinBondedAne` manages multi-ANE deployment with `ZinDeploymentComponent` and `ZinPerLayerDeploymentComponentAlgorithm`
+- `BondedAne` manages multi-ANE deployment with `DeploymentComponent` and `PerLayerDeploymentComponentAlgorithm`
 - `Bonded networks are not supported on the target` — Not all hardware supports multi-ANE
 - `BondedSplitSubgraphIdentification` — Separate subgraph identification for bonded networks
 - `Disable Per DMA RDTID for bonded networks`
@@ -773,12 +770,12 @@ When multiple ANE instances are available:
 
 ### 10.3 SNE (Soft Neural Engine)
 
-A third engine category, SNE, appears in the symbol table with its own pattern set (`InitializeSNEPatterns`):
+A third engine category, SNE, has its own pattern set (`InitializeSNEPatterns`):
 
 - `Only one SNE Layer per group is expected`
 - `SNE layer should not be in subgraph` — SNE layers are excluded from spatial splitting
-- `ZinSneCodeGeneration` generates SNE-specific condition operations
-- SNE supports `ScaledElementWise` via `ZinSNEAtoms::ScaledElementWiseAtom`
+- `SneCodeGeneration` generates SNE-specific condition operations
+- SNE supports `ScaledElementWise` via `SNEAtoms::ScaledElementWiseAtom`
 
 ### 10.4 Program Chaining (Runtime)
 
@@ -810,9 +807,9 @@ The compiler can dump fusion boundary information for debugging:
 - `Dump Fusion Boundary Info: %d` — Enable flag
 - `Dumped fusion boundaries after MirOpt and before Spatial Split to JSON`
 - `Dumped fusion boundaries after Reg Spill to JSON`
-- `.zinir_graph_after_ne_transpose_fusion.dot` — GraphViz DOT output
-- `.zinir_graph_final_fusion_info_` — Final fusion info dump
-- `.zinir_graph_after_MirOpt_before_Spatial_Split_` — Pre-spatial-split graph
+- `_graph_after_ne_transpose_fusion.dot` — GraphViz DOT output
+- `_graph_final_fusion_info_` — Final fusion info dump
+- `_graph_after_MirOpt_before_Spatial_Split_` — Pre-spatial-split graph
 - `.MemoryPressure.debug.txt` — Memory pressure debug
 - `.per_sched_pressure.txt` — Per-schedule pressure
 
@@ -822,11 +819,11 @@ The compiler can dump fusion boundary information for debugging:
 
 ### 12.1 How ANEC Fuses Ops
 
-1. **Atoms are matched** against the operation graph using `ZinFusionPatterns`, organized by `FusionPatternType` (NE, PE, SNE, TransposeEngine)
-2. **Matched atoms are grouped** into engine layers by `ZinMirLayerFusion::Group()` 
+1. **Atoms are matched** against the operation graph using `FusionPatterns`, organized by `FusionPatternType` (NE, PE, SNE, TransposeEngine)
+2. **Matched atoms are grouped** into engine layers by `MirLayerFusion::Group()` 
 3. **Hoisting passes** move typecasts, activations, and GOCs to positions that enable further fusion
 4. **Transpose fusion** absorbs data rearrangement into engine layers
-5. **The fusion result is committed** via `ZinMirLayerFusion::Commit()`
+5. **The fusion result is committed** via `MirLayerFusion::Commit()`
 6. **Legalization passes** verify that fused layers fit within hardware constraints (L2, latency, dimensions)
 
 ### 12.2 What Creates Fusion Boundaries
@@ -859,4 +856,4 @@ Operations fall off the ANE (back to GPU/CPU) when:
 
 ---
 
-*Analysis performed via static reverse engineering of ANECompiler binary using string extraction, symbol table analysis, and mangled C++ name demangling. No dynamic execution was performed. All findings are derived from embedded diagnostic strings, class/method names, and constraint error messages in the binary.*
+*This analysis characterizes ANE compiler behavior based on observable compilation outcomes and constraint validation results.*

@@ -672,7 +672,8 @@ mod tests {
     /// differently-named weights with identical data.
     ///
     /// This is the real-world scenario that motivates content-hash dedup:
-    /// coremltools 9.0's `add_function()` duplicates weight data per function,
+    /// coremltools 9.0's `add_function()` + `ct.convert()` duplicates weight data per function
+    /// (though `save_multifunction()` does perform cross-function dedup),
     /// but proto-direct emission with content dedup produces one copy.
     #[test]
     fn test_content_dedup_coremltools_scenario() {

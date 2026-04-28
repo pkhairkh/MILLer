@@ -4,7 +4,7 @@
 
 | Topic | Canonical document | Use for |
 |---|---|---|
-| Binary provenance | `01-binary-research/ane-framework-binary-analysis.md` | Framework inventory, symbol counts, Zin class names, client/compiler/runtime roles. |
+| Framework analysis | `01-binary-research/ane-framework-binary-analysis.md` | Framework inventory, compiler/runtime roles, and constraint taxonomy. |
 | Hardware limits | `02-hardware-and-limits/hardware-versions-limits-and-op-support.md` | ANE version mapping, HAL parameters, dtype support, register checks, op landing summary. |
 | Placement constraints | `03-placement-and-compiler/mil-to-ane-placement-constraint-system.md` | MIL validation, placement dialect, unit validation, dynamic-shape and memory constraints. |
 | Fusion and boundaries | `03-placement-and-compiler/fusion-boundaries-and-resource-allocation.md` | Fusion patterns, execution engines, ActiveNE/OCG allocation, graph breaks. |
