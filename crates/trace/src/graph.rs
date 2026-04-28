@@ -139,7 +139,18 @@ pub struct TracedNode {
 /// These are the canonical set of operations that can appear in a
 /// traced transformers model. They are mapped 1:1 or N:1 to SIR ops
 /// during `build_sir_from_trace()`.
+///
+/// # Serialization Format
+///
+/// The Python tracer (`trace_model.py`) uses internally-tagged JSON:
+/// `{"type": "Linear", "in_features": 1024, ...}`. The `#[serde(tag = "type")`
+/// attribute matches this format so Rust can deserialize directly.
+///
+/// Extra fields emitted by Python (e.g., `_module_path`, `_module_type`,
+/// `_detection_method`) are silently ignored by `#[serde(deny_unknown_fields)]`
+/// being absent — serde's default is to ignore unknown fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum TracedOp {
     // ─── High-Level Transformer Ops (decompose_at_trace = false) ───
     /// Full attention block (QKV projection + attention + output projection).
@@ -147,6 +158,7 @@ pub enum TracedOp {
         embed_dim: usize,
         num_heads: usize,
         head_dim: usize,
+        #[serde(default)]
         use_sdpa: bool,
     },
     /// MLP / feed-forward block.
@@ -170,13 +182,18 @@ pub enum TracedOp {
     // ─── Primitive Ops (after decomposition) ───────────────────────
     /// Linear projection: y = x @ W^T + b
     Linear {
+        #[serde(default)]
         in_features: usize,
+        #[serde(default)]
         out_features: usize,
+        #[serde(default)]
         has_bias: bool,
     },
     /// Matrix multiplication: C = A @ B
     MatMul {
+        #[serde(default)]
         a_shape: TensorShape,
+        #[serde(default)]
         b_shape: TensorShape,
     },
     /// Embedding lookup (vocab_size × embed_dim).
@@ -201,6 +218,9 @@ pub enum TracedOp {
     Silu,
     /// ReLU activation.
     Relu,
+    /// Identity / no-op (contiguous, size query, etc.).
+    /// Python tracer emits `"type": "Identity"` for no-ops.
+    Identity,
     /// Reshape operation.
     Reshape { target_shape: Vec<usize> },
     /// Transpose / permute dimensions.
@@ -208,7 +228,11 @@ pub enum TracedOp {
     /// Concatenate tensors along an axis.
     Concat { axis: usize },
     /// Split tensor along an axis.
-    Split { axis: usize, num_splits: usize },
+    Split {
+        /// Axis to split on. Python may emit negative values (e.g., -1 for last axis).
+        axis: isize,
+        num_splits: usize,
+    },
     /// Slice operation.
     Slice { begin: Vec<i64>, end: Vec<i64>, stride: Vec<i64> },
     /// Element-wise addition.
@@ -237,6 +261,16 @@ pub enum TracedOp {
     IndexSelect { axis: isize },
     /// Where (conditional select).
     Where,
+    /// Expand dimensions (unsqueeze). Python emits `"type": "ExpandDims"`.
+    ExpandDims {
+        #[serde(default)]
+        axis: Vec<isize>,
+    },
+    /// Squeeze dimensions. Python emits `"type": "Squeeze"`.
+    Squeeze {
+        #[serde(default)]
+        axis: Vec<isize>,
+    },
     /// KV-cache read.
     KvCacheRead {
         layer_idx: usize,
@@ -256,11 +290,16 @@ pub enum TracedOp {
     /// Get item from a tuple/list.
     GetItem { index: usize },
     /// An operation not yet mapped to a specific TracedOp variant.
-    Unknown { op_name: String, target: String },
+    Unknown {
+        #[serde(default)]
+        op_name: String,
+        #[serde(default)]
+        target: String,
+    },
 }
 
 /// Tensor shape with dtype information.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TensorShape {
     pub dims: Vec<usize>,
     pub dtype: String,

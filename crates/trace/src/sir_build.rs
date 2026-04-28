@@ -306,8 +306,17 @@ impl<'a> SirBuildContext<'a> {
             }
             TracedOp::Split { axis, num_splits } => {
                 let input_id = self.resolve_input(&node.inputs, 0);
+                // Python may emit negative axis (e.g., -1 for last dim);
+                // SirOp::Split uses usize, so we must resolve negatives.
+                let axis_usize = if *axis >= 0 {
+                    *axis as usize
+                } else {
+                    // Negative axis: resolve at SIR build time using output_shape rank
+                    let rank = node.output_shape.dims.len();
+                    if rank > 0 { (rank as isize + axis) as usize } else { 0 }
+                };
                 Ok(vec![(
-                    SirOp::Split { input: input_id, axis: *axis, num_splits: *num_splits },
+                    SirOp::Split { input: input_id, axis: axis_usize, num_splits: *num_splits },
                     "split".to_string(),
                 )])
             }
@@ -463,6 +472,30 @@ impl<'a> SirBuildContext<'a> {
                 Ok(vec![(
                     SirOp::Identity { input: input_id },
                     "getitem".to_string(),
+                )])
+            }
+            TracedOp::Identity => {
+                // No-op: contiguous, size query, etc.
+                let input_id = self.resolve_input(&node.inputs, 0);
+                Ok(vec![(
+                    SirOp::Identity { input: input_id },
+                    "identity".to_string(),
+                )])
+            }
+            TracedOp::ExpandDims { axis: _ } => {
+                // Unsqueeze — treated as a reshape at the SIR level
+                let input_id = self.resolve_input(&node.inputs, 0);
+                Ok(vec![(
+                    SirOp::ExpandDims { input: input_id, axis: 0 },
+                    "expand_dims".to_string(),
+                )])
+            }
+            TracedOp::Squeeze { axis: _ } => {
+                // Squeeze — treated as a reshape at the SIR level
+                let input_id = self.resolve_input(&node.inputs, 0);
+                Ok(vec![(
+                    SirOp::Identity { input: input_id },
+                    "squeeze".to_string(),
                 )])
             }
             TracedOp::IndexSelect { axis } => {
