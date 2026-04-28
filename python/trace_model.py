@@ -871,21 +871,25 @@ def _load_model(model_id, model_config, torch_dtype, model_class_hint="auto"):
     """Dynamically resolve and load the appropriate HuggingFace model class.
 
     FULLY DYNAMIC — determines the correct Auto class by inspecting the
-    model's `architectures` field and trying each class. No hardcoded
-    model_type lists are used.
+    model's `architectures` field and config structure. No hardcoded
+    model_type lists are used. No user input required.
 
-    Resolution strategy:
-    1. If model_class_hint is explicit ("causal_lm", "seq2seq_lm", "decoder_only"),
-       use that directly
-    2. Inspect config.architectures for class name hints (this is not a heuristic —
-       it's using HuggingFace's own declared model class names):
-       - Contains "CausalLM" → AutoModelForCausalLM
-       - Contains "Seq2SeqLM" or "ConditionalGeneration" → AutoModelForSeq2SeqLM
-    3. If config.is_encoder_decoder is True → AutoModelForSeq2SeqLM
-    4. Try AutoModelForCausalLM first (most common for ANE use case)
-    5. If that fails, try AutoModelForSeq2SeqLM
-    6. If the model has a text_config sub-object (multimodal), try loading just
-       the decoder via AutoModelForCausalLM with text_config override
+    The `model_class_hint` parameter is accepted for backward compatibility
+    but is never needed — the auto logic handles all known architectures.
+
+    Resolution strategy (purely config-driven, no heuristics):
+    1. Inspect config.architectures for HuggingFace's declared class names:
+       - "*ForCausalLM"           → AutoModelForCausalLM  (decoder-only)
+       - "*ForSeq2SeqLM"          → AutoModelForSeq2SeqLM (encoder-decoder)
+       - "VisionEncoderDecoder*"  → AutoModelForSeq2SeqLM (encoder-decoder)
+       - "*ForConditionalGeneration" → ambiguous! Disambiguate via:
+         a. is_encoder_decoder=True → Seq2SeqLM (e.g., BART, T5, mBART)
+         b. has text_config or thinker_config → multimodal with causal LM
+            decoder → load decoder via _load_decoder_from_multimodal()
+         c. is_encoder_decoder=False, no text_config → try CausalLM first
+    2. config.is_encoder_decoder=True (without architecture match) → Seq2SeqLM
+    3. config has text_config or thinker_config.text_config → multimodal decoder
+    4. Fall back: try CausalLM, then Seq2SeqLM
 
     Returns:
         Tuple of (model, model_class_string)
@@ -894,138 +898,219 @@ def _load_model(model_id, model_config, torch_dtype, model_class_hint="auto"):
     import torch
     from transformers import AutoModelForCausalLM, AutoModelForSeq2SeqLM
 
-    # ─── Explicit hint ─────────────────────────────────────────────
-    if model_class_hint == "causal_lm":
-        sys.stderr.write(f"Loading {model_id} with AutoModelForCausalLM (explicit hint)\n")
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
-        )
-        return model, "causal_lm"
-
-    if model_class_hint == "seq2seq_lm":
-        sys.stderr.write(f"Loading {model_id} with AutoModelForSeq2SeqLM (explicit hint)\n")
-        model = AutoModelForSeq2SeqLM.from_pretrained(
-            model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
-        )
-        return model, "seq2seq_lm"
-
-    if model_class_hint == "decoder_only":
-        # Load just the decoder from a multimodal model
-        return _load_decoder_only(model_id, model_config, torch_dtype)
-
-    # ─── Auto-detect from config ───────────────────────────────────
     architectures = getattr(model_config, "architectures", []) or []
     is_encoder_decoder = getattr(model_config, "is_encoder_decoder", False)
 
-    # Check architecture names for class hints (not model_type — these are
-    # the actual HuggingFace model class names declared in config.json)
+    sys.stderr.write(f"Auto-detecting model class for {model_id}\n")
+    sys.stderr.write(f"  architectures={architectures}, is_encoder_decoder={is_encoder_decoder}\n")
+
+    # ─── 1. Architecture-name resolution ───────────────────────────
     for arch in architectures:
         arch_lower = arch.lower()
-        if "seq2seq" in arch_lower or "conditionageneration" in arch_lower or "conditionalgeneration" in arch_lower:
-            sys.stderr.write(f"Detected encoder-decoder architecture: {arch}\n")
+
+        # "*ForCausalLM" — always decoder-only causal LM
+        if arch_lower.endswith("forcausallm"):
+            sys.stderr.write(f"  → AutoModelForCausalLM (architecture declares CausalLM)\n")
+            try:
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+                )
+                return model, "causal_lm"
+            except Exception as e:
+                sys.stderr.write(f"  AutoModelForCausalLM failed: {e}, trying alternatives\n")
+
+        # "*ForSeq2SeqLM" — always encoder-decoder seq2seq
+        if arch_lower.endswith("forseq2seqlm"):
+            sys.stderr.write(f"  → AutoModelForSeq2SeqLM (architecture declares Seq2SeqLM)\n")
             try:
                 model = AutoModelForSeq2SeqLM.from_pretrained(
                     model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
                 )
                 return model, "seq2seq_lm"
             except Exception as e:
-                sys.stderr.write(f"AutoModelForSeq2SeqLM failed: {e}, trying alternatives\n")
+                sys.stderr.write(f"  AutoModelForSeq2SeqLM failed: {e}, trying alternatives\n")
 
-    # If the config declares is_encoder_decoder=True
+        # "VisionEncoderDecoder*" — always encoder-decoder
+        if arch_lower.startswith("visionencoderdecoder"):
+            sys.stderr.write(f"  → AutoModelForSeq2SeqLM (VisionEncoderDecoder)\n")
+            try:
+                model = AutoModelForSeq2SeqLM.from_pretrained(
+                    model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+                )
+                return model, "seq2seq_lm"
+            except Exception as e:
+                sys.stderr.write(f"  AutoModelForSeq2SeqLM failed: {e}, trying alternatives\n")
+
+        # "*ForConditionalGeneration" — ambiguous! Disambiguate:
+        # - is_encoder_decoder=True → Seq2SeqLM (BART, T5, mBART, etc.)
+        # - has text_config → multimodal with causal LM decoder (Qwen3.5, Qwen3-ASR, etc.)
+        # - else → try CausalLM (some models just use this name loosely)
+        if arch_lower.endswith("forconditionalgeneration"):
+            if is_encoder_decoder:
+                sys.stderr.write(f"  → AutoModelForSeq2SeqLM (ConditionalGeneration + is_encoder_decoder)\n")
+                try:
+                    model = AutoModelForSeq2SeqLM.from_pretrained(
+                        model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+                    )
+                    return model, "seq2seq_lm"
+                except Exception as e:
+                    sys.stderr.write(f"  AutoModelForSeq2SeqLM failed: {e}, trying alternatives\n")
+            else:
+                # Multimodal with a causal LM text decoder (Qwen3.5, Qwen3-ASR, etc.)
+                text_cfg = _find_text_config(model_config)
+                if text_cfg is not None:
+                    sys.stderr.write(f"  → decoder_only (ConditionalGeneration + text_config, not encoder-decoder)\n")
+                    return _load_decoder_from_multimodal(model_id, model_config, torch_dtype)
+                else:
+                    sys.stderr.write(f"  → AutoModelForCausalLM (ConditionalGeneration, no is_encoder_decoder, no text_config)\n")
+                    try:
+                        model = AutoModelForCausalLM.from_pretrained(
+                            model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+                        )
+                        return model, "causal_lm"
+                    except Exception as e:
+                        sys.stderr.write(f"  AutoModelForCausalLM failed: {e}, trying alternatives\n")
+
+    # ─── 2. Config-level signals ──────────────────────────────────
+    # is_encoder_decoder=True without architecture match → Seq2SeqLM
     if is_encoder_decoder:
-        sys.stderr.write(f"Config declares is_encoder_decoder=True, using AutoModelForSeq2SeqLM\n")
+        sys.stderr.write(f"  → AutoModelForSeq2SeqLM (is_encoder_decoder=True, no architecture match)\n")
         try:
             model = AutoModelForSeq2SeqLM.from_pretrained(
                 model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
             )
             return model, "seq2seq_lm"
         except Exception as e:
-            sys.stderr.write(f"AutoModelForSeq2SeqLM failed: {e}, trying alternatives\n")
+            sys.stderr.write(f"  AutoModelForSeq2SeqLM failed: {e}, trying alternatives\n")
 
-    # ─── Check for multimodal with text_config ─────────────────────
-    # Models like Qwen3-ASR have a text_config sub-object. We can load
-    # just the text decoder via AutoModelForCausalLM with text_config.
-    text_config = getattr(model_config, "text_config", None)
-    if text_config is not None and hasattr(text_config, "hidden_size"):
-        sys.stderr.write(f"Detected multimodal model with text_config, extracting decoder\n")
-        return _load_decoder_only(model_id, model_config, torch_dtype)
+    # ─── 3. Multimodal with text_config ───────────────────────────
+    text_cfg = _find_text_config(model_config)
+    if text_cfg is not None:
+        sys.stderr.write(f"  → decoder_only (text_config found, extracting decoder)\n")
+        return _load_decoder_from_multimodal(model_id, model_config, torch_dtype)
 
-    # ─── Try AutoModelForCausalLM (most common for ANE) ────────────
+    # ─── 4. Fallback: try CausalLM, then Seq2SeqLM ───────────────
     try:
         model = AutoModelForCausalLM.from_pretrained(
             model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
         )
-        sys.stderr.write(f"Loaded {model_id} with AutoModelForCausalLM (default)\n")
+        sys.stderr.write(f"  → AutoModelForCausalLM (fallback, most common for ANE)\n")
         return model, "causal_lm"
     except Exception as e:
-        sys.stderr.write(f"AutoModelForCausalLM failed: {e}\n")
+        sys.stderr.write(f"  AutoModelForCausalLM failed: {e}\n")
 
-    # ─── Try AutoModelForSeq2SeqLM ─────────────────────────────────
     try:
         model = AutoModelForSeq2SeqLM.from_pretrained(
             model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
         )
-        sys.stderr.write(f"Loaded {model_id} with AutoModelForSeq2SeqLM (fallback)\n")
+        sys.stderr.write(f"  → AutoModelForSeq2SeqLM (last resort)\n")
         return model, "seq2seq_lm"
     except Exception as e:
-        sys.stderr.write(f"AutoModelForSeq2SeqLM also failed: {e}\n")
+        sys.stderr.write(f"  AutoModelForSeq2SeqLM also failed: {e}\n")
 
     error_exit(f"Could not load model {model_id} with any Auto class. "
                f"architectures={architectures}, is_encoder_decoder={is_encoder_decoder}")
 
 
-def _load_decoder_only(model_id, model_config, torch_dtype):
-    """Load just the text decoder from a multimodal model.
+def _find_text_config(model_config):
+    """Find the text decoder config in a multimodal model.
 
-    For models like Qwen3-ASR-0.6B that have a text_config sub-object,
-    this extracts and loads just the decoder portion as a CausalLM.
+    Searches for the text config in multiple locations that different
+    HuggingFace architectures use. This is NOT a heuristic — it's
+    structural inspection of the config object.
 
-    This is fully dynamic — it uses the text_config from the model's
-    own config.json, not a hardcoded mapping.
+    Locations checked:
+    1. config.text_config (Qwen3.5-VL, Llava, etc.)
+    2. config.thinker_config.text_config (Qwen3-ASR)
+    3. config.decoder (VisionEncoderDecoder models like Dolphin)
+
+    Returns the text config object if found, None otherwise.
+    """
+    # Direct text_config (most multimodal models)
+    text_config = getattr(model_config, "text_config", None)
+    if text_config is not None and hasattr(text_config, "hidden_size"):
+        return text_config
+
+    # Nested thinker_config.text_config (Qwen3-ASR pattern)
+    thinker_config = getattr(model_config, "thinker_config", None)
+    if thinker_config is not None:
+        text_config = getattr(thinker_config, "text_config", None)
+        if text_config is not None and hasattr(text_config, "hidden_size"):
+            return text_config
+
+    # Decoder config (VisionEncoderDecoder pattern like Dolphin)
+    decoder_config = getattr(model_config, "decoder", None)
+    if decoder_config is not None and hasattr(decoder_config, "hidden_size"):
+        return decoder_config
+
+    return None
+
+
+def _load_decoder_from_multimodal(model_id, model_config, torch_dtype):
+    """Load the text decoder from a multimodal or encoder-decoder model.
+
+    FULLY DYNAMIC — discovers the decoder by structural inspection:
+    1. Try AutoModelForCausalLM (some multimodal models support this directly)
+    2. Try VisionEncoderDecoderModel and extract the decoder sub-module
+    3. Try AutoModel and extract language_model/model/decoder sub-module
+
+    This handles:
+    - Qwen3.5-0.8B (multimodal VL with Qwen3 causal LM decoder)
+    - Qwen3-ASR-0.6B (audio encoder + Qwen3 causal LM decoder)
+    - Dolphin-1.5 (DonutSwin encoder + mBART decoder)
+    - Any future multimodal model with a causal LM text decoder
+
+    Returns:
+        Tuple of (model, "decoder_only")
     """
     import torch
     from transformers import AutoModelForCausalLM
 
-    text_config = getattr(model_config, "text_config", None)
-    if text_config is None:
-        error_exit(f"Cannot extract decoder from {model_id}: no text_config found")
+    text_config = _find_text_config(model_config)
+    text_model_type = getattr(text_config, "model_type", None) if text_config else None
+    sys.stderr.write(f"  Extracting decoder from {model_id} (text model_type={text_model_type})\n")
 
-    text_model_type = getattr(text_config, "model_type", None)
-    if text_model_type is None:
-        error_exit(f"Cannot extract decoder from {model_id}: text_config has no model_type")
-
-    sys.stderr.write(f"Loading decoder-only from {model_id} (text model_type={text_model_type})\n")
-
-    # Try loading the full model first, then extract the decoder/language_model
-    # sub-module. Many multimodal models store the text decoder as model.model
-    # or model.language_model.
+    # ─── Strategy 1: AutoModelForCausalLM direct ──────────────────
+    # Some multimodal models (Qwen3.5-VL, Qwen3-ASR) can be loaded
+    # directly as CausalLM — transformers routes to the right class.
     try:
-        from transformers import AutoModelForCausalLM
         model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            torch_dtype=torch_dtype,
-            low_cpu_mem_usage=True,
+            model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+            trust_remote_code=True,
         )
-        # If this succeeded, the model was actually a CausalLM with text_config
-        # embedded (some models support this loading path)
+        sys.stderr.write(f"  Loaded decoder via AutoModelForCausalLM\n")
         return model, "decoder_only"
-    except Exception:
-        pass
+    except Exception as e:
+        sys.stderr.write(f"  AutoModelForCausalLM direct failed: {e}\n")
 
-    # If direct loading fails, we need to load the full multimodal model
-    # and extract the decoder. This is model-specific but we can try
-    # generic sub-module extraction.
+    # ─── Strategy 2: VisionEncoderDecoderModel ────────────────────
+    # Models like Dolphin use VisionEncoderDecoderModel which has
+    # an explicit encoder + decoder split.
+    try:
+        from transformers import VisionEncoderDecoderModel
+        model = VisionEncoderDecoderModel.from_pretrained(
+            model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+        )
+        # Extract the decoder sub-module
+        decoder = getattr(model, "decoder", None)
+        if decoder is not None and hasattr(decoder, "forward"):
+            sys.stderr.write(f"  Extracted decoder from VisionEncoderDecoderModel\n")
+            return decoder, "decoder_only"
+    except Exception as e:
+        sys.stderr.write(f"  VisionEncoderDecoderModel failed: {e}\n")
+
+    # ─── Strategy 3: Generic sub-module extraction ────────────────
+    # Load the full model and try common decoder sub-module names.
     try:
         from transformers import AutoModel
         full_model = AutoModel.from_pretrained(
             model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+            trust_remote_code=True,
         )
-
-        # Try common sub-module names for the text decoder
         for attr_name in ["language_model", "model", "decoder", "text_decoder"]:
             sub_model = getattr(full_model, attr_name, None)
             if sub_model is not None and hasattr(sub_model, "forward"):
-                sys.stderr.write(f"Extracted decoder as .{attr_name}\n")
+                sys.stderr.write(f"  Extracted decoder as .{attr_name}\n")
                 return sub_model, "decoder_only"
 
         error_exit(f"Could not find decoder sub-module in {model_id}. "
