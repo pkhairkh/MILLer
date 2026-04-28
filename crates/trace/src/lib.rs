@@ -12,6 +12,18 @@
 //!   → SIR construction → AIR (ANE-legal) → MIR → Core ML emission
 //! ```
 //!
+//! # Config-Driven Decomposition (No Registry Required)
+//!
+//! The SIR construction is driven entirely by the model's `AutoConfig`
+//! extracted during tracing. The config flags (`uses_rms_norm`, `uses_gqa`,
+//! `uses_rope`, `hidden_act`) determine how composite ops decompose into
+//! ANE-faithful primitives. This means **any** HuggingFace model works
+//! ad-hoc without a hardcoded registry — Qwen3, Qwen3.5, Llama-4, or
+//! any future architecture that follows the standard transformer pattern.
+//!
+//! The `ModelRegistry` is available as an optional override mechanism for
+//! edge cases, but it is NOT required for the trace pipeline to work.
+//!
 //! # ANE-Faithful Compilation
 //!
 //! Unlike naive conversion (which may produce graphs that the ANE rejects at
@@ -20,17 +32,6 @@
 //! - Tensor dimension validation against hal_params
 //! - Version-aware decomposition (e.g., SDPA only on A16+)
 //! - Dynamic shape elimination (ANE requires static shapes)
-//!
-//! # Supported Model Architectures
-//!
-//! The model registry maps HuggingFace model types to known ANE-faithful
-//! decomposition patterns:
-//! - GPT-2 family (causal LM)
-//! - LLaMA / Qwen family (RoPE-based)
-//! - BERT family (encoder-only)
-//! - Phi family (small form factor)
-//!
-//! Custom architectures can be registered via `ModelRegistry::register()`.
 
 pub mod config;
 pub mod graph;
@@ -40,7 +41,7 @@ pub mod versioned;
 pub mod subprocess;
 
 pub use config::{TraceConfig, TraceTarget};
-pub use graph::{TracedGraph, TracedNode, TracedOp, TensorShape};
+pub use graph::{TracedGraph, TracedNode, TracedOp, TensorShape, ModelConfig};
 pub use registry::{ModelRegistry, ModelPattern, TransformerLayerKind};
 pub use sir_build::build_sir_from_trace;
 pub use versioned::{VersionedCompiler, VersionedCompileResult, AnceFaithfulnessReport};

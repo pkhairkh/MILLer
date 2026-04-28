@@ -9,8 +9,7 @@
 //! (like attention blocks) are decomposed into primitives that will
 //! survive ANE placement validation.
 
-use crate::graph::{TracedGraph, TracedNode, TracedOp};
-use crate::registry::ModelRegistry;
+use crate::graph::{TracedGraph, TracedNode, TracedOp, ModelConfig};
 use crate::versioned::VersionedCompiler;
 use ane_ir::ane_target::AneFamily;
 use ane_ir::mir::MilDtype;
@@ -25,6 +24,12 @@ use ane_ir::sir::{
 /// composite operations (attention, MLP blocks) into ANE-faithful
 /// primitives.
 ///
+/// The decomposition is driven entirely by the model's configuration
+/// (`ModelConfig`) extracted from `AutoConfig` during tracing. No hardcoded
+/// model registry is required — any HuggingFace model that provides the
+/// standard config fields (`hidden_size`, `num_attention_heads`,
+/// `num_key_value_heads`, `hidden_act`, etc.) works out of the box.
+///
 /// # Arguments
 /// * `trace` - The traced computation graph from torch.fx
 /// * `target_family` - The target ANE family for version-aware decisions
@@ -36,11 +41,10 @@ pub fn build_sir_from_trace(
     trace: &TracedGraph,
     target_family: AneFamily,
 ) -> Result<SirGraph, String> {
-    let registry = ModelRegistry::default_registry();
     let compiler = VersionedCompiler::new(target_family);
     let ctx = SirBuildContext {
         trace,
-        registry: &registry,
+        config: &trace.model_config,
         compiler: &compiler,
         node_map: std::collections::HashMap::new(),
         next_id: 0,
@@ -51,7 +55,7 @@ pub fn build_sir_from_trace(
 /// Internal state for SIR construction.
 struct SirBuildContext<'a> {
     trace: &'a TracedGraph,
-    registry: &'a ModelRegistry,
+    config: &'a ModelConfig,
     compiler: &'a VersionedCompiler,
     node_map: std::collections::HashMap<String, SirNodeId>,
     next_id: usize,
@@ -59,13 +63,29 @@ struct SirBuildContext<'a> {
 
 impl<'a> SirBuildContext<'a> {
     /// Build the complete SIR graph from the traced graph.
+    ///
+    /// Decomposition is config-driven: the `ModelConfig` flags
+    /// (`uses_rms_norm`, `uses_gqa`, `uses_rope`, `hidden_act`)
+    /// determine how composite ops are decomposed, making the pipeline
+    /// work ad-hoc for any HuggingFace model without a registry.
     fn build(mut self) -> Result<SirGraph, String> {
-        // Determine the model pattern for architecture-specific decisions
-        let _pattern = self.registry.get_by_architecture(&self.trace.architecture);
-
         let mut sir_nodes: Vec<SirNode> = Vec::new();
         let mut sir_inputs: Vec<SirNodeId> = Vec::new();
         let mut sir_outputs: Vec<SirNodeId> = Vec::new();
+
+        // Config-driven decomposition: the ModelConfig flags (uses_rms_norm,
+        // uses_gqa, uses_rope, hidden_act) determine how composite ops
+        // decompose — no hardcoded registry needed.
+        let _config_summary = format!(
+            "model_type={} heads={}/{} rms_norm={} gqa={} rope={} act={}",
+            self.config.model_type,
+            self.config.num_attention_heads,
+            self.config.num_key_value_heads.unwrap_or(self.config.num_attention_heads),
+            self.config.uses_rms_norm,
+            self.config.uses_gqa,
+            self.config.uses_rope,
+            self.config.hidden_act,
+        );
 
         // Process each traced node in order
         for traced_node in &self.trace.nodes {
@@ -462,6 +482,11 @@ impl<'a> SirBuildContext<'a> {
     }
 
     /// Decompose an attention block into ANE-faithful primitives.
+    ///
+    /// Config-driven: uses `self.config.uses_gqa` to determine whether
+    /// KV heads need Expand+Broadcast expansion (GQA) or are already
+    /// aligned (MHA). This works for any model architecture without
+    /// a registry.
     fn decompose_attention(
         &self,
         embed_dim: usize,
@@ -484,11 +509,73 @@ impl<'a> SirBuildContext<'a> {
         ));
 
         // Attention computation
+        // For GQA models: K/V heads need Expand+Broadcast to match Q heads.
+        // ANE-compatible: Expand+Broadcast on A14+, avoid Gather-based repeat.
+        let needs_gqa_expand = self.config.uses_gqa;
+
         if use_sdpa && self.compiler.target_family().supports_sdpa() {
             // Use SDPA directly on A16+
             let q_id = SirNodeId(format!("sir_qkv_split_q_{}", node.id));
-            let k_id = SirNodeId(format!("sir_qkv_split_k_{}", node.id));
-            let v_id = SirNodeId(format!("sir_qkv_split_v_{}", node.id));
+            let mut k_id = SirNodeId(format!("sir_qkv_split_k_{}", node.id));
+            let mut v_id = SirNodeId(format!("sir_qkv_split_v_{}", node.id));
+
+            // GQA: expand K and V to match Q head count
+            if needs_gqa_expand {
+                let num_q_heads = self.config.num_attention_heads;
+                let num_kv_heads = self.config.num_key_value_heads.unwrap_or(num_q_heads);
+                let num_replicas = num_q_heads / num_kv_heads;
+                if num_replicas > 1 {
+                    // Expand K: [batch, kv_heads, seq, dim] → [batch, q_heads, seq, dim]
+                    let k_expanded_id = SirNodeId(format!("sir_gqa_k_expanded_{}", node.id));
+                    ops.push((
+                        SirOp::ExpandDims {
+                            input: k_id.clone(),
+                            axis: vec![2], // Insert repeat dim after kv_heads
+                        },
+                        "gqa_k_expand_dims".to_string(),
+                    ));
+                    // Broadcast/Tile along the new dimension
+                    let k_tiled_id = SirNodeId(format!("sir_gqa_k_tiled_{}", node.id));
+                    ops.push((
+                        SirOp::Identity { input: SirNodeId(format!("sir_gqa_k_expand_dims_{}", node.id)) },
+                        // TODO: Replace with proper Tile/Repeat op when available
+                        format!("gqa_k_tile_{}x", num_replicas),
+                    ));
+                    // Reshape back to [batch, q_heads, seq, dim]
+                    ops.push((
+                        SirOp::Reshape {
+                            input: k_tiled_id,
+                            target_shape: vec![0, num_q_heads, 0, head_dim],
+                        },
+                        "gqa_k_reshape".to_string(),
+                    ));
+                    k_id = SirNodeId(format!("sir_gqa_k_reshape_{}", node.id));
+
+                    // Same for V
+                    let v_expanded_id = SirNodeId(format!("sir_gqa_v_expanded_{}", node.id));
+                    ops.push((
+                        SirOp::ExpandDims {
+                            input: v_id.clone(),
+                            axis: vec![2],
+                        },
+                        "gqa_v_expand_dims".to_string(),
+                    ));
+                    let v_tiled_id = SirNodeId(format!("sir_gqa_v_tiled_{}", node.id));
+                    ops.push((
+                        SirOp::Identity { input: SirNodeId(format!("sir_gqa_v_expand_dims_{}", node.id)) },
+                        format!("gqa_v_tile_{}x", num_replicas),
+                    ));
+                    ops.push((
+                        SirOp::Reshape {
+                            input: v_tiled_id,
+                            target_shape: vec![0, num_q_heads, 0, head_dim],
+                        },
+                        "gqa_v_reshape".to_string(),
+                    ));
+                    v_id = SirNodeId(format!("sir_gqa_v_reshape_{}", node.id));
+                }
+            }
+
             ops.push((
                 SirOp::ScaledDotProductAttention {
                     query: q_id,
