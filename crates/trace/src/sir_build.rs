@@ -482,19 +482,21 @@ impl<'a> SirBuildContext<'a> {
                     "identity".to_string(),
                 )])
             }
-            TracedOp::ExpandDims { axis: _ } => {
+            TracedOp::ExpandDims { axis } => {
                 // Unsqueeze — treated as a reshape at the SIR level
                 let input_id = self.resolve_input(&node.inputs, 0);
+                let sir_axis: Vec<usize> = axis.iter().map(|&a| a as usize).collect();
                 Ok(vec![(
-                    SirOp::ExpandDims { input: input_id, axis: 0 },
+                    SirOp::ExpandDims { input: input_id, axis: sir_axis },
                     "expand_dims".to_string(),
                 )])
             }
-            TracedOp::Squeeze { axis: _ } => {
-                // Squeeze — treated as a reshape at the SIR level
+            TracedOp::Squeeze { axis } => {
+                // Squeeze — remove dimensions of size 1
                 let input_id = self.resolve_input(&node.inputs, 0);
+                let sir_axis: Vec<usize> = axis.iter().map(|&a| a as usize).collect();
                 Ok(vec![(
-                    SirOp::Identity { input: input_id },
+                    SirOp::Squeeze { input: input_id, axis: sir_axis },
                     "squeeze".to_string(),
                 )])
             }
