@@ -59,6 +59,6 @@ pub mod versioned;
 pub mod subprocess;
 
 pub use config::{TraceConfig, TraceTarget};
-pub use graph::{TracedGraph, TracedNode, TracedOp, TensorShape, ModelConfig};
+pub use graph::{TracedGraph, TracedNode, TracedOp, TensorShape, ModelConfig, DiscoveredFeatures};
 pub use sir_build::build_sir_from_trace;
 pub use versioned::{VersionedCompiler, VersionedCompileResult, AnceFaithfulnessReport};

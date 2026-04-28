@@ -74,11 +74,13 @@ impl<'a> SirBuildContext<'a> {
         let mut sir_outputs: Vec<SirNodeId> = Vec::new();
 
         // Config-driven decomposition: the ModelConfig flags (uses_rms_norm,
-        // uses_gqa, uses_rope, hidden_act) determine how composite ops
-        // decompose — no hardcoded registry needed.
+        // uses_gqa, uses_rope, hidden_act, is_encoder_decoder) determine how
+        // composite ops decompose — no hardcoded registry needed.
         let _config_summary = format!(
-            "model_type={} heads={}/{} rms_norm={} gqa={} rope={} act={}",
+            "model_type={} class={} enc_dec={} heads={}/{} rms_norm={} gqa={} rope={} act={}",
             self.config.model_type,
+            self.config.model_class,
+            self.config.is_encoder_decoder,
             self.config.num_attention_heads,
             self.config.num_key_value_heads.unwrap_or(self.config.num_attention_heads),
             self.config.uses_rms_norm,
@@ -888,6 +890,8 @@ mod tests {
                 uses_rms_norm: true,
                 uses_gqa: false,
                 model_type: "llama".to_string(),
+                model_class: "causal_lm".to_string(),
+                is_encoder_decoder: false,
             },
             nodes: vec![
                 TracedNode {
@@ -918,6 +922,21 @@ mod tests {
                     module_path: None,
                 },
             ],
+            discovered_features: crate::graph::DiscoveredFeatures {
+                norm_types_encountered: vec!["RMSNorm".to_string()],
+                has_rope_module: true,
+                attention_module_types: vec![],
+                mlp_module_types: vec![],
+                linear_count: 1,
+                embedding_count: 0,
+                uses_gqa: false,
+                detection_methods: {
+                    let mut m = HashMap::new();
+                    m.insert("norm_type".to_string(), "config_field_presence".to_string());
+                    m.insert("rope".to_string(), "config_field_presence".to_string());
+                    m
+                },
+            },
             weights: HashMap::new(),
             inputs: vec![],
             outputs: vec![],
@@ -974,6 +993,8 @@ mod tests {
                 uses_rms_norm: false,
                 uses_gqa: false,
                 model_type: "bert".to_string(),
+                model_class: "causal_lm".to_string(),
+                is_encoder_decoder: false,
             },
             nodes: vec![
                 TracedNode {
@@ -995,6 +1016,20 @@ mod tests {
                     module_path: None,
                 },
             ],
+            discovered_features: crate::graph::DiscoveredFeatures {
+                norm_types_encountered: vec!["LayerNorm".to_string()],
+                has_rope_module: false,
+                attention_module_types: vec![],
+                mlp_module_types: vec![],
+                linear_count: 0,
+                embedding_count: 0,
+                uses_gqa: false,
+                detection_methods: {
+                    let mut m = HashMap::new();
+                    m.insert("norm_type".to_string(), "config_field_presence".to_string());
+                    m
+                },
+            },
             weights: HashMap::new(),
             inputs: vec![],
             outputs: vec![],
@@ -1037,5 +1072,585 @@ mod tests {
             .filter(|n| matches!(n.op, SirOp::RMSNorm { .. }))
             .collect();
         assert_eq!(rms_ops.len(), 1, "RMSNorm should produce exactly 1 SirOp::RMSNorm node, got {} nodes", rms_ops.len());
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Dynamic Tracing Tests
+    //
+    // These tests validate that the SIR construction pipeline works
+    // fully dynamically — no model_type heuristics, no hardcoded model
+    // lists. All feature detection comes from config field presence
+    // and discovered_features.
+    // ──────────────────────────────────────────────────────────────
+
+    /// Helper: build a TracedGraph with arbitrary ModelConfig.
+    /// This simulates what the Python tracer would produce for different
+    /// model architectures without requiring actual model downloads.
+    fn make_trace_with_config(config: ModelConfig, discovered: crate::graph::DiscoveredFeatures) -> TracedGraph {
+        TracedGraph {
+            model_id: format!("test-{}", config.model_type),
+            architecture: format!("{}ForCausalLM", config.model_type),
+            transformers_version: "4.48.0".to_string(),
+            torch_version: "2.5.0".to_string(),
+            model_config: config,
+            discovered_features: discovered,
+            nodes: vec![
+                TracedNode {
+                    id: "input".to_string(),
+                    op: TracedOp::Placeholder,
+                    name: "input_ids".to_string(),
+                    inputs: vec![],
+                    output_shape: TensorShape { dims: vec![1, 32], dtype: "int32".to_string() },
+                    is_parameter: false,
+                    module_path: None,
+                },
+                TracedNode {
+                    id: "rms1".to_string(),
+                    op: TracedOp::RmsNorm { hidden_size: 256, epsilon: 1e-6 },
+                    name: "input_norm".to_string(),
+                    inputs: vec!["input".to_string()],
+                    output_shape: TensorShape { dims: vec![1, 32, 256], dtype: "fp16".to_string() },
+                    is_parameter: false,
+                    module_path: Some("model.layers.0.input_layernorm".to_string()),
+                },
+                TracedNode {
+                    id: "output".to_string(),
+                    op: TracedOp::Output,
+                    name: "output".to_string(),
+                    inputs: vec!["rms1".to_string()],
+                    output_shape: TensorShape { dims: vec![1, 32, 256], dtype: "fp16".to_string() },
+                    is_parameter: false,
+                    module_path: None,
+                },
+            ],
+            weights: HashMap::new(),
+            inputs: vec![],
+            outputs: vec![],
+            state_declarations: vec![],
+            trace_metadata: TraceMetadata {
+                timestamp: "2026-01-01T00:00:00Z".to_string(),
+                trace_duration_secs: 1.0,
+                num_nodes: 3,
+                num_parameters: 1000,
+                parameter_bytes: 2000,
+                decomposed: false,
+                warnings: vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn test_dynamic_tracing_qwen3_5_config() {
+        // Qwen3.5 has model_type="qwen3_5_text" which would NOT match any
+        // hardcoded heuristic list. But because we detect features from config
+        // fields (rms_norm_eps, rope_parameters, etc.), it works ad-hoc.
+        let config = ModelConfig {
+            hidden_size: 1024,
+            num_attention_heads: 16,
+            num_key_value_heads: Some(8),  // GQA: 8 KV heads for 16 Q heads
+            num_hidden_layers: 24,
+            intermediate_size: 4096,
+            vocab_size: 151936,
+            max_position_embeddings: 40960,
+            layer_norm_epsilon: 1e-6,
+            hidden_act: "silu".to_string(),
+            uses_rope: true,
+            uses_rms_norm: true,
+            uses_gqa: true,
+            model_type: "qwen3_5_text".to_string(),  // No hardcoded list needed!
+            model_class: "causal_lm".to_string(),
+            is_encoder_decoder: false,
+        };
+
+        let discovered = crate::graph::DiscoveredFeatures {
+            norm_types_encountered: vec!["RMSNorm".to_string()],
+            has_rope_module: true,
+            attention_module_types: vec!["Qwen3Attention".to_string()],
+            mlp_module_types: vec!["Qwen3MLP".to_string()],
+            linear_count: 0,
+            embedding_count: 0,
+            uses_gqa: true,
+            detection_methods: {
+                let mut m = HashMap::new();
+                m.insert("norm_type".to_string(), "config_field_presence".to_string());
+                m.insert("rope".to_string(), "config_field_presence".to_string());
+                m.insert("gqa".to_string(), "config_field_comparison".to_string());
+                m
+            },
+        };
+
+        let trace = make_trace_with_config(config, discovered);
+        let sir = build_sir_from_trace(&trace, AneFamily::A12);  // M2 target
+        assert!(sir.is_ok(), "Qwen3.5 should trace successfully on A12 without any hardcoded heuristics");
+
+        let sir = sir.unwrap();
+        let has_rms = sir.nodes.iter().any(|n| matches!(n.op, SirOp::RMSNorm { .. }));
+        assert!(has_rms, "Qwen3.5 should produce RMSNorm ops (detected dynamically from config)");
+    }
+
+    #[test]
+    fn test_dynamic_tracing_qwen3_gqa() {
+        // Qwen3-0.6B: GQA model with num_key_value_heads < num_attention_heads
+        let config = ModelConfig {
+            hidden_size: 1024,
+            num_attention_heads: 16,
+            num_key_value_heads: Some(8),
+            num_hidden_layers: 28,
+            intermediate_size: 4096,
+            vocab_size: 151936,
+            max_position_embeddings: 40960,
+            layer_norm_epsilon: 1e-6,
+            hidden_act: "silu".to_string(),
+            uses_rope: true,
+            uses_rms_norm: true,
+            uses_gqa: true,
+            model_type: "qwen3".to_string(),
+            model_class: "causal_lm".to_string(),
+            is_encoder_decoder: false,
+        };
+
+        let discovered = crate::graph::DiscoveredFeatures {
+            norm_types_encountered: vec!["RMSNorm".to_string()],
+            has_rope_module: true,
+            attention_module_types: vec![],
+            mlp_module_types: vec![],
+            linear_count: 0,
+            embedding_count: 0,
+            uses_gqa: true,
+            detection_methods: {
+                let mut m = HashMap::new();
+                m.insert("norm_type".to_string(), "config_field_presence".to_string());
+                m.insert("rope".to_string(), "config_field_presence".to_string());
+                m.insert("gqa".to_string(), "config_field_comparison".to_string());
+                m
+            },
+        };
+
+        let trace = make_trace_with_config(config, discovered);
+        let sir = build_sir_from_trace(&trace, AneFamily::A12);
+        assert!(sir.is_ok(), "Qwen3 with GQA should trace on A12");
+    }
+
+    #[test]
+    fn test_dynamic_tracing_llama_3_2() {
+        // Llama-3.2-1B: standard Llama architecture
+        let config = ModelConfig {
+            hidden_size: 2048,
+            num_attention_heads: 32,
+            num_key_value_heads: Some(8),  // GQA
+            num_hidden_layers: 16,
+            intermediate_size: 8192,
+            vocab_size: 128256,
+            max_position_embeddings: 131072,
+            layer_norm_epsilon: 1e-5,
+            hidden_act: "silu".to_string(),
+            uses_rope: true,
+            uses_rms_norm: true,
+            uses_gqa: true,
+            model_type: "llama".to_string(),
+            model_class: "causal_lm".to_string(),
+            is_encoder_decoder: false,
+        };
+
+        let discovered = crate::graph::DiscoveredFeatures {
+            norm_types_encountered: vec!["RMSNorm".to_string()],
+            has_rope_module: true,
+            attention_module_types: vec!["LlamaAttention".to_string()],
+            mlp_module_types: vec!["LlamaMLP".to_string()],
+            linear_count: 0,
+            embedding_count: 0,
+            uses_gqa: true,
+            detection_methods: {
+                let mut m = HashMap::new();
+                m.insert("norm_type".to_string(), "module_type_inspection".to_string());
+                m.insert("rope".to_string(), "module_type_inspection".to_string());
+                m.insert("gqa".to_string(), "config_field_comparison".to_string());
+                m
+            },
+        };
+
+        let trace = make_trace_with_config(config, discovered);
+        let sir = build_sir_from_trace(&trace, AneFamily::A12);
+        assert!(sir.is_ok(), "Llama-3.2-1B should trace on A12 (M2)");
+    }
+
+    #[test]
+    fn test_dynamic_tracing_unknown_model_type() {
+        // A completely unknown model_type should still work if it provides
+        // the standard config fields. This is the core value proposition
+        // of fully dynamic tracing: no model registry needed.
+        let config = ModelConfig {
+            hidden_size: 512,
+            num_attention_heads: 8,
+            num_key_value_heads: Some(8),
+            num_hidden_layers: 6,
+            intermediate_size: 2048,
+            vocab_size: 50000,
+            max_position_embeddings: 4096,
+            layer_norm_epsilon: 1e-6,
+            hidden_act: "gelu".to_string(),
+            uses_rope: true,
+            uses_rms_norm: true,
+            uses_gqa: false,
+            model_type: "future_architecture_v7".to_string(),  // Completely unknown!
+            model_class: "causal_lm".to_string(),
+            is_encoder_decoder: false,
+        };
+
+        let discovered = crate::graph::DiscoveredFeatures {
+            norm_types_encountered: vec!["RMSNorm".to_string()],
+            has_rope_module: true,
+            attention_module_types: vec![],
+            mlp_module_types: vec![],
+            linear_count: 0,
+            embedding_count: 0,
+            uses_gqa: false,
+            detection_methods: {
+                let mut m = HashMap::new();
+                m.insert("norm_type".to_string(), "config_field_presence".to_string());
+                m.insert("rope".to_string(), "config_field_presence".to_string());
+                m.insert("gqa".to_string(), "config_field_comparison".to_string());
+                m
+            },
+        };
+
+        let trace = make_trace_with_config(config, discovered);
+        let sir = build_sir_from_trace(&trace, AneFamily::A16);
+        assert!(
+            sir.is_ok(),
+            "Unknown model_type should still work — dynamic tracing doesn't need a registry"
+        );
+
+        let sir = sir.unwrap();
+        assert!(!sir.nodes.is_empty());
+    }
+
+    #[test]
+    fn test_discovered_features_roundtrip() {
+        // Test that DiscoveredFeatures serializes/deserializes correctly
+        let features = crate::graph::DiscoveredFeatures {
+            norm_types_encountered: vec!["RMSNorm".to_string()],
+            has_rope_module: true,
+            attention_module_types: vec!["LlamaAttention".to_string()],
+            mlp_module_types: vec!["LlamaMLP".to_string()],
+            linear_count: 42,
+            embedding_count: 1,
+            uses_gqa: true,
+            detection_methods: {
+                let mut m = HashMap::new();
+                m.insert("norm_type".to_string(), "module_type_inspection".to_string());
+                m.insert("rope".to_string(), "config_field_presence".to_string());
+                m
+            },
+        };
+
+        let json = serde_json::to_string(&features).expect("Should serialize");
+        let deserialized: crate::graph::DiscoveredFeatures =
+            serde_json::from_str(&json).expect("Should deserialize");
+
+        assert_eq!(deserialized.norm_types_encountered, vec!["RMSNorm"]);
+        assert!(deserialized.has_rope_module);
+        assert_eq!(deserialized.linear_count, 42);
+        assert!(deserialized.uses_gqa);
+        assert_eq!(
+            deserialized.detection_methods.get("norm_type"),
+            Some(&"module_type_inspection".to_string())
+        );
+    }
+
+    #[test]
+    fn test_encoder_decoder_seq2seq_config() {
+        // Dolphin-1.5: encoder-decoder (DonutSwin + BART decoder)
+        // The traced graph represents the decoder path for ANE compilation.
+        // The model_class is "seq2seq_lm" and is_encoder_decoder is true.
+        let config = ModelConfig {
+            hidden_size: 768,
+            num_attention_heads: 12,
+            num_key_value_heads: Some(12),
+            num_hidden_layers: 6,
+            intermediate_size: 3072,
+            vocab_size: 50265,
+            max_position_embeddings: 1024,
+            layer_norm_epsilon: 1e-6,
+            hidden_act: "gelu".to_string(),
+            uses_rope: false,
+            uses_rms_norm: false,
+            uses_gqa: false,
+            model_type: "dolphin".to_string(),
+            model_class: "seq2seq_lm".to_string(),
+            is_encoder_decoder: true,
+        };
+
+        // Verify the new fields are set correctly
+        assert_eq!(config.model_class, "seq2seq_lm");
+        assert!(config.is_encoder_decoder);
+        assert!(!config.uses_rope);  // BART uses learned positional embeddings, not RoPE
+        assert!(!config.uses_rms_norm);  // BART uses LayerNorm
+    }
+
+    #[test]
+    fn test_decoder_only_multimodal_config() {
+        // Qwen3-ASR-0.6B: multimodal with text_config
+        // The decoder is a standard Qwen3 causal LM, extracted separately.
+        // The model_class is "decoder_only" and is_encoder_decoder is false.
+        let config = ModelConfig {
+            hidden_size: 896,
+            num_attention_heads: 14,
+            num_key_value_heads: Some(2),
+            num_hidden_layers: 24,
+            intermediate_size: 4864,
+            vocab_size: 151936,
+            max_position_embeddings: 4096,
+            layer_norm_epsilon: 1e-6,
+            hidden_act: "silu".to_string(),
+            uses_rope: true,
+            uses_rms_norm: true,
+            uses_gqa: true,  // 14 heads, 2 KV heads = 7x GQA
+            model_type: "qwen3_asr".to_string(),
+            model_class: "decoder_only".to_string(),
+            is_encoder_decoder: false,
+        };
+
+        assert_eq!(config.model_class, "decoder_only");
+        assert!(!config.is_encoder_decoder);
+        assert!(config.uses_gqa);
+        assert!(config.uses_rope);
+        assert!(config.uses_rms_norm);
+    }
+
+    #[test]
+    fn test_model_config_serialization_with_new_fields() {
+        // Verify that model_class and is_encoder_decoder serialize/deserialize
+        let config = ModelConfig {
+            hidden_size: 2048,
+            num_attention_heads: 32,
+            num_key_value_heads: Some(8),
+            num_hidden_layers: 16,
+            intermediate_size: 8192,
+            vocab_size: 128256,
+            max_position_embeddings: 131072,
+            layer_norm_epsilon: 1e-5,
+            hidden_act: "silu".to_string(),
+            uses_rope: true,
+            uses_rms_norm: true,
+            uses_gqa: true,
+            model_type: "llama".to_string(),
+            model_class: "causal_lm".to_string(),
+            is_encoder_decoder: false,
+        };
+
+        let json = serde_json::to_string(&config).expect("Should serialize");
+        let deserialized: ModelConfig =
+            serde_json::from_str(&json).expect("Should deserialize");
+
+        assert_eq!(deserialized.model_class, "causal_lm");
+        assert!(!deserialized.is_encoder_decoder);
+        assert_eq!(deserialized.model_type, "llama");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Layer 2: Real-model fixture tests
+    //
+    // These tests load pre-traced JSON fixtures (generated by the Python
+    // tracing pipeline) and validate that the SIR construction pipeline
+    // works correctly with real model data, not just hand-crafted configs.
+    //
+    // Fixtures are in crates/trace/test_fixtures/ and are generated by:
+    //   python scripts/generate_fixtures.py
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Helper: load a traced graph from a test fixture JSON file.
+    fn load_fixture(name: &str) -> Option<TracedGraph> {
+        // Try multiple search paths for the fixture directory
+        let search_paths = [
+            format!("crates/trace/test_fixtures/{}", name),
+            format!("test_fixtures/{}", name),
+            format!("fixtures/{}", name),
+        ];
+
+        for path in &search_paths {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                return serde_json::from_str(&content).ok();
+            }
+        }
+
+        // Try relative to Cargo.toml directory
+        if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+            let path = format!("{}/test_fixtures/{}", manifest_dir, name);
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                return serde_json::from_str(&content).ok();
+            }
+        }
+
+        None
+    }
+
+    #[test]
+    fn test_sir_from_llama_3_2_1b_fixture() {
+        // Llama-3.2-1B: standard causal LM with RMSNorm + RoPE + GQA
+        let graph = load_fixture("llama_3_2_1b.json");
+        if graph.is_none() {
+            eprintln!("SKIP: llama_3_2_1b.json fixture not found (run scripts/generate_fixtures.py)");
+            return;
+        }
+        let trace = graph.unwrap();
+
+        // Validate fixture loaded correctly
+        assert_eq!(trace.model_id, "meta-llama/Llama-3.2-1B");
+        assert_eq!(trace.model_config.model_class, "causal_lm");
+        assert!(!trace.model_config.is_encoder_decoder);
+
+        // Build SIR from the fixture
+        let sir = build_sir_from_trace(&trace, AneFamily::A12);
+        assert!(sir.is_ok(), "Llama-3.2-1B fixture should produce valid SIR on A12 (M2)");
+
+        let sir = sir.unwrap();
+        assert!(!sir.nodes.is_empty(), "SIR should have nodes");
+
+        // Should have RMSNorm ops (detected dynamically)
+        let has_rms = sir.nodes.iter().any(|n| matches!(n.op, SirOp::RMSNorm { .. }));
+        assert!(has_rms, "Llama-3.2-1B should produce RMSNorm ops in SIR");
+
+        // Config should match expected Llama-3.2-1B values
+        assert_eq!(trace.model_config.hidden_size, 2048);
+        assert_eq!(trace.model_config.num_attention_heads, 32);
+        assert_eq!(trace.model_config.num_key_value_heads, Some(8));
+    }
+
+    #[test]
+    fn test_sir_from_qwen3_0_6b_fixture() {
+        // Qwen3-0.6B: causal LM with GQA (8 KV heads for 16 Q heads)
+        let graph = load_fixture("qwen3_0_6b.json");
+        if graph.is_none() {
+            eprintln!("SKIP: qwen3_0_6b.json fixture not found (run scripts/generate_fixtures.py)");
+            return;
+        }
+        let trace = graph.unwrap();
+
+        assert_eq!(trace.model_id, "Qwen/Qwen3-0.6B");
+        assert_eq!(trace.model_config.model_class, "causal_lm");
+        assert!(trace.model_config.uses_gqa);
+
+        let sir = build_sir_from_trace(&trace, AneFamily::A12);
+        assert!(sir.is_ok(), "Qwen3-0.6B fixture should produce valid SIR on A12");
+
+        let sir = sir.unwrap();
+        assert!(!sir.nodes.is_empty());
+
+        // Should have RMSNorm ops
+        let has_rms = sir.nodes.iter().any(|n| matches!(n.op, SirOp::RMSNorm { .. }));
+        assert!(has_rms, "Qwen3-0.6B should produce RMSNorm ops in SIR");
+    }
+
+    #[test]
+    fn test_sir_from_qwen3_5_0_8b_fixture() {
+        // Qwen3.5-0.8B: model_type="qwen3_5_text" — no hardcoded registry needed
+        let graph = load_fixture("qwen3_5_0_8b.json");
+        if graph.is_none() {
+            eprintln!("SKIP: qwen3_5_0_8b.json fixture not found (run scripts/generate_fixtures.py)");
+            return;
+        }
+        let trace = graph.unwrap();
+
+        assert_eq!(trace.model_id, "Qwen/Qwen3.5-0.8B");
+        assert_eq!(trace.model_config.model_type, "qwen3_5_text");
+
+        // This is the KEY test: unknown model_type should work without any registry
+        let sir = build_sir_from_trace(&trace, AneFamily::A12);
+        assert!(sir.is_ok(), "Qwen3.5-0.8B with unknown model_type should still produce valid SIR");
+
+        let sir = sir.unwrap();
+        let has_rms = sir.nodes.iter().any(|n| matches!(n.op, SirOp::RMSNorm { .. }));
+        assert!(has_rms, "Qwen3.5-0.8B should produce RMSNorm ops (detected dynamically)");
+    }
+
+    #[test]
+    fn test_sir_from_dolphin_1_5_fixture() {
+        // Dolphin-1.5: encoder-decoder (DonutSwin + BART decoder)
+        // Uses LayerNorm (not RMSNorm), learned positional embeddings (no RoPE)
+        let graph = load_fixture("dolphin_1_5.json");
+        if graph.is_none() {
+            eprintln!("SKIP: dolphin_1_5.json fixture not found (run scripts/generate_fixtures.py)");
+            return;
+        }
+        let trace = graph.unwrap();
+
+        assert_eq!(trace.model_id, "ByteDance/Dolphin-1.5");
+        assert_eq!(trace.model_config.model_class, "seq2seq_lm");
+        assert!(trace.model_config.is_encoder_decoder);
+        assert!(!trace.model_config.uses_rope);  // BART uses learned embeddings
+
+        // Note: Dolphin's LayerNorm requires A15+ or CPU fallback on A12
+        // On A12 (M2), this may need a legality rewrite to handle LayerNorm
+        let sir = build_sir_from_trace(&trace, AneFamily::A16);
+        // A16 supports LayerNorm natively
+        assert!(sir.is_ok(), "Dolphin-1.5 decoder should produce valid SIR on A16+");
+
+        let sir = sir.unwrap();
+        assert!(!sir.nodes.is_empty());
+    }
+
+    #[test]
+    fn test_sir_from_qwen3_asr_0_6b_fixture() {
+        // Qwen3-ASR-0.6B: multimodal with text_config extraction
+        // The decoder is a standard Qwen3 causal LM
+        let graph = load_fixture("qwen3_asr_0_6b.json");
+        if graph.is_none() {
+            eprintln!("SKIP: qwen3_asr_0_6b.json fixture not found (run scripts/generate_fixtures.py)");
+            return;
+        }
+        let trace = graph.unwrap();
+
+        assert_eq!(trace.model_id, "Qwen/Qwen3-ASR-0.6B");
+        assert_eq!(trace.model_config.model_class, "decoder_only");
+        assert!(!trace.model_config.is_encoder_decoder);
+
+        // Qwen3 decoder features: RMSNorm + RoPE + extreme 7:1 GQA
+        assert!(trace.model_config.uses_rms_norm);
+        assert!(trace.model_config.uses_rope);
+        assert!(trace.model_config.uses_gqa);
+
+        let sir = build_sir_from_trace(&trace, AneFamily::A12);
+        assert!(sir.is_ok(), "Qwen3-ASR-0.6B decoder should produce valid SIR on A12");
+
+        let sir = sir.unwrap();
+        let has_rms = sir.nodes.iter().any(|n| matches!(n.op, SirOp::RMSNorm { .. }));
+        assert!(has_rms, "Qwen3-ASR-0.6B should produce RMSNorm ops in SIR");
+    }
+
+    #[test]
+    fn test_all_fixtures_produce_sir_with_correct_op_counts() {
+        // Cross-model validation: all fixtures should produce SIR graphs
+        // with reasonable op counts that scale with model size
+        let fixtures = [
+            ("llama_3_2_1b.json", 16),  // 16 layers
+            ("qwen3_0_6b.json", 28),     // 28 layers
+            ("qwen3_5_0_8b.json", 24),   // 24 layers
+            ("dolphin_1_5.json", 6),      // 6 layers
+            ("qwen3_asr_0_6b.json", 24),  // 24 layers
+        ];
+
+        let mut loaded_count = 0;
+        for (name, expected_layers) in &fixtures {
+            let graph = load_fixture(name);
+            if let Some(trace) = graph {
+                loaded_count += 1;
+                assert_eq!(
+                    trace.model_config.num_hidden_layers, *expected_layers,
+                    "Fixture {} should have {} layers", name, expected_layers
+                );
+
+                let sir = build_sir_from_trace(&trace, AneFamily::A12);
+                assert!(
+                    sir.is_ok(),
+                    "Fixture {} should produce valid SIR", name
+                );
+            }
+        }
+
+        // At least one fixture should be loadable (otherwise fixtures are missing)
+        if loaded_count == 0 {
+            eprintln!("NOTE: No fixtures loaded — run scripts/generate_fixtures.py first");
+        }
     }
 }

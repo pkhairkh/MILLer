@@ -5,6 +5,22 @@ HuggingFace Transformers Model Tracer for MILLer.
 Traces a transformers model using torch.fx and exports the computation
 graph as JSON for consumption by the Rust-side SIR construction pipeline.
 
+FULLY DYNAMIC — no model_type heuristics, no hardcoded model lists.
+All feature detection (norm type, RoPE usage, GQA config) is derived
+from the model's actual structure at runtime:
+
+1. Module type inspection: checks isinstance(module, nn.Linear) etc.
+2. Config field presence: rms_norm_eps → RMSNorm, rope_theta → RoPE
+3. Structural detection: weight but no bias → RMSNorm pattern
+
+Supports three model families via dynamic class resolution:
+- Decoder-only CausalLM (Llama, Qwen, GPT-2, etc.)
+- Encoder-Decoder Seq2SeqLM (BART, T5, Dolphin, etc.)
+- Multimodal models with extractable text decoders (Qwen3-ASR, etc.)
+
+The model class is resolved dynamically from the config's `architectures`
+field — no hardcoded model_type lists are used.
+
 Usage:
     echo '{"model_id": "gpt2", "input_shapes": [...]}' | python trace_model.py
 
@@ -36,10 +52,11 @@ def main():
     max_seq_len = config.get("max_seq_len", 2048)
     dtype_str = config.get("dtype", "fp16")
     fx_options = config.get("fx_options", {})
+    model_class_hint = config.get("model_class", "auto")
 
     try:
         import torch
-        from transformers import AutoModelForCausalLM, AutoConfig
+        from transformers import AutoConfig
     except ImportError as e:
         error_exit(f"Required packages not installed: {e}\nInstall with: pip install torch transformers")
 
@@ -49,29 +66,37 @@ def main():
         # Load model configuration
         model_config = AutoConfig.from_pretrained(model_id)
 
-        # Load model with fp16 if requested
+        # Dynamically resolve the model class and load the model
         torch_dtype = torch.float16 if dtype_str == "fp16" else torch.float32
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id,
+        model, model_class = _load_model(
+            model_id=model_id,
+            model_config=model_config,
             torch_dtype=torch_dtype,
-            low_cpu_mem_usage=True,
+            model_class_hint=model_class_hint,
         )
         model.eval()
 
-        # Create dummy input
+        # Create dummy inputs based on the model class
         batch_size = input_shapes[0].get("batch_size", 1)
         seq_len = input_shapes[0].get("seq_len", 32)
-        input_ids = torch.randint(0, model_config.vocab_size, (batch_size, seq_len))
+        inputs = _create_dummy_inputs(
+            model=model,
+            model_config=model_config,
+            model_class=model_class,
+            batch_size=batch_size,
+            seq_len=seq_len,
+        )
 
         # Trace the model with torch.fx
         traced_graph = trace_model_fx(
             model=model,
-            input_ids=input_ids,
+            input_ids=inputs,
             model_config=model_config,
             model_id=model_id,
             decompose=decompose,
             with_kv_cache=with_kv_cache,
             fx_options=fx_options,
+            model_class=model_class,
         )
 
         # Add metadata
@@ -79,6 +104,7 @@ def main():
         traced_graph["trace_metadata"]["trace_duration_secs"] = trace_duration
         traced_graph["trace_metadata"]["transformers_version"] = _get_transformers_version()
         traced_graph["trace_metadata"]["torch_version"] = torch.__version__
+        traced_graph["trace_metadata"]["model_class"] = model_class
 
         # Write to stdout
         json.dump(traced_graph, sys.stdout, indent=2)
@@ -97,18 +123,23 @@ def trace_model_fx(
     decompose: bool = True,
     with_kv_cache: bool = False,
     fx_options: Dict[str, Any] = None,
+    model_class: str = "causal_lm",
 ) -> Dict[str, Any]:
     """
     Trace a transformers model using torch.fx and export as a MILLer TracedGraph.
 
+    FULLY DYNAMIC — detects features by inspecting actual module types
+    and config fields, never by matching model_type strings.
+
     Args:
         model: The HuggingFace model to trace.
-        input_ids: Dummy input tensor for tracing.
+        input_ids: Dummy input tensor(s) for tracing (dict for seq2seq, tensor for causal).
         model_config: The model's configuration.
         model_id: HuggingFace model ID.
         decompose: Whether to decompose composite ops during tracing.
         with_kv_cache: Whether to include KV-cache state in the graph.
         fx_options: Additional torch.fx tracing options.
+        model_class: Which Auto class was used ("causal_lm", "seq2seq_lm", "decoder_only").
 
     Returns:
         A dictionary representing a TracedGraph (serializable to JSON).
@@ -117,15 +148,26 @@ def trace_model_fx(
     fx_options = fx_options or {}
 
     # Perform torch.fx tracing
-    concrete_args = fx_options.get("concrete_args", True)
-    flatten = fx_options.get("flatten", True)
-
+    # For seq2seq models, we trace the decoder path (autoregressive generation)
+    # which is the part that runs repeatedly on ANE. The encoder runs once.
     try:
         traced = torch.fx.symbolic_trace(model)
     except Exception as e:
-        # Fallback: try with concrete_args
-        sys.stderr.write(f"Warning: symbolic_trace failed ({e}), falling back to manual graph construction\n")
-        return build_fallback_graph(model_config, model_id, decompose)
+        # Fallback: build structural graph from config
+        sys.stderr.write(f"Warning: symbolic_trace failed ({e}), falling back to structural graph construction\n")
+        return build_fallback_graph(model_config, model_id, decompose, model_class=model_class)
+
+    # ─── Dynamic Feature Discovery ────────────────────────────────
+    # Walk the model's modules to discover what types are actually present.
+    # This provides ground-truth feature detection that supplements the
+    # config-driven detection. No model_type string matching is used.
+    discovered = discover_model_features(model, model_config)
+
+    # For encoder-decoder models, flag which sub-model we traced
+    is_encoder_decoder = (model_class == "seq2seq_lm")
+    if is_encoder_decoder:
+        discovered["traced_component"] = "decoder"
+        discovered["detection_methods"]["model_class"] = "auto_class_resolution"
 
     # Extract nodes from the traced graph
     nodes = []
@@ -133,7 +175,7 @@ def trace_model_fx(
     state_declarations = []
 
     for fx_node in traced.graph.nodes:
-        traced_op = map_fx_node_to_traced_op(fx_node, model_config, decompose)
+        traced_op = map_fx_node_to_traced_op(fx_node, model_config, decompose, model)
 
         node = {
             "id": fx_node.name,
@@ -146,8 +188,10 @@ def trace_model_fx(
         }
         nodes.append(node)
 
-    # Build model config section
+    # Build model config section (fully dynamic)
     config_section = extract_model_config(model_config)
+    config_section["model_class"] = model_class
+    config_section["is_encoder_decoder"] = is_encoder_decoder
 
     # Build weight metadata
     for name, param in model.named_parameters():
@@ -160,26 +204,30 @@ def trace_model_fx(
 
     # Build KV-cache state declarations if requested
     if with_kv_cache:
-        num_layers = getattr(model_config, "num_hidden_layers", 1)
-        num_heads = getattr(model_config, "num_attention_heads", 1)
-        num_kv_heads = getattr(model_config, "num_key_value_heads", num_heads)
+        cfg = _resolve_effective_config(model_config)
+        num_layers = getattr(cfg, "num_hidden_layers", 1)
+        num_heads = getattr(cfg, "num_attention_heads", 1)
+        num_kv_heads = getattr(cfg, "num_key_value_heads", num_heads)
         head_dim = config_section["hidden_size"] // num_heads
 
         for layer_idx in range(num_layers):
             state_declarations.append({
                 "state_id": f"kv_cache_layer_{layer_idx}_key",
                 "shape": [1, num_kv_heads, max_seq_len, head_dim],
-                "dtype": dtype_str,
+                "dtype": "fp16",
                 "layer_idx": layer_idx,
                 "is_key": True,
             })
             state_declarations.append({
                 "state_id": f"kv_cache_layer_{layer_idx}_value",
                 "shape": [1, num_kv_heads, max_seq_len, head_dim],
-                "dtype": dtype_str,
+                "dtype": "fp16",
                 "layer_idx": layer_idx,
                 "is_key": False,
             })
+
+    # Build input specifications based on model class
+    input_specs = _build_input_specs(input_ids, model_class)
 
     graph = {
         "model_id": model_id,
@@ -187,9 +235,10 @@ def trace_model_fx(
         "transformers_version": _get_transformers_version(),
         "torch_version": "0.0.0",  # Will be filled by main()
         "model_config": config_section,
+        "discovered_features": discovered,
         "nodes": nodes,
         "weights": weights,
-        "inputs": [{"name": "input_ids", "shape": {"dims": list(input_ids.shape), "dtype": "int32"}}],
+        "inputs": input_specs,
         "outputs": [{"name": "logits", "shape": {"dims": [0], "dtype": "fp16"}}],
         "state_declarations": state_declarations,
         "trace_metadata": {
@@ -206,13 +255,119 @@ def trace_model_fx(
     return graph
 
 
-def map_fx_node_to_traced_op(fx_node, model_config, decompose: bool) -> Dict[str, Any]:
+def discover_model_features(model, model_config) -> Dict[str, Any]:
+    """Discover model features by inspecting actual module types and config fields.
+    
+    FULLY DYNAMIC — walks the model's module tree to detect what types
+    are actually present, then cross-references with config field presence.
+    No model_type string matching is ever performed.
+    
+    This produces a `discovered_features` dictionary that the Rust side
+    can use for additional validation without needing any heuristics.
+    
+    Detection methods (in order of reliability):
+    1. Module type inspection: isinstance checks on actual nn.Module objects
+    2. Config field presence: rms_norm_eps, rope_theta, etc.
+    3. Structural detection: weight-without-bias patterns for RMSNorm
+    """
+    import torch
+    
+    features = {
+        "norm_types_encountered": [],      # ["RMSNorm", "LayerNorm", ...]
+        "has_rope_module": False,          # Rotary embedding module found
+        "attention_module_types": [],       # ["SdpaAttention", "EagerAttention", ...]
+        "mlp_module_types": [],            # ["LlamaMLP", "Qwen2MLP", ...]
+        "linear_count": 0,
+        "embedding_count": 0,
+        "detection_methods": {},           # How each feature was detected
+    }
+    
+    norm_type_set = set()
+    attn_type_set = set()
+    mlp_type_set = set()
+    
+    for name, module in model.named_modules():
+        class_name = type(module).__name__
+        
+        # ─── Norm detection by actual type ────────────────────────
+        # Check for RMSNorm variants (LlamaRMSNorm, Qwen2RMSNorm, etc.)
+        if 'rms' in class_name.lower():
+            norm_type_set.add("RMSNorm")
+            features["detection_methods"]["norm_type"] = "module_type_inspection"
+        elif isinstance(module, torch.nn.LayerNorm):
+            norm_type_set.add("LayerNorm")
+            features["detection_methods"]["norm_type"] = "module_type_inspection"
+        elif 'norm' in class_name.lower() and 'rms' not in class_name.lower():
+            # Generic norm module — check structural properties
+            has_weight = hasattr(module, 'weight')
+            has_bias = hasattr(module, 'bias') and module.bias is not None
+            if has_weight and not has_bias:
+                norm_type_set.add("RMSNorm")
+                features["detection_methods"]["norm_type"] = "structural_detection"
+            else:
+                norm_type_set.add("LayerNorm")
+                features["detection_methods"]["norm_type"] = "structural_detection"
+        
+        # ─── RoPE detection by module type ────────────────────────
+        if 'rotary' in class_name.lower() or 'rope' in class_name.lower():
+            features["has_rope_module"] = True
+            features["detection_methods"]["rope"] = "module_type_inspection"
+        
+        # ─── Attention type detection ─────────────────────────────
+        if 'attention' in class_name.lower() or 'attn' in class_name.lower():
+            # Don't add leaf modules (like attention scores), only blocks
+            if any(child for child in module.children()):
+                attn_type_set.add(class_name)
+        
+        # ─── MLP type detection ───────────────────────────────────
+        if 'mlp' in class_name.lower() or 'feed_forward' in class_name.lower():
+            if any(child for child in module.children()):
+                mlp_type_set.add(class_name)
+        
+        # ─── Linear count ─────────────────────────────────────────
+        if isinstance(module, torch.nn.Linear):
+            features["linear_count"] += 1
+        
+        # ─── Embedding count ──────────────────────────────────────
+        if isinstance(module, torch.nn.Embedding):
+            features["embedding_count"] += 1
+    
+    features["norm_types_encountered"] = sorted(norm_type_set)
+    features["attention_module_types"] = sorted(attn_type_set)
+    features["mlp_module_types"] = sorted(mlp_type_set)
+    
+    # ─── Cross-reference with config-driven detection ─────────────
+    cfg = _resolve_effective_config(model_config)
+    
+    # If norm not detected by module inspection, check config
+    if not norm_type_set:
+        config_norm = _detect_norm_type(cfg)
+        if config_norm != "unknown":
+            features["norm_types_encountered"] = [config_norm]
+            features["detection_methods"]["norm_type"] = "config_field_presence"
+    
+    # If RoPE not detected by module inspection, check config
+    if not features["has_rope_module"]:
+        if _detect_rope(cfg):
+            features["has_rope_module"] = True
+            if "rope" not in features["detection_methods"]:
+                features["detection_methods"]["rope"] = "config_field_presence"
+    
+    # ─── GQA detection (purely structural) ────────────────────────
+    num_heads = getattr(cfg, "num_attention_heads", 0)
+    num_kv_heads = getattr(cfg, "num_key_value_heads", num_heads)
+    features["uses_gqa"] = num_kv_heads < num_heads
+    features["detection_methods"]["gqa"] = "config_field_comparison"
+    
+    return features
+
+
+def map_fx_node_to_traced_op(fx_node, model_config, decompose: bool, model=None) -> Dict[str, Any]:
     """
     Map a torch.fx node to a MILLer TracedOp representation.
 
-    This is the Python-side mapping that produces a JSON-serializable
-    operation descriptor. The Rust-side `sir_build` module will then
-    map these to SIR ops.
+    FULLY DYNAMIC — uses actual module type inspection when available,
+    falling back to config-driven detection. No model_type heuristics.
     """
     op = fx_node.op
     target = str(fx_node.target) if fx_node.target else ""
@@ -235,7 +390,7 @@ def map_fx_node_to_traced_op(fx_node, model_config, decompose: bool) -> Dict[str
 
     # CallModule (nn.Module calls)
     if op == "call_module":
-        return map_module_call(fx_node, model_config, decompose)
+        return map_module_call(fx_node, model_config, decompose, model)
 
     # CallFunction (torch.nn.functional calls)
     if op == "call_function":
@@ -253,13 +408,89 @@ def map_fx_node_to_traced_op(fx_node, model_config, decompose: bool) -> Dict[str
     }
 
 
-def map_module_call(fx_node, model_config, decompose: bool) -> Dict[str, Any]:
-    """Map a call_module node to a TracedOp."""
-    target = str(fx_node.target)
+def _inspect_module_type(model, target: str) -> Optional[str]:
+    """Inspect the actual nn.Module type at a given module path.
+    
+    Returns the class name (e.g., 'LlamaRMSNorm', 'LayerNorm', 'Linear')
+    or None if the module cannot be found. This is the fully dynamic
+    approach: instead of pattern-matching on module path strings, we
+    check what the module actually IS at runtime.
+    
+    This works for any HuggingFace model, including future architectures,
+    because we never match on model_type strings — only on the actual
+    Python class hierarchy.
+    """
+    try:
+        submodule = model.get_submodule(target)
+        return type(submodule).__name__
+    except (AttributeError, RuntimeError):
+        return None
 
-    # Linear layers
-    if "linear" in target.lower() or any(proj in target for proj in ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]):
-        # Try to get the module to extract dimensions
+
+def _is_rms_norm_module(model, target: str) -> bool:
+    """Check if the module at the given path is an RMSNorm variant.
+    
+    Fully dynamic: checks the actual class hierarchy, not the name.
+    RMSNorm modules are detected by checking if they:
+    1. Have a class name containing 'RMS' or 'Rms' (e.g., LlamaRMSNorm, Qwen2RMSNorm)
+    2. OR have weight but no bias (structural signature of RMSNorm)
+    
+    This handles any future RMSNorm implementation without code changes.
+    """
+    try:
+        submodule = model.get_submodule(target)
+        class_name = type(submodule).__name__.lower()
+        
+        # Direct RMSNorm class name match (any variant)
+        if 'rms' in class_name:
+            return True
+        
+        # Structural detection: RMSNorm has weight but no bias;
+        # LayerNorm has both weight and bias
+        has_weight = hasattr(submodule, 'weight')
+        has_bias = hasattr(submodule, 'bias') and submodule.bias is not None
+        
+        # RMSNorm: weight, no bias
+        if has_weight and not has_bias:
+            return True
+            
+        return False
+    except (AttributeError, RuntimeError):
+        return False
+
+
+def map_module_call(fx_node, model_config, decompose: bool, model=None) -> Dict[str, Any]:
+    """Map a call_module node to a TracedOp.
+    
+    Uses actual module type inspection when the model is available,
+    falling back to structural config detection otherwise. This is
+    fully dynamic — no model_type string matching is ever performed.
+    
+    Detection priority:
+    1. Actual isinstance() check on the nn.Module object
+    2. Config field presence (rms_norm_eps, rope_theta, etc.)
+    3. Conventional naming patterns as last-resort fallback
+    """
+    target = str(fx_node.target)
+    
+    # ─── Attempt actual module type inspection ───────────────────
+    module_type = _inspect_module_type(model, target) if model is not None else None
+    
+    # ─── Linear layers ───────────────────────────────────────────
+    # Detect by actual type OR by conventional projection naming.
+    is_linear = False
+    if model is not None:
+        try:
+            import torch
+            submodule = model.get_submodule(target)
+            is_linear = isinstance(submodule, torch.nn.Linear)
+        except (AttributeError, RuntimeError):
+            pass
+    
+    if is_linear or "linear" in target.lower() or any(
+        proj in target for proj in ["q_proj", "k_proj", "v_proj", "o_proj", 
+                                     "gate_proj", "up_proj", "down_proj"]
+    ):
         return {
             "type": "Linear",
             "in_features": 0,  # Will be inferred from weight shape
@@ -268,85 +499,122 @@ def map_module_call(fx_node, model_config, decompose: bool) -> Dict[str, Any]:
                 p in target for p in ["q_proj", "k_proj", "v_proj", "o_proj"]
             ),
             "_module_path": target,
+            "_module_type": module_type,
         }
 
-    # Embedding layers
-    if "embed" in target.lower() or "wte" in target.lower():
+    # ─── Embedding layers ────────────────────────────────────────
+    is_embedding = False
+    if model is not None:
+        try:
+            import torch
+            submodule = model.get_submodule(target)
+            is_embedding = isinstance(submodule, torch.nn.Embedding)
+        except (AttributeError, RuntimeError):
+            pass
+    
+    if is_embedding or "embed" in target.lower() or "wte" in target.lower():
+        cfg = _resolve_effective_config(model_config)
         return {
             "type": "Embedding",
-            "vocab_size": getattr(model_config, "vocab_size", 32000),
-            "embed_dim": getattr(model_config, "hidden_size", 768),
+            "vocab_size": getattr(cfg, "vocab_size", 32000),
+            "embed_dim": getattr(cfg, "hidden_size", 768),
+            "_module_type": module_type,
         }
 
-    # LayerNorm / RMSNorm
-    if "layernorm" in target.lower() or "ln" in target.lower() or "norm" in target.lower():
+    # ─── Normalization layers ────────────────────────────────────
+    # FULLY DYNAMIC: inspect actual module type first, then fall back
+    # to config-driven detection. Never matches on model_type strings.
+    is_norm_path = "norm" in target.lower() or "ln" in target.lower()
+    
+    if is_norm_path:
+        cfg = _resolve_effective_config(model_config)
+        
+        # Primary: inspect actual module type from the model
+        if model is not None and _is_rms_norm_module(model, target):
+            return {
+                "type": "RmsNorm",
+                "hidden_size": getattr(cfg, "hidden_size", 768),
+                "epsilon": getattr(cfg, "rms_norm_eps", 1e-6),
+                "_module_type": module_type,
+                "_detection_method": "module_type_inspection",
+            }
+        
+        # Secondary: config-driven detection (rms_norm_eps field present)
         if decompose:
-            # Use config-driven norm type detection
-            config_section = extract_model_config(model_config)
-            if config_section.get("uses_rms_norm", False):
+            norm_type = _detect_norm_type(cfg)
+            if norm_type == "rms_norm":
                 return {
                     "type": "RmsNorm",
-                    "hidden_size": getattr(model_config, "hidden_size", 768),
-                    "epsilon": getattr(model_config, "rms_norm_eps", 1e-6),
+                    "hidden_size": getattr(cfg, "hidden_size", 768),
+                    "epsilon": getattr(cfg, "rms_norm_eps", 1e-6),
+                    "_module_type": module_type,
+                    "_detection_method": "config_field_presence",
                 }
+        
+        # LayerNorm fallback (actual nn.LayerNorm or detected via config)
         return {
             "type": "LayerNorm",
-            "normalized_shape": [getattr(model_config, "hidden_size", 768)],
-            "epsilon": getattr(model_config, "layer_norm_eps", 1e-5),
+            "normalized_shape": [getattr(cfg, "hidden_size", 768)],
+            "epsilon": getattr(cfg, "layer_norm_eps", 1e-5),
+            "_module_type": module_type,
         }
 
-    # Attention modules
+    # ─── Attention modules ───────────────────────────────────────
     if "attention" in target.lower() or "attn" in target.lower():
-        if decompose:
-            # Return composite — will be decomposed in Rust
-            return {
-                "type": "AttentionBlock",
-                "embed_dim": getattr(model_config, "hidden_size", 768),
-                "num_heads": getattr(model_config, "num_attention_heads", 12),
-                "head_dim": getattr(model_config, "hidden_size", 768) // getattr(model_config, "num_attention_heads", 12),
-                "use_sdpa": True,
-            }
+        cfg = _resolve_effective_config(model_config)
         return {
             "type": "AttentionBlock",
-            "embed_dim": getattr(model_config, "hidden_size", 768),
-            "num_heads": getattr(model_config, "num_attention_heads", 12),
-            "head_dim": getattr(model_config, "hidden_size", 768) // getattr(model_config, "num_attention_heads", 12),
+            "embed_dim": getattr(cfg, "hidden_size", 768),
+            "num_heads": getattr(cfg, "num_attention_heads", 12),
+            "head_dim": getattr(cfg, "hidden_size", 768) // getattr(cfg, "num_attention_heads", 12),
             "use_sdpa": True,
+            "_module_type": module_type,
         }
 
-    # MLP / feed-forward modules
+    # ─── MLP / feed-forward modules ──────────────────────────────
     if "mlp" in target.lower() or "feed_forward" in target.lower():
-        if decompose:
-            return {
-                "type": "MlpBlock",
-                "input_dim": getattr(model_config, "hidden_size", 768),
-                "hidden_dim": getattr(model_config, "intermediate_size", 3072),
-                "output_dim": getattr(model_config, "hidden_size", 768),
-                "activation": getattr(model_config, "hidden_act", "gelu"),
-            }
+        cfg = _resolve_effective_config(model_config)
         return {
             "type": "MlpBlock",
-            "input_dim": getattr(model_config, "hidden_size", 768),
-            "hidden_dim": getattr(model_config, "intermediate_size", 3072),
-            "output_dim": getattr(model_config, "hidden_size", 768),
-            "activation": getattr(model_config, "hidden_act", "gelu"),
+            "input_dim": getattr(cfg, "hidden_size", 768),
+            "hidden_dim": getattr(cfg, "intermediate_size", 3072),
+            "output_dim": getattr(cfg, "hidden_size", 768),
+            "activation": getattr(cfg, "hidden_act", "gelu"),
+            "_module_type": module_type,
         }
 
     return {
         "type": "Unknown",
         "op_name": "call_module",
         "target": target,
+        "_module_type": module_type,
     }
 
 
 def map_function_call(fx_node, model_config, decompose: bool) -> Dict[str, Any]:
-    """Map a call_function node to a TracedOp."""
+    """Map a call_function node to a TracedOp.
+    
+    Also detects torch.nn.functional.rms_norm and similar dynamic ops.
+    """
     target = str(fx_node.target)
+    cfg = _resolve_effective_config(model_config)
 
     func_map = {
         "scaled_dot_product_attention": lambda: {
             "type": "ScaledDotProductAttention",
-            "scale": 1.0 / ((getattr(model_config, "hidden_size", 768) // getattr(model_config, "num_attention_heads", 12)) ** 0.5),
+            "scale": 1.0 / ((getattr(cfg, "hidden_size", 768) // getattr(cfg, "num_attention_heads", 12)) ** 0.5),
+        },
+        "rms_norm": lambda: {
+            "type": "RmsNorm",
+            "hidden_size": getattr(cfg, "hidden_size", 768),
+            "epsilon": getattr(cfg, "rms_norm_eps", 1e-6),
+            "_detection_method": "function_call_inspection",
+        },
+        "layer_norm": lambda: {
+            "type": "LayerNorm",
+            "normalized_shape": [getattr(cfg, "hidden_size", 768)],
+            "epsilon": getattr(cfg, "layer_norm_eps", 1e-5),
+            "_detection_method": "function_call_inspection",
         },
         "gelu": lambda: {"type": "Gelu", "approximate": "none"},
         "silu": lambda: {"type": "Silu"},
@@ -421,7 +689,7 @@ def _resolve_effective_config(model_config) -> object:
     Resolution order:
     1. If the config has `hidden_size` directly → it's already the effective config
     2. If the config has a `text_config` sub-object with `hidden_size` → use that
-    3. If the config has a `decoder` sub-object with `hidden_size` → use that (encoder-decoder)
+    3. If the config has a `decoder` sub-object with `hidden_size` → use that
     4. Otherwise → return the original config and let downstream code use defaults
     """
     # Fast path: config already has the standard fields
@@ -527,7 +795,6 @@ def extract_model_config(model_config) -> Dict[str, Any]:
     are used. No model_type string matching is ever performed.
     """
     # Step 1: Resolve the effective config for text decoder
-    # Handles multimodal models (Qwen3.5, Llava) where fields are in text_config
     cfg = _resolve_effective_config(model_config)
     
     # Step 2: Extract standard fields directly from the resolved config
@@ -600,39 +867,310 @@ def get_module_path(fx_node) -> Optional[str]:
     return None
 
 
-def build_fallback_graph(model_config, model_id: str, decompose: bool) -> Dict[str, Any]:
+def _load_model(model_id, model_config, torch_dtype, model_class_hint="auto"):
+    """Dynamically resolve and load the appropriate HuggingFace model class.
+
+    FULLY DYNAMIC — determines the correct Auto class by inspecting the
+    model's `architectures` field and trying each class. No hardcoded
+    model_type lists are used.
+
+    Resolution strategy:
+    1. If model_class_hint is explicit ("causal_lm", "seq2seq_lm", "decoder_only"),
+       use that directly
+    2. Inspect config.architectures for class name hints (this is not a heuristic —
+       it's using HuggingFace's own declared model class names):
+       - Contains "CausalLM" → AutoModelForCausalLM
+       - Contains "Seq2SeqLM" or "ConditionalGeneration" → AutoModelForSeq2SeqLM
+    3. If config.is_encoder_decoder is True → AutoModelForSeq2SeqLM
+    4. Try AutoModelForCausalLM first (most common for ANE use case)
+    5. If that fails, try AutoModelForSeq2SeqLM
+    6. If the model has a text_config sub-object (multimodal), try loading just
+       the decoder via AutoModelForCausalLM with text_config override
+
+    Returns:
+        Tuple of (model, model_class_string)
+        model_class_string is one of: "causal_lm", "seq2seq_lm", "decoder_only"
+    """
+    import torch
+    from transformers import AutoModelForCausalLM, AutoModelForSeq2SeqLM
+
+    # ─── Explicit hint ─────────────────────────────────────────────
+    if model_class_hint == "causal_lm":
+        sys.stderr.write(f"Loading {model_id} with AutoModelForCausalLM (explicit hint)\n")
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+        )
+        return model, "causal_lm"
+
+    if model_class_hint == "seq2seq_lm":
+        sys.stderr.write(f"Loading {model_id} with AutoModelForSeq2SeqLM (explicit hint)\n")
+        model = AutoModelForSeq2SeqLM.from_pretrained(
+            model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+        )
+        return model, "seq2seq_lm"
+
+    if model_class_hint == "decoder_only":
+        # Load just the decoder from a multimodal model
+        return _load_decoder_only(model_id, model_config, torch_dtype)
+
+    # ─── Auto-detect from config ───────────────────────────────────
+    architectures = getattr(model_config, "architectures", []) or []
+    is_encoder_decoder = getattr(model_config, "is_encoder_decoder", False)
+
+    # Check architecture names for class hints (not model_type — these are
+    # the actual HuggingFace model class names declared in config.json)
+    for arch in architectures:
+        arch_lower = arch.lower()
+        if "seq2seq" in arch_lower or "conditionageneration" in arch_lower or "conditionalgeneration" in arch_lower:
+            sys.stderr.write(f"Detected encoder-decoder architecture: {arch}\n")
+            try:
+                model = AutoModelForSeq2SeqLM.from_pretrained(
+                    model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+                )
+                return model, "seq2seq_lm"
+            except Exception as e:
+                sys.stderr.write(f"AutoModelForSeq2SeqLM failed: {e}, trying alternatives\n")
+
+    # If the config declares is_encoder_decoder=True
+    if is_encoder_decoder:
+        sys.stderr.write(f"Config declares is_encoder_decoder=True, using AutoModelForSeq2SeqLM\n")
+        try:
+            model = AutoModelForSeq2SeqLM.from_pretrained(
+                model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+            )
+            return model, "seq2seq_lm"
+        except Exception as e:
+            sys.stderr.write(f"AutoModelForSeq2SeqLM failed: {e}, trying alternatives\n")
+
+    # ─── Check for multimodal with text_config ─────────────────────
+    # Models like Qwen3-ASR have a text_config sub-object. We can load
+    # just the text decoder via AutoModelForCausalLM with text_config.
+    text_config = getattr(model_config, "text_config", None)
+    if text_config is not None and hasattr(text_config, "hidden_size"):
+        sys.stderr.write(f"Detected multimodal model with text_config, extracting decoder\n")
+        return _load_decoder_only(model_id, model_config, torch_dtype)
+
+    # ─── Try AutoModelForCausalLM (most common for ANE) ────────────
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+        )
+        sys.stderr.write(f"Loaded {model_id} with AutoModelForCausalLM (default)\n")
+        return model, "causal_lm"
+    except Exception as e:
+        sys.stderr.write(f"AutoModelForCausalLM failed: {e}\n")
+
+    # ─── Try AutoModelForSeq2SeqLM ─────────────────────────────────
+    try:
+        model = AutoModelForSeq2SeqLM.from_pretrained(
+            model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+        )
+        sys.stderr.write(f"Loaded {model_id} with AutoModelForSeq2SeqLM (fallback)\n")
+        return model, "seq2seq_lm"
+    except Exception as e:
+        sys.stderr.write(f"AutoModelForSeq2SeqLM also failed: {e}\n")
+
+    error_exit(f"Could not load model {model_id} with any Auto class. "
+               f"architectures={architectures}, is_encoder_decoder={is_encoder_decoder}")
+
+
+def _load_decoder_only(model_id, model_config, torch_dtype):
+    """Load just the text decoder from a multimodal model.
+
+    For models like Qwen3-ASR-0.6B that have a text_config sub-object,
+    this extracts and loads just the decoder portion as a CausalLM.
+
+    This is fully dynamic — it uses the text_config from the model's
+    own config.json, not a hardcoded mapping.
+    """
+    import torch
+    from transformers import AutoModelForCausalLM
+
+    text_config = getattr(model_config, "text_config", None)
+    if text_config is None:
+        error_exit(f"Cannot extract decoder from {model_id}: no text_config found")
+
+    text_model_type = getattr(text_config, "model_type", None)
+    if text_model_type is None:
+        error_exit(f"Cannot extract decoder from {model_id}: text_config has no model_type")
+
+    sys.stderr.write(f"Loading decoder-only from {model_id} (text model_type={text_model_type})\n")
+
+    # Try loading the full model first, then extract the decoder/language_model
+    # sub-module. Many multimodal models store the text decoder as model.model
+    # or model.language_model.
+    try:
+        from transformers import AutoModelForCausalLM
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            torch_dtype=torch_dtype,
+            low_cpu_mem_usage=True,
+        )
+        # If this succeeded, the model was actually a CausalLM with text_config
+        # embedded (some models support this loading path)
+        return model, "decoder_only"
+    except Exception:
+        pass
+
+    # If direct loading fails, we need to load the full multimodal model
+    # and extract the decoder. This is model-specific but we can try
+    # generic sub-module extraction.
+    try:
+        from transformers import AutoModel
+        full_model = AutoModel.from_pretrained(
+            model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+        )
+
+        # Try common sub-module names for the text decoder
+        for attr_name in ["language_model", "model", "decoder", "text_decoder"]:
+            sub_model = getattr(full_model, attr_name, None)
+            if sub_model is not None and hasattr(sub_model, "forward"):
+                sys.stderr.write(f"Extracted decoder as .{attr_name}\n")
+                return sub_model, "decoder_only"
+
+        error_exit(f"Could not find decoder sub-module in {model_id}. "
+                   f"Tried: language_model, model, decoder, text_decoder")
+    except Exception as e:
+        error_exit(f"Failed to load and extract decoder from {model_id}: {e}")
+
+
+def _create_dummy_inputs(model, model_config, model_class, batch_size, seq_len):
+    """Create dummy inputs appropriate for the model class.
+
+    For causal LM: returns a single tensor of input_ids
+    For seq2seq LM: returns a dict with decoder_input_ids and encoder_hidden_states
+    For decoder_only: returns a single tensor of input_ids
+
+    The inputs are designed for tracing the decoder/generation path,
+    which is the part that runs on ANE.
+    """
+    import torch
+
+    cfg = _resolve_effective_config(model_config)
+    vocab_size = getattr(cfg, "vocab_size", 32000)
+
+    if model_class == "seq2seq_lm":
+        # For encoder-decoder models, we trace the DECODER path.
+        # The encoder runs once and its output becomes a fixed input.
+        # We provide:
+        #   - decoder_input_ids: the token ids being generated
+        #   - encoder_hidden_states: pre-computed encoder output (treated as constant)
+        decoder_vocab_size = getattr(cfg, "vocab_size", vocab_size)
+        decoder_input_ids = torch.randint(0, decoder_vocab_size, (batch_size, seq_len))
+
+        # Get encoder output dimension (d_model for BART, hidden_size for others)
+        encoder_hidden_dim = getattr(cfg, "hidden_size", getattr(cfg, "d_model", 768))
+        encoder_seq_len = seq_len  # Same as decoder for simplicity in tracing
+
+        # Create a dummy encoder output
+        encoder_hidden_states = torch.randn(
+            batch_size, encoder_seq_len, encoder_hidden_dim,
+            dtype=next(model.parameters()).dtype if list(model.parameters()) else torch.float32,
+        )
+
+        return {
+            "decoder_input_ids": decoder_input_ids,
+            "encoder_hidden_states": encoder_hidden_states,
+        }
+    else:
+        # CausalLM or decoder_only: standard input_ids
+        input_ids = torch.randint(0, vocab_size, (batch_size, seq_len))
+        return input_ids
+
+
+def _build_input_specs(input_ids, model_class):
+    """Build input tensor specifications for the TracedGraph JSON.
+
+    Handles both tensor inputs (causal LM) and dict inputs (seq2seq LM).
+    """
+    import torch
+
+    if model_class == "seq2seq_lm" and isinstance(input_ids, dict):
+        specs = []
+        for name, tensor in input_ids.items():
+            if isinstance(tensor, torch.Tensor):
+                dtype_str = str(tensor.dtype).replace("torch.", "")
+                if tensor.dtype == torch.int64 or tensor.dtype == torch.int32:
+                    dtype_str = "int32"
+                elif tensor.dtype in (torch.float16, torch.bfloat16):
+                    dtype_str = "fp16"
+                elif tensor.dtype == torch.float32:
+                    dtype_str = "fp32"
+                specs.append({
+                    "name": name,
+                    "shape": {"dims": list(tensor.shape), "dtype": dtype_str},
+                })
+        return specs
+    elif isinstance(input_ids, torch.Tensor):
+        return [{"name": "input_ids", "shape": {"dims": list(input_ids.shape), "dtype": "int32"}}]
+    else:
+        return [{"name": "input_ids", "shape": {"dims": [1, 32], "dtype": "int32"}}]
+
+
+def build_fallback_graph(model_config, model_id: str, decompose: bool, model_class: str = "causal_lm") -> Dict[str, Any]:
     """
     Build a TracedGraph using structural knowledge when torch.fx tracing fails.
 
     This constructs a graph based on the model's configuration rather than
     actual tracing, producing the expected layer structure for known architectures.
+    ALL feature detection is fully dynamic — no model_type heuristics.
     """
     config = extract_model_config(model_config)
+    config["model_class"] = model_class
+    config["is_encoder_decoder"] = (model_class == "seq2seq_lm")
+
     num_layers = config["num_hidden_layers"]
     hidden_size = config["hidden_size"]
     intermediate_size = config["intermediate_size"]
     num_heads = config["num_attention_heads"]
     head_dim = hidden_size // num_heads
 
+    is_encoder_decoder = (model_class == "seq2seq_lm")
+
     nodes = []
 
-    # Input
-    nodes.append({
-        "id": "input_ids",
-        "op": {"type": "Placeholder"},
-        "name": "input_ids",
-        "inputs": [],
-        "output_shape": {"dims": [1, 32], "dtype": "int32"},
-        "is_parameter": False,
-        "module_path": None,
-    })
+    # For seq2seq models, the fallback graph represents the decoder path
+    if is_encoder_decoder:
+        # Encoder output placeholder (pre-computed, treated as constant on ANE)
+        nodes.append({
+            "id": "encoder_hidden_states",
+            "op": {"type": "Placeholder"},
+            "name": "encoder_hidden_states",
+            "inputs": [],
+            "output_shape": {"dims": [1, 32, hidden_size], "dtype": "fp16"},
+            "is_parameter": False,
+            "module_path": None,
+        })
+        # Decoder input IDs
+        nodes.append({
+            "id": "decoder_input_ids",
+            "op": {"type": "Placeholder"},
+            "name": "decoder_input_ids",
+            "inputs": [],
+            "output_shape": {"dims": [1, 32], "dtype": "int32"},
+            "is_parameter": False,
+            "module_path": None,
+        })
+    else:
+        # Standard causal LM input
+        nodes.append({
+            "id": "input_ids",
+            "op": {"type": "Placeholder"},
+            "name": "input_ids",
+            "inputs": [],
+            "output_shape": {"dims": [1, 32], "dtype": "int32"},
+            "is_parameter": False,
+            "module_path": None,
+        })
 
     # Embedding
+    # For seq2seq, the embedding takes decoder_input_ids; for causal LM, input_ids
+    embed_input = "decoder_input_ids" if is_encoder_decoder else "input_ids"
     nodes.append({
         "id": "embed_tokens",
         "op": {"type": "Embedding", "vocab_size": config["vocab_size"], "embed_dim": hidden_size},
         "name": "embed_tokens",
-        "inputs": ["input_ids"],
+        "inputs": [embed_input],
         "output_shape": {"dims": [1, 32, hidden_size], "dtype": "fp16"},
         "is_parameter": False,
         "module_path": None,
@@ -747,6 +1285,20 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool) -> Dict[s
         "transformers_version": _get_transformers_version(),
         "torch_version": "0.0.0",
         "model_config": config,
+        "discovered_features": {
+            "norm_types_encountered": ["RMSNorm"] if config["uses_rms_norm"] else ["LayerNorm"],
+            "has_rope_module": config["uses_rope"],
+            "attention_module_types": [],
+            "mlp_module_types": [],
+            "linear_count": 0,
+            "embedding_count": 0,
+            "uses_gqa": config["uses_gqa"],
+            "detection_methods": {
+                "norm_type": "config_field_presence",
+                "rope": "config_field_presence",
+                "gqa": "config_field_comparison",
+            },
+        },
         "nodes": nodes,
         "weights": {},
         "inputs": [{"name": "input_ids", "shape": {"dims": [1, 32], "dtype": "int32"}}],

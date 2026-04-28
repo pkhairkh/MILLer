@@ -51,6 +51,7 @@ fn run_trace_subprocess(config: &TraceConfig) -> Result<TracedGraph> {
         "with_kv_cache": config.with_kv_cache,
         "max_seq_len": config.max_seq_len,
         "dtype": config.dtype,
+        "model_class": config.model_class,
         "fx_options": {
             "concrete_args": config.fx_options.concrete_args,
             "flatten": config.fx_options.flatten,
@@ -124,7 +125,9 @@ mod tests {
                 "uses_rope": true,
                 "uses_rms_norm": true,
                 "uses_gqa": false,
-                "model_type": "llama"
+                "model_type": "llama",
+                "model_class": "causal_lm",
+                "is_encoder_decoder": false
             },
             "nodes": [],
             "weights": {},

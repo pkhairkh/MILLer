@@ -50,6 +50,13 @@ pub struct TraceConfig {
     /// Path to the Python interpreter.
     pub python_path: String,
 
+    /// Which Auto class to use for loading the model.
+    /// "auto" = auto-detect from config (default)
+    /// "causal_lm" = AutoModelForCausalLM
+    /// "seq2seq_lm" = AutoModelForSeq2SeqLM
+    /// "decoder_only" = extract decoder from multimodal model
+    pub model_class: String,
+
     /// Additional tracing options forwarded to torch.fx.
     pub fx_options: FxTraceOptions,
 }
@@ -67,6 +74,7 @@ impl Default for TraceConfig {
             dtype: "fp16".to_string(),
             trace_script: "python/trace_model.py".to_string(),
             python_path: "python3".to_string(),
+            model_class: "auto".to_string(),
             fx_options: FxTraceOptions::default(),
         }
     }

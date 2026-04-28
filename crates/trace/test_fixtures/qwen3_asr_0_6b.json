@@ -1,0 +1,2391 @@
+{
+  "model_id": "Qwen/Qwen3-ASR-0.6B",
+  "architecture": "Qwen3_asrForCausalLM",
+  "transformers_version": "5.6.2",
+  "torch_version": "0.0.0",
+  "model_config": {
+    "hidden_size": 896,
+    "num_attention_heads": 14,
+    "num_key_value_heads": 2,
+    "num_hidden_layers": 24,
+    "intermediate_size": 4864,
+    "vocab_size": 151936,
+    "max_position_embeddings": 4096,
+    "layer_norm_epsilon": 1e-06,
+    "hidden_act": "silu",
+    "uses_rope": true,
+    "uses_rms_norm": true,
+    "uses_gqa": true,
+    "model_type": "qwen3_asr",
+    "model_class": "decoder_only",
+    "is_encoder_decoder": false
+  },
+  "discovered_features": {
+    "norm_types_encountered": [
+      "RMSNorm"
+    ],
+    "has_rope_module": true,
+    "attention_module_types": [],
+    "mlp_module_types": [],
+    "linear_count": 0,
+    "embedding_count": 0,
+    "uses_gqa": true,
+    "detection_methods": {
+      "norm_type": "config_field_presence",
+      "rope": "config_field_presence",
+      "gqa": "config_field_comparison"
+    }
+  },
+  "nodes": [
+    {
+      "id": "input_ids",
+      "op": {
+        "type": "Placeholder"
+      },
+      "name": "input_ids",
+      "inputs": [],
+      "output_shape": {
+        "dims": [
+          1,
+          32
+        ],
+        "dtype": "int32"
+      },
+      "is_parameter": false,
+      "module_path": null
+    },
+    {
+      "id": "embed_tokens",
+      "op": {
+        "type": "Embedding",
+        "vocab_size": 151936,
+        "embed_dim": 896
+      },
+      "name": "embed_tokens",
+      "inputs": [
+        "input_ids"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": null
+    },
+    {
+      "id": "layer_0_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_0_input_norm",
+      "inputs": [
+        "embed_tokens"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.0.input_layernorm"
+    },
+    {
+      "id": "layer_0_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_0_self_attn",
+      "inputs": [
+        "layer_0_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.0.self_attn"
+    },
+    {
+      "id": "layer_0_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_0_post_attn_norm",
+      "inputs": [
+        "layer_0_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.0.post_attention_layernorm"
+    },
+    {
+      "id": "layer_0_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_0_mlp",
+      "inputs": [
+        "layer_0_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.0.mlp"
+    },
+    {
+      "id": "layer_1_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_1_input_norm",
+      "inputs": [
+        "layer_0_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.1.input_layernorm"
+    },
+    {
+      "id": "layer_1_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_1_self_attn",
+      "inputs": [
+        "layer_1_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.1.self_attn"
+    },
+    {
+      "id": "layer_1_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_1_post_attn_norm",
+      "inputs": [
+        "layer_1_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.1.post_attention_layernorm"
+    },
+    {
+      "id": "layer_1_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_1_mlp",
+      "inputs": [
+        "layer_1_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.1.mlp"
+    },
+    {
+      "id": "layer_2_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_2_input_norm",
+      "inputs": [
+        "layer_1_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.2.input_layernorm"
+    },
+    {
+      "id": "layer_2_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_2_self_attn",
+      "inputs": [
+        "layer_2_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.2.self_attn"
+    },
+    {
+      "id": "layer_2_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_2_post_attn_norm",
+      "inputs": [
+        "layer_2_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.2.post_attention_layernorm"
+    },
+    {
+      "id": "layer_2_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_2_mlp",
+      "inputs": [
+        "layer_2_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.2.mlp"
+    },
+    {
+      "id": "layer_3_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_3_input_norm",
+      "inputs": [
+        "layer_2_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.3.input_layernorm"
+    },
+    {
+      "id": "layer_3_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_3_self_attn",
+      "inputs": [
+        "layer_3_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.3.self_attn"
+    },
+    {
+      "id": "layer_3_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_3_post_attn_norm",
+      "inputs": [
+        "layer_3_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.3.post_attention_layernorm"
+    },
+    {
+      "id": "layer_3_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_3_mlp",
+      "inputs": [
+        "layer_3_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.3.mlp"
+    },
+    {
+      "id": "layer_4_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_4_input_norm",
+      "inputs": [
+        "layer_3_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.4.input_layernorm"
+    },
+    {
+      "id": "layer_4_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_4_self_attn",
+      "inputs": [
+        "layer_4_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.4.self_attn"
+    },
+    {
+      "id": "layer_4_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_4_post_attn_norm",
+      "inputs": [
+        "layer_4_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.4.post_attention_layernorm"
+    },
+    {
+      "id": "layer_4_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_4_mlp",
+      "inputs": [
+        "layer_4_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.4.mlp"
+    },
+    {
+      "id": "layer_5_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_5_input_norm",
+      "inputs": [
+        "layer_4_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.5.input_layernorm"
+    },
+    {
+      "id": "layer_5_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_5_self_attn",
+      "inputs": [
+        "layer_5_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.5.self_attn"
+    },
+    {
+      "id": "layer_5_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_5_post_attn_norm",
+      "inputs": [
+        "layer_5_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.5.post_attention_layernorm"
+    },
+    {
+      "id": "layer_5_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_5_mlp",
+      "inputs": [
+        "layer_5_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.5.mlp"
+    },
+    {
+      "id": "layer_6_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_6_input_norm",
+      "inputs": [
+        "layer_5_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.6.input_layernorm"
+    },
+    {
+      "id": "layer_6_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_6_self_attn",
+      "inputs": [
+        "layer_6_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.6.self_attn"
+    },
+    {
+      "id": "layer_6_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_6_post_attn_norm",
+      "inputs": [
+        "layer_6_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.6.post_attention_layernorm"
+    },
+    {
+      "id": "layer_6_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_6_mlp",
+      "inputs": [
+        "layer_6_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.6.mlp"
+    },
+    {
+      "id": "layer_7_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_7_input_norm",
+      "inputs": [
+        "layer_6_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.7.input_layernorm"
+    },
+    {
+      "id": "layer_7_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_7_self_attn",
+      "inputs": [
+        "layer_7_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.7.self_attn"
+    },
+    {
+      "id": "layer_7_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_7_post_attn_norm",
+      "inputs": [
+        "layer_7_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.7.post_attention_layernorm"
+    },
+    {
+      "id": "layer_7_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_7_mlp",
+      "inputs": [
+        "layer_7_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.7.mlp"
+    },
+    {
+      "id": "layer_8_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_8_input_norm",
+      "inputs": [
+        "layer_7_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.8.input_layernorm"
+    },
+    {
+      "id": "layer_8_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_8_self_attn",
+      "inputs": [
+        "layer_8_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.8.self_attn"
+    },
+    {
+      "id": "layer_8_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_8_post_attn_norm",
+      "inputs": [
+        "layer_8_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.8.post_attention_layernorm"
+    },
+    {
+      "id": "layer_8_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_8_mlp",
+      "inputs": [
+        "layer_8_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.8.mlp"
+    },
+    {
+      "id": "layer_9_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_9_input_norm",
+      "inputs": [
+        "layer_8_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.9.input_layernorm"
+    },
+    {
+      "id": "layer_9_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_9_self_attn",
+      "inputs": [
+        "layer_9_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.9.self_attn"
+    },
+    {
+      "id": "layer_9_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_9_post_attn_norm",
+      "inputs": [
+        "layer_9_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.9.post_attention_layernorm"
+    },
+    {
+      "id": "layer_9_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_9_mlp",
+      "inputs": [
+        "layer_9_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.9.mlp"
+    },
+    {
+      "id": "layer_10_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_10_input_norm",
+      "inputs": [
+        "layer_9_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.10.input_layernorm"
+    },
+    {
+      "id": "layer_10_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_10_self_attn",
+      "inputs": [
+        "layer_10_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.10.self_attn"
+    },
+    {
+      "id": "layer_10_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_10_post_attn_norm",
+      "inputs": [
+        "layer_10_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.10.post_attention_layernorm"
+    },
+    {
+      "id": "layer_10_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_10_mlp",
+      "inputs": [
+        "layer_10_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.10.mlp"
+    },
+    {
+      "id": "layer_11_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_11_input_norm",
+      "inputs": [
+        "layer_10_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.11.input_layernorm"
+    },
+    {
+      "id": "layer_11_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_11_self_attn",
+      "inputs": [
+        "layer_11_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.11.self_attn"
+    },
+    {
+      "id": "layer_11_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_11_post_attn_norm",
+      "inputs": [
+        "layer_11_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.11.post_attention_layernorm"
+    },
+    {
+      "id": "layer_11_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_11_mlp",
+      "inputs": [
+        "layer_11_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.11.mlp"
+    },
+    {
+      "id": "layer_12_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_12_input_norm",
+      "inputs": [
+        "layer_11_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.12.input_layernorm"
+    },
+    {
+      "id": "layer_12_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_12_self_attn",
+      "inputs": [
+        "layer_12_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.12.self_attn"
+    },
+    {
+      "id": "layer_12_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_12_post_attn_norm",
+      "inputs": [
+        "layer_12_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.12.post_attention_layernorm"
+    },
+    {
+      "id": "layer_12_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_12_mlp",
+      "inputs": [
+        "layer_12_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.12.mlp"
+    },
+    {
+      "id": "layer_13_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_13_input_norm",
+      "inputs": [
+        "layer_12_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.13.input_layernorm"
+    },
+    {
+      "id": "layer_13_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_13_self_attn",
+      "inputs": [
+        "layer_13_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.13.self_attn"
+    },
+    {
+      "id": "layer_13_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_13_post_attn_norm",
+      "inputs": [
+        "layer_13_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.13.post_attention_layernorm"
+    },
+    {
+      "id": "layer_13_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_13_mlp",
+      "inputs": [
+        "layer_13_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.13.mlp"
+    },
+    {
+      "id": "layer_14_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_14_input_norm",
+      "inputs": [
+        "layer_13_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.14.input_layernorm"
+    },
+    {
+      "id": "layer_14_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_14_self_attn",
+      "inputs": [
+        "layer_14_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.14.self_attn"
+    },
+    {
+      "id": "layer_14_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_14_post_attn_norm",
+      "inputs": [
+        "layer_14_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.14.post_attention_layernorm"
+    },
+    {
+      "id": "layer_14_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_14_mlp",
+      "inputs": [
+        "layer_14_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.14.mlp"
+    },
+    {
+      "id": "layer_15_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_15_input_norm",
+      "inputs": [
+        "layer_14_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.15.input_layernorm"
+    },
+    {
+      "id": "layer_15_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_15_self_attn",
+      "inputs": [
+        "layer_15_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.15.self_attn"
+    },
+    {
+      "id": "layer_15_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_15_post_attn_norm",
+      "inputs": [
+        "layer_15_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.15.post_attention_layernorm"
+    },
+    {
+      "id": "layer_15_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_15_mlp",
+      "inputs": [
+        "layer_15_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.15.mlp"
+    },
+    {
+      "id": "layer_16_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_16_input_norm",
+      "inputs": [
+        "layer_15_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.16.input_layernorm"
+    },
+    {
+      "id": "layer_16_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_16_self_attn",
+      "inputs": [
+        "layer_16_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.16.self_attn"
+    },
+    {
+      "id": "layer_16_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_16_post_attn_norm",
+      "inputs": [
+        "layer_16_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.16.post_attention_layernorm"
+    },
+    {
+      "id": "layer_16_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_16_mlp",
+      "inputs": [
+        "layer_16_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.16.mlp"
+    },
+    {
+      "id": "layer_17_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_17_input_norm",
+      "inputs": [
+        "layer_16_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.17.input_layernorm"
+    },
+    {
+      "id": "layer_17_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_17_self_attn",
+      "inputs": [
+        "layer_17_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.17.self_attn"
+    },
+    {
+      "id": "layer_17_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_17_post_attn_norm",
+      "inputs": [
+        "layer_17_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.17.post_attention_layernorm"
+    },
+    {
+      "id": "layer_17_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_17_mlp",
+      "inputs": [
+        "layer_17_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.17.mlp"
+    },
+    {
+      "id": "layer_18_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_18_input_norm",
+      "inputs": [
+        "layer_17_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.18.input_layernorm"
+    },
+    {
+      "id": "layer_18_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_18_self_attn",
+      "inputs": [
+        "layer_18_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.18.self_attn"
+    },
+    {
+      "id": "layer_18_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_18_post_attn_norm",
+      "inputs": [
+        "layer_18_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.18.post_attention_layernorm"
+    },
+    {
+      "id": "layer_18_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_18_mlp",
+      "inputs": [
+        "layer_18_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.18.mlp"
+    },
+    {
+      "id": "layer_19_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_19_input_norm",
+      "inputs": [
+        "layer_18_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.19.input_layernorm"
+    },
+    {
+      "id": "layer_19_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_19_self_attn",
+      "inputs": [
+        "layer_19_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.19.self_attn"
+    },
+    {
+      "id": "layer_19_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_19_post_attn_norm",
+      "inputs": [
+        "layer_19_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.19.post_attention_layernorm"
+    },
+    {
+      "id": "layer_19_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_19_mlp",
+      "inputs": [
+        "layer_19_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.19.mlp"
+    },
+    {
+      "id": "layer_20_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_20_input_norm",
+      "inputs": [
+        "layer_19_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.20.input_layernorm"
+    },
+    {
+      "id": "layer_20_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_20_self_attn",
+      "inputs": [
+        "layer_20_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.20.self_attn"
+    },
+    {
+      "id": "layer_20_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_20_post_attn_norm",
+      "inputs": [
+        "layer_20_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.20.post_attention_layernorm"
+    },
+    {
+      "id": "layer_20_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_20_mlp",
+      "inputs": [
+        "layer_20_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.20.mlp"
+    },
+    {
+      "id": "layer_21_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_21_input_norm",
+      "inputs": [
+        "layer_20_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.21.input_layernorm"
+    },
+    {
+      "id": "layer_21_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_21_self_attn",
+      "inputs": [
+        "layer_21_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.21.self_attn"
+    },
+    {
+      "id": "layer_21_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_21_post_attn_norm",
+      "inputs": [
+        "layer_21_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.21.post_attention_layernorm"
+    },
+    {
+      "id": "layer_21_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_21_mlp",
+      "inputs": [
+        "layer_21_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.21.mlp"
+    },
+    {
+      "id": "layer_22_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_22_input_norm",
+      "inputs": [
+        "layer_21_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.22.input_layernorm"
+    },
+    {
+      "id": "layer_22_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_22_self_attn",
+      "inputs": [
+        "layer_22_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.22.self_attn"
+    },
+    {
+      "id": "layer_22_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_22_post_attn_norm",
+      "inputs": [
+        "layer_22_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.22.post_attention_layernorm"
+    },
+    {
+      "id": "layer_22_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_22_mlp",
+      "inputs": [
+        "layer_22_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.22.mlp"
+    },
+    {
+      "id": "layer_23_input_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_23_input_norm",
+      "inputs": [
+        "layer_22_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.23.input_layernorm"
+    },
+    {
+      "id": "layer_23_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 896,
+        "num_heads": 14,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_23_self_attn",
+      "inputs": [
+        "layer_23_input_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.23.self_attn"
+    },
+    {
+      "id": "layer_23_post_attn_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "layer_23_post_attn_norm",
+      "inputs": [
+        "layer_23_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.23.post_attention_layernorm"
+    },
+    {
+      "id": "layer_23_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 896,
+        "hidden_dim": 4864,
+        "output_dim": 896,
+        "activation": "silu"
+      },
+      "name": "layer_23_mlp",
+      "inputs": [
+        "layer_23_post_attn_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.23.mlp"
+    },
+    {
+      "id": "final_norm",
+      "op": {
+        "type": "RmsNorm",
+        "hidden_size": 896,
+        "epsilon": 1e-06
+      },
+      "name": "final_norm",
+      "inputs": [
+        "layer_23_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          896
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.norm"
+    },
+    {
+      "id": "lm_head",
+      "op": {
+        "type": "Linear",
+        "in_features": 896,
+        "out_features": 151936,
+        "has_bias": false
+      },
+      "name": "lm_head",
+      "inputs": [
+        "final_norm"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          151936
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "lm_head"
+    },
+    {
+      "id": "output",
+      "op": {
+        "type": "Output"
+      },
+      "name": "output",
+      "inputs": [
+        "lm_head"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          151936
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": null
+    }
+  ],
+  "weights": {},
+  "inputs": [
+    {
+      "name": "input_ids",
+      "shape": {
+        "dims": [
+          1,
+          32
+        ],
+        "dtype": "int32"
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "name": "logits",
+      "shape": {
+        "dims": [
+          1,
+          32,
+          151936
+        ],
+        "dtype": "fp16"
+      }
+    }
+  ],
+  "state_declarations": [],
+  "trace_metadata": {
+    "timestamp": "2026-04-28T17:22:21Z",
+    "trace_duration_secs": 0.0,
+    "num_nodes": 101,
+    "num_parameters": 0,
+    "parameter_bytes": 0,
+    "decomposed": true,
+    "warnings": [
+      "Built via structural fallback (torch.fx tracing failed)"
+    ]
+  }
+}

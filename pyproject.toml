@@ -8,6 +8,7 @@ testpaths = ["python/tests"]
 markers = [
     "macos_only: tests that require macOS",
     "needs_coremltools: tests that require coremltools",
+    "needs_hf_models: tests that require downloading models from HuggingFace Hub",
 ]
 
 [tool.ruff]

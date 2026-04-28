@@ -1,0 +1,467 @@
+{
+  "model_id": "ByteDance/Dolphin-1.5",
+  "architecture": "DolphinForCausalLM",
+  "transformers_version": "5.6.2",
+  "torch_version": "0.0.0",
+  "model_config": {
+    "hidden_size": 768,
+    "num_attention_heads": 12,
+    "num_key_value_heads": 12,
+    "num_hidden_layers": 6,
+    "intermediate_size": 3072,
+    "vocab_size": 50265,
+    "max_position_embeddings": 1024,
+    "layer_norm_epsilon": 1e-06,
+    "hidden_act": "gelu",
+    "uses_rope": false,
+    "uses_rms_norm": false,
+    "uses_gqa": false,
+    "model_type": "dolphin",
+    "model_class": "seq2seq_lm",
+    "is_encoder_decoder": true
+  },
+  "discovered_features": {
+    "norm_types_encountered": [
+      "LayerNorm"
+    ],
+    "has_rope_module": false,
+    "attention_module_types": [],
+    "mlp_module_types": [],
+    "linear_count": 0,
+    "embedding_count": 0,
+    "uses_gqa": false,
+    "detection_methods": {
+      "norm_type": "config_field_presence",
+      "rope": "config_field_presence",
+      "gqa": "config_field_comparison"
+    }
+  },
+  "nodes": [
+    {
+      "id": "encoder_hidden_states",
+      "op": {
+        "type": "Placeholder"
+      },
+      "name": "encoder_hidden_states",
+      "inputs": [],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          768
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": null
+    },
+    {
+      "id": "decoder_input_ids",
+      "op": {
+        "type": "Placeholder"
+      },
+      "name": "decoder_input_ids",
+      "inputs": [],
+      "output_shape": {
+        "dims": [
+          1,
+          32
+        ],
+        "dtype": "int32"
+      },
+      "is_parameter": false,
+      "module_path": null
+    },
+    {
+      "id": "embed_tokens",
+      "op": {
+        "type": "Embedding",
+        "vocab_size": 50265,
+        "embed_dim": 768
+      },
+      "name": "embed_tokens",
+      "inputs": [
+        "decoder_input_ids"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          768
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": null
+    },
+    {
+      "id": "layer_0_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 768,
+        "num_heads": 12,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_0_self_attn",
+      "inputs": [
+        "embed_tokens"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          768
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.0.self_attn"
+    },
+    {
+      "id": "layer_0_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 768,
+        "hidden_dim": 3072,
+        "output_dim": 768,
+        "activation": "gelu"
+      },
+      "name": "layer_0_mlp",
+      "inputs": [
+        "layer_0_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          768
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.0.mlp"
+    },
+    {
+      "id": "layer_1_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 768,
+        "num_heads": 12,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_1_self_attn",
+      "inputs": [
+        "layer_0_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          768
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.1.self_attn"
+    },
+    {
+      "id": "layer_1_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 768,
+        "hidden_dim": 3072,
+        "output_dim": 768,
+        "activation": "gelu"
+      },
+      "name": "layer_1_mlp",
+      "inputs": [
+        "layer_1_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          768
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.1.mlp"
+    },
+    {
+      "id": "layer_2_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 768,
+        "num_heads": 12,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_2_self_attn",
+      "inputs": [
+        "layer_1_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          768
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.2.self_attn"
+    },
+    {
+      "id": "layer_2_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 768,
+        "hidden_dim": 3072,
+        "output_dim": 768,
+        "activation": "gelu"
+      },
+      "name": "layer_2_mlp",
+      "inputs": [
+        "layer_2_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          768
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.2.mlp"
+    },
+    {
+      "id": "layer_3_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 768,
+        "num_heads": 12,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_3_self_attn",
+      "inputs": [
+        "layer_2_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          768
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.3.self_attn"
+    },
+    {
+      "id": "layer_3_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 768,
+        "hidden_dim": 3072,
+        "output_dim": 768,
+        "activation": "gelu"
+      },
+      "name": "layer_3_mlp",
+      "inputs": [
+        "layer_3_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          768
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.3.mlp"
+    },
+    {
+      "id": "layer_4_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 768,
+        "num_heads": 12,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_4_self_attn",
+      "inputs": [
+        "layer_3_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          768
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.4.self_attn"
+    },
+    {
+      "id": "layer_4_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 768,
+        "hidden_dim": 3072,
+        "output_dim": 768,
+        "activation": "gelu"
+      },
+      "name": "layer_4_mlp",
+      "inputs": [
+        "layer_4_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          768
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.4.mlp"
+    },
+    {
+      "id": "layer_5_self_attn",
+      "op": {
+        "type": "AttentionBlock",
+        "embed_dim": 768,
+        "num_heads": 12,
+        "head_dim": 64,
+        "use_sdpa": true
+      },
+      "name": "layer_5_self_attn",
+      "inputs": [
+        "layer_4_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          768
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.5.self_attn"
+    },
+    {
+      "id": "layer_5_mlp",
+      "op": {
+        "type": "MlpBlock",
+        "input_dim": 768,
+        "hidden_dim": 3072,
+        "output_dim": 768,
+        "activation": "gelu"
+      },
+      "name": "layer_5_mlp",
+      "inputs": [
+        "layer_5_self_attn"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          768
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "model.layers.5.mlp"
+    },
+    {
+      "id": "lm_head",
+      "op": {
+        "type": "Linear",
+        "in_features": 768,
+        "out_features": 50265,
+        "has_bias": false
+      },
+      "name": "lm_head",
+      "inputs": [
+        "layer_5_mlp"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          50265
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": "lm_head"
+    },
+    {
+      "id": "output",
+      "op": {
+        "type": "Output"
+      },
+      "name": "output",
+      "inputs": [
+        "lm_head"
+      ],
+      "output_shape": {
+        "dims": [
+          1,
+          32,
+          50265
+        ],
+        "dtype": "fp16"
+      },
+      "is_parameter": false,
+      "module_path": null
+    }
+  ],
+  "weights": {},
+  "inputs": [
+    {
+      "name": "input_ids",
+      "shape": {
+        "dims": [
+          1,
+          32
+        ],
+        "dtype": "int32"
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "name": "logits",
+      "shape": {
+        "dims": [
+          1,
+          32,
+          50265
+        ],
+        "dtype": "fp16"
+      }
+    }
+  ],
+  "state_declarations": [],
+  "trace_metadata": {
+    "timestamp": "2026-04-28T17:22:21Z",
+    "trace_duration_secs": 0.0,
+    "num_nodes": 17,
+    "num_parameters": 0,
+    "parameter_bytes": 0,
+    "decomposed": true,
+    "warnings": [
+      "Built via structural fallback (torch.fx tracing failed)"
+    ]
+  }
+}

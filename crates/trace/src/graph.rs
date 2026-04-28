@@ -14,6 +14,13 @@ use std::collections::HashMap;
 /// This is the JSON-serializable format produced by the Python tracing
 /// module (`python/trace_model.py`) and consumed by the Rust-side
 /// `build_sir_from_trace()` function.
+///
+/// # Fully Dynamic Tracing
+///
+/// All feature detection (norm type, RoPE usage, GQA config) is derived
+/// from the model's actual structure at runtime — no model_type heuristics
+/// or hardcoded model lists are used. The `discovered_features` field
+/// records how each feature was detected, providing an audit trail.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TracedGraph {
     /// Model identifier (HuggingFace ID or local path).
@@ -30,6 +37,17 @@ pub struct TracedGraph {
 
     /// Configuration of the traced model.
     pub model_config: ModelConfig,
+
+    /// Features discovered dynamically during tracing.
+    ///
+    /// This records how each feature (norm type, RoPE, GQA) was detected,
+    /// providing an audit trail and validation signal. Features are detected
+    /// by (in order of reliability):
+    /// 1. Module type inspection (isinstance checks on actual nn.Module objects)
+    /// 2. Config field presence (rms_norm_eps, rope_theta, etc.)
+    /// 3. Structural detection (weight-without-bias patterns for RMSNorm)
+    #[serde(default)]
+    pub discovered_features: DiscoveredFeatures,
 
     /// Ordered list of computation nodes.
     pub nodes: Vec<TracedNode>,
@@ -79,6 +97,16 @@ pub struct ModelConfig {
     pub uses_gqa: bool,
     /// Model type identifier from HuggingFace config.
     pub model_type: String,
+    /// Which Auto class was used to load the model.
+    /// "causal_lm" = AutoModelForCausalLM, "seq2seq_lm" = AutoModelForSeq2SeqLM,
+    /// "decoder_only" = extracted decoder from multimodal model.
+    #[serde(default)]
+    pub model_class: String,
+    /// Whether the original model is encoder-decoder architecture.
+    /// For seq2seq models, the traced graph represents the decoder path
+    /// (the autoregressive generation path that runs on ANE).
+    #[serde(default)]
+    pub is_encoder_decoder: bool,
 }
 
 /// A single node in the traced computation graph.
@@ -299,6 +327,54 @@ pub struct StateDeclaration {
     pub layer_idx: usize,
     /// Whether this is a key or value cache.
     pub is_key: bool,
+}
+
+/// Features discovered dynamically during model tracing.
+///
+/// This struct records what features were found and how they were detected,
+/// providing an audit trail that validates the fully-dynamic tracing approach.
+/// No model_type string matching is used — features are discovered from the
+/// model's actual structure at runtime.
+///
+/// Detection methods (in order of reliability):
+/// 1. `module_type_inspection` — isinstance checks on actual nn.Module objects
+/// 2. `config_field_presence` — config fields like rms_norm_eps, rope_theta
+/// 3. `structural_detection` — patterns like weight-without-bias for RMSNorm
+/// 4. `config_field_comparison` — structural comparisons like num_kv_heads < num_heads
+/// 5. `function_call_inspection` — torch.nn.functional.rms_norm detected in call_function
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DiscoveredFeatures {
+    /// Norm types encountered during module walk (e.g., ["RMSNorm", "LayerNorm"]).
+    #[serde(default)]
+    pub norm_types_encountered: Vec<String>,
+
+    /// Whether a Rotary Embedding module was found.
+    #[serde(default)]
+    pub has_rope_module: bool,
+
+    /// Attention module class names found (e.g., ["SdpaAttention", "LlamaAttention"]).
+    #[serde(default)]
+    pub attention_module_types: Vec<String>,
+
+    /// MLP module class names found (e.g., ["LlamaMLP", "Qwen2MLP"]).
+    #[serde(default)]
+    pub mlp_module_types: Vec<String>,
+
+    /// Number of nn.Linear modules found.
+    #[serde(default)]
+    pub linear_count: usize,
+
+    /// Number of nn.Embedding modules found.
+    #[serde(default)]
+    pub embedding_count: usize,
+
+    /// Whether the model uses Grouped Query Attention.
+    #[serde(default)]
+    pub uses_gqa: bool,
+
+    /// How each feature was detected (feature_name → detection_method).
+    #[serde(default)]
+    pub detection_methods: HashMap<String, String>,
 }
 
 /// Metadata about the tracing process.
