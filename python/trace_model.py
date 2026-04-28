@@ -250,24 +250,87 @@ def trace_model_fx(
     # Build input specifications based on model class
     input_specs = _build_input_specs(input_ids, model_class)
 
-    # Locate safetensors files in the HuggingFace cache
+    # Locate safetensors files in the HuggingFace cache.
+    # This is critical for the Rust-side SafetensorsWeightResolver to load
+    # real model weights into the .mlpackage. We try multiple strategies:
+    #
+    # Strategy 1: Use model.name_or_path (set by from_pretrained) to locate
+    #   the snapshot directory via huggingface_hub.
+    # Strategy 2: Scan the HF cache for the repo (scan_cache_dir).
+    # Strategy 3: If model_id is a local directory, scan it directly.
     safetensors_files = []
     model_cache_dir = None
+
+    # Strategy 1a: Try snapshot_download with local_files_only=True first.
+    # This is the fastest path for already-cached models — no network access.
     try:
-        from huggingface_hub import scan_cache_dir
-        cache_info = scan_cache_dir()
-        for repo in cache_info.repos:
-            if repo.repo_id == model_id:
-                for revision in repo.revisions:
-                    model_cache_dir = str(revision.snapshot_path)
-                    safetensors_files = sorted([
-                        str(f.path) for f in revision.files
-                        if f.path.name.endswith(".safetensors")
-                    ])
+        from huggingface_hub import snapshot_download
+        resolved_name = getattr(model, "name_or_path", None) or model_id
+        cache_dir_path = snapshot_download(
+            repo_id=resolved_name,
+            allow_patterns=["*.safetensors"],
+            local_files_only=True,
+        )
+        if cache_dir_path:
+            model_cache_dir = str(cache_dir_path)
+            from pathlib import Path as _P
+            safetensors_files = sorted([
+                str(f) for f in _P(cache_dir_path).glob("*.safetensors")
+            ])
+    except Exception as e:
+        sys.stderr.write(f"  Strategy 1a (snapshot_download local_only) failed: {e}\n")
+
+    # Strategy 1b: If local_files_only didn't work, try with download allowed.
+    # This ensures that if the model config is cached but safetensors aren't,
+    # we still pull them down automatically.
+    if not safetensors_files:
+        try:
+            from huggingface_hub import snapshot_download
+            resolved_name = getattr(model, "name_or_path", None) or model_id
+            cache_dir_path = snapshot_download(
+                repo_id=resolved_name,
+                allow_patterns=["*.safetensors"],
+            )
+            if cache_dir_path:
+                model_cache_dir = str(cache_dir_path)
+                from pathlib import Path as _P
+                safetensors_files = sorted([
+                    str(f) for f in _P(cache_dir_path).glob("*.safetensors")
+                ])
+        except Exception as e:
+            sys.stderr.write(f"  Strategy 1b (snapshot_download with download) failed: {e}\n")
+
+    # Strategy 2: Scan HF cache by repo_id (original approach, kept as fallback)
+    if not safetensors_files:
+        try:
+            from huggingface_hub import scan_cache_dir
+            cache_info = scan_cache_dir()
+            for repo in cache_info.repos:
+                if repo.repo_id == model_id:
+                    for revision in repo.revisions:
+                        model_cache_dir = str(revision.snapshot_path)
+                        safetensors_files = sorted([
+                            str(f.path) for f in revision.files
+                            if f.path.name.endswith(".safetensors")
+                        ])
+                        break
                     break
-                break
-    except Exception:
-        pass  # Non-critical — weight resolution will fall back to empty
+        except Exception as e:
+            sys.stderr.write(f"  Strategy 2 (scan_cache_dir) failed: {e}\n")
+
+    # Strategy 3: model_id is a local directory — scan it for safetensors
+    if not safetensors_files:
+        local_path = Path(model_id)
+        if local_path.is_dir():
+            model_cache_dir = str(local_path.resolve())
+            safetensors_files = sorted([
+                str(f) for f in local_path.glob("*.safetensors")
+            ])
+
+    if safetensors_files:
+        sys.stderr.write(f"  Found {len(safetensors_files)} safetensors file(s) in {model_cache_dir}\n")
+    else:
+        sys.stderr.write("  WARNING: No safetensors files found — weights will be zero-filled\n")
 
     graph = {
         "model_id": model_id,

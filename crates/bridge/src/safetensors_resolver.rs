@@ -157,6 +157,18 @@ impl SafetensorsWeightResolver {
     pub fn is_empty(&self) -> bool {
         self.tensors.is_empty()
     }
+
+    /// Get the names of all loaded tensors (for diagnostic output).
+    pub fn tensor_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.tensors.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// Total byte size of all loaded weight data.
+    pub fn total_weight_bytes(&self) -> usize {
+        self.tensors.values().map(|e| e.data.len()).sum()
+    }
 }
 
 impl WeightResolver for SafetensorsWeightResolver {
