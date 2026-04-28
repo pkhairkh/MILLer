@@ -27,8 +27,8 @@
 use crate::knowledge_query::PassKnowledgeQuery;
 use ane_ir::mir::ComputeUnitHint;
 use ane_ir::pir::{
-    FunctionEntry, Package, PackageRole, PirGraph, ShardPipelineSpec, ShardRole, ShardTemplate,
-    TensorSpec,
+    FunctionEntry, KvCacheLayout, Package, PackageRole, PirGraph, ShardPipelineSpec, ShardRole,
+    ShardTemplate, TensorSpec,
 };
 #[cfg(test)]
 use ane_ir::pir::{HandoffKind, ShardPartitionEntry};
@@ -286,6 +286,9 @@ impl ShardPlanPass {
             context_length: 0,          // No context in linear projection
             opset_version: "iOS18".into(),
             minimum_deployment_target: "iOS18".into(),
+            kv_cache_layout: KvCacheLayout::default(),
+            sampler_spec: None,
+            io_model_spec: None,
         };
 
         Ok((shard_plan, pir_graph))

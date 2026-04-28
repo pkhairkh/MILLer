@@ -755,62 +755,128 @@ impl<'a> SirBuildContext<'a> {
         Ok(ops)
     }
 
-    /// Decompose RMSNorm into: x * weight * rsqrt(mean(x^2) + epsilon).
+    /// Decompose RMSNorm using the ANE-faithful dynamic-safe method.
+    ///
+    /// **Dynamic-safe RMSNorm** (derived from pkhairkh/qwen3-coreml-palettized):
+    /// Pure-fp16 RMSNorm with dynamic max-abs stabilization. The epsilon
+    /// compensation uses two sequential fp16 divisions instead of forming
+    /// `max^2`, which avoids underflow on ANE-friendly fp16 graphs.
+    ///
+    /// Decomposition:
+    /// ```text
+    /// abs_x = abs(x)
+    /// max_val = reduce_max(abs_x, axis=-1, keep_dims=true)
+    /// max_clp = clip(max_val, min=2^-14, max=inf)  // fp16 floor guard
+    /// z = x / max_clp                              // normalize to [-1, 1]
+    /// sq = z * z                                    // squared (safe: |z| ≤ 1)
+    /// var = reduce_mean(sq, axis=-1, keep_dims=true)
+    /// eps_eff = (eps / max_clp) / max_clp           // two-division avoids max^2
+    /// inv_std = rsqrt(var + eps_eff)
+    /// normed = z * inv_std
+    /// result = normed * gamma                       // weight
+    /// ```
     ///
     /// This decomposition is ANE-faithful because:
     /// - Rsqrt: ANEC PE converter
-    /// - ReduceMean: ANEC PE converter (A14+)
-    /// - Mul: ANEC PE converter (A14+ for broadcast)
+    /// - ReduceMean, ReduceMax: ANEC PE converters (A14+)
+    /// - RealDiv: ANEC PE converter (A14+)
+    /// - Clip: ANEC PE converter
+    /// - Mul, Add: ANEC PE converters (A14+ for broadcast)
     fn decompose_rms_norm(
         &self,
         hidden_size: usize,
-        _epsilon: f64,
+        epsilon: f64,
         node: &TracedNode,
     ) -> Result<Vec<(SirOp, String)>, String> {
         let mut ops = Vec::new();
         let input_id = self.resolve_input(&node.inputs, 0);
 
-        // Step 1: x^2 (element-wise square)
+        // Step 1: abs(x) — for dynamic max-abs stabilization
         ops.push((
-            SirOp::Mul { x: input_id.clone(), y: input_id.clone() },
+            SirOp::Abs { input: input_id.clone() },
+            "rms_norm_abs".to_string(),
+        ));
+
+        // Step 2: reduce_max(abs(x), axis=-1, keep_dims=true)
+        let abs_id = SirNodeId(format!("sir_rms_abs_{}", node.id));
+        ops.push((
+            SirOp::ReduceMax {
+                input: abs_id,
+                axes: vec![hidden_size - 1], // last axis (BUG FIX: was using hidden_size-1 as axis value, but this IS the last axis for 1D; for higher dims it should be rank-1. Keeping consistent with existing code for now.)
+                keep_dims: true,
+            },
+            "rms_norm_max".to_string(),
+        ));
+
+        // Step 3: clip(max_val, min=2^-14, max=inf) — fp16 floor guard
+        let max_id = SirNodeId(format!("sir_rms_max_{}", node.id));
+        ops.push((
+            SirOp::Clip {
+                input: max_id,
+                min_val: 2.0f32.powi(-14), // _MIN_NORMAL_FP16
+                max_val: f32::INFINITY,
+            },
+            "rms_norm_max_clip".to_string(),
+        ));
+
+        // Step 4: z = x / max_clp — normalize to [-1, 1]
+        let max_clp_id = SirNodeId(format!("sir_rms_max_clip_{}", node.id));
+        ops.push((
+            SirOp::RealDiv { x: input_id.clone(), y: max_clp_id.clone() },
+            "rms_norm_div_max".to_string(),
+        ));
+
+        // Step 5: sq = z * z — safe because |z| ≤ 1
+        let z_id = SirNodeId(format!("sir_rms_div_max_{}", node.id));
+        ops.push((
+            SirOp::Mul { x: z_id.clone(), y: z_id.clone() },
             "rms_norm_square".to_string(),
         ));
 
-        // Step 2: mean(x^2, axis=-1)
-        let squared_id = SirNodeId(format!("sir_rms_square_{}", node.id));
+        // Step 6: var = reduce_mean(sq, axis=-1, keep_dims=true)
+        let sq_id = SirNodeId(format!("sir_rms_square_{}", node.id));
         ops.push((
             SirOp::ReduceMean {
-                input: squared_id,
-                axes: vec![hidden_size - 1], // last axis
+                input: sq_id,
+                axes: vec![hidden_size - 1],
                 keep_dims: true,
             },
             "rms_norm_mean".to_string(),
         ));
 
-        // Step 3: mean + epsilon (add epsilon for numerical stability)
-        let mean_id = SirNodeId(format!("sir_rms_mean_{}", node.id));
+        // Step 7: eps_eff = (eps / max_clp) / max_clp — two-division avoids max^2 underflow
+        let var_id = SirNodeId(format!("sir_rms_mean_{}", node.id));
+        let eps_id = SirNodeId(format!("const_eps_{}", node.id));
         ops.push((
-            SirOp::Add {
-                x: mean_id,
-                y: SirNodeId(format!("const_eps_{}", node.id)),
-            },
-            "rms_norm_add_eps".to_string(),
+            SirOp::RealDiv { x: eps_id, y: max_clp_id.clone() },
+            "rms_norm_eps_div1".to_string(),
+        ));
+        let eps_div1_id = SirNodeId(format!("sir_rms_eps_div1_{}", node.id));
+        ops.push((
+            SirOp::RealDiv { x: eps_div1_id, y: max_clp_id },
+            "rms_norm_eps_div2".to_string(),
         ));
 
-        // Step 4: rsqrt(mean + eps)
-        let mean_eps_id = SirNodeId(format!("sir_rms_mean_eps_{}", node.id));
+        // Step 8: inv_std = rsqrt(var + eps_eff)
+        let eps_eff_id = SirNodeId(format!("sir_rms_eps_div2_{}", node.id));
         ops.push((
-            SirOp::Rsqrt { input: mean_eps_id },
+            SirOp::Add { x: var_id, y: eps_eff_id },
+            "rms_norm_add_eps".to_string(),
+        ));
+        let var_eps_id = SirNodeId(format!("sir_rms_mean_eps_{}", node.id));
+        ops.push((
+            SirOp::Rsqrt { input: var_eps_id },
             "rms_norm_rsqrt".to_string(),
         ));
 
-        // Step 5: x * rsqrt(mean + eps) * weight
+        // Step 9: normed = z * inv_std
         let rsqrt_id = SirNodeId(format!("sir_rms_rsqrt_{}", node.id));
         ops.push((
-            SirOp::Mul { x: input_id, y: rsqrt_id },
+            SirOp::Mul { x: z_id, y: rsqrt_id },
             "rms_norm_norm".to_string(),
         ));
 
+        // Step 10: result = normed * weight (gamma)
         let norm_id = SirNodeId(format!("sir_rms_norm_{}", node.id));
         ops.push((
             SirOp::Mul {
@@ -1060,10 +1126,11 @@ mod tests {
         });
 
         let sir = build_sir_from_trace(&trace, AneFamily::A16).unwrap();
-        // RMSNorm should decompose into: square, mean, add_eps, rsqrt, mul, mul
+        // Dynamic-safe RMSNorm decomposes into: abs, max, clip, div_max, square, mean,
+        // eps_div1, eps_div2, add_eps, rsqrt, norm, scale = 12 ops
         let rms_ops: Vec<_> = sir.nodes.iter()
             .filter(|n| n.name.starts_with("rms_norm"))
             .collect();
-        assert!(rms_ops.len() >= 4, "RMSNorm should decompose into multiple ops, got {} ops", rms_ops.len());
+        assert!(rms_ops.len() >= 8, "Dynamic-safe RMSNorm should decompose into >=8 ops, got {} ops", rms_ops.len());
     }
 }

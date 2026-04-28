@@ -187,7 +187,7 @@ impl LegalityRewritePass {
                     );
                     (final_id, nodes, "mb.scaled_dot_product_attention")
                 }
-                SirOp::RMSNorm { input, weight, epsilon } => {
+                SirOp::RMSNorm { input, weight, epsilon, .. } => {
                     let (final_id, nodes) = Self::decompose_rms_norm(
                         sir_node,
                         input,
@@ -203,7 +203,7 @@ impl LegalityRewritePass {
                         Self::decompose_rope(sir_node, input, &sir_to_air, knowledge_query);
                     (final_id, nodes, "mb.cos")
                 }
-                SirOp::Sampler { logits, temperature: _, top_p: _, rep_penalty: _ } => {
+                SirOp::Sampler { logits, temperature: _, top_p: _, rep_penalty: _, .. } => {
                     let (final_id, nodes) =
                         Self::decompose_sampler(sir_node, logits, &sir_to_air, knowledge_query);
                     (final_id, nodes, "mb.topk")
@@ -2016,7 +2016,9 @@ impl LegalityRewritePass {
             | SirOp::DecodeStep { .. }
             | SirOp::Sampler { .. }
             | SirOp::StateRead { .. }
-            | SirOp::StateWrite { .. } => {
+            | SirOp::StateWrite { .. }
+            | SirOp::SlancPreScale { .. }
+            | SirOp::KvCacheRingUpdate { .. } => {
                 unreachable!("composite ops should be handled by explicit decompositions above")
             }
         }
@@ -2422,6 +2424,8 @@ mod tests {
                     input: SirNodeId("input".into()),
                     weight: "gamma".into(),
                     epsilon: 1e-5,
+                    slanc_scale: None,
+                    dynamic_safe: false,
                 },
                 name: "norm".into(),
                 metadata: SirMetadata {
@@ -2493,6 +2497,9 @@ mod tests {
                     temperature: 1.0,
                     top_p: 0.9,
                     rep_penalty: 1.0,
+                    min_p: 0.0,
+                    top_k: 0,
+                    gumbel_noise: false,
                 },
                 name: "sampler".into(),
                 metadata: SirMetadata {

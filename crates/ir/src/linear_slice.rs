@@ -13,7 +13,7 @@ use crate::pir::{
     FunctionEntry, Handoff, Package, PackageRole, PirGraph, ShardPartitionEntry, ShardRole,
     ShardTemplate, TensorSpec as PirTensorSpec,
 };
-use crate::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+use crate::sir::{KvCacheLayout, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
 use crate::task_spec::{SyntheticTaskSpec, TaskOp};
 
 /// Build a SIR graph from a synthetic linear projection task spec.
@@ -1302,6 +1302,9 @@ pub fn build_sharded_pipeline_pir(spec: &SyntheticTaskSpec) -> Result<PirGraph, 
         context_length: 0,
         opset_version: "iOS18".into(),
         minimum_deployment_target: "iOS18".into(),
+        kv_cache_layout: KvCacheLayout::default(),
+        sampler_spec: None,
+        io_model_spec: None,
     })
 }
 

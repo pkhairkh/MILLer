@@ -44,6 +44,7 @@ use serde::{Deserialize, Serialize};
 // Sprint 58 (S58.3): ComputeUnits was removed. PIR now uses
 // `ComputeUnitHint` from the mir module directly, eliminating the duplicate type.
 pub use super::mir::ComputeUnitHint;
+pub use super::sir::{KvCacheLayout, SamplerSpec, IoModelSpec, QuantizationStrategy};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Package {
@@ -866,6 +867,9 @@ impl ShardPipelineSpec {
             context_length: self.shard_template.as_ref().map(|t| t.context_length).unwrap_or(0),
             opset_version: self.opset_version.clone(),
             minimum_deployment_target: self.opset_version.clone(),
+            kv_cache_layout: KvCacheLayout::default(),
+            sampler_spec: None,
+            io_model_spec: None,
         }
     }
 }
@@ -879,6 +883,18 @@ pub struct PirGraph {
     pub context_length: usize,
     pub opset_version: String,
     pub minimum_deployment_target: String,
+    /// KV cache layout strategy. Default is Naive; set to ReverseRingBuffer
+    /// for ANE-optimized KV cache updates via masked blending.
+    /// Derived from pkhairkh/qwen3-coreml-palettized's reverse ring-buffer approach.
+    pub kv_cache_layout: KvCacheLayout,
+    /// Specification for the on-device sampler model, if present.
+    /// When set, the deployment includes a dedicated sampler MLProgram
+    /// instead of relying on host-side sampling.
+    pub sampler_spec: Option<SamplerSpec>,
+    /// Specification for the conditional IO model (embedding + LM head).
+    /// When set with tied_weights=true, embedding and logit projection
+    /// share weights in a single MLProgram with a mode switch.
+    pub io_model_spec: Option<IoModelSpec>,
 }
 
 #[cfg(test)]
