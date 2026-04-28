@@ -58,7 +58,7 @@ impl Default for ProtoEmitter {
 impl ProtoEmitter {
     /// Create a new proto-direct emitter targeting the latest spec version.
     pub fn new() -> Self {
-        Self { spec_version: SpecVersion::V8, compute_unit: CoreMlComputeUnit::CpuAndNe }
+        Self { spec_version: SpecVersion::V9, compute_unit: CoreMlComputeUnit::CpuAndNe }
     }
 
     /// Create an emitter targeting a specific spec version.
@@ -68,7 +68,7 @@ impl ProtoEmitter {
 
     /// Create an emitter with a specific compute unit preference.
     pub fn with_compute_unit(compute_unit: CoreMlComputeUnit) -> Self {
-        Self { spec_version: SpecVersion::V8, compute_unit }
+        Self { spec_version: SpecVersion::V9, compute_unit }
     }
 
     /// Emit a single-function MIR graph as an mlpackage.
@@ -180,7 +180,7 @@ mod tests {
     #[test]
     fn test_proto_emitter_creation() {
         let emitter = ProtoEmitter::new();
-        assert!(matches!(emitter.spec_version, SpecVersion::V8));
+        assert!(matches!(emitter.spec_version, SpecVersion::V9));
         assert!(matches!(emitter.compute_unit, CoreMlComputeUnit::CpuAndNe));
     }
 

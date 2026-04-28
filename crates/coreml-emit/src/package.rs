@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn test_build_manifest() {
         let model = CoreMlModel {
-            spec_version: SpecVersion::V8,
+            spec_version: SpecVersion::V9,
             description: ane_coreml_proto::ModelDescriptionCompat {
                 inputs: vec![],
                 outputs: vec![],

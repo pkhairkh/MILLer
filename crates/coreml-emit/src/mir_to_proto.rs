@@ -374,7 +374,7 @@ mod tests {
         let graph = build_linear_projection_mir("test_linear", 64, 32, 1, MilDtypeCompat::Fp16, 42);
 
         let model =
-            convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe).unwrap();
+            convert_mir_to_proto(&graph, SpecVersion::V9, CoreMlComputeUnit::CpuAndNe).unwrap();
 
         assert_eq!(model.functions.len(), 1);
         assert_eq!(model.functions[0].name, "main");
@@ -391,7 +391,7 @@ mod tests {
         let model = convert_mir_to_proto_multifunction(
             &graphs,
             &shared_names,
-            SpecVersion::V8,
+            SpecVersion::V9,
             CoreMlComputeUnit::CpuAndNe,
         )
         .unwrap();
@@ -431,14 +431,14 @@ mod tests {
     fn test_model_to_protobuf_bytes_linear() {
         let graph = build_linear_projection_mir("test_linear", 64, 32, 1, MilDtypeCompat::Fp16, 42);
         let model =
-            convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe).unwrap();
+            convert_mir_to_proto(&graph, SpecVersion::V9, CoreMlComputeUnit::CpuAndNe).unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         assert!(!bytes.is_empty());
 
         // Verify the bytes are valid Apple protobuf by parsing back
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
-        assert_eq!(parsed.specification_version, 8);
+        assert_eq!(parsed.specification_version, 9);
         assert!(parsed.description.is_some());
 
         // Check that mlProgram is present (field 502 in Apple's format)
@@ -457,7 +457,7 @@ mod tests {
         let model = convert_mir_to_proto_multifunction(
             &graphs,
             &shared_names,
-            SpecVersion::V8,
+            SpecVersion::V9,
             CoreMlComputeUnit::CpuAndNe,
         )
         .unwrap();
@@ -490,7 +490,7 @@ mod tests {
     fn test_apple_proto_ops_preserved() {
         let graph = build_linear_projection_mir("test_ops", 16, 8, 1, MilDtypeCompat::Fp16, 7);
         let model =
-            convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe).unwrap();
+            convert_mir_to_proto(&graph, SpecVersion::V9, CoreMlComputeUnit::CpuAndNe).unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
@@ -500,11 +500,11 @@ mod tests {
             ane_coreml_proto::apple_proto::model::Type::MlProgram(p) => p,
         };
         let main_func = program.functions.get("main").unwrap();
-        assert_eq!(main_func.opset, "CoreML8");
+        assert_eq!(main_func.opset, "CoreML9");
 
         let block = main_func
             .block_specializations
-            .get("CoreML8")
+            .get("CoreML9")
             .unwrap();
 
         // Should have 3 operations: const (weight) + const (bias) + linear
@@ -539,7 +539,7 @@ mod tests {
     fn test_apple_proto_weight_blob_file_references() {
         let graph = build_linear_projection_mir("test_wref", 16, 8, 1, MilDtypeCompat::Fp16, 7);
         let model =
-            convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe).unwrap();
+            convert_mir_to_proto(&graph, SpecVersion::V9, CoreMlComputeUnit::CpuAndNe).unwrap();
 
         // Simulate weight entries with real offsets (as WeightBinBuilder would produce)
         let weight_entries = vec![
@@ -571,7 +571,7 @@ mod tests {
         let main_func = program.functions.get("main").unwrap();
         let block = main_func
             .block_specializations
-            .get("CoreML8")
+            .get("CoreML9")
             .unwrap();
 
         // First const op: should have BlobFileValue in attributes["val"] with offset 0
@@ -603,7 +603,7 @@ mod tests {
     fn test_apple_proto_model_description_functions() {
         let graph = build_linear_projection_mir("test_desc", 32, 16, 1, MilDtypeCompat::Fp16, 99);
         let model =
-            convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe).unwrap();
+            convert_mir_to_proto(&graph, SpecVersion::V9, CoreMlComputeUnit::CpuAndNe).unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
@@ -673,7 +673,7 @@ mod tests {
         };
 
         let model =
-            convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe).unwrap();
+            convert_mir_to_proto(&graph, SpecVersion::V9, CoreMlComputeUnit::CpuAndNe).unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
@@ -685,7 +685,7 @@ mod tests {
         let func = program.functions.get("decode_step").unwrap();
         let block = func
             .block_specializations
-            .get("CoreML8")
+            .get("CoreML9")
             .unwrap();
 
         assert_eq!(block.operations.len(), 2);

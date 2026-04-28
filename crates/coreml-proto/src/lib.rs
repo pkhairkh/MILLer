@@ -3057,7 +3057,7 @@ mod tests {
         use prost::Message;
 
         let model = CoreMlModel {
-            spec_version: SpecVersion::V8,
+            spec_version: SpecVersion::V9,
             description: ModelDescriptionCompat {
                 inputs: vec![TensorDesc {
                     name: "x".to_string(),
@@ -3119,11 +3119,8 @@ mod tests {
         let weight_entries = model.weights.clone();
         let proto_model = convert_to_proto_model(&model, &weight_entries);
 
-        // Verify key fields
-        assert_eq!(
-            proto_model.specification_version,
-            proto::SpecificationVersion::SpecificationVersion8 as i32
-        );
+        // Verify key fields — V9 maps to raw value 9 (not in legacy proto enum)
+        assert_eq!(proto_model.specification_version, 9);
         assert!(proto_model.description.is_some());
         assert!(proto_model.ml_program.is_some());
 
@@ -3136,10 +3133,8 @@ mod tests {
 
         // Parse back
         let parsed = proto::Model::decode(bytes.as_slice()).unwrap();
-        assert_eq!(
-            parsed.specification_version,
-            proto::SpecificationVersion::SpecificationVersion8 as i32
-        );
+        // V9 → raw value 9 (SpecificationVersion9 not in legacy proto enum)
+        assert_eq!(parsed.specification_version, 9);
         assert!(parsed.ml_program.is_some());
         assert!(parsed.ml_program.as_ref().unwrap().functions.contains_key("main"));
     }
