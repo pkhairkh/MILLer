@@ -327,10 +327,54 @@ def trace_model_fx(
                 str(f) for f in local_path.glob("*.safetensors")
             ])
 
+    # Strategy 4: Manual HF cache walk (no huggingface_hub dependency).
+    # Walks the standard cache directory structure directly on the filesystem.
+    # This is the most reliable fallback — it works even if huggingface_hub
+    # is not installed or its API has changed.
+    if not safetensors_files:
+        import os
+        # Convert model_id to repo directory name: "Qwen/Qwen3-0.6B" → "models--Qwen--Qwen3-0.6B"
+        repo_dir_name = "models--" + model_id.replace("/", "--")
+        # Determine the HF cache root (respects HF_HOME, XDG_CACHE_HOME, etc.)
+        hf_cache = os.environ.get("HF_HUB_CACHE") or os.environ.get("HUGGINGFACE_HUB_CACHE")
+        if not hf_cache:
+            hf_home = os.environ.get("HF_HOME")
+            if hf_home:
+                hf_cache = os.path.join(hf_home, "hub")
+            else:
+                # Default: ~/.cache/huggingface/hub (used by huggingface_hub on macOS and Linux)
+                hf_cache = os.path.expanduser("~/.cache/huggingface/hub")
+        repo_dir = os.path.join(hf_cache, repo_dir_name)
+        if os.path.isdir(repo_dir):
+            snapshots_dir = os.path.join(repo_dir, "snapshots")
+            if os.path.isdir(snapshots_dir):
+                # Find all snapshot directories, sorted by modification time (newest first)
+                snapshot_dirs = []
+                try:
+                    for d in os.listdir(snapshots_dir):
+                        sd = os.path.join(snapshots_dir, d)
+                        if os.path.isdir(sd):
+                            snapshot_dirs.append(sd)
+                except OSError:
+                    pass
+                snapshot_dirs.sort(key=lambda d: os.path.getmtime(d), reverse=True)
+                for sd in snapshot_dirs:
+                    st_files = sorted([
+                        os.path.join(sd, f)
+                        for f in os.listdir(sd)
+                        if f.endswith(".safetensors")
+                    ])
+                    if st_files:
+                        model_cache_dir = sd
+                        safetensors_files = st_files
+                        break
+
     if safetensors_files:
         sys.stderr.write(f"  Found {len(safetensors_files)} safetensors file(s) in {model_cache_dir}\n")
     else:
         sys.stderr.write("  WARNING: No safetensors files found — weights will be zero-filled\n")
+        sys.stderr.write(f"  Tried: huggingface_hub snapshot_download, scan_cache_dir, local dir, manual HF cache walk\n")
+        sys.stderr.write(f"  Model ID: {model_id}\n")
 
     graph = {
         "model_id": model_id,

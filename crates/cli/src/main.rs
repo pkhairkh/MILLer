@@ -5369,36 +5369,28 @@ fn run_trace_compile(
     let output_path = PathBuf::from(output);
     fs::create_dir_all(&output_path).map_err(|e| format!("Failed to create output dir: {}", e))?;
 
-    // Load real weights from safetensors files in the HuggingFace cache
-    let weight_resolver = if !traced_graph.safetensors_files.is_empty() {
-        println!("  Loading weights from {} safetensors file(s)...", traced_graph.safetensors_files.len());
-        for sf in &traced_graph.safetensors_files {
-            println!("    - {}", sf);
-        }
-        let resolver = SafetensorsWeightResolver::from_safetensors_files(&traced_graph.safetensors_files);
-        println!("  Loaded {} tensor(s) from safetensors", resolver.len());
-        if !resolver.is_empty() {
-            let names = resolver.tensor_names();
-            let sample: Vec<&str> = names.iter().take(5).map(|s| s.as_str()).collect();
-            println!("  Sample tensor names: {:?}", sample);
-            println!("  Total weight data: {} bytes ({:.1} MB)", resolver.total_weight_bytes(), resolver.total_weight_bytes() as f64 / 1e6);
-        }
-        resolver
-    } else if let Some(ref cache_dir) = traced_graph.model_cache_dir {
-        println!("  Loading weights from cache dir: {}", cache_dir);
-        let resolver = SafetensorsWeightResolver::from_cache_dir(cache_dir);
-        println!("  Loaded {} tensor(s) from safetensors", resolver.len());
-        if !resolver.is_empty() {
-            let names = resolver.tensor_names();
-            let sample: Vec<&str> = names.iter().take(5).map(|s| s.as_str()).collect();
-            println!("  Sample tensor names: {:?}", sample);
-            println!("  Total weight data: {} bytes ({:.1} MB)", resolver.total_weight_bytes(), resolver.total_weight_bytes() as f64 / 1e6);
-        }
-        resolver
-    } else {
+    // Load real weights from safetensors files using multi-strategy resolution.
+    // Strategy 1: Explicit paths from Python tracer (safetensors_files field)
+    // Strategy 2: Cache directory from Python tracer (model_cache_dir field)
+    // Strategy 3: Automatic HF cache discovery from model_id
+    println!("  Resolving weights for model: {}", traced_graph.model_id);
+    let (weight_resolver, strategy) = SafetensorsWeightResolver::from_traced_graph(
+        &traced_graph.safetensors_files,
+        traced_graph.model_cache_dir.as_deref(),
+        &traced_graph.model_id,
+    );
+
+    if weight_resolver.is_empty() {
         println!("  No safetensors files found — using zero-filled weights");
-        SafetensorsWeightResolver::empty()
-    };
+        println!("  Attempted strategy: {}", strategy);
+    } else {
+        println!("  Weight resolution strategy: {}", strategy);
+        println!("  Loaded {} tensor(s) from safetensors", weight_resolver.len());
+        let names = weight_resolver.tensor_names();
+        let sample: Vec<&str> = names.iter().take(5).map(|s| s.as_str()).collect();
+        println!("  Sample tensor names: {:?}", sample);
+        println!("  Total weight data: {} bytes ({:.1} MB)", weight_resolver.total_weight_bytes(), weight_resolver.total_weight_bytes() as f64 / 1e6);
+    }
 
     let mlpackage_dir = output_path.join("model.mlpackage");
     if mirs.is_empty() {

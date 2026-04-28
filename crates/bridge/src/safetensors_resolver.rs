@@ -30,7 +30,7 @@ use crate::mir_to_compat::{WeightData, WeightResolver};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Weight resolver backed by HuggingFace safetensors files.
 ///
@@ -99,6 +99,78 @@ impl SafetensorsWeightResolver {
         Self::from_safetensors_files(&files)
     }
 
+    /// Create a resolver by locating safetensors files from a HuggingFace model ID.
+    ///
+    /// This is the primary fallback when the Python tracer's strategies fail.
+    /// It scans the standard HuggingFace cache directory structure:
+    ///
+    /// ```text
+    /// ~/.cache/huggingface/hub/
+    ///   models--Qwen--Qwen3-0.6B/
+    ///     snapshots/
+    ///       <commit-hash>/
+    ///         model.safetensors  (or model-00001-of-000NN.safetensors)
+    /// ```
+    ///
+    /// The model ID is converted to a directory name by replacing `/` with `--`
+    /// and prepending `models--`. For example, `Qwen/Qwen3-0.6B` becomes
+    /// `models--Qwen--Qwen3-0.6B`.
+    ///
+    /// This method does NOT require the `huggingface_hub` Python package —
+    /// it directly walks the filesystem, which is more reliable.
+    pub fn from_hf_model_id(model_id: &str) -> Self {
+        let safetensors_files = discover_hf_safetensors(model_id);
+        if safetensors_files.is_empty() {
+            return Self { tensors: HashMap::new() };
+        }
+        Self::from_safetensors_files(&safetensors_files)
+    }
+
+    /// Create a resolver by locating safetensors from a HuggingFace model ID,
+    /// with additional fallback to a cache directory.
+    ///
+    /// This is the comprehensive resolver that tries multiple strategies:
+    /// 1. Explicit safetensors file paths (from Python tracer)
+    /// 2. Model cache directory (from Python tracer)
+    /// 3. HuggingFace model ID → automatic cache discovery
+    ///
+    /// Returns the resolver and a description of which strategy succeeded.
+    pub fn from_traced_graph(
+        safetensors_files: &[String],
+        model_cache_dir: Option<&str>,
+        model_id: &str,
+    ) -> (Self, String) {
+        // Strategy 1: Use explicit safetensors file paths from the tracer
+        if !safetensors_files.is_empty() {
+            let resolver = Self::from_safetensors_files(safetensors_files);
+            if !resolver.is_empty() {
+                return (resolver, format!("explicit paths ({} files)", safetensors_files.len()));
+            }
+        }
+
+        // Strategy 2: Scan cache directory from the tracer
+        if let Some(cache_dir) = model_cache_dir {
+            let resolver = Self::from_cache_dir(cache_dir);
+            if !resolver.is_empty() {
+                return (resolver, format!("cache dir: {}", cache_dir));
+            }
+            // The cache_dir might be the HF hub root (not the snapshot dir).
+            // Try walking snapshots/ subdirectories.
+            let resolver = Self::from_cache_dir_recursive(cache_dir);
+            if !resolver.is_empty() {
+                return (resolver, format!("cache dir (recursive): {}", cache_dir));
+            }
+        }
+
+        // Strategy 3: Automatic HF cache discovery from model ID
+        let resolver = Self::from_hf_model_id(model_id);
+        if !resolver.is_empty() {
+            return (resolver, format!("HF model ID auto-discovery: {}", model_id));
+        }
+
+        (Self::empty(), "no weights found".to_string())
+    }
+
     /// Create an empty resolver that returns `None` for all lookups.
     /// Equivalent to `EmptyWeightResolver` but in the same type for API consistency.
     pub fn empty() -> Self {
@@ -151,6 +223,22 @@ impl SafetensorsWeightResolver {
     /// Number of tensors loaded.
     pub fn len(&self) -> usize {
         self.tensors.len()
+    }
+
+    /// Create a resolver by recursively scanning a directory for .safetensors files.
+    ///
+    /// Unlike `from_cache_dir()` which only scans the top level, this method
+    /// walks all subdirectories. This is needed for HuggingFace cache directories
+    /// where safetensors files are inside `snapshots/<hash>/` subdirectories.
+    pub fn from_cache_dir_recursive(cache_dir: &str) -> Self {
+        let path = Path::new(cache_dir);
+        if !path.is_dir() {
+            return Self { tensors: HashMap::new() };
+        }
+
+        let mut files = Vec::new();
+        walk_for_safetensors(path, &mut files);
+        Self::from_safetensors_files(&files)
     }
 
     /// Whether any tensors were loaded.
@@ -249,6 +337,137 @@ fn f32_to_f16(val: f32) -> u16 {
     ((sign as u16) << 15) | ((new_exp as u16) << MANTISSA_BITS_F16) | (truncated_mantissa as u16)
 }
 
+/// Discover safetensors files in the HuggingFace cache from a model ID.
+///
+/// Walks the standard HF cache directory structure:
+/// ```text
+/// ~/.cache/huggingface/hub/
+///   models--Qwen--Qwen3-0.6B/
+///     snapshots/
+///       <commit-hash>/
+///         model.safetensors
+/// ```
+///
+/// Also respects `HF_HOME` and `HUGGINGFACE_HUB_CACHE` environment variables
+/// for custom cache locations.
+fn discover_hf_safetensors(model_id: &str) -> Vec<String> {
+    // Convert model ID to directory name: "Qwen/Qwen3-0.6B" → "models--Qwen--Qwen3-0.6B"
+    let repo_dir_name = format!("models--{}", model_id.replace('/', "--"));
+
+    // Determine the HuggingFace cache root directory.
+    // Priority: HF_HUB_CACHE > HUGGINGFACE_HUB_CACHE > HF_HOME/hub > ~/.cache/huggingface/hub
+    let cache_root = if let Ok(v) = std::env::var("HF_HUB_CACHE") {
+        PathBuf::from(v)
+    } else if let Ok(v) = std::env::var("HUGGINGFACE_HUB_CACHE") {
+        PathBuf::from(v)
+    } else if let Ok(v) = std::env::var("HF_HOME") {
+        PathBuf::from(v).join("hub")
+    } else {
+        // Default: ~/.cache/huggingface/hub
+        dirs_home_cache().join("huggingface").join("hub")
+    };
+
+    let repo_dir = cache_root.join(&repo_dir_name);
+    if !repo_dir.is_dir() {
+        eprintln!(
+            "  HF cache repo dir not found: {} (model_id={})",
+            repo_dir.display(),
+            model_id
+        );
+        return Vec::new();
+    }
+
+    // Walk the snapshots/ subdirectory to find the latest snapshot with safetensors files
+    let snapshots_dir = repo_dir.join("snapshots");
+    if !snapshots_dir.is_dir() {
+        eprintln!("  No snapshots/ directory in {}", repo_dir.display());
+        return Vec::new();
+    }
+
+    // Find all snapshot directories, sorted by modification time (newest first)
+    let mut snapshot_dirs: Vec<PathBuf> = Vec::new();
+    if let Ok(entries) = fs::read_dir(&snapshots_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                snapshot_dirs.push(p);
+            }
+        }
+    }
+
+    // Sort by modification time, newest first
+    snapshot_dirs.sort_by(|a, b| {
+        let mt_a = a.metadata().and_then(|m| m.modified()).ok();
+        let mt_b = b.metadata().and_then(|m| m.modified()).ok();
+        mt_b.cmp(&mt_a) // newest first
+    });
+
+    // Try each snapshot directory, returning the first one with safetensors files
+    for snapshot_dir in &snapshot_dirs {
+        let mut safetensors_files = Vec::new();
+        if let Ok(entries) = fs::read_dir(snapshot_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.extension().map(|e| e == "safetensors").unwrap_or(false) {
+                    if let Some(s) = p.to_str() {
+                        safetensors_files.push(s.to_string());
+                    }
+                }
+            }
+        }
+        if !safetensors_files.is_empty() {
+            safetensors_files.sort();
+            return safetensors_files;
+        }
+    }
+
+    eprintln!(
+        "  No .safetensors files found in any snapshot of {}",
+        model_id
+    );
+    Vec::new()
+}
+
+/// Get the default cache directory for the current platform.
+///
+/// HuggingFace's `huggingface_hub` uses XDG-style paths on all platforms:
+/// - macOS: ~/.cache  (NOT ~/Library/Caches)
+/// - Linux: ~/.cache
+/// - Windows: %LOCALAPPDATA%
+///
+/// This matches the behavior of `huggingface_hub.constants.HF_HUB_CACHE`
+/// which uses `os.path.expanduser("~/.cache")` on macOS and Linux.
+fn dirs_home_cache() -> PathBuf {
+    // Check XDG_CACHE_HOME first (Linux and power users on macOS)
+    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
+        return PathBuf::from(xdg);
+    }
+
+    // Default: ~/.cache (used by huggingface_hub on both macOS and Linux)
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home).join(".cache");
+    }
+
+    // Fallback: use a temp-like location
+    PathBuf::from("/tmp/.cache")
+}
+
+/// Recursively walk a directory tree collecting .safetensors file paths.
+fn walk_for_safetensors(dir: &Path, files: &mut Vec<String>) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                walk_for_safetensors(&p, files);
+            } else if p.extension().map(|e| e == "safetensors").unwrap_or(false) {
+                if let Some(s) = p.to_str() {
+                    files.push(s.to_string());
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,6 +504,30 @@ mod tests {
     #[test]
     fn test_from_nonexistent_dir() {
         let resolver = SafetensorsWeightResolver::from_cache_dir("/nonexistent/path");
+        assert!(resolver.is_empty());
+    }
+
+    #[test]
+    fn test_from_hf_model_id_nonexistent() {
+        // This should not panic, just return empty
+        let resolver = SafetensorsWeightResolver::from_hf_model_id("nonexistent/model-12345");
+        assert!(resolver.is_empty());
+    }
+
+    #[test]
+    fn test_from_traced_graph_no_weights() {
+        let (resolver, strategy) = SafetensorsWeightResolver::from_traced_graph(
+            &[],
+            None,
+            "nonexistent/model-12345",
+        );
+        assert!(resolver.is_empty());
+        assert_eq!(strategy, "no weights found");
+    }
+
+    #[test]
+    fn test_from_cache_dir_recursive_nonexistent() {
+        let resolver = SafetensorsWeightResolver::from_cache_dir_recursive("/nonexistent/path");
         assert!(resolver.is_empty());
     }
 }

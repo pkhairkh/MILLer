@@ -89,6 +89,15 @@ fn run_trace_subprocess(config: &TraceConfig) -> Result<TracedGraph> {
         ));
     }
 
+    // Show Python tracer's stderr output for diagnostic purposes
+    // (safetensors discovery warnings, strategy failures, etc.)
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.is_empty() {
+        for line in stderr.lines() {
+            eprintln!("  [tracer] {}", line);
+        }
+    }
+
     // Parse the JSON output
     let stdout = String::from_utf8_lossy(&output.stdout);
     let graph: TracedGraph = serde_json::from_str(&stdout)
