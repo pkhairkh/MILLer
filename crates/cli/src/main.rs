@@ -458,6 +458,14 @@ enum Commands {
         #[arg(long, default_value = "fp16")]
         dtype: String,
 
+        /// Which Auto class to use for loading the model.
+        /// "auto" = auto-detect from config (default, works for Llama/Qwen)
+        /// "causal_lm" = AutoModelForCausalLM (decoder-only models)
+        /// "seq2seq_lm" = AutoModelForSeq2SeqLM (encoder-decoder like Dolphin/BART)
+        /// "decoder_only" = extract decoder from multimodal model (Qwen3-ASR etc.)
+        #[arg(long, default_value = "auto")]
+        model_class: String,
+
         /// Knowledge store directory.
         #[arg(long)]
         knowledge: Option<String>,
@@ -645,6 +653,7 @@ fn main() {
             bridge: _,
             python: _,
             dtype,
+            model_class,
             knowledge,
         } => {
             if let Err(e) = run_trace_compile(
@@ -658,6 +667,7 @@ fn main() {
                 with_kv_cache,
                 &trace_script,
                 &dtype,
+                &model_class,
                 knowledge.as_deref(),
             ) {
                 eprintln!("Trace-compile failed: {}", e);
@@ -5220,6 +5230,7 @@ fn run_trace_compile(
     with_kv_cache: bool,
     trace_script: &str,
     dtype: &str,
+    model_class: &str,
     knowledge_dir: Option<&str>,
 ) -> Result<(), String> {
     use ane_trace::config::{TraceConfig, TraceTarget, InputShape};
@@ -5228,6 +5239,16 @@ fn run_trace_compile(
     use ane_trace::versioned::VersionedCompiler;
 
     println!("=== MILLer — Trace-Compile Pipeline ===\n");
+
+    // Validate model_class early
+    let valid_classes = ["auto", "causal_lm", "seq2seq_lm", "decoder_only"];
+    if !valid_classes.contains(&model_class) {
+        return Err(format!(
+            "Invalid model_class '{}'. Valid options: {}",
+            model_class,
+            valid_classes.join(", ")
+        ));
+    }
 
     // Step 1: Parse target family
     println!("[1/6] Parsing target ANE family: {}", target_family);
@@ -5255,6 +5276,7 @@ fn run_trace_compile(
         dtype: dtype.to_string(),
         trace_script: trace_script.to_string(),
         python_path: "python3".to_string(),
+        model_class: model_class.to_string(),
         ..TraceConfig::default()
     };
 
