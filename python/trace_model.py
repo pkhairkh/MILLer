@@ -202,6 +202,27 @@ def trace_model_fx(
             "quantized": None,
         }
 
+    # Build weight name map: maps SIR synthetic names to HuggingFace parameter names.
+    # This enables the Rust compiler to look up real weight data from safetensors.
+    # For call_module nodes (Linear, LayerNorm, etc.), the module_path directly
+    # corresponds to the HF parameter prefix (e.g., "model.layers.0.self_attn.q_proj").
+    weight_name_map = {}
+    for fx_node in traced.graph.nodes:
+        if fx_node.op == "call_module":
+            module_path = str(fx_node.target)
+            submodule = dict(model.named_modules()).get(module_path)
+            if submodule is not None:
+                for pname, _ in submodule.named_parameters():
+                    # pname is relative to submodule, e.g., "weight" or "bias"
+                    hf_name = f"{module_path}.{pname}"
+                    # Map both the synthetic SIR name ("weight_{node_id}") and
+                    # the canonical HF name to the same parameter.
+                    weight_name_map[fx_node.name] = {
+                        "module_path": module_path,
+                        "weight": f"{module_path}.weight",
+                        "bias": f"{module_path}.bias" if hasattr(submodule, "bias") and submodule.bias is not None else None,
+                    }
+
     # Build KV-cache state declarations if requested
     if with_kv_cache:
         cfg = _resolve_effective_config(model_config)
@@ -229,6 +250,25 @@ def trace_model_fx(
     # Build input specifications based on model class
     input_specs = _build_input_specs(input_ids, model_class)
 
+    # Locate safetensors files in the HuggingFace cache
+    safetensors_files = []
+    model_cache_dir = None
+    try:
+        from huggingface_hub import scan_cache_dir
+        cache_info = scan_cache_dir()
+        for repo in cache_info.repos:
+            if repo.repo_id == model_id:
+                for revision in repo.revisions:
+                    model_cache_dir = str(revision.snapshot_path)
+                    safetensors_files = sorted([
+                        str(f.path) for f in revision.files
+                        if f.path.name.endswith(".safetensors")
+                    ])
+                    break
+                break
+    except Exception:
+        pass  # Non-critical — weight resolution will fall back to empty
+
     graph = {
         "model_id": model_id,
         "architecture": model.__class__.__name__,
@@ -238,6 +278,9 @@ def trace_model_fx(
         "discovered_features": discovered,
         "nodes": nodes,
         "weights": weights,
+        "weight_name_map": weight_name_map,
+        "model_cache_dir": model_cache_dir,
+        "safetensors_files": safetensors_files,
         "inputs": input_specs,
         "outputs": [{"name": "logits", "shape": {"dims": [0], "dtype": "fp16"}}],
         "state_declarations": state_declarations,

@@ -55,6 +55,22 @@ pub struct TracedGraph {
     /// Named weight tensors (parameter name → shape + dtype).
     pub weights: HashMap<String, WeightInfo>,
 
+    /// Mapping from fx node name to HuggingFace parameter names.
+    /// Key: torch.fx node name (e.g., "linear1").
+    /// Value: {"module_path": "model.layers.0.self_attn.q_proj",
+    ///        "weight": "model.layers.0.self_attn.q_proj.weight",
+    ///        "bias": "model.layers.0.self_attn.q_proj.bias" | null}
+    #[serde(default)]
+    pub weight_name_map: HashMap<String, WeightNameMapEntry>,
+
+    /// Path to the HuggingFace model cache snapshot directory containing safetensors.
+    #[serde(default)]
+    pub model_cache_dir: Option<String>,
+
+    /// Paths to safetensors files in the cache directory.
+    #[serde(default)]
+    pub safetensors_files: Vec<String>,
+
     /// Input tensor specifications.
     pub inputs: Vec<TensorSpec>,
 
@@ -333,6 +349,17 @@ pub struct WeightInfo {
     pub data_path: Option<String>,
     /// Optional: whether this is a quantized weight.
     pub quantized: Option<QuantizedWeightInfo>,
+}
+
+/// Entry in the weight_name_map: maps a torch.fx node name to HuggingFace parameter names.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeightNameMapEntry {
+    /// PyTorch module path (e.g., "model.layers.0.self_attn.q_proj").
+    pub module_path: String,
+    /// HuggingFace weight parameter name (e.g., "model.layers.0.self_attn.q_proj.weight").
+    pub weight: String,
+    /// HuggingFace bias parameter name, if the module has a bias.
+    pub bias: Option<String>,
 }
 
 /// Quantized weight metadata.

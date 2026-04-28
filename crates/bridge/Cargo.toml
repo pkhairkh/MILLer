@@ -8,8 +8,10 @@ ane-ir = { workspace = true }
 ane-passes = { workspace = true }
 ane-coreml-emit = { path = "../coreml-emit" }
 ane-coreml-proto = { path = "../coreml-proto" }
+ane-trace = { path = "../trace" }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 tempfile = "3"
+safetensors = "0.4"

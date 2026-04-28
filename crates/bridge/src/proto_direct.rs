@@ -159,8 +159,8 @@ pub fn emit_role_shard_proto_direct(
 /// pass pipeline (not a `MirGraphCompat`).
 ///
 /// For weight data, this uses `EmptyWeightResolver` which fills in zero
-/// bytes. For real weight data, build your own resolver and call
-/// `mir_graph_to_compat()` + `emit_proto_direct()` directly.
+/// bytes. For real weight data, use `emit_mir_graph_proto_direct_with_resolver()`
+/// or build your own resolver and call `mir_graph_to_compat()` + `emit_proto_direct()` directly.
 pub fn emit_mir_graph_proto_direct(
     graph: &MirGraph,
     output_path: &str,
@@ -168,6 +168,20 @@ pub fn emit_mir_graph_proto_direct(
     let resolver = EmptyWeightResolver;
     let compat = mir_graph_to_compat(graph, &resolver)?;
 
+    emit_proto_direct(&compat, output_path)
+}
+
+/// Emit a compiler MIR graph as an mlpackage via proto-direct with real weight data.
+///
+/// This is the same as `emit_mir_graph_proto_direct()` but accepts a custom
+/// `WeightResolver` that provides actual weight bytes. Use this when you have
+/// access to safetensors files or other weight data sources.
+pub fn emit_mir_graph_proto_direct_with_resolver(
+    graph: &MirGraph,
+    output_path: &str,
+    resolver: &dyn crate::mir_to_compat::WeightResolver,
+) -> Result<ProtoDirectResult> {
+    let compat = mir_graph_to_compat(graph, resolver)?;
     emit_proto_direct(&compat, output_path)
 }
 

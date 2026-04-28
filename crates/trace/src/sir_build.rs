@@ -153,6 +153,44 @@ impl<'a> SirBuildContext<'a> {
         self.node_map.get(trace_id)
     }
 
+    /// Resolve the HuggingFace weight name for a traced node.
+    ///
+    /// If the node has a `module_path` and the `weight_name_map` contains
+    /// an entry for this node's ID, returns the HF parameter name (e.g.,
+    /// "model.layers.0.self_attn.q_proj.weight"). Otherwise falls back to
+    /// the synthetic name (e.g., "weight_linear1").
+    fn resolve_weight_name(&self, node: &TracedNode, fallback: &str) -> String {
+        if let Some(ref module_path) = node.module_path {
+            if let Some(entry) = self.trace.weight_name_map.get(&node.id) {
+                return entry.weight.clone();
+            }
+            // Fallback: construct from module_path + ".weight"
+            format!("{}.weight", module_path)
+        } else {
+            fallback.to_string()
+        }
+    }
+
+    /// Resolve the HuggingFace bias name for a traced node.
+    fn resolve_bias_name(&self, node: &TracedNode, fallback: &Option<String>) -> Option<String> {
+        if let Some(ref module_path) = node.module_path {
+            if let Some(entry) = self.trace.weight_name_map.get(&node.id) {
+                return entry.bias.clone();
+            }
+            // Fallback: construct from module_path + ".bias"
+            Some(format!("{}.bias", module_path))
+        } else {
+            fallback.clone()
+        }
+    }
+
+    /// Resolve the HuggingFace weight name for a specific suffix (e.g., "weight", "bias")
+    /// relative to a module path prefix. Used for composite ops that generate
+    /// sub-module weight names (e.g., attention q_proj, k_proj, v_proj).
+    fn hf_param_name(&self, module_path: &str, suffix: &str) -> String {
+        format!("{}.{}", module_path, suffix)
+    }
+
     /// Map a TracedOp to one or more SirOps.
     ///
     /// Composite ops (AttentionBlock, MlpBlock, RmsNorm) are decomposed
@@ -181,8 +219,12 @@ impl<'a> SirBuildContext<'a> {
             // ─── Primitive Ops: Direct 1:1 mapping ─────────────────
             TracedOp::Linear { in_features, out_features, has_bias } => {
                 let input_id = self.resolve_input(&node.inputs, 0);
-                let weight_name = format!("weight_{}", node.id);
-                let bias_name = if *has_bias { Some(format!("bias_{}", node.id)) } else { None };
+                let weight_name = self.resolve_weight_name(node, &format!("weight_{}", node.id));
+                let bias_name = if *has_bias {
+                    self.resolve_bias_name(node, &Some(format!("bias_{}", node.id)))
+                } else {
+                    None
+                };
                 Ok(vec![(
                     SirOp::LinearProjection {
                         input: input_id,
@@ -203,9 +245,10 @@ impl<'a> SirBuildContext<'a> {
             TracedOp::Embedding { vocab_size, embed_dim } => {
                 // Embedding lookup is CPU-only on ANE — mark for awareness
                 let input_id = self.resolve_input(&node.inputs, 0);
+                let embed_weight_name = self.resolve_weight_name(node, &format!("embed_weight_{}", node.id));
                 Ok(vec![(
                     SirOp::Gather {
-                        input: SirNodeId(format!("embed_weight_{}", node.id)),
+                        input: SirNodeId(embed_weight_name),
                         indices: input_id,
                         axis: 0,
                     },
@@ -222,11 +265,13 @@ impl<'a> SirBuildContext<'a> {
                     ));
                 }
                 let input_id = self.resolve_input(&node.inputs, 0);
+                let ln_weight = self.resolve_weight_name(node, &format!("ln_weight_{}", node.id));
+                let ln_bias = self.resolve_bias_name(node, &Some(format!("ln_bias_{}", node.id)));
                 Ok(vec![(
                     SirOp::LayerNorm {
                         input: input_id,
-                        weight: format!("ln_weight_{}", node.id),
-                        bias: Some(format!("ln_bias_{}", node.id)),
+                        weight: ln_weight,
+                        bias: ln_bias,
                         epsilon: *epsilon as f32,
                         axes: vec![normalized_shape.len() - 1],
                     },
@@ -534,12 +579,26 @@ impl<'a> SirBuildContext<'a> {
     ) -> Result<Vec<(SirOp, String)>, String> {
         let mut ops = Vec::new();
 
+        // Resolve weight names using the module_path from the traced node.
+        // For attention, the module_path is typically "model.layers.0.self_attn"
+        // and the sub-modules are q_proj, k_proj, v_proj, o_proj.
+        let qkv_weight = if let Some(ref mp) = node.module_path {
+            self.hf_param_name(mp, "q_proj.weight")
+        } else {
+            format!("qkv_weight_{}", node.id)
+        };
+        let out_weight = if let Some(ref mp) = node.module_path {
+            self.hf_param_name(mp, "o_proj.weight")
+        } else {
+            format!("out_proj_weight_{}", node.id)
+        };
+
         // QKV Projection: input → [Q, K, V]
         let input_id = self.resolve_input(&node.inputs, 0);
         ops.push((
             SirOp::LinearProjection {
                 input: input_id,
-                weight: format!("qkv_weight_{}", node.id),
+                weight: qkv_weight,
                 bias: None,
             },
             format!("qkv_proj_{}", embed_dim),
@@ -655,7 +714,7 @@ impl<'a> SirBuildContext<'a> {
         ops.push((
             SirOp::LinearProjection {
                 input: attn_out_id,
-                weight: format!("out_proj_weight_{}", node.id),
+                weight: out_weight,
                 bias: None,
             },
             format!("out_proj_{}", embed_dim),
@@ -676,11 +735,30 @@ impl<'a> SirBuildContext<'a> {
         let mut ops = Vec::new();
         let input_id = self.resolve_input(&node.inputs, 0);
 
+        // Resolve weight names using module_path.
+        // MLP module_path is typically "model.layers.0.mlp"
+        // Sub-modules are gate_proj/up_proj, down_proj (varies by architecture).
+        let up_weight = if let Some(ref mp) = node.module_path {
+            // Try common MLP up-projection names: gate_proj, up_proj
+            if self.trace.weights.contains_key(&self.hf_param_name(mp, "gate_proj.weight")) {
+                self.hf_param_name(mp, "gate_proj.weight")
+            } else {
+                self.hf_param_name(mp, "up_proj.weight")
+            }
+        } else {
+            format!("up_proj_weight_{}", node.id)
+        };
+        let down_weight = if let Some(ref mp) = node.module_path {
+            self.hf_param_name(mp, "down_proj.weight")
+        } else {
+            format!("down_proj_weight_{}", node.id)
+        };
+
         // Up-projection: input → hidden
         ops.push((
             SirOp::LinearProjection {
                 input: input_id,
-                weight: format!("up_proj_weight_{}", node.id),
+                weight: up_weight,
                 bias: None,
             },
             format!("up_proj_{}_{}", input_dim, hidden_dim),
@@ -714,7 +792,7 @@ impl<'a> SirBuildContext<'a> {
         ops.push((
             SirOp::LinearProjection {
                 input: act_id,
-                weight: format!("down_proj_weight_{}", node.id),
+                weight: down_weight,
                 bias: None,
             },
             format!("down_proj_{}_{}", hidden_dim, output_dim),
@@ -814,6 +892,7 @@ impl<'a> SirBuildContext<'a> {
         node: &TracedNode,
     ) -> Result<Vec<(SirOp, String)>, String> {
         let input_id = self.resolve_input(&node.inputs, 0);
+        let rms_weight = self.resolve_weight_name(node, &format!("rms_weight_{}", node.id));
 
         // Emit the composite RMSNorm op. The actual decomposition into
         // primitives (naive vs max-abs-stabilized vs other) is determined
@@ -824,7 +903,7 @@ impl<'a> SirBuildContext<'a> {
         Ok(vec![(
             SirOp::RMSNorm {
                 input: input_id,
-                weight: format!("rms_weight_{}", node.id),
+                weight: rms_weight,
                 epsilon: epsilon as f32,
             },
             format!("rms_norm_{}", hidden_size),

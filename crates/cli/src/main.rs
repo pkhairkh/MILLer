@@ -5230,7 +5230,10 @@ fn run_trace_compile(
     dtype: &str,
     knowledge_dir: Option<&str>,
 ) -> Result<(), String> {
-    use ane_bridge::proto_direct::{emit_mir_graph_proto_direct, validate_proto_direct_package};
+    use ane_bridge::proto_direct::{
+        emit_mir_graph_proto_direct_with_resolver, validate_proto_direct_package,
+    };
+    use ane_bridge::safetensors_resolver::SafetensorsWeightResolver;
     use ane_passes::knowledge_query::NoKnowledge;
     use ane_passes::legality_rewrite::{DecompositionContext, LegalityRewritePass};
     use ane_passes::mil_lower::MilLowerPass;
@@ -5361,17 +5364,37 @@ fn run_trace_compile(
         );
     }
 
-    // Step 7: Emit .mlpackage via proto-direct
+    // Step 7: Emit .mlpackage via proto-direct with real weights
     println!("[7/10] Emitting .mlpackage via proto-direct...");
     let output_path = PathBuf::from(output);
     fs::create_dir_all(&output_path).map_err(|e| format!("Failed to create output dir: {}", e))?;
+
+    // Load real weights from safetensors files in the HuggingFace cache
+    let weight_resolver = if !traced_graph.safetensors_files.is_empty() {
+        println!("  Loading weights from {} safetensors file(s)...", traced_graph.safetensors_files.len());
+        let resolver = SafetensorsWeightResolver::from_safetensors_files(&traced_graph.safetensors_files);
+        println!("  Loaded {} tensor(s) from safetensors", resolver.len());
+        resolver
+    } else if let Some(ref cache_dir) = traced_graph.model_cache_dir {
+        println!("  Loading weights from cache dir: {}", cache_dir);
+        let resolver = SafetensorsWeightResolver::from_cache_dir(cache_dir);
+        println!("  Loaded {} tensor(s) from safetensors", resolver.len());
+        resolver
+    } else {
+        println!("  No safetensors files found — using zero-filled weights");
+        SafetensorsWeightResolver::empty()
+    };
 
     let mlpackage_dir = output_path.join("model.mlpackage");
     if mirs.is_empty() {
         return Err("MilLowerPass produced no MIR graphs — nothing to emit".to_string());
     }
-    let emit_result = emit_mir_graph_proto_direct(&mirs[0], mlpackage_dir.to_str().unwrap_or(""))
-        .map_err(|e| format!("Proto-direct emission failed: {}", e))?;
+    let emit_result = emit_mir_graph_proto_direct_with_resolver(
+        &mirs[0],
+        mlpackage_dir.to_str().unwrap_or(""),
+        &weight_resolver,
+    )
+    .map_err(|e| format!("Proto-direct emission failed: {}", e))?;
     println!("  Emitted: {}", mlpackage_dir.display());
     println!("  Total size: {} bytes, {} file(s), {} weight(s)",
         emit_result.total_size, emit_result.file_count, emit_result.weight_count);

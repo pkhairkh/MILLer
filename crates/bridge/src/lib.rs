@@ -11,4 +11,5 @@
 
 pub mod mir_to_compat;
 pub mod proto_direct;
+pub mod safetensors_resolver;
 pub mod subprocess;
