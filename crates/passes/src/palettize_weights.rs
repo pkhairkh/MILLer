@@ -11,7 +11,7 @@
 //! - KV/mask constants: 1-bit kmeans palettization
 //! - Q/K projections: treated more conservatively (higher bitwidth)
 
-use ane_ir::sir::{SirGraph, SirNode, SirOp};
+use ane_ir::sir::{SirGraph, SirOp};
 
 /// Result of the palettize weights pass.
 #[derive(Debug, Clone)]
@@ -122,7 +122,7 @@ pub fn run_palettize_weights_pass(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ane_ir::sir::{SirMetadata, SirNodeId, TaskOrigin};
+    use ane_ir::sir::{SirMetadata, SirNode, SirNodeId, TaskOrigin};
 
     fn make_test_graph() -> SirGraph {
         SirGraph {
