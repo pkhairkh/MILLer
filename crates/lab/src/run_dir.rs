@@ -51,9 +51,7 @@ pub struct LabRunWriter {
 impl LabRunWriter {
     /// Create a new lab run writer that places runs under the given output directory.
     pub fn new(output_dir: &Path) -> Self {
-        Self {
-            output_dir: output_dir.to_path_buf(),
-        }
+        Self { output_dir: output_dir.to_path_buf() }
     }
 
     /// Create the run directory for a given run ID.

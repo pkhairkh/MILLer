@@ -665,26 +665,28 @@ pub fn tensor_desc_to_proto(td: &TensorDesc) -> proto::FeatureDescription {
 /// (weight data goes into weight.bin; protobuf only references by offset/size).
 pub fn weight_entry_to_proto(entry: &WeightEntry) -> proto::WeightData {
     proto::WeightData {
-        weight_data: Some(proto::weight_data::WeightData::FileRef(
-            proto::FileReference {
-                offset: entry.offset as i64,
-                size: entry.size as i64,
-            },
-        )),
+        weight_data: Some(proto::weight_data::WeightData::FileRef(proto::FileReference {
+            offset: entry.offset as i64,
+            size: entry.size as i64,
+        })),
     }
 }
 
 /// Build a `proto::WeightData` with inline value from raw const data.
 /// Used for const ops where the weight data is embedded directly in the proto.
-pub fn weight_data_inline(data: &[u8], dtype: &mir_compat::MilDtypeCompat, shape: &[usize]) -> proto::WeightData {
+pub fn weight_data_inline(
+    data: &[u8],
+    dtype: &mir_compat::MilDtypeCompat,
+    shape: &[usize],
+) -> proto::WeightData {
     let proto_dtype = mil_dtype_to_proto(dtype);
     let value = match dtype {
-        mir_compat::MilDtypeCompat::Fp16 | mir_compat::MilDtypeCompat::Fp32 | mir_compat::MilDtypeCompat::UInt8 => {
+        mir_compat::MilDtypeCompat::Fp16
+        | mir_compat::MilDtypeCompat::Fp32
+        | mir_compat::MilDtypeCompat::UInt8 => {
             proto::weight_value::Value::FloatValue(data.to_vec())
         }
-        mir_compat::MilDtypeCompat::Int32 => {
-            proto::weight_value::Value::IntValue(data.to_vec())
-        }
+        mir_compat::MilDtypeCompat::Int32 => proto::weight_value::Value::IntValue(data.to_vec()),
     };
 
     proto::WeightData {
@@ -1050,16 +1052,16 @@ pub fn mir_op_to_proto_op(
         mir_compat::MirOpCompat::Unsupported { op_kind, name, params_json: _ } => {
             // Emit as identity to preserve graph structure; downstream
             // Python bridge will handle the actual op emission.
-            (format!("{name}__unsupported_{op_kind}"), proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
-                x: Some(proto::OperandRef { name: name.clone() }),
-            }))
+            (
+                format!("{name}__unsupported_{op_kind}"),
+                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                    x: Some(proto::OperandRef { name: name.clone() }),
+                }),
+            )
         }
     };
 
-    proto::MilOperation {
-        name,
-        operation: Some(operation),
-    }
+    proto::MilOperation { name, operation: Some(operation) }
 }
 
 /// Convert `MirGraphCompat` → `proto::MilFunction`.
@@ -1067,11 +1069,7 @@ pub fn mir_graph_to_proto_function(
     graph: &mir_compat::MirGraphCompat,
     weight_entries: &[WeightEntry],
 ) -> proto::MilFunction {
-    let operations = graph
-        .ops
-        .iter()
-        .map(|op| mir_op_to_proto_op(op, weight_entries))
-        .collect();
+    let operations = graph.ops.iter().map(|op| mir_op_to_proto_op(op, weight_entries)).collect();
 
     proto::MilFunction {
         block: Some(proto::MilBlock {
@@ -1087,10 +1085,7 @@ pub fn mir_graph_to_proto_function(
 ///
 /// This is the top-level conversion that produces a complete protobuf `Model`
 /// message ready for serialization with `prost::Message::encode_to_vec()`.
-pub fn convert_to_proto_model(
-    model: &CoreMlModel,
-    weight_entries: &[WeightEntry],
-) -> proto::Model {
+pub fn convert_to_proto_model(model: &CoreMlModel, weight_entries: &[WeightEntry]) -> proto::Model {
     // Build function descriptions map for ModelDescription
     let mut functions_map = std::collections::HashMap::new();
     for func in &model.functions {
@@ -1116,7 +1111,8 @@ pub fn convert_to_proto_model(
             opset_version: "iOS18".to_string(),
             function_name: func.name.clone(),
         };
-        ml_program_functions.insert(func.name.clone(), mir_graph_to_proto_function(&graph, weight_entries));
+        ml_program_functions
+            .insert(func.name.clone(), mir_graph_to_proto_function(&graph, weight_entries));
     }
 
     proto::Model {
@@ -1220,21 +1216,36 @@ mod tests {
 
     #[test]
     fn test_data_type_to_proto() {
-        assert_eq!(data_type_to_proto(&CoreMlDataType::Float16), proto::ArrayDataType::Float16 as i32);
-        assert_eq!(data_type_to_proto(&CoreMlDataType::Float32), proto::ArrayDataType::Float32 as i32);
+        assert_eq!(
+            data_type_to_proto(&CoreMlDataType::Float16),
+            proto::ArrayDataType::Float16 as i32
+        );
+        assert_eq!(
+            data_type_to_proto(&CoreMlDataType::Float32),
+            proto::ArrayDataType::Float32 as i32
+        );
         assert_eq!(data_type_to_proto(&CoreMlDataType::Int32), proto::ArrayDataType::Int32 as i32);
     }
 
     #[test]
     fn test_compute_unit_to_proto() {
-        assert_eq!(compute_unit_to_proto(&CoreMlComputeUnit::CpuAndNe), proto::ComputeUnit::CpuAndNe as i32);
+        assert_eq!(
+            compute_unit_to_proto(&CoreMlComputeUnit::CpuAndNe),
+            proto::ComputeUnit::CpuAndNe as i32
+        );
         assert_eq!(compute_unit_to_proto(&CoreMlComputeUnit::All), proto::ComputeUnit::All as i32);
     }
 
     #[test]
     fn test_spec_version_to_proto() {
-        assert_eq!(spec_version_to_proto(&SpecVersion::V7), proto::SpecificationVersion::SpecificationVersion7 as i32);
-        assert_eq!(spec_version_to_proto(&SpecVersion::V8), proto::SpecificationVersion::SpecificationVersion8 as i32);
+        assert_eq!(
+            spec_version_to_proto(&SpecVersion::V7),
+            proto::SpecificationVersion::SpecificationVersion7 as i32
+        );
+        assert_eq!(
+            spec_version_to_proto(&SpecVersion::V8),
+            proto::SpecificationVersion::SpecificationVersion8 as i32
+        );
     }
 
     #[test]
@@ -1257,7 +1268,10 @@ mod tests {
         };
         let fd = tensor_desc_to_proto(&td);
         assert_eq!(fd.name, "input");
-        assert!(matches!(fd.feature_type, Some(proto::feature_description::FeatureType::Tensor(_))));
+        assert!(matches!(
+            fd.feature_type,
+            Some(proto::feature_description::FeatureType::Tensor(_))
+        ));
     }
 
     #[test]
@@ -1306,82 +1320,131 @@ mod tests {
         // Test every MirOpCompat variant converts without panic
         let ops: Vec<mir_compat::MirOpCompat> = vec![
             mir_compat::MirOpCompat::Const {
-                name: "c".to_string(), data: vec![0u8; 4], dtype: mir_compat::MilDtypeCompat::Fp16, shape: vec![2],
+                name: "c".to_string(),
+                data: vec![0u8; 4],
+                dtype: mir_compat::MilDtypeCompat::Fp16,
+                shape: vec![2],
             },
             mir_compat::MirOpCompat::Linear {
-                name: "l".to_string(), x: "x".to_string(), weight_name: "w".to_string(), bias_name: None,
+                name: "l".to_string(),
+                x: "x".to_string(),
+                weight_name: "w".to_string(),
+                bias_name: None,
             },
             mir_compat::MirOpCompat::MatMul {
-                name: "mm".to_string(), x: "x".to_string(), y: "y".to_string(),
+                name: "mm".to_string(),
+                x: "x".to_string(),
+                y: "y".to_string(),
             },
             mir_compat::MirOpCompat::Add {
-                name: "a".to_string(), x: "x".to_string(), y: "y".to_string(),
+                name: "a".to_string(),
+                x: "x".to_string(),
+                y: "y".to_string(),
             },
             mir_compat::MirOpCompat::Mul {
-                name: "m".to_string(), x: "x".to_string(), y: "y".to_string(),
+                name: "m".to_string(),
+                x: "x".to_string(),
+                y: "y".to_string(),
             },
             mir_compat::MirOpCompat::Sub {
-                name: "s".to_string(), x: "x".to_string(), y: "y".to_string(),
+                name: "s".to_string(),
+                x: "x".to_string(),
+                y: "y".to_string(),
             },
-            mir_compat::MirOpCompat::Abs {
-                name: "ab".to_string(), x: "x".to_string(),
-            },
+            mir_compat::MirOpCompat::Abs { name: "ab".to_string(), x: "x".to_string() },
             mir_compat::MirOpCompat::Reshape {
-                name: "r".to_string(), x: "x".to_string(), shape: vec![1, 2],
+                name: "r".to_string(),
+                x: "x".to_string(),
+                shape: vec![1, 2],
             },
             mir_compat::MirOpCompat::Transpose {
-                name: "t".to_string(), x: "x".to_string(), perm: vec![1, 0],
+                name: "t".to_string(),
+                x: "x".to_string(),
+                perm: vec![1, 0],
             },
             mir_compat::MirOpCompat::SliceByIndex {
-                name: "sbi".to_string(), x: "x".to_string(), begin: vec![0], end: vec![1],
+                name: "sbi".to_string(),
+                x: "x".to_string(),
+                begin: vec![0],
+                end: vec![1],
             },
             mir_compat::MirOpCompat::SliceUpdate {
-                name: "su".to_string(), x: "x".to_string(), update: "u".to_string(), begin: vec![0], end: vec![1],
+                name: "su".to_string(),
+                x: "x".to_string(),
+                update: "u".to_string(),
+                begin: vec![0],
+                end: vec![1],
             },
             mir_compat::MirOpCompat::Concat {
-                name: "cat".to_string(), values: vec!["a".to_string(), "b".to_string()], axis: 0,
+                name: "cat".to_string(),
+                values: vec!["a".to_string(), "b".to_string()],
+                axis: 0,
             },
             mir_compat::MirOpCompat::Softmax {
-                name: "sm".to_string(), x: "x".to_string(), axis: -1,
+                name: "sm".to_string(),
+                x: "x".to_string(),
+                axis: -1,
             },
             mir_compat::MirOpCompat::Gelu {
-                name: "g".to_string(), x: "x".to_string(), mode: "EXACT".to_string(),
+                name: "g".to_string(),
+                x: "x".to_string(),
+                mode: "EXACT".to_string(),
             },
             mir_compat::MirOpCompat::ScaledDotProductAttention {
-                name: "sdpa".to_string(), query: "q".to_string(), key: "k".to_string(), value: "v".to_string(),
+                name: "sdpa".to_string(),
+                query: "q".to_string(),
+                key: "k".to_string(),
+                value: "v".to_string(),
             },
             mir_compat::MirOpCompat::ReadState {
-                name: "rs".to_string(), state_id: "s1".to_string(), shape: vec![128], dtype: mir_compat::MilDtypeCompat::Fp16,
+                name: "rs".to_string(),
+                state_id: "s1".to_string(),
+                shape: vec![128],
+                dtype: mir_compat::MilDtypeCompat::Fp16,
             },
             mir_compat::MirOpCompat::CoremlUpdateState {
-                name: "us".to_string(), state_id: "s1".to_string(), value: "v".to_string(),
+                name: "us".to_string(),
+                state_id: "s1".to_string(),
+                value: "v".to_string(),
             },
             mir_compat::MirOpCompat::Gather {
-                name: "ga".to_string(), x: "x".to_string(), indices: "idx".to_string(), axis: 0,
+                name: "ga".to_string(),
+                x: "x".to_string(),
+                indices: "idx".to_string(),
+                axis: 0,
             },
             mir_compat::MirOpCompat::ReduceMean {
-                name: "rm".to_string(), x: "x".to_string(), axes: vec![1], keep_dims: true,
+                name: "rm".to_string(),
+                x: "x".to_string(),
+                axes: vec![1],
+                keep_dims: true,
             },
-            mir_compat::MirOpCompat::Rsqrt {
-                name: "rsqrt".to_string(), x: "x".to_string(),
-            },
+            mir_compat::MirOpCompat::Rsqrt { name: "rsqrt".to_string(), x: "x".to_string() },
             mir_compat::MirOpCompat::RealDiv {
-                name: "rd".to_string(), x: "x".to_string(), y: "y".to_string(),
+                name: "rd".to_string(),
+                x: "x".to_string(),
+                y: "y".to_string(),
             },
             mir_compat::MirOpCompat::LayerNorm {
-                name: "ln".to_string(), x: "x".to_string(), weight_name: "w".to_string(), bias_name: None, epsilon: 1e-5, axes: vec![-1],
+                name: "ln".to_string(),
+                x: "x".to_string(),
+                weight_name: "w".to_string(),
+                bias_name: None,
+                epsilon: 1e-5,
+                axes: vec![-1],
             },
             mir_compat::MirOpCompat::Topk {
-                name: "tk".to_string(), x: "x".to_string(), k: 10, axis: -1,
+                name: "tk".to_string(),
+                x: "x".to_string(),
+                k: 10,
+                axis: -1,
             },
-            mir_compat::MirOpCompat::Cos {
-                name: "cos".to_string(), x: "x".to_string(),
-            },
-            mir_compat::MirOpCompat::Sin {
-                name: "sin".to_string(), x: "x".to_string(),
-            },
+            mir_compat::MirOpCompat::Cos { name: "cos".to_string(), x: "x".to_string() },
+            mir_compat::MirOpCompat::Sin { name: "sin".to_string(), x: "x".to_string() },
             mir_compat::MirOpCompat::Cast {
-                name: "cast".to_string(), x: "x".to_string(), dtype: mir_compat::MilDtypeCompat::Fp16,
+                name: "cast".to_string(),
+                x: "x".to_string(),
+                dtype: mir_compat::MilDtypeCompat::Fp16,
             },
         ];
 
@@ -1459,7 +1522,10 @@ mod tests {
         let proto_model = convert_to_proto_model(&model, &weight_entries);
 
         // Verify key fields
-        assert_eq!(proto_model.specification_version, proto::SpecificationVersion::SpecificationVersion8 as i32);
+        assert_eq!(
+            proto_model.specification_version,
+            proto::SpecificationVersion::SpecificationVersion8 as i32
+        );
         assert!(proto_model.description.is_some());
         assert!(proto_model.ml_program.is_some());
 
@@ -1472,7 +1538,10 @@ mod tests {
 
         // Parse back
         let parsed = proto::Model::decode(bytes.as_slice()).unwrap();
-        assert_eq!(parsed.specification_version, proto::SpecificationVersion::SpecificationVersion8 as i32);
+        assert_eq!(
+            parsed.specification_version,
+            proto::SpecificationVersion::SpecificationVersion8 as i32
+        );
         assert!(parsed.ml_program.is_some());
         assert!(parsed.ml_program.as_ref().unwrap().functions.contains_key("main"));
     }

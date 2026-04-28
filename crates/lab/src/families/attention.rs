@@ -14,9 +14,9 @@
 //! the attention-specific ANE path: QKV projection, softmax, and output
 //! projection as a fused unit.
 
-use ane_ir::task_spec::{SyntheticTaskSpec, TaskOp, MeasurementConfig};
-use anyhow::Result;
 use super::TaskFamilyTrait;
+use ane_ir::task_spec::{MeasurementConfig, SyntheticTaskSpec, TaskOp};
+use anyhow::Result;
 
 /// Configuration for the attention family generator.
 #[derive(Debug, Clone)]
@@ -51,10 +51,7 @@ impl Default for AttentionFamilyConfig {
 impl AttentionFamilyConfig {
     /// Create a new config with the given seed.
     pub fn new(seed: u64) -> Self {
-        Self {
-            seed,
-            ..Default::default()
-        }
+        Self { seed, ..Default::default() }
     }
 }
 
@@ -76,16 +73,12 @@ pub struct AttentionFamily {
 impl AttentionFamily {
     /// Create a new attention family generator with default config.
     pub fn new() -> Self {
-        Self {
-            config: AttentionFamilyConfig::default(),
-        }
+        Self { config: AttentionFamilyConfig::default() }
     }
 
     /// Create an attention family generator with the given seed.
     pub fn with_seed(seed: u64) -> Self {
-        Self {
-            config: AttentionFamilyConfig::new(seed),
-        }
+        Self { config: AttentionFamilyConfig::new(seed) }
     }
 
     /// Create an attention family generator with custom config.
@@ -208,8 +201,24 @@ mod tests {
             assert_eq!(t1.name, t2.name, "Task names must be identical for same config");
             assert_eq!(t1.family, t2.family);
             match (&t1.op, &t2.op) {
-                (TaskOp::Attention { embed_dim: e1, num_heads: h1, head_dim: d1, seq_len: s1, batch_size: b1, dtype: dt1 },
-                 TaskOp::Attention { embed_dim: e2, num_heads: h2, head_dim: d2, seq_len: s2, batch_size: b2, dtype: dt2 }) => {
+                (
+                    TaskOp::Attention {
+                        embed_dim: e1,
+                        num_heads: h1,
+                        head_dim: d1,
+                        seq_len: s1,
+                        batch_size: b1,
+                        dtype: dt1,
+                    },
+                    TaskOp::Attention {
+                        embed_dim: e2,
+                        num_heads: h2,
+                        head_dim: d2,
+                        seq_len: s2,
+                        batch_size: b2,
+                        dtype: dt2,
+                    },
+                ) => {
                     assert_eq!((e1, h1, d1, s1, b1, dt1), (e2, h2, d2, s2, b2, dt2));
                 }
                 _ => panic!("Expected both to be Attention"),
@@ -228,8 +237,10 @@ mod tests {
             assert_eq!(parsed.name, task.name);
             assert_eq!(parsed.family, task.family);
             match (&parsed.op, &task.op) {
-                (TaskOp::Attention { embed_dim: e1, .. },
-                 TaskOp::Attention { embed_dim: e2, .. }) => {
+                (
+                    TaskOp::Attention { embed_dim: e1, .. },
+                    TaskOp::Attention { embed_dim: e2, .. },
+                ) => {
                     assert_eq!(e1, e2);
                 }
                 _ => panic!("Expected Attention"),

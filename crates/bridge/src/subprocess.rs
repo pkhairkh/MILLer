@@ -73,7 +73,10 @@ impl PythonBridge {
         if !output.status.success() {
             return Ok(BridgeResult {
                 status: "error".into(),
-                error_message: Some(format!("Python bridge exited with {}: {}", output.status, stderr)),
+                error_message: Some(format!(
+                    "Python bridge exited with {}: {}",
+                    output.status, stderr
+                )),
                 output_path: None,
                 coremltools_version: None,
                 content_hash: None,

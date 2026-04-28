@@ -398,43 +398,111 @@ fn main() {
 
     match cli.command {
         Commands::Compile { input, output, bridge, python, knowledge, seed } => {
-            if let Err(e) = run_compile(&input, &output, &bridge, &python, knowledge.as_deref(), seed) {
+            if let Err(e) =
+                run_compile(&input, &output, &bridge, &python, knowledge.as_deref(), seed)
+            {
                 eprintln!("Compile failed: {}", e);
                 std::process::exit(1);
             }
         }
         Commands::CompileFull { input, output, bridge, python, knowledge, seed } => {
-            if let Err(e) = run_compile_full(&input, &output, &bridge, &python, knowledge.as_deref(), seed) {
+            if let Err(e) =
+                run_compile_full(&input, &output, &bridge, &python, knowledge.as_deref(), seed)
+            {
                 eprintln!("Compile-full failed: {}", e);
                 std::process::exit(1);
             }
         }
-        Commands::CompileSharded { input, output, bridge, python, knowledge, seed, proto_direct } => {
-            if let Err(e) = run_compile_sharded(&input, &output, &bridge, &python, knowledge.as_deref(), seed, proto_direct) {
+        Commands::CompileSharded {
+            input,
+            output,
+            bridge,
+            python,
+            knowledge,
+            seed,
+            proto_direct,
+        } => {
+            if let Err(e) = run_compile_sharded(
+                &input,
+                &output,
+                &bridge,
+                &python,
+                knowledge.as_deref(),
+                seed,
+                proto_direct,
+            ) {
                 eprintln!("Compile-sharded failed: {}", e);
                 std::process::exit(1);
             }
         }
-        Commands::CompileFullSharded { input, output, bridge, python, knowledge, seed, proto_direct } => {
-            if let Err(e) = run_compile_full_sharded(&input, &output, &bridge, &python, knowledge.as_deref(), seed, proto_direct) {
+        Commands::CompileFullSharded {
+            input,
+            output,
+            bridge,
+            python,
+            knowledge,
+            seed,
+            proto_direct,
+        } => {
+            if let Err(e) = run_compile_full_sharded(
+                &input,
+                &output,
+                &bridge,
+                &python,
+                knowledge.as_deref(),
+                seed,
+                proto_direct,
+            ) {
                 eprintln!("Compile-full-sharded failed: {}", e);
                 std::process::exit(1);
             }
         }
         Commands::LabLoop { input, output, bridge, python, knowledge, seed, generated_from } => {
-            if let Err(e) = run_lab_loop(&input, &output, &bridge, &python, &knowledge, seed, generated_from.as_deref()) {
+            if let Err(e) = run_lab_loop(
+                &input,
+                &output,
+                &bridge,
+                &python,
+                &knowledge,
+                seed,
+                generated_from.as_deref(),
+            ) {
                 eprintln!("Lab-loop run failed: {}", e);
                 std::process::exit(1);
             }
         }
         Commands::Lab { input, output, bridge, python, skip_inspect, seed, generated_from } => {
-            if let Err(e) = run_lab(&input, &output, &bridge, &python, !skip_inspect, seed, generated_from.as_deref()) {
+            if let Err(e) = run_lab(
+                &input,
+                &output,
+                &bridge,
+                &python,
+                !skip_inspect,
+                seed,
+                generated_from.as_deref(),
+            ) {
                 eprintln!("Lab run failed: {}", e);
                 std::process::exit(1);
             }
         }
-        Commands::Profile { mlpackage, output, bridge, python, warmup, iterations, compute_units } => {
-            if let Err(e) = run_profile(&mlpackage, &output, &bridge, &python, warmup, iterations, &compute_units) {
+        Commands::Profile {
+            mlpackage,
+            output,
+            bridge,
+            python,
+            warmup,
+            iterations,
+            compute_units,
+        } => {
+            if let Err(e) = run_profile(
+                &mlpackage,
+                &output,
+                &bridge,
+                &python,
+                warmup,
+                iterations,
+                &compute_units,
+            ) {
                 eprintln!("Profile failed: {}", e);
                 std::process::exit(1);
             }
@@ -469,8 +537,26 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        Commands::Verify { mlpackage, output, bridge, python, compute_units, mir_ops, expected_functions, expected_states } => {
-            if let Err(e) = run_verify(&mlpackage, &output, &bridge, &python, &compute_units, mir_ops.as_deref(), expected_functions.as_deref(), expected_states.as_deref()) {
+        Commands::Verify {
+            mlpackage,
+            output,
+            bridge,
+            python,
+            compute_units,
+            mir_ops,
+            expected_functions,
+            expected_states,
+        } => {
+            if let Err(e) = run_verify(
+                &mlpackage,
+                &output,
+                &bridge,
+                &python,
+                &compute_units,
+                mir_ops.as_deref(),
+                expected_functions.as_deref(),
+                expected_states.as_deref(),
+            ) {
                 eprintln!("Verify failed: {}", e);
                 std::process::exit(1);
             }
@@ -515,12 +601,16 @@ fn run_compile(
     knowledge_dir: Option<&str>,
     _seed: u64,
 ) -> Result<(), String> {
-    use ane_ir::task_spec::load_synthetic_task;
-    use ane_ir::linear_slice::{sir_from_linear_projection, lower_linear_projection_to_mir, FamilyPayload};
     use ane_bridge::subprocess::PythonBridge;
+    use ane_ir::linear_slice::{
+        lower_linear_projection_to_mir, sir_from_linear_projection, FamilyPayload,
+    };
+    use ane_ir::task_spec::load_synthetic_task;
 
-    println!("=== MILLer — Vertical Slice Compile ===\
-");
+    println!(
+        "=== MILLer — Vertical Slice Compile ===\
+"
+    );
 
     // Optionally load knowledge store for awareness (fast-path compile does not
     // drive the pass pipeline, but it records whether knowledge was available).
@@ -542,7 +632,9 @@ fn run_compile(
                 // Treat as seed directory
                 let tmp_store_dir = std::env::temp_dir().join("ane_compile_knowledge_store");
                 let tmp_store_dir_str = tmp_store_dir.to_string_lossy().into_owned();
-                if let Ok(mut store) = ane_knowledge::store::KnowledgeStore::open(&tmp_store_dir_str) {
+                if let Ok(mut store) =
+                    ane_knowledge::store::KnowledgeStore::open(&tmp_store_dir_str)
+                {
                     if let Ok(count) = store.load_seeds_from_directory(kdir) {
                         if count > 0 {
                             println!("  Knowledge seeds: {} entries loaded from {}", count, kdir);
@@ -577,15 +669,23 @@ fn run_compile(
     // lowers directly from spec to MIR. The full pass pipeline (compile-full)
     // drives SIR → AIR → MIR through the pass infrastructure.
     let sir = sir_from_linear_projection(&spec)?;
-    println!("  SIR: {} nodes, {} inputs, {} outputs",
-        sir.nodes.len(), sir.inputs.len(), sir.outputs.len());
+    println!(
+        "  SIR: {} nodes, {} inputs, {} outputs",
+        sir.nodes.len(),
+        sir.inputs.len(),
+        sir.outputs.len()
+    );
 
     // Step 3: Lower to MIR
     println!("[3/7] Lowering SIR to MIR...");
     let shard_name = format!("{}_shard_0", spec.name);
     let mir = lower_linear_projection_to_mir(&spec, &shard_name)?;
-    println!("  MIR: {} nodes, {} inputs, {} outputs",
-        mir.nodes.len(), mir.inputs.len(), mir.outputs.len());
+    println!(
+        "  MIR: {} nodes, {} inputs, {} outputs",
+        mir.nodes.len(),
+        mir.inputs.len(),
+        mir.outputs.len()
+    );
 
     // Step 4: Build bridge payload
     println!("[4/7] Building bridge payload...");
@@ -600,7 +700,8 @@ fn run_compile(
     // Step 5: Invoke Python bridge
     println!("[5/7] Invoking Python bridge...");
     let bridge = PythonBridge::new(python_path, bridge_script);
-    let result = bridge.execute_raw_payload(&payload_json)
+    let result = bridge
+        .execute_raw_payload(&payload_json)
         .map_err(|e| format!("Bridge execution failed: {}", e))?;
 
     if result.status == "success" {
@@ -635,19 +736,24 @@ fn run_compile(
         if let Some(obj) = manifest.as_object_mut() {
             obj.insert("knowledge_consulted".to_string(), serde_json::json!(true));
             obj.insert("knowledge_seed_count".to_string(), serde_json::json!(knowledge_seed_count));
-            obj.insert("knowledge_observation_count".to_string(), serde_json::json!(knowledge_observation_count));
+            obj.insert(
+                "knowledge_observation_count".to_string(),
+                serde_json::json!(knowledge_observation_count),
+            );
             obj.insert("knowledge_path".to_string(), serde_json::json!("fast_path_compile"));
         }
     } else if knowledge_dir.is_some() {
         // Knowledge was requested but not available
         if let Some(obj) = manifest.as_object_mut() {
             obj.insert("knowledge_consulted".to_string(), serde_json::json!(false));
-            obj.insert("knowledge_note".to_string(), serde_json::json!("knowledge directory specified but no store found"));
+            obj.insert(
+                "knowledge_note".to_string(),
+                serde_json::json!("knowledge directory specified but no store found"),
+            );
         }
     }
     let manifest_path = output_path.join("manifest.json");
-    fs::create_dir_all(&output_path)
-        .map_err(|e| format!("Failed to create output dir: {}", e))?;
+    fs::create_dir_all(&output_path).map_err(|e| format!("Failed to create output dir: {}", e))?;
     let manifest_json = serde_json::to_string_pretty(&manifest)
         .map_err(|e| format!("Manifest serialization failed: {}", e))?;
     fs::write(&manifest_path, &manifest_json)
@@ -658,8 +764,7 @@ fn run_compile(
     let mir_path = output_path.join("mir.json");
     let mir_json = serde_json::to_string_pretty(&mir)
         .map_err(|e| format!("MIR serialization failed: {}", e))?;
-    fs::write(&mir_path, &mir_json)
-        .map_err(|e| format!("Failed to write MIR: {}", e))?;
+    fs::write(&mir_path, &mir_json).map_err(|e| format!("Failed to write MIR: {}", e))?;
 
     // Step 7: Write backend-knowledge update
     println!("[7/7] Writing backend-knowledge update...");
@@ -700,13 +805,16 @@ impl<'a> StoreKnowledgeQuery<'a> {
 }
 
 impl<'a> ane_passes::knowledge_query::PassKnowledgeQuery for StoreKnowledgeQuery<'a> {
-    fn query_legality(&self, op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<ane_passes::knowledge_query::LegalityInfo> {
-        use ane_knowledge::query::{KnowledgeQueryable, KnowledgeQuery};
+    fn query_legality(
+        &self,
+        op_pattern: &str,
+        _scope: Option<&ane_ir::kir::KnowledgeScope>,
+    ) -> Option<ane_passes::knowledge_query::LegalityInfo> {
         use ane_ir::kir::KnowledgeType;
+        use ane_knowledge::query::{KnowledgeQuery, KnowledgeQueryable};
 
-        let query = KnowledgeQuery::new()
-            .with_type(KnowledgeType::LegalityRule)
-            .with_min_confidence(0.1);
+        let query =
+            KnowledgeQuery::new().with_type(KnowledgeType::LegalityRule).with_min_confidence(0.1);
 
         let results = self.store.query(&query).ok()?;
 
@@ -717,7 +825,8 @@ impl<'a> ane_passes::knowledge_query::PassKnowledgeQuery for StoreKnowledgeQuery
                 // - Exact: "mb.matmul"
                 // - Pipe-separated alternatives: "mb.add|mb.mul|mb.abs"
                 if pattern.split('|').any(|p| p.trim() == op_pattern) {
-                    let ane_legal = unit.payload.get("ane_legal").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let ane_legal =
+                        unit.payload.get("ane_legal").and_then(|v| v.as_bool()).unwrap_or(false);
                     return Some(ane_passes::knowledge_query::LegalityInfo {
                         ane_legal,
                         confidence: unit.confidence,
@@ -730,9 +839,13 @@ impl<'a> ane_passes::knowledge_query::PassKnowledgeQuery for StoreKnowledgeQuery
         None
     }
 
-    fn query_risk(&self, op_pattern: &str, scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<ane_passes::knowledge_query::RiskInfo> {
-        use ane_knowledge::query::{KnowledgeQueryable, KnowledgeQuery};
+    fn query_risk(
+        &self,
+        op_pattern: &str,
+        scope: Option<&ane_ir::kir::KnowledgeScope>,
+    ) -> Option<ane_passes::knowledge_query::RiskInfo> {
         use ane_ir::kir::KnowledgeType;
+        use ane_knowledge::query::{KnowledgeQuery, KnowledgeQueryable};
 
         // Query for survival data (fallback risk)
         let survival_query = KnowledgeQuery::new()
@@ -743,8 +856,14 @@ impl<'a> ane_passes::knowledge_query::PassKnowledgeQuery for StoreKnowledgeQuery
             for unit in survival_results {
                 if let Some(pattern) = unit.payload.get("op_pattern").and_then(|v| v.as_str()) {
                     if pattern.split('|').any(|p| p.trim() == op_pattern) {
-                        let fallback_risk = unit.payload.get("fallback_risk").and_then(|v| v.as_f64()).unwrap_or(0.1) as f32;
-                        let drift_risk = unit.payload.get("drift_risk").and_then(|v| v.as_f64()).unwrap_or(0.05) as f32;
+                        let fallback_risk = unit
+                            .payload
+                            .get("fallback_risk")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.1) as f32;
+                        let drift_risk =
+                            unit.payload.get("drift_risk").and_then(|v| v.as_f64()).unwrap_or(0.05)
+                                as f32;
                         return Some(ane_passes::knowledge_query::RiskInfo {
                             fallback_risk,
                             drift_risk,
@@ -760,7 +879,8 @@ impl<'a> ane_passes::knowledge_query::PassKnowledgeQuery for StoreKnowledgeQuery
         // Fall back to legality knowledge: if an op is known ANE-legal with high confidence,
         // its fallback risk is low. If illegal, fallback risk is high.
         let legality = self.query_legality(op_pattern, scope)?;
-        let fallback_risk = if legality.ane_legal { 1.0 - legality.confidence } else { legality.confidence };
+        let fallback_risk =
+            if legality.ane_legal { 1.0 - legality.confidence } else { legality.confidence };
         let drift_risk = fallback_risk * 0.5;
 
         Some(ane_passes::knowledge_query::RiskInfo {
@@ -772,9 +892,14 @@ impl<'a> ane_passes::knowledge_query::PassKnowledgeQuery for StoreKnowledgeQuery
         })
     }
 
-    fn query_precision_hazard(&self, op_pattern: &str, current_dtype: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<ane_passes::knowledge_query::PrecisionHazardInfo> {
-        use ane_knowledge::query::{KnowledgeQueryable, KnowledgeQuery};
+    fn query_precision_hazard(
+        &self,
+        op_pattern: &str,
+        current_dtype: &str,
+        _scope: Option<&ane_ir::kir::KnowledgeScope>,
+    ) -> Option<ane_passes::knowledge_query::PrecisionHazardInfo> {
         use ane_ir::kir::KnowledgeType;
+        use ane_knowledge::query::{KnowledgeQuery, KnowledgeQueryable};
 
         // Query for precision hazard knowledge
         let hazard_query = KnowledgeQuery::new()
@@ -788,13 +913,17 @@ impl<'a> ane_passes::knowledge_query::PassKnowledgeQuery for StoreKnowledgeQuery
         // and "bitwidth" or "quality_impact" to indicate severity.
         for unit in results {
             // Check op pattern match
-            let op_match = unit.payload.get("op")
+            let op_match = unit
+                .payload
+                .get("op")
                 .and_then(|v| v.as_str())
                 .map(|op| op == op_pattern)
                 .unwrap_or(false);
 
             // Also check op_pattern field (used by legality/risk entries)
-            let pattern_match = unit.payload.get("op_pattern")
+            let pattern_match = unit
+                .payload
+                .get("op_pattern")
                 .and_then(|v| v.as_str())
                 .map(|p| p.split('|').any(|s| s.trim() == op_pattern))
                 .unwrap_or(false);
@@ -803,9 +932,8 @@ impl<'a> ane_passes::knowledge_query::PassKnowledgeQuery for StoreKnowledgeQuery
                 // Determine if this hazard applies to the current dtype.
                 // The seed entries have "bitwidth" and "quality_impact" fields.
                 // A hazard with "high" quality_impact means fp16 is unsafe.
-                let quality_impact = unit.payload.get("quality_impact")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("none");
+                let quality_impact =
+                    unit.payload.get("quality_impact").and_then(|v| v.as_str()).unwrap_or("none");
 
                 // Only report a hazard if the quality impact is high or medium
                 // and the current dtype is fp16 (the default)
@@ -822,7 +950,9 @@ impl<'a> ane_passes::knowledge_query::PassKnowledgeQuery for StoreKnowledgeQuery
                         confidence: unit.confidence,
                         evidence_count: unit.evidence_count,
                         source_id: Some(unit.id.clone()),
-                        description: unit.payload.get("note")
+                        description: unit
+                            .payload
+                            .get("note")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string()),
                     });
@@ -832,9 +962,13 @@ impl<'a> ane_passes::knowledge_query::PassKnowledgeQuery for StoreKnowledgeQuery
         None
     }
 
-    fn query_compute_plan_placement(&self, op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<ane_passes::knowledge_query::ComputePlanPlacementInfo> {
-        use ane_knowledge::query::{KnowledgeQueryable, KnowledgeQuery};
+    fn query_compute_plan_placement(
+        &self,
+        op_pattern: &str,
+        _scope: Option<&ane_ir::kir::KnowledgeScope>,
+    ) -> Option<ane_passes::knowledge_query::ComputePlanPlacementInfo> {
         use ane_ir::kir::KnowledgeType;
+        use ane_knowledge::query::{KnowledgeQuery, KnowledgeQueryable};
 
         let query = KnowledgeQuery::new()
             .with_type(KnowledgeType::SurvivalMatrixEntry)
@@ -845,8 +979,11 @@ impl<'a> ane_passes::knowledge_query::PassKnowledgeQuery for StoreKnowledgeQuery
         for unit in results {
             if let Some(pattern) = unit.payload.get("op_pattern").and_then(|v| v.as_str()) {
                 if pattern.split('|').any(|p| p.trim() == op_pattern) {
-                    let ane_placed = unit.payload.get("ane_placed").and_then(|v| v.as_bool()).unwrap_or(false);
-                    let preferred_device = unit.payload.get("preferred_device")
+                    let ane_placed =
+                        unit.payload.get("ane_placed").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let preferred_device = unit
+                        .payload
+                        .get("preferred_device")
                         .and_then(|v| v.as_str())
                         .unwrap_or("CPU")
                         .to_string();
@@ -883,17 +1020,17 @@ fn run_compile_full(
     knowledge_dir: Option<&str>,
     _seed: u64,
 ) -> Result<(), String> {
-    use ane_ir::task_spec::load_synthetic_task;
-    use ane_ir::linear_slice::{sir_from_linear_projection, FamilyPayload};
     use ane_bridge::subprocess::PythonBridge;
+    use ane_ir::linear_slice::{sir_from_linear_projection, FamilyPayload};
+    use ane_ir::task_spec::load_synthetic_task;
     use ane_passes::canonicalize::CanonicalizePass;
-    use ane_passes::staticize::StaticizePass;
+    use ane_passes::knowledge_query::NoKnowledge;
+    use ane_passes::legality_rewrite::{DecompositionContext, LegalityRewritePass};
+    use ane_passes::mil_lower::MilLowerPass;
     use ane_passes::precision_policy::PrecisionPolicyPass;
-    use ane_passes::legality_rewrite::{LegalityRewritePass, DecompositionContext};
     use ane_passes::risk_annotate::RiskAnnotatePass;
     use ane_passes::shard_plan::ShardPlanPass;
-    use ane_passes::mil_lower::MilLowerPass;
-    use ane_passes::knowledge_query::NoKnowledge;
+    use ane_passes::staticize::StaticizePass;
 
     println!("=== MILLer — Full Pass Pipeline Compile ===\n");
 
@@ -907,7 +1044,10 @@ fn run_compile_full(
 
     // Verify the task op type (reject sharded types, print op info via generic methods)
     if spec.op.is_sharded() {
-        return Err(format!("Use 'compile-full-sharded' command for {} tasks", spec.op.family_id()));
+        return Err(format!(
+            "Use 'compile-full-sharded' command for {} tasks",
+            spec.op.family_id()
+        ));
     }
     let (input_dim, output_dim, _batch_size, _dtype) = spec.op.primary_dims();
     println!("  Op: {} {}x{}", spec.op.op_type_str(), input_dim, output_dim);
@@ -915,8 +1055,12 @@ fn run_compile_full(
     // Step 2: Build SIR graph
     println!("[2/13] Building SIR graph...");
     let sir = sir_from_linear_projection(&spec)?;
-    println!("  SIR: {} nodes, {} inputs, {} outputs",
-        sir.nodes.len(), sir.inputs.len(), sir.outputs.len());
+    println!(
+        "  SIR: {} nodes, {} inputs, {} outputs",
+        sir.nodes.len(),
+        sir.inputs.len(),
+        sir.outputs.len()
+    );
 
     // Step 2b: Set up knowledge query for the pass pipeline
     // If a knowledge directory is provided, load seeds and create a StoreKnowledgeQuery.
@@ -943,19 +1087,23 @@ fn run_compile_full(
                 let tmp_store_dir = std::env::temp_dir().join("ane_compile_full_knowledge_store");
                 let tmp_store_dir_str = tmp_store_dir.to_string_lossy().into_owned();
                 match ane_knowledge::store::KnowledgeStore::open(&tmp_store_dir_str) {
-                    Ok(mut store) => {
-                        match store.load_seeds_from_directory(kdir) {
-                            Ok(count) => {
-                                if count > 0 {
-                                    println!("  Knowledge seeds: {} entries loaded from {}", count, kdir);
-                                    knowledge_store = Some(store);
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("  Warning: failed to load knowledge seeds from {}: {}", kdir, e);
+                    Ok(mut store) => match store.load_seeds_from_directory(kdir) {
+                        Ok(count) => {
+                            if count > 0 {
+                                println!(
+                                    "  Knowledge seeds: {} entries loaded from {}",
+                                    count, kdir
+                                );
+                                knowledge_store = Some(store);
                             }
                         }
-                    }
+                        Err(e) => {
+                            eprintln!(
+                                "  Warning: failed to load knowledge seeds from {}: {}",
+                                kdir, e
+                            );
+                        }
+                    },
                     Err(e) => {
                         eprintln!("  Warning: failed to create temporary knowledge store: {}", e);
                     }
@@ -967,15 +1115,13 @@ fn run_compile_full(
     // Step 3: Run CanonicalizePass on SIR (pass-through for now)
     println!("[3/13] Running CanonicalizePass...");
     let canonicalize = CanonicalizePass::new();
-    let sir = canonicalize.run(sir)
-        .map_err(|e| format!("CanonicalizePass failed: {}", e))?;
+    let sir = canonicalize.run(sir).map_err(|e| format!("CanonicalizePass failed: {}", e))?;
     println!("  Canonicalize: {} nodes (pass-through for linear projection)", sir.nodes.len());
 
     // Step 4: Run StaticizePass on SIR (pass-through for now)
     println!("[4/13] Running StaticizePass...");
     let staticize = StaticizePass::new();
-    let sir = staticize.run(sir)
-        .map_err(|e| format!("StaticizePass failed: {}", e))?;
+    let sir = staticize.run(sir).map_err(|e| format!("StaticizePass failed: {}", e))?;
     println!("  Staticize: {} nodes (pass-through for linear projection)", sir.nodes.len());
 
     // Step 4b: Run PrecisionPolicyPass (SIR→SIR with dtype adaptation)
@@ -987,22 +1133,28 @@ fn run_compile_full(
     let sir = match &knowledge_store {
         Some(store) => {
             let query = StoreKnowledgeQuery::new(store);
-            precision_policy.run(sir, &query)
+            precision_policy
+                .run(sir, &query)
                 .map_err(|e| format!("PrecisionPolicyPass failed: {}", e))?
         }
         None => {
             let no_knowledge = NoKnowledge;
-            precision_policy.run(sir, &no_knowledge)
+            precision_policy
+                .run(sir, &no_knowledge)
                 .map_err(|e| format!("PrecisionPolicyPass failed: {}", e))?
         }
     };
     if precision_policy.has_adaptations() {
         println!("  PrecisionPolicy: {} adaptation(s) applied", precision_policy.adaptations.len());
         for adaptation in &precision_policy.adaptations {
-            println!("    {}:{} → {} (source: {}, confidence: {:.2})",
-                adaptation.node_name, adaptation.original_dtype, adaptation.adapted_dtype,
+            println!(
+                "    {}:{} → {} (source: {}, confidence: {:.2})",
+                adaptation.node_name,
+                adaptation.original_dtype,
+                adaptation.adapted_dtype,
                 adaptation.source_id.as_deref().unwrap_or("unknown"),
-                adaptation.confidence);
+                adaptation.confidence
+            );
         }
     } else {
         println!("  PrecisionPolicy: no adaptations (all nodes use default fp16)");
@@ -1011,15 +1163,48 @@ fn run_compile_full(
     // Step 5: Run LegalityRewritePass (SIR→AIR)
     // Construct DecompositionContext from task spec for truthful AIR shapes (Sprint 56)
     let decomp_ctx: Option<DecompositionContext> = match &spec.op {
-        ane_ir::task_spec::TaskOp::Attention { embed_dim, num_heads, head_dim, seq_len, batch_size, .. } => {
-            Some(DecompositionContext::for_attention(*batch_size, *embed_dim, *num_heads, *head_dim, *seq_len))
-        }
-        ane_ir::task_spec::TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, .. } => {
-            Some(DecompositionContext::for_decode_step(*batch_size, *embed_dim, *num_heads, *head_dim, *kv_len))
-        }
-        ane_ir::task_spec::TaskOp::ShardedDecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, .. } => {
-            Some(DecompositionContext::for_decode_step(*batch_size, *embed_dim, *num_heads, *head_dim, *kv_len))
-        }
+        ane_ir::task_spec::TaskOp::Attention {
+            embed_dim,
+            num_heads,
+            head_dim,
+            seq_len,
+            batch_size,
+            ..
+        } => Some(DecompositionContext::for_attention(
+            *batch_size,
+            *embed_dim,
+            *num_heads,
+            *head_dim,
+            *seq_len,
+        )),
+        ane_ir::task_spec::TaskOp::DecodeStep {
+            embed_dim,
+            num_heads,
+            head_dim,
+            kv_len,
+            batch_size,
+            ..
+        } => Some(DecompositionContext::for_decode_step(
+            *batch_size,
+            *embed_dim,
+            *num_heads,
+            *head_dim,
+            *kv_len,
+        )),
+        ane_ir::task_spec::TaskOp::ShardedDecodeStep {
+            embed_dim,
+            num_heads,
+            head_dim,
+            kv_len,
+            batch_size,
+            ..
+        } => Some(DecompositionContext::for_decode_step(
+            *batch_size,
+            *embed_dim,
+            *num_heads,
+            *head_dim,
+            *kv_len,
+        )),
         _ => None,
     };
     println!("[5/13] Running LegalityRewritePass (SIR→AIR)...");
@@ -1027,17 +1212,23 @@ fn run_compile_full(
     let air = match &knowledge_store {
         Some(store) => {
             let query = StoreKnowledgeQuery::new(store);
-            legality.run(sir.clone(), &query, decomp_ctx.as_ref())
+            legality
+                .run(sir.clone(), &query, decomp_ctx.as_ref())
                 .map_err(|e| format!("LegalityRewritePass failed: {}", e))?
         }
         None => {
             let no_knowledge = NoKnowledge;
-            legality.run(sir.clone(), &no_knowledge, decomp_ctx.as_ref())
+            legality
+                .run(sir.clone(), &no_knowledge, decomp_ctx.as_ref())
                 .map_err(|e| format!("LegalityRewritePass failed: {}", e))?
         }
     };
-    println!("  AIR: {} nodes, {} inputs, {} outputs",
-        air.nodes.len(), air.inputs.len(), air.outputs.len());
+    println!(
+        "  AIR: {} nodes, {} inputs, {} outputs",
+        air.nodes.len(),
+        air.inputs.len(),
+        air.outputs.len()
+    );
 
     // Step 6: Run RiskAnnotatePass on AIR
     println!("[6/13] Running RiskAnnotatePass...");
@@ -1045,13 +1236,11 @@ fn run_compile_full(
     let air = match &knowledge_store {
         Some(store) => {
             let query = StoreKnowledgeQuery::new(store);
-            risk.run(air, &query)
-                .map_err(|e| format!("RiskAnnotatePass failed: {}", e))?
+            risk.run(air, &query).map_err(|e| format!("RiskAnnotatePass failed: {}", e))?
         }
         None => {
             let no_knowledge = NoKnowledge;
-            risk.run(air, &no_knowledge)
-                .map_err(|e| format!("RiskAnnotatePass failed: {}", e))?
+            risk.run(air, &no_knowledge).map_err(|e| format!("RiskAnnotatePass failed: {}", e))?
         }
     };
     println!("  RiskAnnotate: {} nodes annotated", air.nodes.len());
@@ -1065,22 +1254,27 @@ fn run_compile_full(
     let (shard_plan, pir) = match &knowledge_store {
         Some(store) => {
             let query = StoreKnowledgeQuery::new(store);
-            shard_plan_pass.run(&sir, &query)
-                .map_err(|e| format!("ShardPlanPass failed: {}", e))?
+            shard_plan_pass.run(&sir, &query).map_err(|e| format!("ShardPlanPass failed: {}", e))?
         }
         None => {
             let no_knowledge = NoKnowledge;
-            shard_plan_pass.run(&sir, &no_knowledge)
+            shard_plan_pass
+                .run(&sir, &no_knowledge)
                 .map_err(|e| format!("ShardPlanPass failed: {}", e))?
         }
     };
     if shard_plan_pass.has_adaptations() {
         println!("  ShardPlan: {} adaptation(s) applied", shard_plan_pass.adaptations.len());
         for adaptation in &shard_plan_pass.adaptations {
-            println!("    {}:{} → {} (source: {}, fallback_risk: {:.2}, confidence: {:.2})",
-                adaptation.shard_name, adaptation.original_compute_units, adaptation.adapted_compute_units,
+            println!(
+                "    {}:{} → {} (source: {}, fallback_risk: {:.2}, confidence: {:.2})",
+                adaptation.shard_name,
+                adaptation.original_compute_units,
+                adaptation.adapted_compute_units,
                 adaptation.source_id.as_deref().unwrap_or("unknown"),
-                adaptation.fallback_risk, adaptation.confidence);
+                adaptation.fallback_risk,
+                adaptation.confidence
+            );
         }
     } else {
         println!("  ShardPlan: no adaptations (all shards use default CPU_AND_NE)");
@@ -1091,12 +1285,17 @@ fn run_compile_full(
     // Step 8: Run MilLowerPass (AIR→Vec<MIR>)
     println!("[8/13] Running MilLowerPass (AIR→MIR)...");
     let mil_lower = MilLowerPass::new();
-    let mirs = mil_lower.run(&air, &shard_plan)
-        .map_err(|e| format!("MilLowerPass failed: {}", e))?;
+    let mirs =
+        mil_lower.run(&air, &shard_plan).map_err(|e| format!("MilLowerPass failed: {}", e))?;
     println!("  MIR: {} shard graphs produced", mirs.len());
     for (i, mir) in mirs.iter().enumerate() {
-        println!("    MIR[{}]: {} nodes, {} inputs, {} outputs",
-            i, mir.nodes.len(), mir.inputs.len(), mir.outputs.len());
+        println!(
+            "    MIR[{}]: {} nodes, {} inputs, {} outputs",
+            i,
+            mir.nodes.len(),
+            mir.inputs.len(),
+            mir.outputs.len()
+        );
     }
 
     // Step 9: Build bridge payload from spec
@@ -1115,7 +1314,11 @@ fn run_compile_full(
         None
     };
     // Use generic FamilyPayload with dtype override — no per-variant match needed
-    let payload = FamilyPayload::from_spec_with_override(&spec, mlpackage_output.to_str().unwrap_or(""), adapted_dtype)?;
+    let payload = FamilyPayload::from_spec_with_override(
+        &spec,
+        mlpackage_output.to_str().unwrap_or(""),
+        adapted_dtype,
+    )?;
     let payload_json = serde_json::to_value(&payload)
         .map_err(|e| format!("Payload serialization failed: {}", e))?;
     println!("  Payload: command={}, task={}", payload.command, payload.task_name);
@@ -1126,7 +1329,8 @@ fn run_compile_full(
     // Step 10: Invoke Python bridge
     println!("[10/13] Invoking Python bridge...");
     let bridge = PythonBridge::new(python_path, bridge_script);
-    let result = bridge.execute_raw_payload(&payload_json)
+    let result = bridge
+        .execute_raw_payload(&payload_json)
         .map_err(|e| format!("Bridge execution failed: {}", e))?;
 
     if result.status == "success" {
@@ -1149,8 +1353,7 @@ fn run_compile_full(
 
     // Step 11: Write manifest (version "0.5.0" for pass-pipeline path)
     println!("[11/13] Writing artifact manifest...");
-    fs::create_dir_all(&output_path)
-        .map_err(|e| format!("Failed to create output dir: {}", e))?;
+    fs::create_dir_all(&output_path).map_err(|e| format!("Failed to create output dir: {}", e))?;
 
     let mut manifest = {
         // Extract MIR op types from each MIR graph for the manifest.
@@ -1158,32 +1361,40 @@ fn run_compile_full(
         // from the compile manifest, closing the usability gap where
         // users had to manually specify expected MIR ops.
         use ane_artifacts::manifest::MirOpEntry;
-        let mir_ops_per_graph: Vec<Vec<MirOpEntry>> = mirs.iter().map(|mir| {
-            mir.nodes.iter().map(|node| {
-                MirOpEntry {
-                    op_type: format!("{:?}", node.op)
-                        .strip_prefix("MIL")
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| format!("{:?}", node.op)),
-                }
-            }).collect()
-        }).collect();
+        let mir_ops_per_graph: Vec<Vec<MirOpEntry>> = mirs
+            .iter()
+            .map(|mir| {
+                mir.nodes
+                    .iter()
+                    .map(|node| MirOpEntry {
+                        op_type: format!("{:?}", node.op)
+                            .strip_prefix("MIL")
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| format!("{:?}", node.op)),
+                    })
+                    .collect()
+            })
+            .collect();
         build_artifact_manifest_pass_pipeline(&spec, &result, &task_hash, &pir, &mir_ops_per_graph)
     };
 
     // Add precision adaptation provenance to the manifest (S16.3)
     if precision_policy.has_adaptations() {
         if let Some(obj) = manifest.as_object_mut() {
-            let adaptations: Vec<serde_json::Value> = precision_policy.adaptations.iter().map(|a| {
-                serde_json::json!({
-                    "node_name": a.node_name,
-                    "original_dtype": a.original_dtype,
-                    "adapted_dtype": a.adapted_dtype,
-                    "source_id": a.source_id,
-                    "confidence": a.confidence,
-                    "reason": a.reason,
+            let adaptations: Vec<serde_json::Value> = precision_policy
+                .adaptations
+                .iter()
+                .map(|a| {
+                    serde_json::json!({
+                        "node_name": a.node_name,
+                        "original_dtype": a.original_dtype,
+                        "adapted_dtype": a.adapted_dtype,
+                        "source_id": a.source_id,
+                        "confidence": a.confidence,
+                        "reason": a.reason,
+                    })
                 })
-            }).collect();
+                .collect();
             obj.insert("precision_adaptations".to_string(), serde_json::json!(adaptations));
             obj.insert("precision_adapted".to_string(), serde_json::json!(true));
         }
@@ -1198,18 +1409,22 @@ fn run_compile_full(
     // the compute unit assignment to change, the adaptation is recorded here.
     if shard_plan_pass.has_adaptations() {
         if let Some(obj) = manifest.as_object_mut() {
-            let adaptations: Vec<serde_json::Value> = shard_plan_pass.adaptations.iter().map(|a| {
-                serde_json::json!({
-                    "shard_name": a.shard_name,
-                    "original_compute_units": a.original_compute_units,
-                    "adapted_compute_units": a.adapted_compute_units,
-                    "op_pattern": a.op_pattern,
-                    "fallback_risk": a.fallback_risk,
-                    "source_id": a.source_id,
-                    "confidence": a.confidence,
-                    "reason": a.reason,
+            let adaptations: Vec<serde_json::Value> = shard_plan_pass
+                .adaptations
+                .iter()
+                .map(|a| {
+                    serde_json::json!({
+                        "shard_name": a.shard_name,
+                        "original_compute_units": a.original_compute_units,
+                        "adapted_compute_units": a.adapted_compute_units,
+                        "op_pattern": a.op_pattern,
+                        "fallback_risk": a.fallback_risk,
+                        "source_id": a.source_id,
+                        "confidence": a.confidence,
+                        "reason": a.reason,
+                    })
                 })
-            }).collect();
+                .collect();
             obj.insert("compute_unit_adaptations".to_string(), serde_json::json!(adaptations));
             obj.insert("compute_units_adapted".to_string(), serde_json::json!(true));
         }
@@ -1231,27 +1446,23 @@ fn run_compile_full(
     let sir_path = output_path.join("sir.json");
     let sir_json = serde_json::to_string_pretty(&sir)
         .map_err(|e| format!("SIR serialization failed: {}", e))?;
-    fs::write(&sir_path, &sir_json)
-        .map_err(|e| format!("Failed to write SIR: {}", e))?;
+    fs::write(&sir_path, &sir_json).map_err(|e| format!("Failed to write SIR: {}", e))?;
 
     let air_path = output_path.join("air.json");
     let air_json = serde_json::to_string_pretty(&air)
         .map_err(|e| format!("AIR serialization failed: {}", e))?;
-    fs::write(&air_path, &air_json)
-        .map_err(|e| format!("Failed to write AIR: {}", e))?;
+    fs::write(&air_path, &air_json).map_err(|e| format!("Failed to write AIR: {}", e))?;
 
     let pir_path = output_path.join("pir.json");
     let pir_json = serde_json::to_string_pretty(&pir)
         .map_err(|e| format!("PIR serialization failed: {}", e))?;
-    fs::write(&pir_path, &pir_json)
-        .map_err(|e| format!("Failed to write PIR: {}", e))?;
+    fs::write(&pir_path, &pir_json).map_err(|e| format!("Failed to write PIR: {}", e))?;
 
     for (i, mir) in mirs.iter().enumerate() {
         let mir_path = output_path.join(format!("mir_{}.json", i));
         let mir_json = serde_json::to_string_pretty(&mir)
             .map_err(|e| format!("MIR serialization failed: {}", e))?;
-        fs::write(&mir_path, &mir_json)
-            .map_err(|e| format!("Failed to write MIR: {}", e))?;
+        fs::write(&mir_path, &mir_json).map_err(|e| format!("Failed to write MIR: {}", e))?;
     }
     println!("  SIR: {}", sir_path.display());
     println!("  AIR: {}", air_path.display());
@@ -1292,52 +1503,97 @@ fn build_artifact_manifest_pass_pipeline(
     _pir: &ane_ir::pir::PirGraph,
     mir_ops_per_graph: &[Vec<ane_artifacts::manifest::MirOpEntry>],
 ) -> serde_json::Value {
-    use ane_artifacts::manifest::{ArtifactManifest, PackageEntry, FunctionDescriptor, TensorSpec};
+    use ane_artifacts::manifest::{ArtifactManifest, FunctionDescriptor, PackageEntry, TensorSpec};
 
     let timestamp = chrono::Utc::now().to_rfc3339();
 
     let (input_dim, output_dim, batch_size, dtype) = spec.op.primary_dims();
 
     let functions: Vec<FunctionDescriptor> = if !bridge_result.function_descriptors.is_empty() {
-        bridge_result.function_descriptors.iter().enumerate().map(|(i, fd)| {
-            let inputs: Vec<TensorSpec> = fd.inputs.iter().map(|inp| {
-                TensorSpec {
-                    name: inp.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
-                    shape: inp.get("shape").and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as usize)).collect())
-                        .unwrap_or_default(),
-                    dtype: inp.get("dtype").and_then(|v| v.as_str()).unwrap_or("fp16").to_string(),
+        bridge_result
+            .function_descriptors
+            .iter()
+            .enumerate()
+            .map(|(i, fd)| {
+                let inputs: Vec<TensorSpec> = fd
+                    .inputs
+                    .iter()
+                    .map(|inp| TensorSpec {
+                        name: inp
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string(),
+                        shape: inp
+                            .get("shape")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter().filter_map(|v| v.as_u64().map(|n| n as usize)).collect()
+                            })
+                            .unwrap_or_default(),
+                        dtype: inp
+                            .get("dtype")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("fp16")
+                            .to_string(),
+                    })
+                    .collect();
+                let outputs: Vec<TensorSpec> = fd
+                    .outputs
+                    .iter()
+                    .map(|outp| TensorSpec {
+                        name: outp
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string(),
+                        shape: outp
+                            .get("shape")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter().filter_map(|v| v.as_u64().map(|n| n as usize)).collect()
+                            })
+                            .unwrap_or_default(),
+                        dtype: outp
+                            .get("dtype")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("fp16")
+                            .to_string(),
+                    })
+                    .collect();
+                // Get MIR ops for this function from the MIR graphs produced by the pass pipeline.
+                // mir_ops_per_graph is indexed by MIR graph index; bridge function descriptors
+                // are indexed by function index. For single-function models they align 1:1.
+                let mir_ops = mir_ops_per_graph.get(i).cloned().unwrap_or_default();
+                FunctionDescriptor {
+                    name: fd.name.clone(),
+                    inputs,
+                    outputs,
+                    stateful: fd.stateful,
+                    emission_status: "emitted".to_string(),
+                    mir_ops,
                 }
-            }).collect();
-            let outputs: Vec<TensorSpec> = fd.outputs.iter().map(|outp| {
-                TensorSpec {
-                    name: outp.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
-                    shape: outp.get("shape").and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as usize)).collect())
-                        .unwrap_or_default(),
-                    dtype: outp.get("dtype").and_then(|v| v.as_str()).unwrap_or("fp16").to_string(),
-                }
-            }).collect();
-            // Get MIR ops for this function from the MIR graphs produced by the pass pipeline.
-            // mir_ops_per_graph is indexed by MIR graph index; bridge function descriptors
-            // are indexed by function index. For single-function models they align 1:1.
-            let mir_ops = mir_ops_per_graph.get(i).cloned().unwrap_or_default();
-            FunctionDescriptor {
-                name: fd.name.clone(),
-                inputs,
-                outputs,
-                stateful: fd.stateful,
-                emission_status: "emitted".to_string(),
-                mir_ops,
-            }
-        }).collect()
+            })
+            .collect()
     } else {
         vec![FunctionDescriptor {
             name: "main".to_string(),
-            inputs: vec![TensorSpec { name: "x".to_string(), shape: vec![batch_size, input_dim], dtype: dtype.clone() }],
-            outputs: vec![TensorSpec { name: "output".to_string(), shape: vec![batch_size, output_dim], dtype: dtype.clone() }],
+            inputs: vec![TensorSpec {
+                name: "x".to_string(),
+                shape: vec![batch_size, input_dim],
+                dtype: dtype.clone(),
+            }],
+            outputs: vec![TensorSpec {
+                name: "output".to_string(),
+                shape: vec![batch_size, output_dim],
+                dtype: dtype.clone(),
+            }],
             stateful: false,
-            emission_status: if bridge_result.status == "success" { "emitted".to_string() } else { "seam_only".to_string() },
+            emission_status: if bridge_result.status == "success" {
+                "emitted".to_string()
+            } else {
+                "seam_only".to_string()
+            },
             mir_ops: mir_ops_per_graph.first().cloned().unwrap_or_default(),
         }]
     };
@@ -1374,7 +1630,8 @@ fn build_artifact_manifest_pass_pipeline(
         ],
     };
 
-    serde_json::to_value(&manifest).unwrap_or_else(|_| serde_json::json!({"error": "manifest serialization failed"}))
+    serde_json::to_value(&manifest)
+        .unwrap_or_else(|_| serde_json::json!({"error": "manifest serialization failed"}))
 }
 
 /// Run the compile-full-sharded path: multi-unit orchestration through the pass pipeline.
@@ -1401,9 +1658,9 @@ fn run_compile_full_sharded(
     seed: u64,
     proto_direct: bool,
 ) -> Result<(), String> {
-    use ane_ir::task_spec::load_synthetic_task;
-    use ane_ir::linear_slice::{sir_from_linear_projection, ShardedShardPayload, ShardDesc};
     use ane_bridge::subprocess::PythonBridge;
+    use ane_ir::linear_slice::{sir_from_linear_projection, ShardDesc, ShardedShardPayload};
+    use ane_ir::task_spec::load_synthetic_task;
     use ane_passes::shard_plan::ShardPlanPass;
 
     println!("=== MILLer — Full Pipeline Multi-Shard Compile ===\n");
@@ -1418,7 +1675,10 @@ fn run_compile_full_sharded(
 
     // Verify it's a sharded task and extract parameters
     if !spec.op.is_sharded() {
-        return Err(format!("compile-full-sharded requires a sharded task, got {}", spec.op.family_id()));
+        return Err(format!(
+            "compile-full-sharded requires a sharded task, got {}",
+            spec.op.family_id()
+        ));
     }
     println!("  Op: {}", spec.op.op_type_str());
     let (_input_dim, _output_dim, batch_size, dtype) = spec.op.primary_dims();
@@ -1426,23 +1686,45 @@ fn run_compile_full_sharded(
     // Step 2: Build shard pipeline spec (generalized)
     println!("[2/8] Building shard pipeline specification...");
     let pipeline_spec = match &spec.op {
-        ane_ir::task_spec::TaskOp::ShardedLinearPipeline { input_dim, hidden_dim, output_dim, batch_size, dtype } => {
-            ane_ir::pir::ShardPipelineSpec::three_shard_linear(
-                &spec.name, *input_dim, *hidden_dim, *output_dim, *batch_size, dtype,
-            )
-        }
-        ane_ir::task_spec::TaskOp::ShardedDecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, dtype } => {
-            ane_ir::pir::ShardPipelineSpec::three_shard_decode_step(
-                &spec.name, *embed_dim, *num_heads, *head_dim, *kv_len, *batch_size, dtype,
-            )
-        }
+        ane_ir::task_spec::TaskOp::ShardedLinearPipeline {
+            input_dim,
+            hidden_dim,
+            output_dim,
+            batch_size,
+            dtype,
+        } => ane_ir::pir::ShardPipelineSpec::three_shard_linear(
+            &spec.name,
+            *input_dim,
+            *hidden_dim,
+            *output_dim,
+            *batch_size,
+            dtype,
+        ),
+        ane_ir::task_spec::TaskOp::ShardedDecodeStep {
+            embed_dim,
+            num_heads,
+            head_dim,
+            kv_len,
+            batch_size,
+            dtype,
+        } => ane_ir::pir::ShardPipelineSpec::three_shard_decode_step(
+            &spec.name,
+            *embed_dim,
+            *num_heads,
+            *head_dim,
+            *kv_len,
+            *batch_size,
+            dtype,
+        ),
         _ => return Err("Unexpected task type after validation".into()),
     };
     for shard in &pipeline_spec.shards {
-        println!("  Shard: {} (role: {}, compute: {})",
+        println!(
+            "  Shard: {} (role: {}, compute: {})",
             shard.shard_name,
             shard.role.canonical_name(),
-            shard.compute_units.to_coreml_string());
+            shard.compute_units.to_coreml_string()
+        );
     }
 
     // Step 3: Build multi-shard plan and PIR with concrete handoffs
@@ -1479,9 +1761,12 @@ fn run_compile_full_sharded(
                     knowledge_store = Some(store);
                 }
             } else {
-                let tmp_store_dir = std::env::temp_dir().join("ane_compile_full_sharded_knowledge_store");
+                let tmp_store_dir =
+                    std::env::temp_dir().join("ane_compile_full_sharded_knowledge_store");
                 let tmp_store_dir_str = tmp_store_dir.to_string_lossy().into_owned();
-                if let Ok(mut store) = ane_knowledge::store::KnowledgeStore::open(&tmp_store_dir_str) {
+                if let Ok(mut store) =
+                    ane_knowledge::store::KnowledgeStore::open(&tmp_store_dir_str)
+                {
                     if let Ok(count) = store.load_seeds_from_directory(kdir) {
                         if count > 0 {
                             println!("  Knowledge seeds: {} entries loaded from {}", count, kdir);
@@ -1503,7 +1788,9 @@ fn run_compile_full_sharded(
         Some(store) => {
             let query = StoreKnowledgeQuery::new(store);
             multi_shard_plan_pass.build_sharded_plan_from_spec_with_risk_knowledge(
-                &pipeline_spec, &shard_templates, &query,
+                &pipeline_spec,
+                &shard_templates,
+                &query,
             )
         }
         None => {
@@ -1513,50 +1800,65 @@ fn run_compile_full_sharded(
             } else {
                 println!("  Applying shard template knowledge to compute unit assignments...");
                 ShardPlanPass::build_sharded_plan_from_spec_with_knowledge(
-                    &pipeline_spec, &shard_templates,
+                    &pipeline_spec,
+                    &shard_templates,
                 )
             };
             (plan, graph, vec![])
         }
     };
     if !plan_compute_adaptations.is_empty() {
-        println!("  Multi-shard plan: {} compute unit adaptation(s) from risk knowledge",
-            plan_compute_adaptations.len());
+        println!(
+            "  Multi-shard plan: {} compute unit adaptation(s) from risk knowledge",
+            plan_compute_adaptations.len()
+        );
         for a in &plan_compute_adaptations {
-            println!("    {} → {} (risk: {:.2}, source: {})",
-                a.original_compute_units, a.adapted_compute_units,
-                a.fallback_risk, a.source_id.as_deref().unwrap_or("unknown"));
+            println!(
+                "    {} → {} (risk: {:.2}, source: {})",
+                a.original_compute_units,
+                a.adapted_compute_units,
+                a.fallback_risk,
+                a.source_id.as_deref().unwrap_or("unknown")
+            );
         }
     }
-    println!("  ShardPlan: {} shards, multi_shard={}", shard_plan.num_shards, shard_plan.is_multi_shard);
+    println!(
+        "  ShardPlan: {} shards, multi_shard={}",
+        shard_plan.num_shards, shard_plan.is_multi_shard
+    );
     println!("  PIR: {} packages, {} handoffs", pir.packages.len(), pir.handoffs.len());
     for handoff in &pir.handoffs {
-        println!("    Handoff[{}]: {} → {} (kind: {:?}, output: {} → input: {})",
+        println!(
+            "    Handoff[{}]: {} → {} (kind: {:?}, output: {} → input: {})",
             handoff.execution_order,
-            handoff.from_package, handoff.to_package,
+            handoff.from_package,
+            handoff.to_package,
             handoff.handoff_kind,
-            handoff.source_output_name, handoff.target_input_name);
+            handoff.source_output_name,
+            handoff.target_input_name
+        );
     }
 
     // Step 5: Run each shard through the pass pipeline independently
     println!("[5/8] Running each shard through the pass pipeline...");
     let output_path = PathBuf::from(output);
-    fs::create_dir_all(&output_path)
-        .map_err(|e| format!("Failed to create output dir: {}", e))?;
+    fs::create_dir_all(&output_path).map_err(|e| format!("Failed to create output dir: {}", e))?;
 
     let bridge = PythonBridge::new(python_path, bridge_script);
     let mut shard_results: Vec<ShardCompileResult> = Vec::new();
 
     for shard_spec in &pipeline_spec.shards {
-        println!("  --- Shard: {} (role: {}) ---", shard_spec.shard_name, shard_spec.role.canonical_name());
+        println!(
+            "  --- Shard: {} (role: {}) ---",
+            shard_spec.shard_name,
+            shard_spec.role.canonical_name()
+        );
 
         // Derive scalar dimensions from the tensor specs
-        let input_dim = shard_spec.input_specs.first()
-            .and_then(|t| t.shape.last().copied())
-            .unwrap_or(0);
-        let output_dim = shard_spec.output_specs.first()
-            .and_then(|t| t.shape.last().copied())
-            .unwrap_or(0);
+        let input_dim =
+            shard_spec.input_specs.first().and_then(|t| t.shape.last().copied()).unwrap_or(0);
+        let output_dim =
+            shard_spec.output_specs.first().and_then(|t| t.shape.last().copied()).unwrap_or(0);
 
         // Build a synthetic spec for this shard (linear projection)
         let shard_task_spec = ane_ir::task_spec::SyntheticTaskSpec {
@@ -1564,8 +1866,10 @@ fn run_compile_full_sharded(
             family: spec.family.clone(),
             description: Some(format!(
                 "Shard {} of {}: {}x{} linear projection",
-                shard_spec.role.canonical_name(), spec.name,
-                input_dim, output_dim
+                shard_spec.role.canonical_name(),
+                spec.name,
+                input_dim,
+                output_dim
             )),
             op: ane_ir::task_spec::TaskOp::LinearProjection {
                 input_dim,
@@ -1583,31 +1887,35 @@ fn run_compile_full_sharded(
 
         // Run pass pipeline: Canonicalize → Staticize → PrecisionPolicy → LegalityRewrite → RiskAnnotate
         use ane_passes::canonicalize::CanonicalizePass;
-        use ane_passes::staticize::StaticizePass;
-        use ane_passes::precision_policy::PrecisionPolicyPass;
-        use ane_passes::legality_rewrite::{LegalityRewritePass, DecompositionContext};
-        use ane_passes::risk_annotate::RiskAnnotatePass;
         use ane_passes::knowledge_query::NoKnowledge;
+        use ane_passes::legality_rewrite::{DecompositionContext, LegalityRewritePass};
+        use ane_passes::precision_policy::PrecisionPolicyPass;
+        use ane_passes::risk_annotate::RiskAnnotatePass;
+        use ane_passes::staticize::StaticizePass;
 
         let canonicalize = CanonicalizePass::new();
-        let shard_sir = canonicalize.run(shard_sir)
-            .map_err(|e| format!("CanonicalizePass failed for shard {}: {}", shard_spec.shard_name, e))?;
+        let shard_sir = canonicalize.run(shard_sir).map_err(|e| {
+            format!("CanonicalizePass failed for shard {}: {}", shard_spec.shard_name, e)
+        })?;
 
         let staticize = StaticizePass::new();
-        let shard_sir = staticize.run(shard_sir)
-            .map_err(|e| format!("StaticizePass failed for shard {}: {}", shard_spec.shard_name, e))?;
+        let shard_sir = staticize.run(shard_sir).map_err(|e| {
+            format!("StaticizePass failed for shard {}: {}", shard_spec.shard_name, e)
+        })?;
 
         let mut precision_policy = PrecisionPolicyPass::new();
         let shard_sir = match &knowledge_store {
             Some(store) => {
                 let query = StoreKnowledgeQuery::new(store);
-                precision_policy.run(shard_sir, &query)
-                    .map_err(|e| format!("PrecisionPolicyPass failed for shard {}: {}", shard_spec.shard_name, e))?
+                precision_policy.run(shard_sir, &query).map_err(|e| {
+                    format!("PrecisionPolicyPass failed for shard {}: {}", shard_spec.shard_name, e)
+                })?
             }
             None => {
                 let no_knowledge = NoKnowledge;
-                precision_policy.run(shard_sir, &no_knowledge)
-                    .map_err(|e| format!("PrecisionPolicyPass failed for shard {}: {}", shard_spec.shard_name, e))?
+                precision_policy.run(shard_sir, &no_knowledge).map_err(|e| {
+                    format!("PrecisionPolicyPass failed for shard {}: {}", shard_spec.shard_name, e)
+                })?
             }
         };
         let shard_precision_adaptations = precision_policy.adaptations.clone();
@@ -1618,21 +1926,39 @@ fn run_compile_full_sharded(
         let legality = LegalityRewritePass::new();
         // Construct DecompositionContext from the original task spec for sharded paths (Sprint 56)
         let shard_decomp_ctx: Option<DecompositionContext> = match &spec.op {
-            ane_ir::task_spec::TaskOp::ShardedDecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, .. } => {
-                Some(DecompositionContext::for_decode_step(*batch_size, *embed_dim, *num_heads, *head_dim, *kv_len))
-            }
+            ane_ir::task_spec::TaskOp::ShardedDecodeStep {
+                embed_dim,
+                num_heads,
+                head_dim,
+                kv_len,
+                batch_size,
+                ..
+            } => Some(DecompositionContext::for_decode_step(
+                *batch_size,
+                *embed_dim,
+                *num_heads,
+                *head_dim,
+                *kv_len,
+            )),
             _ => None,
         };
         let _shard_air = match &knowledge_store {
             Some(store) => {
                 let query = StoreKnowledgeQuery::new(store);
-                legality.run(shard_sir.clone(), &query, shard_decomp_ctx.as_ref())
-                    .map_err(|e| format!("LegalityRewritePass failed for shard {}: {}", shard_spec.shard_name, e))?
+                legality.run(shard_sir.clone(), &query, shard_decomp_ctx.as_ref()).map_err(|e| {
+                    format!("LegalityRewritePass failed for shard {}: {}", shard_spec.shard_name, e)
+                })?
             }
             None => {
                 let no_knowledge = NoKnowledge;
-                legality.run(shard_sir.clone(), &no_knowledge, shard_decomp_ctx.as_ref())
-                    .map_err(|e| format!("LegalityRewritePass failed for shard {}: {}", shard_spec.shard_name, e))?
+                legality.run(shard_sir.clone(), &no_knowledge, shard_decomp_ctx.as_ref()).map_err(
+                    |e| {
+                        format!(
+                            "LegalityRewritePass failed for shard {}: {}",
+                            shard_spec.shard_name, e
+                        )
+                    },
+                )?
             }
         };
 
@@ -1640,13 +1966,15 @@ fn run_compile_full_sharded(
         let shard_air = match &knowledge_store {
             Some(store) => {
                 let query = StoreKnowledgeQuery::new(store);
-                risk.run(_shard_air, &query)
-                    .map_err(|e| format!("RiskAnnotatePass failed for shard {}: {}", shard_spec.shard_name, e))?
+                risk.run(_shard_air, &query).map_err(|e| {
+                    format!("RiskAnnotatePass failed for shard {}: {}", shard_spec.shard_name, e)
+                })?
             }
             None => {
                 let no_knowledge = NoKnowledge;
-                risk.run(_shard_air, &no_knowledge)
-                    .map_err(|e| format!("RiskAnnotatePass failed for shard {}: {}", shard_spec.shard_name, e))?
+                risk.run(_shard_air, &no_knowledge).map_err(|e| {
+                    format!("RiskAnnotatePass failed for shard {}: {}", shard_spec.shard_name, e)
+                })?
             }
         };
 
@@ -1658,13 +1986,15 @@ fn run_compile_full_sharded(
         let (mut shard_shard_plan, _shard_pir) = match &knowledge_store {
             Some(store) => {
                 let query = StoreKnowledgeQuery::new(store);
-                shard_plan_pass.run(&shard_sir, &query)
-                    .map_err(|e| format!("ShardPlanPass failed for shard {}: {}", shard_spec.shard_name, e))?
+                shard_plan_pass.run(&shard_sir, &query).map_err(|e| {
+                    format!("ShardPlanPass failed for shard {}: {}", shard_spec.shard_name, e)
+                })?
             }
             None => {
                 let no_knowledge = NoKnowledge;
-                shard_plan_pass.run(&shard_sir, &no_knowledge)
-                    .map_err(|e| format!("ShardPlanPass failed for shard {}: {}", shard_spec.shard_name, e))?
+                shard_plan_pass.run(&shard_sir, &no_knowledge).map_err(|e| {
+                    format!("ShardPlanPass failed for shard {}: {}", shard_spec.shard_name, e)
+                })?
             }
         };
 
@@ -1674,12 +2004,15 @@ fn run_compile_full_sharded(
         // build_sharded_plan_from_spec_with_knowledge. We take the multi-shard plan's
         // assignment as authoritative, since it was constructed with both template knowledge
         // and the shard role's default compute units.
-        let shard_index = pipeline_spec.shards.iter().position(|s| s.shard_name == shard_spec.shard_name);
+        let shard_index =
+            pipeline_spec.shards.iter().position(|s| s.shard_name == shard_spec.shard_name);
         if let Some(idx) = shard_index {
             if idx < shard_plan.compute_units.len() {
                 // If the knowledge-driven adaptation (from ShardPlanPass) changed the
                 // compute units, record it. Otherwise, use the multi-shard plan's value.
-                let knowledge_compute = shard_shard_plan.compute_units.first()
+                let knowledge_compute = shard_shard_plan
+                    .compute_units
+                    .first()
                     .cloned()
                     .unwrap_or_else(|| "CPU_AND_NE".to_string());
                 let multi_shard_compute = shard_plan.compute_units[idx].clone();
@@ -1701,9 +2034,13 @@ fn run_compile_full_sharded(
         if shard_plan_pass.has_adaptations() {
             println!("    ShardPlanPass: {} adaptation(s)", shard_plan_pass.adaptations.len());
             for a in &shard_plan_pass.adaptations {
-                println!("      {} → {} (risk: {:.2}, source: {})",
-                    a.original_compute_units, a.adapted_compute_units,
-                    a.fallback_risk, a.source_id.as_deref().unwrap_or("unknown"));
+                println!(
+                    "      {} → {} (risk: {:.2}, source: {})",
+                    a.original_compute_units,
+                    a.adapted_compute_units,
+                    a.fallback_risk,
+                    a.source_id.as_deref().unwrap_or("unknown")
+                );
             }
         }
 
@@ -1713,35 +2050,51 @@ fn run_compile_full_sharded(
         // the multi-shard plan's actual compute unit assignment.
         use ane_passes::mil_lower::MilLowerPass;
         let mil_lower = MilLowerPass::new();
-        let _shard_mirs = mil_lower.run(&shard_air, &shard_shard_plan)
-            .map_err(|e| format!("MilLowerPass failed for shard {}: {}", shard_spec.shard_name, e))?;
-        println!("    MilLower: {} MIR graph(s) produced, compute_unit_hint={}",
+        let _shard_mirs = mil_lower.run(&shard_air, &shard_shard_plan).map_err(|e| {
+            format!("MilLowerPass failed for shard {}: {}", shard_spec.shard_name, e)
+        })?;
+        println!(
+            "    MilLower: {} MIR graph(s) produced, compute_unit_hint={}",
             _shard_mirs.len(),
-            shard_shard_plan.compute_units.first().unwrap_or(&"N/A".to_string()));
+            shard_shard_plan.compute_units.first().unwrap_or(&"N/A".to_string())
+        );
 
         // Step 6: Emit mlpackage for this shard
         // Sprint 52: When --proto-direct is set for decode-step shards, use
         // RoleMirBuilder + proto-direct emission instead of the Python bridge.
         let shard_output = output_path.join(&shard_spec.shard_name);
-        let use_proto_direct = proto_direct && matches!(&spec.op,
-            ane_ir::task_spec::TaskOp::ShardedDecodeStep { .. });
+        let use_proto_direct =
+            proto_direct && matches!(&spec.op, ane_ir::task_spec::TaskOp::ShardedDecodeStep { .. });
 
         if use_proto_direct {
-            use ane_bridge::proto_direct::{emit_role_shard_proto_direct, validate_proto_direct_package};
+            use ane_bridge::proto_direct::{
+                emit_role_shard_proto_direct, validate_proto_direct_package,
+            };
             println!("    Emission: proto-direct via RoleMirBuilder");
 
-            let mlpackage_path = shard_output.join(format!("{}_proto_direct.mlpackage", shard_spec.shard_name));
+            let mlpackage_path =
+                shard_output.join(format!("{}_proto_direct.mlpackage", shard_spec.shard_name));
             fs::create_dir_all(&shard_output)
                 .map_err(|e| format!("Failed to create shard output dir: {}", e))?;
 
-            let emit_result = emit_role_shard_proto_direct(shard_spec, mlpackage_path.to_str().unwrap_or(""))
-                .map_err(|e| format!("Proto-direct emission failed for shard {}: {}", shard_spec.shard_name, e))?;
+            let emit_result =
+                emit_role_shard_proto_direct(shard_spec, mlpackage_path.to_str().unwrap_or(""))
+                    .map_err(|e| {
+                        format!(
+                            "Proto-direct emission failed for shard {}: {}",
+                            shard_spec.shard_name, e
+                        )
+                    })?;
 
             let validation = validate_proto_direct_package(mlpackage_path.to_str().unwrap_or(""))
-                .map_err(|e| format!("Validation failed for shard {}: {}", shard_spec.shard_name, e))?;
+                .map_err(|e| {
+                format!("Validation failed for shard {}: {}", shard_spec.shard_name, e)
+            })?;
 
-            println!("    Proto-direct: {} files, {} weights, hash={:.8}",
-                emit_result.file_count, emit_result.weight_count, emit_result.content_hash);
+            println!(
+                "    Proto-direct: {} files, {} weights, hash={:.8}",
+                emit_result.file_count, emit_result.weight_count, emit_result.content_hash
+            );
             if !validation.is_valid {
                 for err in &validation.errors {
                     eprintln!("    Validation warning: {}", err);
@@ -1758,12 +2111,24 @@ fn run_compile_full_sharded(
                 compute_plan: None,
                 function_descriptors: vec![ane_bridge::subprocess::BridgeFunctionDescriptor {
                     name: "main".to_string(),
-                    inputs: shard_spec.input_specs.iter().map(|t| serde_json::json!({
-                        "name": t.name, "shape": t.shape, "dtype": t.dtype
-                    })).collect(),
-                    outputs: shard_spec.output_specs.iter().map(|t| serde_json::json!({
-                        "name": t.name, "shape": t.shape, "dtype": t.dtype
-                    })).collect(),
+                    inputs: shard_spec
+                        .input_specs
+                        .iter()
+                        .map(|t| {
+                            serde_json::json!({
+                                "name": t.name, "shape": t.shape, "dtype": t.dtype
+                            })
+                        })
+                        .collect(),
+                    outputs: shard_spec
+                        .output_specs
+                        .iter()
+                        .map(|t| {
+                            serde_json::json!({
+                                "name": t.name, "shape": t.shape, "dtype": t.dtype
+                            })
+                        })
+                        .collect(),
                     stateful: false,
                 }],
                 metadata: serde_json::json!({"emission_method": "proto-direct"}),
@@ -1777,7 +2142,9 @@ fn run_compile_full_sharded(
                 bridge_result: result,
                 precision_adaptations: shard_precision_adaptations,
                 compute_adaptations: shard_compute_adaptations,
-                effective_compute_units: shard_shard_plan.compute_units.first()
+                effective_compute_units: shard_shard_plan
+                    .compute_units
+                    .first()
                     .cloned()
                     .unwrap_or_else(|| "CPU_AND_NE".to_string()),
             });
@@ -1804,31 +2171,48 @@ fn run_compile_full_sharded(
             // closing the gap where "shard emission is still too uniform until shard
             // role materially changes emitted graphs and/or dimensions."
             let payload = match &spec.op {
-                ane_ir::task_spec::TaskOp::ShardedDecodeStep { embed_dim, num_heads, head_dim, kv_len, .. } => {
-                    ShardedShardPayload::from_shard_decode_step(
-                        &shard_desc, &spec.name, &spec.family,
-                        batch_size, &dtype,
-                        shard_output.to_str().unwrap_or(""), seed,
-                        shard_adapted_dtype,
-                        *embed_dim, *num_heads, *head_dim, *kv_len,
-                    )
-                }
-                _ => {
-                    ShardedShardPayload::from_shard_with_override(
-                        &shard_desc, &spec.name, &spec.family,
-                        batch_size, &dtype,
-                        shard_output.to_str().unwrap_or(""), seed,
-                        shard_adapted_dtype,
-                    )
-                }
+                ane_ir::task_spec::TaskOp::ShardedDecodeStep {
+                    embed_dim,
+                    num_heads,
+                    head_dim,
+                    kv_len,
+                    ..
+                } => ShardedShardPayload::from_shard_decode_step(
+                    &shard_desc,
+                    &spec.name,
+                    &spec.family,
+                    batch_size,
+                    &dtype,
+                    shard_output.to_str().unwrap_or(""),
+                    seed,
+                    shard_adapted_dtype,
+                    *embed_dim,
+                    *num_heads,
+                    *head_dim,
+                    *kv_len,
+                ),
+                _ => ShardedShardPayload::from_shard_with_override(
+                    &shard_desc,
+                    &spec.name,
+                    &spec.family,
+                    batch_size,
+                    &dtype,
+                    shard_output.to_str().unwrap_or(""),
+                    seed,
+                    shard_adapted_dtype,
+                ),
             };
             let payload_json = serde_json::to_value(&payload)
                 .map_err(|e| format!("Shard payload serialization failed: {}", e))?;
 
-            let result = bridge.execute_raw_payload(&payload_json)
-                .map_err(|e| format!("Bridge execution failed for shard {}: {}", shard_spec.shard_name, e))?;
+            let result = bridge.execute_raw_payload(&payload_json).map_err(|e| {
+                format!("Bridge execution failed for shard {}: {}", shard_spec.shard_name, e)
+            })?;
 
-            println!("    Bridge: {}", if result.status == "success" { "SUCCESS" } else { "FAILED" });
+            println!(
+                "    Bridge: {}",
+                if result.status == "success" { "SUCCESS" } else { "FAILED" }
+            );
 
             shard_results.push(ShardCompileResult {
                 shard_name: shard_spec.shard_name.clone(),
@@ -1836,7 +2220,9 @@ fn run_compile_full_sharded(
                 bridge_result: result,
                 precision_adaptations: shard_precision_adaptations,
                 compute_adaptations: shard_compute_adaptations,
-                effective_compute_units: shard_shard_plan.compute_units.first()
+                effective_compute_units: shard_shard_plan
+                    .compute_units
+                    .first()
                     .cloned()
                     .unwrap_or_else(|| "CPU_AND_NE".to_string()),
             });
@@ -1845,9 +2231,8 @@ fn run_compile_full_sharded(
 
     // Step 7: Write unified manifest with concrete handoffs and per-shard provenance
     println!("[7/8] Writing unified manifest with per-shard provenance...");
-    let manifest = build_full_sharded_manifest(
-        &spec, &shard_results, &pir, &task_hash, &shard_plan,
-    );
+    let manifest =
+        build_full_sharded_manifest(&spec, &shard_results, &pir, &task_hash, &shard_plan);
     let manifest_path = output_path.join("manifest.json");
     let manifest_json = serde_json::to_string_pretty(&manifest)
         .map_err(|e| format!("Manifest serialization failed: {}", e))?;
@@ -1859,16 +2244,14 @@ fn run_compile_full_sharded(
     let pir_path = output_path.join("pir.json");
     let pir_json = serde_json::to_string_pretty(&pir)
         .map_err(|e| format!("PIR serialization failed: {}", e))?;
-    fs::write(&pir_path, &pir_json)
-        .map_err(|e| format!("Failed to write PIR: {}", e))?;
+    fs::write(&pir_path, &pir_json).map_err(|e| format!("Failed to write PIR: {}", e))?;
 
     // Step 8: Write shard plan dump
     println!("[8/8] Writing shard plan...");
     let plan_path = output_path.join("shard_plan.json");
     let plan_json = serde_json::to_string_pretty(&shard_plan)
         .map_err(|e| format!("Shard plan serialization failed: {}", e))?;
-    fs::write(&plan_path, &plan_json)
-        .map_err(|e| format!("Failed to write shard plan: {}", e))?;
+    fs::write(&plan_path, &plan_json).map_err(|e| format!("Failed to write shard plan: {}", e))?;
 
     println!("\n=== Full-pipeline multi-shard compile complete ===");
     println!("Artifacts in: {}", output);
@@ -1902,71 +2285,124 @@ fn build_full_sharded_manifest(
     task_hash: &str,
     shard_plan: &ane_passes::shard_plan::ShardPlan,
 ) -> serde_json::Value {
-    use ane_artifacts::manifest::{ArtifactManifest, PackageEntry, FunctionDescriptor, TensorSpec, HandoffEntry};
+    use ane_artifacts::manifest::{
+        ArtifactManifest, FunctionDescriptor, HandoffEntry, PackageEntry, TensorSpec,
+    };
 
     let timestamp = chrono::Utc::now().to_rfc3339();
 
-    let packages: Vec<PackageEntry> = shard_results.iter().map(|result| {
-        let functions: Vec<FunctionDescriptor> = if !result.bridge_result.function_descriptors.is_empty() {
-            result.bridge_result.function_descriptors.iter().map(|fd| {
-                let inputs: Vec<TensorSpec> = fd.inputs.iter().map(|inp| {
-                    TensorSpec {
-                        name: inp.get("name").and_then(|v| v.as_str()).unwrap_or("x").to_string(),
-                        shape: inp.get("shape").and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as usize)).collect())
-                            .unwrap_or_default(),
-                        dtype: inp.get("dtype").and_then(|v| v.as_str()).unwrap_or("fp16").to_string(),
-                    }
-                }).collect();
-                let outputs: Vec<TensorSpec> = fd.outputs.iter().map(|outp| {
-                    TensorSpec {
-                        name: outp.get("name").and_then(|v| v.as_str()).unwrap_or("output").to_string(),
-                        shape: outp.get("shape").and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as usize)).collect())
-                            .unwrap_or_default(),
-                        dtype: outp.get("dtype").and_then(|v| v.as_str()).unwrap_or("fp16").to_string(),
-                    }
-                }).collect();
-                FunctionDescriptor {
-                    name: fd.name.clone(),
-                    inputs,
-                    outputs,
-                    stateful: fd.stateful,
-                    emission_status: if result.bridge_result.status == "success" { "emitted".to_string() } else { "seam_only".to_string() },
-                    mir_ops: vec![],
-                }
-            }).collect()
-        } else {
-            vec![FunctionDescriptor {
-                name: "main".to_string(),
-                inputs: vec![],
-                outputs: vec![],
-                stateful: false,
-                emission_status: if result.bridge_result.status == "success" { "emitted".to_string() } else { "seam_only".to_string() },
-                mir_ops: vec![],
-            }]
-        };
+    let packages: Vec<PackageEntry> = shard_results
+        .iter()
+        .map(|result| {
+            let functions: Vec<FunctionDescriptor> =
+                if !result.bridge_result.function_descriptors.is_empty() {
+                    result
+                        .bridge_result
+                        .function_descriptors
+                        .iter()
+                        .map(|fd| {
+                            let inputs: Vec<TensorSpec> = fd
+                                .inputs
+                                .iter()
+                                .map(|inp| TensorSpec {
+                                    name: inp
+                                        .get("name")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("x")
+                                        .to_string(),
+                                    shape: inp
+                                        .get("shape")
+                                        .and_then(|v| v.as_array())
+                                        .map(|arr| {
+                                            arr.iter()
+                                                .filter_map(|v| v.as_u64().map(|n| n as usize))
+                                                .collect()
+                                        })
+                                        .unwrap_or_default(),
+                                    dtype: inp
+                                        .get("dtype")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("fp16")
+                                        .to_string(),
+                                })
+                                .collect();
+                            let outputs: Vec<TensorSpec> = fd
+                                .outputs
+                                .iter()
+                                .map(|outp| TensorSpec {
+                                    name: outp
+                                        .get("name")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("output")
+                                        .to_string(),
+                                    shape: outp
+                                        .get("shape")
+                                        .and_then(|v| v.as_array())
+                                        .map(|arr| {
+                                            arr.iter()
+                                                .filter_map(|v| v.as_u64().map(|n| n as usize))
+                                                .collect()
+                                        })
+                                        .unwrap_or_default(),
+                                    dtype: outp
+                                        .get("dtype")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("fp16")
+                                        .to_string(),
+                                })
+                                .collect();
+                            FunctionDescriptor {
+                                name: fd.name.clone(),
+                                inputs,
+                                outputs,
+                                stateful: fd.stateful,
+                                emission_status: if result.bridge_result.status == "success" {
+                                    "emitted".to_string()
+                                } else {
+                                    "seam_only".to_string()
+                                },
+                                mir_ops: vec![],
+                            }
+                        })
+                        .collect()
+                } else {
+                    vec![FunctionDescriptor {
+                        name: "main".to_string(),
+                        inputs: vec![],
+                        outputs: vec![],
+                        stateful: false,
+                        emission_status: if result.bridge_result.status == "success" {
+                            "emitted".to_string()
+                        } else {
+                            "seam_only".to_string()
+                        },
+                        mir_ops: vec![],
+                    }]
+                };
 
-        PackageEntry {
-            name: result.shard_name.clone(),
-            role: format!("DecoderShard({})", result.role),
-            path: result.bridge_result.output_path.clone(),
-            content_hash: result.bridge_result.content_hash.clone(),
-            size_bytes: 0,
-            functions,
-        }
-    }).collect();
+            PackageEntry {
+                name: result.shard_name.clone(),
+                role: format!("DecoderShard({})", result.role),
+                path: result.bridge_result.output_path.clone(),
+                content_hash: result.bridge_result.content_hash.clone(),
+                size_bytes: 0,
+                functions,
+            }
+        })
+        .collect();
 
     // Build handoff entries with concrete runtime semantics
-    let handoffs: Vec<HandoffEntry> = pir.handoffs.iter().map(|h| {
-        HandoffEntry {
+    let handoffs: Vec<HandoffEntry> = pir
+        .handoffs
+        .iter()
+        .map(|h| HandoffEntry {
             from_package: h.from_package.clone(),
             to_package: h.to_package.clone(),
             tensor_name: h.tensor_name.clone(),
             shape: h.shape.clone(),
             dtype: h.dtype.clone(),
-        }
-    }).collect();
+        })
+        .collect();
 
     let manifest = ArtifactManifest {
         version: "0.6.0".to_string(),
@@ -1993,19 +2429,23 @@ fn build_full_sharded_manifest(
     // Add concrete handoff semantics and per-shard provenance
     if let Some(obj) = manifest_value.as_object_mut() {
         // Add concrete handoff details with runtime semantics
-        let handoff_details: Vec<serde_json::Value> = pir.handoffs.iter().map(|h| {
-            serde_json::json!({
-                "from_package": h.from_package,
-                "to_package": h.to_package,
-                "tensor_name": h.tensor_name,
-                "shape": h.shape,
-                "dtype": h.dtype,
-                "handoff_kind": format!("{:?}", h.handoff_kind),
-                "execution_order": h.execution_order,
-                "source_output_name": h.source_output_name,
-                "target_input_name": h.target_input_name,
+        let handoff_details: Vec<serde_json::Value> = pir
+            .handoffs
+            .iter()
+            .map(|h| {
+                serde_json::json!({
+                    "from_package": h.from_package,
+                    "to_package": h.to_package,
+                    "tensor_name": h.tensor_name,
+                    "shape": h.shape,
+                    "dtype": h.dtype,
+                    "handoff_kind": format!("{:?}", h.handoff_kind),
+                    "execution_order": h.execution_order,
+                    "source_output_name": h.source_output_name,
+                    "target_input_name": h.target_input_name,
+                })
             })
-        }).collect();
+            .collect();
         obj.insert("concrete_handoffs".to_string(), serde_json::json!(handoff_details));
 
         // Add per-shard provenance (S37.5: now includes compute_unit_adaptations
@@ -2049,14 +2489,17 @@ fn build_full_sharded_manifest(
 
         // Add shard plan summary with knowledge_adapted flag (S37.5)
         let any_compute_adapted = shard_results.iter().any(|r| !r.compute_adaptations.is_empty());
-        obj.insert("shard_plan".to_string(), serde_json::json!({
-            "num_shards": shard_plan.num_shards,
-            "is_multi_shard": shard_plan.is_multi_shard,
-            "shard_roles": shard_plan.shard_roles,
-            "shard_names": shard_plan.shard_names,
-            "compute_units": shard_plan.compute_units,
-            "compute_units_adapted": any_compute_adapted,
-        }));
+        obj.insert(
+            "shard_plan".to_string(),
+            serde_json::json!({
+                "num_shards": shard_plan.num_shards,
+                "is_multi_shard": shard_plan.is_multi_shard,
+                "shard_roles": shard_plan.shard_roles,
+                "shard_names": shard_plan.shard_names,
+                "compute_units": shard_plan.compute_units,
+                "compute_units_adapted": any_compute_adapted,
+            }),
+        );
     }
 
     manifest_value
@@ -2071,9 +2514,9 @@ fn run_compile_sharded(
     seed: u64,
     proto_direct: bool,
 ) -> Result<(), String> {
-    use ane_ir::task_spec::load_synthetic_task;
-    use ane_ir::linear_slice::{ShardedShardPayload, ShardDesc};
     use ane_bridge::subprocess::PythonBridge;
+    use ane_ir::linear_slice::{ShardDesc, ShardedShardPayload};
+    use ane_ir::task_spec::load_synthetic_task;
     use ane_knowledge::shard_template::load_shard_template_seeds;
 
     println!("=== MILLer — Shard-Aware Compile ===\n");
@@ -2097,20 +2540,41 @@ fn run_compile_sharded(
     // Step 2: Build shard pipeline spec and PIR
     println!("[2/5] Building shard pipeline specification...");
     let pipeline_spec = match &spec.op {
-        ane_ir::task_spec::TaskOp::ShardedLinearPipeline { input_dim, hidden_dim, output_dim, batch_size, dtype } => {
-            ane_ir::pir::ShardPipelineSpec::three_shard_linear(
-                &spec.name, *input_dim, *hidden_dim, *output_dim, *batch_size, dtype,
-            )
-        }
-        ane_ir::task_spec::TaskOp::ShardedDecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, dtype } => {
-            ane_ir::pir::ShardPipelineSpec::three_shard_decode_step(
-                &spec.name, *embed_dim, *num_heads, *head_dim, *kv_len, *batch_size, dtype,
-            )
-        }
+        ane_ir::task_spec::TaskOp::ShardedLinearPipeline {
+            input_dim,
+            hidden_dim,
+            output_dim,
+            batch_size,
+            dtype,
+        } => ane_ir::pir::ShardPipelineSpec::three_shard_linear(
+            &spec.name,
+            *input_dim,
+            *hidden_dim,
+            *output_dim,
+            *batch_size,
+            dtype,
+        ),
+        ane_ir::task_spec::TaskOp::ShardedDecodeStep {
+            embed_dim,
+            num_heads,
+            head_dim,
+            kv_len,
+            batch_size,
+            dtype,
+        } => ane_ir::pir::ShardPipelineSpec::three_shard_decode_step(
+            &spec.name,
+            *embed_dim,
+            *num_heads,
+            *head_dim,
+            *kv_len,
+            *batch_size,
+            dtype,
+        ),
         _ => return Err("Unexpected task type after validation".into()),
     };
     for shard in &pipeline_spec.shards {
-        println!("  Shard: {} (role: {}, compute: {})",
+        println!(
+            "  Shard: {} (role: {}, compute: {})",
             shard.shard_name,
             shard.role.canonical_name(),
             shard.compute_units.to_coreml_string(),
@@ -2143,17 +2607,16 @@ fn run_compile_sharded(
     } else {
         println!("  Applying shard template knowledge to compute unit assignments...");
         ane_passes::shard_plan::ShardPlanPass::build_sharded_plan_from_spec_with_knowledge(
-            &pipeline_spec, &shard_templates,
+            &pipeline_spec,
+            &shard_templates,
         )
     };
-    println!("  PIR: {} packages, {} handoffs",
-        pir.packages.len(), pir.handoffs.len());
+    println!("  PIR: {} packages, {} handoffs", pir.packages.len(), pir.handoffs.len());
 
     // Step 4: Emit one mlpackage per shard
     println!("[4/5] Emitting mlpackage per shard...");
     let output_path = PathBuf::from(output);
-    fs::create_dir_all(&output_path)
-        .map_err(|e| format!("Failed to create output dir: {}", e))?;
+    fs::create_dir_all(&output_path).map_err(|e| format!("Failed to create output dir: {}", e))?;
 
     let bridge = PythonBridge::new(python_path, bridge_script);
     let mut shard_results: Vec<(String, String, ane_bridge::subprocess::BridgeResult)> = Vec::new();
@@ -2165,27 +2628,45 @@ fn run_compile_sharded(
         // + proto-direct emission instead of the Python bridge. This makes
         // RoleMirBuilder the single source of truth for role-specific MIR in the
         // CLI compile path.
-        let use_proto_direct = proto_direct && matches!(&spec.op,
-            ane_ir::task_spec::TaskOp::ShardedDecodeStep { .. });
+        let use_proto_direct =
+            proto_direct && matches!(&spec.op, ane_ir::task_spec::TaskOp::ShardedDecodeStep { .. });
 
         if use_proto_direct {
-            use ane_bridge::proto_direct::{emit_role_shard_proto_direct, validate_proto_direct_package};
-            println!("  Shard {} (role: {}): using proto-direct emission via RoleMirBuilder",
-                shard_spec.shard_name, shard_spec.role.canonical_name());
+            use ane_bridge::proto_direct::{
+                emit_role_shard_proto_direct, validate_proto_direct_package,
+            };
+            println!(
+                "  Shard {} (role: {}): using proto-direct emission via RoleMirBuilder",
+                shard_spec.shard_name,
+                shard_spec.role.canonical_name()
+            );
 
-            let mlpackage_path = shard_output.join(format!("{}_proto_direct.mlpackage", shard_spec.shard_name));
+            let mlpackage_path =
+                shard_output.join(format!("{}_proto_direct.mlpackage", shard_spec.shard_name));
             fs::create_dir_all(&shard_output)
                 .map_err(|e| format!("Failed to create shard output dir: {}", e))?;
 
-            let emit_result = emit_role_shard_proto_direct(shard_spec, mlpackage_path.to_str().unwrap_or(""))
-                .map_err(|e| format!("Proto-direct emission failed for shard {}: {}", shard_spec.shard_name, e))?;
+            let emit_result =
+                emit_role_shard_proto_direct(shard_spec, mlpackage_path.to_str().unwrap_or(""))
+                    .map_err(|e| {
+                        format!(
+                            "Proto-direct emission failed for shard {}: {}",
+                            shard_spec.shard_name, e
+                        )
+                    })?;
 
             // Validate the emitted package
             let validation = validate_proto_direct_package(mlpackage_path.to_str().unwrap_or(""))
-                .map_err(|e| format!("Validation failed for shard {}: {}", shard_spec.shard_name, e))?;
+                .map_err(|e| {
+                format!("Validation failed for shard {}: {}", shard_spec.shard_name, e)
+            })?;
 
-            println!("    Proto-direct: {} files, {} weights, content_hash={}",
-                emit_result.file_count, emit_result.weight_count, &emit_result.content_hash[..8]);
+            println!(
+                "    Proto-direct: {} files, {} weights, content_hash={}",
+                emit_result.file_count,
+                emit_result.weight_count,
+                &emit_result.content_hash[..8]
+            );
             if !validation.is_valid {
                 for err in &validation.errors {
                     eprintln!("    Validation warning: {}", err);
@@ -2203,12 +2684,24 @@ fn run_compile_sharded(
                 compute_plan: None,
                 function_descriptors: vec![ane_bridge::subprocess::BridgeFunctionDescriptor {
                     name: "main".to_string(),
-                    inputs: shard_spec.input_specs.iter().map(|t| serde_json::json!({
-                        "name": t.name, "shape": t.shape, "dtype": t.dtype
-                    })).collect(),
-                    outputs: shard_spec.output_specs.iter().map(|t| serde_json::json!({
-                        "name": t.name, "shape": t.shape, "dtype": t.dtype
-                    })).collect(),
+                    inputs: shard_spec
+                        .input_specs
+                        .iter()
+                        .map(|t| {
+                            serde_json::json!({
+                                "name": t.name, "shape": t.shape, "dtype": t.dtype
+                            })
+                        })
+                        .collect(),
+                    outputs: shard_spec
+                        .output_specs
+                        .iter()
+                        .map(|t| {
+                            serde_json::json!({
+                                "name": t.name, "shape": t.shape, "dtype": t.dtype
+                            })
+                        })
+                        .collect(),
                     stateful: false,
                 }],
                 metadata: serde_json::json!({"emission_method": "proto-direct"}),
@@ -2216,17 +2709,19 @@ fn run_compile_sharded(
                 emission_path: ane_bridge::subprocess::EmissionPath::ProtoDirect,
             };
 
-            shard_results.push((shard_spec.shard_name.clone(), shard_spec.role.canonical_name().to_string(), result));
+            shard_results.push((
+                shard_spec.shard_name.clone(),
+                shard_spec.role.canonical_name().to_string(),
+                result,
+            ));
         } else {
             // Derive scalar dimensions from the tensor specs for bridge payload.
             // Each shard has one input tensor and one output tensor; we take the
             // last dimension as the feature dimension for the linear projection.
-            let input_dim = shard_spec.input_specs.first()
-                .and_then(|t| t.shape.last().copied())
-                .unwrap_or(0);
-            let output_dim = shard_spec.output_specs.first()
-                .and_then(|t| t.shape.last().copied())
-                .unwrap_or(0);
+            let input_dim =
+                shard_spec.input_specs.first().and_then(|t| t.shape.last().copied()).unwrap_or(0);
+            let output_dim =
+                shard_spec.output_specs.first().and_then(|t| t.shape.last().copied()).unwrap_or(0);
 
             // Construct a ShardDesc for the bridge payload.
             // Sprint 23: for decode-step shards, the emission path still uses
@@ -2252,16 +2747,25 @@ fn run_compile_sharded(
             let payload_json = serde_json::to_value(&payload)
                 .map_err(|e| format!("Shard payload serialization failed: {}", e))?;
 
-            let result = bridge.execute_raw_payload(&payload_json)
-                .map_err(|e| format!("Bridge execution failed for shard {}: {}", shard_spec.shard_name, e))?;
+            let result = bridge.execute_raw_payload(&payload_json).map_err(|e| {
+                format!("Bridge execution failed for shard {}: {}", shard_spec.shard_name, e)
+            })?;
 
             let status = result.status.clone();
-            println!("  Shard {}: {}", shard_spec.shard_name, if status == "success" { "SUCCESS" } else { "FAILED" });
+            println!(
+                "  Shard {}: {}",
+                shard_spec.shard_name,
+                if status == "success" { "SUCCESS" } else { "FAILED" }
+            );
             if let Some(ref err) = result.error_message {
                 println!("    Error: {}", err);
             }
 
-            shard_results.push((shard_spec.shard_name.clone(), shard_spec.role.canonical_name().to_string(), result));
+            shard_results.push((
+                shard_spec.shard_name.clone(),
+                shard_spec.role.canonical_name().to_string(),
+                result,
+            ));
         }
     }
 
@@ -2279,17 +2783,14 @@ fn run_compile_sharded(
     let pir_path = output_path.join("pir.json");
     let pir_json = serde_json::to_string_pretty(&pir)
         .map_err(|e| format!("PIR serialization failed: {}", e))?;
-    fs::write(&pir_path, &pir_json)
-        .map_err(|e| format!("Failed to write PIR: {}", e))?;
+    fs::write(&pir_path, &pir_json).map_err(|e| format!("Failed to write PIR: {}", e))?;
 
     // Write MIR dumps per shard
     for shard_spec in &pipeline_spec.shards {
-        let input_dim = shard_spec.input_specs.first()
-            .and_then(|t| t.shape.last().copied())
-            .unwrap_or(0);
-        let output_dim = shard_spec.output_specs.first()
-            .and_then(|t| t.shape.last().copied())
-            .unwrap_or(0);
+        let input_dim =
+            shard_spec.input_specs.first().and_then(|t| t.shape.last().copied()).unwrap_or(0);
+        let output_dim =
+            shard_spec.output_specs.first().and_then(|t| t.shape.last().copied()).unwrap_or(0);
         let shard_desc = ShardDesc {
             role: shard_spec.role.clone(),
             shard_name: shard_spec.shard_name.clone(),
@@ -2301,8 +2802,7 @@ fn run_compile_sharded(
         let mir_path = output_path.join(format!("mir_{}.json", shard_spec.shard_name));
         let mir_json = serde_json::to_string_pretty(&mir)
             .map_err(|e| format!("MIR serialization failed: {}", e))?;
-        fs::write(&mir_path, &mir_json)
-            .map_err(|e| format!("Failed to write MIR: {}", e))?;
+        fs::write(&mir_path, &mir_json).map_err(|e| format!("Failed to write MIR: {}", e))?;
     }
 
     println!("\n=== Shard-aware compile complete ===");
@@ -2321,70 +2821,121 @@ fn build_sharded_manifest(
     pir: &ane_ir::pir::PirGraph,
     task_hash: &str,
 ) -> serde_json::Value {
-    use ane_artifacts::manifest::{ArtifactManifest, PackageEntry, FunctionDescriptor, TensorSpec, HandoffEntry};
+    use ane_artifacts::manifest::{
+        ArtifactManifest, FunctionDescriptor, HandoffEntry, PackageEntry, TensorSpec,
+    };
 
     let timestamp = chrono::Utc::now().to_rfc3339();
 
-    let packages: Vec<PackageEntry> = shard_results.iter().map(|(shard_name, role, result)| {
-        let functions: Vec<FunctionDescriptor> = if !result.function_descriptors.is_empty() {
-            result.function_descriptors.iter().map(|fd| {
-                let inputs: Vec<TensorSpec> = fd.inputs.iter().map(|inp| {
-                    TensorSpec {
-                        name: inp.get("name").and_then(|v| v.as_str()).unwrap_or("x").to_string(),
-                        shape: inp.get("shape").and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as usize)).collect())
-                            .unwrap_or_default(),
-                        dtype: inp.get("dtype").and_then(|v| v.as_str()).unwrap_or("fp16").to_string(),
-                    }
-                }).collect();
-                let outputs: Vec<TensorSpec> = fd.outputs.iter().map(|outp| {
-                    TensorSpec {
-                        name: outp.get("name").and_then(|v| v.as_str()).unwrap_or("output").to_string(),
-                        shape: outp.get("shape").and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as usize)).collect())
-                            .unwrap_or_default(),
-                        dtype: outp.get("dtype").and_then(|v| v.as_str()).unwrap_or("fp16").to_string(),
-                    }
-                }).collect();
-                FunctionDescriptor {
-                    name: fd.name.clone(),
-                    inputs,
-                    outputs,
-                    stateful: fd.stateful,
-                    emission_status: if result.status == "success" { "emitted".to_string() } else { "seam_only".to_string() },
+    let packages: Vec<PackageEntry> = shard_results
+        .iter()
+        .map(|(shard_name, role, result)| {
+            let functions: Vec<FunctionDescriptor> = if !result.function_descriptors.is_empty() {
+                result
+                    .function_descriptors
+                    .iter()
+                    .map(|fd| {
+                        let inputs: Vec<TensorSpec> = fd
+                            .inputs
+                            .iter()
+                            .map(|inp| TensorSpec {
+                                name: inp
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("x")
+                                    .to_string(),
+                                shape: inp
+                                    .get("shape")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_u64().map(|n| n as usize))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default(),
+                                dtype: inp
+                                    .get("dtype")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("fp16")
+                                    .to_string(),
+                            })
+                            .collect();
+                        let outputs: Vec<TensorSpec> = fd
+                            .outputs
+                            .iter()
+                            .map(|outp| TensorSpec {
+                                name: outp
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("output")
+                                    .to_string(),
+                                shape: outp
+                                    .get("shape")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_u64().map(|n| n as usize))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default(),
+                                dtype: outp
+                                    .get("dtype")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("fp16")
+                                    .to_string(),
+                            })
+                            .collect();
+                        FunctionDescriptor {
+                            name: fd.name.clone(),
+                            inputs,
+                            outputs,
+                            stateful: fd.stateful,
+                            emission_status: if result.status == "success" {
+                                "emitted".to_string()
+                            } else {
+                                "seam_only".to_string()
+                            },
+                            mir_ops: vec![],
+                        }
+                    })
+                    .collect()
+            } else {
+                vec![FunctionDescriptor {
+                    name: "main".to_string(),
+                    inputs: vec![],
+                    outputs: vec![],
+                    stateful: false,
+                    emission_status: if result.status == "success" {
+                        "emitted".to_string()
+                    } else {
+                        "seam_only".to_string()
+                    },
                     mir_ops: vec![],
-                }
-            }).collect()
-        } else {
-            vec![FunctionDescriptor {
-                name: "main".to_string(),
-                inputs: vec![],
-                outputs: vec![],
-                stateful: false,
-                emission_status: if result.status == "success" { "emitted".to_string() } else { "seam_only".to_string() },
-                mir_ops: vec![],
-            }]
-        };
+                }]
+            };
 
-        PackageEntry {
-            name: shard_name.clone(),
-            role: format!("DecoderShard({})", role),
-            path: result.output_path.clone(),
-            content_hash: result.content_hash.clone(),
-            size_bytes: 0,
-            functions,
-        }
-    }).collect();
+            PackageEntry {
+                name: shard_name.clone(),
+                role: format!("DecoderShard({})", role),
+                path: result.output_path.clone(),
+                content_hash: result.content_hash.clone(),
+                size_bytes: 0,
+                functions,
+            }
+        })
+        .collect();
 
-    let handoffs: Vec<HandoffEntry> = pir.handoffs.iter().map(|h| {
-        HandoffEntry {
+    let handoffs: Vec<HandoffEntry> = pir
+        .handoffs
+        .iter()
+        .map(|h| HandoffEntry {
             from_package: h.from_package.clone(),
             to_package: h.to_package.clone(),
             tensor_name: h.tensor_name.clone(),
             shape: h.shape.clone(),
             dtype: h.dtype.clone(),
-        }
-    }).collect();
+        })
+        .collect();
 
     let manifest = ArtifactManifest {
         version: "0.4.0".to_string(),
@@ -2405,7 +2956,8 @@ fn build_sharded_manifest(
         ],
     };
 
-    serde_json::to_value(&manifest).unwrap_or_else(|_| serde_json::json!({"error": "manifest serialization failed"}))
+    serde_json::to_value(&manifest)
+        .unwrap_or_else(|_| serde_json::json!({"error": "manifest serialization failed"}))
 }
 
 /// Run a complete lab session: compile + inspect + baseline + drift + structured run record.
@@ -2428,13 +2980,18 @@ fn run_lab(
     seed: u64,
     generated_from: Option<&str>,
 ) -> Result<(), String> {
-    use ane_ir::task_spec::load_synthetic_task;
-    use ane_ir::linear_slice::{sir_from_linear_projection, lower_linear_projection_to_mir, FamilyPayload};
     use ane_bridge::subprocess::PythonBridge;
-    use ane_lab::harness::{LabRunBuilder, VerificationScope, CompileStepResult, EnvironmentSummary, GeneratorProvenance};
-    use ane_lab::run_dir::{LabRunWriter, generate_run_id, layout};
+    use ane_ir::linear_slice::{
+        lower_linear_projection_to_mir, sir_from_linear_projection, FamilyPayload,
+    };
+    use ane_ir::task_spec::load_synthetic_task;
     use ane_lab::baseline::BaselineComputer;
     use ane_lab::drift::DriftDetector;
+    use ane_lab::harness::{
+        CompileStepResult, EnvironmentSummary, GeneratorProvenance, LabRunBuilder,
+        VerificationScope,
+    };
+    use ane_lab::run_dir::{generate_run_id, layout, LabRunWriter};
 
     println!("=== MILLer — Lab Run ===\n");
 
@@ -2467,7 +3024,8 @@ fn run_lab(
         .map_err(|e| format!("Payload serialization failed: {}", e))?;
 
     let bridge = PythonBridge::new(python_path, bridge_script);
-    let result = bridge.execute_raw_payload(&payload_json)
+    let result = bridge
+        .execute_raw_payload(&payload_json)
         .map_err(|e| format!("Bridge execution failed: {}", e))?;
 
     let compile_step = CompileStepResult {
@@ -2475,7 +3033,11 @@ fn run_lab(
         error: result.error_message.clone(),
         output_path: result.output_path.clone(),
         content_hash: result.content_hash.clone(),
-        file_count: if result.package_files.is_empty() { None } else { Some(result.package_files.len()) },
+        file_count: if result.package_files.is_empty() {
+            None
+        } else {
+            Some(result.package_files.len())
+        },
         coremltools_version: result.coremltools_version.clone(),
     };
 
@@ -2496,20 +3058,21 @@ fn run_lab(
     let run_id = generate_run_id(&task_hash);
     let _run_dir_initial = output_path.join(&run_id);
     let writer = LabRunWriter::new(&output_path);
-    let run_dir = writer.create_run_directory(&run_id)
+    let run_dir = writer
+        .create_run_directory(&run_id)
         .map_err(|e| format!("Failed to create run directory: {}", e))?;
     println!("  Run directory: {}", run_dir.display());
 
     // Write manifest
     let manifest = build_artifact_manifest(&spec, &result, &task_hash);
-    writer.write_manifest(&run_dir, &manifest)
+    writer
+        .write_manifest(&run_dir, &manifest)
         .map_err(|e| format!("Failed to write manifest: {}", e))?;
 
     // Write MIR
-    let mir_json = serde_json::to_value(&mir)
-        .map_err(|e| format!("MIR serialization failed: {}", e))?;
-    writer.write_mir(&run_dir, &mir_json)
-        .map_err(|e| format!("Failed to write MIR: {}", e))?;
+    let mir_json =
+        serde_json::to_value(&mir).map_err(|e| format!("MIR serialization failed: {}", e))?;
+    writer.write_mir(&run_dir, &mir_json).map_err(|e| format!("Failed to write MIR: {}", e))?;
 
     // Step 4: Host-side inspection
     let inspect_step = if do_inspect && compile_step.success {
@@ -2536,7 +3099,8 @@ fn run_lab(
         // Write inspection result
         let inspect_json = serde_json::to_value(&inspect_result)
             .map_err(|e| format!("Inspection serialization failed: {}", e))?;
-        writer.write_inspection(&run_dir, &inspect_json)
+        writer
+            .write_inspection(&run_dir, &inspect_json)
             .map_err(|e| format!("Failed to write inspection: {}", e))?;
 
         inspect_result
@@ -2572,52 +3136,116 @@ fn run_lab(
     println!("[5/8] Computing FP32 baseline reference...");
     let baseline_computer = BaselineComputer::new(seed);
     let mut baseline_result = match &spec.op {
-        ane_ir::task_spec::TaskOp::MlpBlock { input_dim, hidden_dim, output_dim, activation, batch_size, .. } => {
-            baseline_computer
-                .compute_mlp_block(&spec.name, *input_dim, *hidden_dim, *output_dim, activation, *batch_size)
-                .map_err(|e| format!("MLP baseline computation failed: {}", e))?
-        }
-        ane_ir::task_spec::TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, .. } => {
-            baseline_computer
-                .compute_decode_step(&spec.name, *embed_dim, *num_heads, *head_dim, *kv_len, *batch_size)
-                .map_err(|e| format!("Decode-step baseline computation failed: {}", e))?
-        }
-        ane_ir::task_spec::TaskOp::Attention { embed_dim, num_heads, head_dim, seq_len, batch_size, .. } => {
-            baseline_computer
-                .compute_attention(&spec.name, *embed_dim, *num_heads, *head_dim, *seq_len, *batch_size)
-                .map_err(|e| format!("Attention baseline computation failed: {}", e))?
-        }
-        ane_ir::task_spec::TaskOp::LutProjection { vocab_size, embed_dim, num_groups, lut_bitwidth, batch_size, .. } => {
-            baseline_computer
-                .compute_lut_projection(&spec.name, *vocab_size, *embed_dim, *num_groups, *lut_bitwidth, *batch_size)
-                .map_err(|e| format!("LUT baseline computation failed: {}", e))?
-        }
-        ane_ir::task_spec::TaskOp::ShardedLinearPipeline { input_dim, hidden_dim, output_dim, batch_size, .. } => {
-            baseline_computer
-                .compute_sharded_linear_pipeline(&spec.name, *input_dim, *hidden_dim, *output_dim, *batch_size)
-                .map_err(|e| format!("Sharded linear pipeline baseline computation failed: {}", e))?
-        }
-        ane_ir::task_spec::TaskOp::ShardedDecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, .. } => {
-            baseline_computer
-                .compute_sharded_decode_step(&spec.name, *embed_dim, *num_heads, *head_dim, *kv_len, *batch_size)
-                .map_err(|e| format!("Sharded decode-step baseline computation failed: {}", e))?
-        }
-        _ => {
-            baseline_computer
-                .compute_linear_projection(&spec.name, input_dim, output_dim, batch_size)
-                .map_err(|e| format!("Baseline computation failed: {}", e))?
-        }
+        ane_ir::task_spec::TaskOp::MlpBlock {
+            input_dim,
+            hidden_dim,
+            output_dim,
+            activation,
+            batch_size,
+            ..
+        } => baseline_computer
+            .compute_mlp_block(
+                &spec.name,
+                *input_dim,
+                *hidden_dim,
+                *output_dim,
+                activation,
+                *batch_size,
+            )
+            .map_err(|e| format!("MLP baseline computation failed: {}", e))?,
+        ane_ir::task_spec::TaskOp::DecodeStep {
+            embed_dim,
+            num_heads,
+            head_dim,
+            kv_len,
+            batch_size,
+            ..
+        } => baseline_computer
+            .compute_decode_step(
+                &spec.name,
+                *embed_dim,
+                *num_heads,
+                *head_dim,
+                *kv_len,
+                *batch_size,
+            )
+            .map_err(|e| format!("Decode-step baseline computation failed: {}", e))?,
+        ane_ir::task_spec::TaskOp::Attention {
+            embed_dim,
+            num_heads,
+            head_dim,
+            seq_len,
+            batch_size,
+            ..
+        } => baseline_computer
+            .compute_attention(&spec.name, *embed_dim, *num_heads, *head_dim, *seq_len, *batch_size)
+            .map_err(|e| format!("Attention baseline computation failed: {}", e))?,
+        ane_ir::task_spec::TaskOp::LutProjection {
+            vocab_size,
+            embed_dim,
+            num_groups,
+            lut_bitwidth,
+            batch_size,
+            ..
+        } => baseline_computer
+            .compute_lut_projection(
+                &spec.name,
+                *vocab_size,
+                *embed_dim,
+                *num_groups,
+                *lut_bitwidth,
+                *batch_size,
+            )
+            .map_err(|e| format!("LUT baseline computation failed: {}", e))?,
+        ane_ir::task_spec::TaskOp::ShardedLinearPipeline {
+            input_dim,
+            hidden_dim,
+            output_dim,
+            batch_size,
+            ..
+        } => baseline_computer
+            .compute_sharded_linear_pipeline(
+                &spec.name,
+                *input_dim,
+                *hidden_dim,
+                *output_dim,
+                *batch_size,
+            )
+            .map_err(|e| format!("Sharded linear pipeline baseline computation failed: {}", e))?,
+        ane_ir::task_spec::TaskOp::ShardedDecodeStep {
+            embed_dim,
+            num_heads,
+            head_dim,
+            kv_len,
+            batch_size,
+            ..
+        } => baseline_computer
+            .compute_sharded_decode_step(
+                &spec.name,
+                *embed_dim,
+                *num_heads,
+                *head_dim,
+                *kv_len,
+                *batch_size,
+            )
+            .map_err(|e| format!("Sharded decode-step baseline computation failed: {}", e))?,
+        _ => baseline_computer
+            .compute_linear_projection(&spec.name, input_dim, output_dim, batch_size)
+            .map_err(|e| format!("Baseline computation failed: {}", e))?,
     };
     // Link baseline to the deterministic task identity
     baseline_result.task_hash = Some(task_hash.clone());
-    println!("  Baseline: {} output elements, computed in {:.3}ms",
+    println!(
+        "  Baseline: {} output elements, computed in {:.3}ms",
         baseline_result.output_tensor.len(),
-        baseline_result.compute_time_ms);
+        baseline_result.compute_time_ms
+    );
 
     // Write baseline artifact
     let baseline_json = serde_json::to_value(&baseline_result)
         .map_err(|e| format!("Baseline serialization failed: {}", e))?;
-    writer.write_baseline(&run_dir, &baseline_json)
+    writer
+        .write_baseline(&run_dir, &baseline_json)
         .map_err(|e| format!("Failed to write baseline: {}", e))?;
     println!("  Baseline: {}", run_dir.join(layout::BASELINE_JSON).display());
 
@@ -2628,15 +3256,13 @@ fn run_lab(
         // We have a compiled model but cannot run predict() on this host.
         // Drift computation requires actual model output, which requires
         // Apple hardware with Core ML runtime.
-        let unavailable_report = DriftDetector::unavailable(
-            "predict() requires Apple hardware with Core ML runtime"
-        );
+        let unavailable_report =
+            DriftDetector::unavailable("predict() requires Apple hardware with Core ML runtime");
         println!("  Drift: UNAVAILABLE (no on-device predict output)");
         unavailable_report
     } else {
-        let unavailable_report = DriftDetector::unavailable(
-            "compilation failed — no model output to compare"
-        );
+        let unavailable_report =
+            DriftDetector::unavailable("compilation failed — no model output to compare");
         println!("  Drift: UNAVAILABLE (compilation failed)");
         unavailable_report
     };
@@ -2644,16 +3270,22 @@ fn run_lab(
     // Write drift report
     let drift_json = serde_json::to_value(&drift_report)
         .map_err(|e| format!("Drift serialization failed: {}", e))?;
-    writer.write_drift(&run_dir, &drift_json)
+    writer
+        .write_drift(&run_dir, &drift_json)
         .map_err(|e| format!("Failed to write drift report: {}", e))?;
     println!("  Drift report: {}", run_dir.join(layout::DRIFT_JSON).display());
 
     // Step 7: Write knowledge update with drift evidence
     println!("[7/8] Writing knowledge update...");
     let knowledge_update = build_knowledge_update_with_drift(
-        &spec, &result, &task_hash, &baseline_result, &drift_report,
+        &spec,
+        &result,
+        &task_hash,
+        &baseline_result,
+        &drift_report,
     );
-    writer.write_knowledge_update(&run_dir, &spec.name, &knowledge_update)
+    writer
+        .write_knowledge_update(&run_dir, &spec.name, &knowledge_update)
         .map_err(|e| format!("Failed to write knowledge update: {}", e))?;
     println!("  Knowledge: {}", run_dir.join(layout::KNOWLEDGE_DIR).display());
 
@@ -2662,19 +3294,17 @@ fn run_lab(
     let env = EnvironmentSummary::detect(1); // bridge_version = 1
     let verification_scope = VerificationScope::HostOnlyInspection;
 
-    let mut builder = LabRunBuilder::new(
-        run_id,
-        task_hash,
-        spec.name.clone(),
-        verification_scope,
-        env,
-    )
-    .compile_result(compile_step)
-    .inspect_result(inspect_step)
-    .artifact_directory(run_dir.to_string_lossy().to_string())
-    .adaptation_readiness("artifacts_only".to_string())
-    .warning("No device-backed profiling performed — requires Apple hardware".to_string())
-    .warning("Drift metrics unavailable — requires Apple hardware for predict() output".to_string());
+    let mut builder =
+        LabRunBuilder::new(run_id, task_hash, spec.name.clone(), verification_scope, env)
+            .compile_result(compile_step)
+            .inspect_result(inspect_step)
+            .artifact_directory(run_dir.to_string_lossy().to_string())
+            .adaptation_readiness("artifacts_only".to_string())
+            .warning("No device-backed profiling performed — requires Apple hardware".to_string())
+            .warning(
+                "Drift metrics unavailable — requires Apple hardware for predict() output"
+                    .to_string(),
+            );
 
     // Attach generator provenance if this run used a generated task
     if let Some(gen_info) = generated_from {
@@ -2688,24 +3318,33 @@ fn run_lab(
                     seed: gen_seed,
                     task_name: spec.name.clone(),
                 });
-                println!("  Generator provenance: family={}, seed={}, version={}",
-                    parts[0], gen_seed, parts[2]);
+                println!(
+                    "  Generator provenance: family={}, seed={}, version={}",
+                    parts[0], gen_seed, parts[2]
+                );
             }
         } else {
-            eprintln!("  Warning: --generated-from format should be 'family,seed,version', got: {}", gen_info);
+            eprintln!(
+                "  Warning: --generated-from format should be 'family,seed,version', got: {}",
+                gen_info
+            );
         }
     }
 
     let lab_run = builder.build();
 
-    writer.write_run_record(&run_dir, &lab_run)
+    writer
+        .write_run_record(&run_dir, &lab_run)
         .map_err(|e| format!("Failed to write run record: {}", e))?;
     println!("  Run record: {}", run_dir.join(layout::RUN_JSON).display());
 
     println!("\n=== Lab run summary ===");
     println!("  Run ID: {}", lab_run.run_id);
     println!("  Verification scope: {:?}", lab_run.verification_scope);
-    println!("  Compilation: {}", if lab_run.compile_result.success { "SUCCESS" } else { "FAILED" });
+    println!(
+        "  Compilation: {}",
+        if lab_run.compile_result.success { "SUCCESS" } else { "FAILED" }
+    );
     println!("  Baseline: {} FP32 reference values computed", baseline_result.output_tensor.len());
     println!("  Drift: {}", if drift_report.is_computed() { "computed" } else { "unavailable" });
     println!("  Artifacts: {}", run_dir.display());
@@ -2727,10 +3366,11 @@ fn ingest_knowledge_observations(
     knowledge_update: &serde_json::Value,
     task_hash: &str,
 ) -> Result<usize, String> {
+    use ane_ir::kir::{EvidenceSource, KnowledgeScope, KnowledgeType, KnowledgeUnit};
     use ane_knowledge::update::UpdatePipeline;
-    use ane_ir::kir::{KnowledgeUnit, KnowledgeType, EvidenceSource, KnowledgeScope};
 
-    let observations = knowledge_update.get("observations")
+    let observations = knowledge_update
+        .get("observations")
         .and_then(|v| v.as_array())
         .ok_or("No observations found in knowledge update")?;
 
@@ -2739,9 +3379,8 @@ fn ingest_knowledge_observations(
 
     for obs in observations {
         // Extract fields from the observation JSON
-        let knowledge_type_str = obs.get("knowledge_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("LegalityRule");
+        let knowledge_type_str =
+            obs.get("knowledge_type").and_then(|v| v.as_str()).unwrap_or("LegalityRule");
 
         let knowledge_type = match knowledge_type_str {
             "LegalityRule" => KnowledgeType::LegalityRule,
@@ -2756,13 +3395,10 @@ fn ingest_knowledge_observations(
             _ => KnowledgeType::LegalityRule,
         };
 
-        let confidence = obs.get("confidence")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0) as f32;
+        let confidence = obs.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
 
-        let evidence_source_str = obs.get("evidence_source")
-            .and_then(|v| v.as_str())
-            .unwrap_or("SyntheticRun");
+        let evidence_source_str =
+            obs.get("evidence_source").and_then(|v| v.as_str()).unwrap_or("SyntheticRun");
 
         let evidence_source = match evidence_source_str {
             "SyntheticRun" => EvidenceSource::SyntheticRun,
@@ -2775,9 +3411,8 @@ fn ingest_knowledge_observations(
             _ => EvidenceSource::SyntheticRun,
         };
 
-        let evidence_count = obs.get("evidence_count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as usize;
+        let evidence_count =
+            obs.get("evidence_count").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
 
         // Build a unique ID for this observation
         let obs_id = format!("obs_{}_{}", task_hash.replace(":", "_"), ingested);
@@ -2790,15 +3425,18 @@ fn ingest_knowledge_observations(
         }));
 
         let scope = KnowledgeScope {
-            device_classes: scope_json.get("device_classes")
+            device_classes: scope_json
+                .get("device_classes")
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
-            os_versions: scope_json.get("os_versions")
+            os_versions: scope_json
+                .get("os_versions")
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
-            opset_versions: scope_json.get("opset_versions")
+            opset_versions: scope_json
+                .get("opset_versions")
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
@@ -2808,7 +3446,14 @@ fn ingest_knowledge_observations(
         let mut payload = std::collections::HashMap::new();
         if let Some(obj) = obs.as_object() {
             for (key, value) in obj {
-                if !matches!(key.as_str(), "knowledge_type" | "confidence" | "evidence_source" | "evidence_count" | "scope") {
+                if !matches!(
+                    key.as_str(),
+                    "knowledge_type"
+                        | "confidence"
+                        | "evidence_source"
+                        | "evidence_count"
+                        | "scope"
+                ) {
                     payload.insert(key.clone(), value.clone());
                 }
             }
@@ -2864,13 +3509,18 @@ fn run_lab_loop(
     seed: u64,
     generated_from: Option<&str>,
 ) -> Result<(), String> {
-    use ane_ir::task_spec::load_synthetic_task;
-    use ane_ir::linear_slice::{sir_from_linear_projection, lower_linear_projection_to_mir, FamilyPayload};
     use ane_bridge::subprocess::PythonBridge;
-    use ane_lab::harness::{LabRunBuilder, VerificationScope, CompileStepResult, EnvironmentSummary, GeneratorProvenance};
-    use ane_lab::run_dir::{LabRunWriter, generate_run_id, layout};
+    use ane_ir::linear_slice::{
+        lower_linear_projection_to_mir, sir_from_linear_projection, FamilyPayload,
+    };
+    use ane_ir::task_spec::load_synthetic_task;
     use ane_lab::baseline::BaselineComputer;
     use ane_lab::drift::DriftDetector;
+    use ane_lab::harness::{
+        CompileStepResult, EnvironmentSummary, GeneratorProvenance, LabRunBuilder,
+        VerificationScope,
+    };
+    use ane_lab::run_dir::{generate_run_id, layout, LabRunWriter};
 
     println!("=== MILLer — Lab-Loop (Host-Side Evidence Loop) ===\n");
 
@@ -2903,7 +3553,8 @@ fn run_lab_loop(
         .map_err(|e| format!("Payload serialization failed: {}", e))?;
 
     let bridge = PythonBridge::new(python_path, bridge_script);
-    let result = bridge.execute_raw_payload(&payload_json)
+    let result = bridge
+        .execute_raw_payload(&payload_json)
         .map_err(|e| format!("Bridge execution failed: {}", e))?;
 
     let compile_step = CompileStepResult {
@@ -2911,7 +3562,11 @@ fn run_lab_loop(
         error: result.error_message.clone(),
         output_path: result.output_path.clone(),
         content_hash: result.content_hash.clone(),
-        file_count: if result.package_files.is_empty() { None } else { Some(result.package_files.len()) },
+        file_count: if result.package_files.is_empty() {
+            None
+        } else {
+            Some(result.package_files.len())
+        },
         coremltools_version: result.coremltools_version.clone(),
     };
 
@@ -2931,7 +3586,8 @@ fn run_lab_loop(
     println!("[3/9] Writing lab-loop run artifacts...");
     let run_id = generate_run_id(&task_hash);
     let writer = LabRunWriter::new(&output_path);
-    let run_dir = writer.create_run_directory(&run_id)
+    let run_dir = writer
+        .create_run_directory(&run_id)
         .map_err(|e| format!("Failed to create run directory: {}", e))?;
     println!("  Run directory: {}", run_dir.display());
 
@@ -2939,10 +3595,9 @@ fn run_lab_loop(
     let mut manifest = build_artifact_manifest(&spec, &result, &task_hash);
 
     // Write MIR
-    let mir_json = serde_json::to_value(&mir)
-        .map_err(|e| format!("MIR serialization failed: {}", e))?;
-    writer.write_mir(&run_dir, &mir_json)
-        .map_err(|e| format!("Failed to write MIR: {}", e))?;
+    let mir_json =
+        serde_json::to_value(&mir).map_err(|e| format!("MIR serialization failed: {}", e))?;
+    writer.write_mir(&run_dir, &mir_json).map_err(|e| format!("Failed to write MIR: {}", e))?;
 
     // Step 4: Host-side inspection
     println!("[4/9] Performing host-side inspection...");
@@ -2963,7 +3618,8 @@ fn run_lab_loop(
         // Write inspection result
         let inspect_json = serde_json::to_value(&inspect_result)
             .map_err(|e| format!("Inspection serialization failed: {}", e))?;
-        writer.write_inspection(&run_dir, &inspect_json)
+        writer
+            .write_inspection(&run_dir, &inspect_json)
             .map_err(|e| format!("Failed to write inspection: {}", e))?;
 
         inspect_result
@@ -2995,65 +3651,127 @@ fn run_lab_loop(
     println!("[5/9] Computing FP32 baseline reference...");
     let baseline_computer = BaselineComputer::new(seed);
     let mut baseline_result = match &spec.op {
-        ane_ir::task_spec::TaskOp::MlpBlock { input_dim, hidden_dim, output_dim, activation, batch_size, .. } => {
-            baseline_computer
-                .compute_mlp_block(&spec.name, *input_dim, *hidden_dim, *output_dim, activation, *batch_size)
-                .map_err(|e| format!("MLP baseline computation failed: {}", e))?
-        }
-        ane_ir::task_spec::TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, .. } => {
-            baseline_computer
-                .compute_decode_step(&spec.name, *embed_dim, *num_heads, *head_dim, *kv_len, *batch_size)
-                .map_err(|e| format!("Decode-step baseline computation failed: {}", e))?
-        }
-        ane_ir::task_spec::TaskOp::Attention { embed_dim, num_heads, head_dim, seq_len, batch_size, .. } => {
-            baseline_computer
-                .compute_attention(&spec.name, *embed_dim, *num_heads, *head_dim, *seq_len, *batch_size)
-                .map_err(|e| format!("Attention baseline computation failed: {}", e))?
-        }
-        ane_ir::task_spec::TaskOp::LutProjection { vocab_size, embed_dim, num_groups, lut_bitwidth, batch_size, .. } => {
-            baseline_computer
-                .compute_lut_projection(&spec.name, *vocab_size, *embed_dim, *num_groups, *lut_bitwidth, *batch_size)
-                .map_err(|e| format!("LUT baseline computation failed: {}", e))?
-        }
-        ane_ir::task_spec::TaskOp::ShardedLinearPipeline { input_dim, hidden_dim, output_dim, batch_size, .. } => {
-            baseline_computer
-                .compute_sharded_linear_pipeline(&spec.name, *input_dim, *hidden_dim, *output_dim, *batch_size)
-                .map_err(|e| format!("Sharded linear pipeline baseline computation failed: {}", e))?
-        }
-        ane_ir::task_spec::TaskOp::ShardedDecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, .. } => {
-            baseline_computer
-                .compute_sharded_decode_step(&spec.name, *embed_dim, *num_heads, *head_dim, *kv_len, *batch_size)
-                .map_err(|e| format!("Sharded decode-step baseline computation failed: {}", e))?
-        }
-        _ => {
-            baseline_computer
-                .compute_linear_projection(&spec.name, input_dim, output_dim, batch_size)
-                .map_err(|e| format!("Baseline computation failed: {}", e))?
-        }
+        ane_ir::task_spec::TaskOp::MlpBlock {
+            input_dim,
+            hidden_dim,
+            output_dim,
+            activation,
+            batch_size,
+            ..
+        } => baseline_computer
+            .compute_mlp_block(
+                &spec.name,
+                *input_dim,
+                *hidden_dim,
+                *output_dim,
+                activation,
+                *batch_size,
+            )
+            .map_err(|e| format!("MLP baseline computation failed: {}", e))?,
+        ane_ir::task_spec::TaskOp::DecodeStep {
+            embed_dim,
+            num_heads,
+            head_dim,
+            kv_len,
+            batch_size,
+            ..
+        } => baseline_computer
+            .compute_decode_step(
+                &spec.name,
+                *embed_dim,
+                *num_heads,
+                *head_dim,
+                *kv_len,
+                *batch_size,
+            )
+            .map_err(|e| format!("Decode-step baseline computation failed: {}", e))?,
+        ane_ir::task_spec::TaskOp::Attention {
+            embed_dim,
+            num_heads,
+            head_dim,
+            seq_len,
+            batch_size,
+            ..
+        } => baseline_computer
+            .compute_attention(&spec.name, *embed_dim, *num_heads, *head_dim, *seq_len, *batch_size)
+            .map_err(|e| format!("Attention baseline computation failed: {}", e))?,
+        ane_ir::task_spec::TaskOp::LutProjection {
+            vocab_size,
+            embed_dim,
+            num_groups,
+            lut_bitwidth,
+            batch_size,
+            ..
+        } => baseline_computer
+            .compute_lut_projection(
+                &spec.name,
+                *vocab_size,
+                *embed_dim,
+                *num_groups,
+                *lut_bitwidth,
+                *batch_size,
+            )
+            .map_err(|e| format!("LUT baseline computation failed: {}", e))?,
+        ane_ir::task_spec::TaskOp::ShardedLinearPipeline {
+            input_dim,
+            hidden_dim,
+            output_dim,
+            batch_size,
+            ..
+        } => baseline_computer
+            .compute_sharded_linear_pipeline(
+                &spec.name,
+                *input_dim,
+                *hidden_dim,
+                *output_dim,
+                *batch_size,
+            )
+            .map_err(|e| format!("Sharded linear pipeline baseline computation failed: {}", e))?,
+        ane_ir::task_spec::TaskOp::ShardedDecodeStep {
+            embed_dim,
+            num_heads,
+            head_dim,
+            kv_len,
+            batch_size,
+            ..
+        } => baseline_computer
+            .compute_sharded_decode_step(
+                &spec.name,
+                *embed_dim,
+                *num_heads,
+                *head_dim,
+                *kv_len,
+                *batch_size,
+            )
+            .map_err(|e| format!("Sharded decode-step baseline computation failed: {}", e))?,
+        _ => baseline_computer
+            .compute_linear_projection(&spec.name, input_dim, output_dim, batch_size)
+            .map_err(|e| format!("Baseline computation failed: {}", e))?,
     };
     baseline_result.task_hash = Some(task_hash.clone());
-    println!("  Baseline: {} output elements, computed in {:.3}ms",
+    println!(
+        "  Baseline: {} output elements, computed in {:.3}ms",
         baseline_result.output_tensor.len(),
-        baseline_result.compute_time_ms);
+        baseline_result.compute_time_ms
+    );
 
     // Write baseline artifact
     let baseline_json = serde_json::to_value(&baseline_result)
         .map_err(|e| format!("Baseline serialization failed: {}", e))?;
-    writer.write_baseline(&run_dir, &baseline_json)
+    writer
+        .write_baseline(&run_dir, &baseline_json)
         .map_err(|e| format!("Failed to write baseline: {}", e))?;
 
     // Step 6: Compute drift (requires actual model output from predict())
     println!("[6/9] Computing drift metrics...");
     let drift_report = if compile_step.success {
-        let unavailable_report = DriftDetector::unavailable(
-            "predict() requires Apple hardware with Core ML runtime"
-        );
+        let unavailable_report =
+            DriftDetector::unavailable("predict() requires Apple hardware with Core ML runtime");
         println!("  Drift: UNAVAILABLE (no on-device predict output)");
         unavailable_report
     } else {
-        let unavailable_report = DriftDetector::unavailable(
-            "compilation failed — no model output to compare"
-        );
+        let unavailable_report =
+            DriftDetector::unavailable("compilation failed — no model output to compare");
         println!("  Drift: UNAVAILABLE (compilation failed)");
         unavailable_report
     };
@@ -3061,17 +3779,23 @@ fn run_lab_loop(
     // Write drift report
     let drift_json = serde_json::to_value(&drift_report)
         .map_err(|e| format!("Drift serialization failed: {}", e))?;
-    writer.write_drift(&run_dir, &drift_json)
+    writer
+        .write_drift(&run_dir, &drift_json)
         .map_err(|e| format!("Failed to write drift report: {}", e))?;
 
     // Step 7: Build knowledge update and ingest observations into the store
     println!("[7/9] Ingesting observations into knowledge store...");
     let knowledge_update = build_knowledge_update_with_drift(
-        &spec, &result, &task_hash, &baseline_result, &drift_report,
+        &spec,
+        &result,
+        &task_hash,
+        &baseline_result,
+        &drift_report,
     );
 
     // Write knowledge update artifact
-    writer.write_knowledge_update(&run_dir, &spec.name, &knowledge_update)
+    writer
+        .write_knowledge_update(&run_dir, &spec.name, &knowledge_update)
         .map_err(|e| format!("Failed to write knowledge update: {}", e))?;
 
     // Open the knowledge store and ingest observations
@@ -3088,7 +3812,10 @@ fn run_lab_loop(
     };
 
     let ingested_count = ingest_knowledge_observations(&mut store, &knowledge_update, &task_hash)?;
-    println!("  Ingested {} observations into knowledge store at {}", ingested_count, knowledge_dir);
+    println!(
+        "  Ingested {} observations into knowledge store at {}",
+        ingested_count, knowledge_dir
+    );
 
     // Step 8: Determine adaptation_readiness
     println!("[8/9] Determining adaptation readiness...");
@@ -3096,7 +3823,8 @@ fn run_lab_loop(
         // Check if any ingested observation is compiler-consumable
         // (confidence > 0 and evidence_count >= 1, making it queryable by the pass pipeline)
         let empty_observations: Vec<serde_json::Value> = vec![];
-        let observations = knowledge_update.get("observations")
+        let observations = knowledge_update
+            .get("observations")
             .and_then(|v| v.as_array())
             .unwrap_or(&empty_observations);
         let has_compiler_consumable = observations.iter().any(|obs| {
@@ -3119,19 +3847,17 @@ fn run_lab_loop(
     let env = EnvironmentSummary::detect(1);
     let verification_scope = VerificationScope::HostOnlyInspection;
 
-    let mut builder = LabRunBuilder::new(
-        run_id,
-        task_hash,
-        spec.name.clone(),
-        verification_scope,
-        env,
-    )
-    .compile_result(compile_step)
-    .inspect_result(inspect_step)
-    .artifact_directory(run_dir.to_string_lossy().to_string())
-    .adaptation_readiness(readiness_level.to_string())
-    .warning("No device-backed profiling performed — requires Apple hardware".to_string())
-    .warning("Drift metrics unavailable — requires Apple hardware for predict() output".to_string());
+    let mut builder =
+        LabRunBuilder::new(run_id, task_hash, spec.name.clone(), verification_scope, env)
+            .compile_result(compile_step)
+            .inspect_result(inspect_step)
+            .artifact_directory(run_dir.to_string_lossy().to_string())
+            .adaptation_readiness(readiness_level.to_string())
+            .warning("No device-backed profiling performed — requires Apple hardware".to_string())
+            .warning(
+                "Drift metrics unavailable — requires Apple hardware for predict() output"
+                    .to_string(),
+            );
 
     // Attach generator provenance if this run used a generated task
     if let Some(gen_info) = generated_from {
@@ -3144,17 +3870,23 @@ fn run_lab_loop(
                     seed: gen_seed,
                     task_name: spec.name.clone(),
                 });
-                println!("  Generator provenance: family={}, seed={}, version={}",
-                    parts[0], gen_seed, parts[2]);
+                println!(
+                    "  Generator provenance: family={}, seed={}, version={}",
+                    parts[0], gen_seed, parts[2]
+                );
             }
         } else {
-            eprintln!("  Warning: --generated-from format should be 'family,seed,version', got: {}", gen_info);
+            eprintln!(
+                "  Warning: --generated-from format should be 'family,seed,version', got: {}",
+                gen_info
+            );
         }
     }
 
     let lab_run = builder.build();
 
-    writer.write_run_record(&run_dir, &lab_run)
+    writer
+        .write_run_record(&run_dir, &lab_run)
         .map_err(|e| format!("Failed to write run record: {}", e))?;
 
     // Add adaptation_readiness to manifest
@@ -3163,7 +3895,8 @@ fn run_lab_loop(
         obj.insert("knowledge_store_path".to_string(), serde_json::json!(knowledge_dir));
         obj.insert("observations_ingested".to_string(), serde_json::json!(ingested_count));
     }
-    writer.write_manifest(&run_dir, &manifest)
+    writer
+        .write_manifest(&run_dir, &manifest)
         .map_err(|e| format!("Failed to write manifest: {}", e))?;
 
     println!("  Run record: {}", run_dir.join(layout::RUN_JSON).display());
@@ -3171,7 +3904,10 @@ fn run_lab_loop(
     println!("\n=== Lab-loop run summary ===");
     println!("  Run ID: {}", lab_run.run_id);
     println!("  Verification scope: {:?}", lab_run.verification_scope);
-    println!("  Compilation: {}", if lab_run.compile_result.success { "SUCCESS" } else { "FAILED" });
+    println!(
+        "  Compilation: {}",
+        if lab_run.compile_result.success { "SUCCESS" } else { "FAILED" }
+    );
     println!("  Baseline: {} FP32 reference values computed", baseline_result.output_tensor.len());
     println!("  Drift: {}", if drift_report.is_computed() { "computed" } else { "unavailable" });
     println!("  Observations ingested: {}", ingested_count);
@@ -3200,8 +3936,8 @@ fn run_profile(
 ) -> Result<(), String> {
     use ane_bridge::subprocess::PythonBridge;
     use ane_lab::device_meta::DeviceMetadata;
-    use ane_lab::harness::TimingResult;
     use ane_lab::fallback::FallbackDetector;
+    use ane_lab::harness::TimingResult;
 
     println!("=== MILLer — Device Profiling ===\n");
 
@@ -3226,7 +3962,8 @@ fn run_profile(
         "seed": 42,
     });
 
-    let result = bridge.execute_raw_payload(&payload)
+    let result = bridge
+        .execute_raw_payload(&payload)
         .map_err(|e| format!("Bridge invocation failed: {}", e))?;
 
     if result.status != "success" {
@@ -3239,7 +3976,8 @@ fn run_profile(
         // Write a result indicating unavailability
         let output_path = PathBuf::from(output);
         if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("Failed to create output dir: {}", e))?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create output dir: {}", e))?;
         }
         let unavailable_result = serde_json::json!({
             "status": "unavailable",
@@ -3255,8 +3993,7 @@ fn run_profile(
         });
         let json = serde_json::to_string_pretty(&unavailable_result)
             .map_err(|e| format!("JSON serialization failed: {}", e))?;
-        fs::write(&output_path, json)
-            .map_err(|e| format!("Failed to write output: {}", e))?;
+        fs::write(&output_path, json).map_err(|e| format!("Failed to write output: {}", e))?;
 
         return Ok(());
     }
@@ -3286,7 +4023,10 @@ fn run_profile(
         println!("  min: {:.3}ms", t.min_ms);
         println!("  max: {:.3}ms", t.max_ms);
         println!("  mean: {:.3}ms (stddev: {:.3}ms)", t.mean_ms, t.std_dev_ms);
-        println!("  Iterations: {} warmup + {} measured", t.warmup_iterations, t.measured_iterations);
+        println!(
+            "  Iterations: {} warmup + {} measured",
+            t.warmup_iterations, t.measured_iterations
+        );
         println!("  Scope: {}", t.scope_note);
     }
 
@@ -3317,8 +4057,7 @@ fn run_profile(
 
     let json = serde_json::to_string_pretty(&profile_result)
         .map_err(|e| format!("JSON serialization failed: {}", e))?;
-    fs::write(&output_path, json)
-        .map_err(|e| format!("Failed to write output: {}", e))?;
+    fs::write(&output_path, json).map_err(|e| format!("Failed to write output: {}", e))?;
 
     println!("\n=== Profiling complete ===");
     println!("Results: {}", output_path.display());
@@ -3339,7 +4078,7 @@ fn build_artifact_manifest(
     bridge_result: &ane_bridge::subprocess::BridgeResult,
     task_hash: &str,
 ) -> serde_json::Value {
-    use ane_artifacts::manifest::{ArtifactManifest, PackageEntry, FunctionDescriptor, TensorSpec};
+    use ane_artifacts::manifest::{ArtifactManifest, FunctionDescriptor, PackageEntry, TensorSpec};
 
     let timestamp = chrono::Utc::now().to_rfc3339();
 
@@ -3348,42 +4087,86 @@ fn build_artifact_manifest(
 
     // Build function descriptors from bridge result or spec fallback
     let functions: Vec<FunctionDescriptor> = if !bridge_result.function_descriptors.is_empty() {
-        bridge_result.function_descriptors.iter().map(|fd| {
-            let inputs: Vec<TensorSpec> = fd.inputs.iter().map(|inp| {
-                TensorSpec {
-                    name: inp.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
-                    shape: inp.get("shape").and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as usize)).collect())
-                        .unwrap_or_default(),
-                    dtype: inp.get("dtype").and_then(|v| v.as_str()).unwrap_or("fp16").to_string(),
+        bridge_result
+            .function_descriptors
+            .iter()
+            .map(|fd| {
+                let inputs: Vec<TensorSpec> = fd
+                    .inputs
+                    .iter()
+                    .map(|inp| TensorSpec {
+                        name: inp
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string(),
+                        shape: inp
+                            .get("shape")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter().filter_map(|v| v.as_u64().map(|n| n as usize)).collect()
+                            })
+                            .unwrap_or_default(),
+                        dtype: inp
+                            .get("dtype")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("fp16")
+                            .to_string(),
+                    })
+                    .collect();
+                let outputs: Vec<TensorSpec> = fd
+                    .outputs
+                    .iter()
+                    .map(|outp| TensorSpec {
+                        name: outp
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string(),
+                        shape: outp
+                            .get("shape")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter().filter_map(|v| v.as_u64().map(|n| n as usize)).collect()
+                            })
+                            .unwrap_or_default(),
+                        dtype: outp
+                            .get("dtype")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("fp16")
+                            .to_string(),
+                    })
+                    .collect();
+                FunctionDescriptor {
+                    name: fd.name.clone(),
+                    inputs,
+                    outputs,
+                    stateful: fd.stateful,
+                    emission_status: "emitted".to_string(),
+                    mir_ops: vec![],
                 }
-            }).collect();
-            let outputs: Vec<TensorSpec> = fd.outputs.iter().map(|outp| {
-                TensorSpec {
-                    name: outp.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
-                    shape: outp.get("shape").and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as usize)).collect())
-                        .unwrap_or_default(),
-                    dtype: outp.get("dtype").and_then(|v| v.as_str()).unwrap_or("fp16").to_string(),
-                }
-            }).collect();
-            FunctionDescriptor {
-                name: fd.name.clone(),
-                inputs,
-                outputs,
-                stateful: fd.stateful,
-                emission_status: "emitted".to_string(),
-                mir_ops: vec![],
-            }
-        }).collect()
+            })
+            .collect()
     } else {
         // Fallback: derive from spec dimensions (not hardcoded)
         vec![FunctionDescriptor {
             name: "main".to_string(),
-            inputs: vec![TensorSpec { name: "x".to_string(), shape: vec![batch_size, input_dim], dtype: dtype.clone() }],
-            outputs: vec![TensorSpec { name: "output".to_string(), shape: vec![batch_size, output_dim], dtype: dtype.clone() }],
+            inputs: vec![TensorSpec {
+                name: "x".to_string(),
+                shape: vec![batch_size, input_dim],
+                dtype: dtype.clone(),
+            }],
+            outputs: vec![TensorSpec {
+                name: "output".to_string(),
+                shape: vec![batch_size, output_dim],
+                dtype: dtype.clone(),
+            }],
             stateful: false,
-            emission_status: if bridge_result.status == "success" { "emitted".to_string() } else { "seam_only".to_string() },
+            emission_status: if bridge_result.status == "success" {
+                "emitted".to_string()
+            } else {
+                "seam_only".to_string()
+            },
             mir_ops: vec![],
         }]
     };
@@ -3419,7 +4202,8 @@ fn build_artifact_manifest(
         ],
     };
 
-    serde_json::to_value(&manifest).unwrap_or_else(|_| serde_json::json!({"error": "manifest serialization failed"}))
+    serde_json::to_value(&manifest)
+        .unwrap_or_else(|_| serde_json::json!({"error": "manifest serialization failed"}))
 }
 
 /// Build a backend-knowledge update from the compilation result.
@@ -3642,13 +4426,11 @@ fn run_package(input: &str, output: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to read manifest.json: {}", e))?;
     let manifest: serde_json::Value = serde_json::from_str(&manifest_str)
         .map_err(|e| format!("Failed to parse manifest.json: {}", e))?;
-    let model_id = manifest.get("model_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("package");
+    let model_id = manifest.get("model_id").and_then(|v| v.as_str()).unwrap_or("package");
 
     let packager = Packager::new(input);
-    let zip_path = packager.package_single(model_id, input)
-        .map_err(|e| format!("Packaging failed: {}", e))?;
+    let zip_path =
+        packager.package_single(model_id, input).map_err(|e| format!("Packaging failed: {}", e))?;
 
     // Move zip to output directory if different from input
     let zip_src = PathBuf::from(&zip_path);
@@ -3662,8 +4444,8 @@ fn run_package(input: &str, output: &str) -> Result<(), String> {
     }
 
     // Validate the package
-    let valid = packager.validate(&zip_path)
-        .map_err(|e| format!("Validation check failed: {}", e))?;
+    let valid =
+        packager.validate(&zip_path).map_err(|e| format!("Validation check failed: {}", e))?;
     if valid {
         println!("Package validation: OK");
     } else {
@@ -3682,8 +4464,8 @@ fn run_package(input: &str, output: &str) -> Result<(), String> {
 /// - A directory containing manifest.json (and knowledge/update_*.json)
 /// - A single manifest.json file
 fn run_report(input: &str, output: &str, format: &str) -> Result<(), String> {
-    use ane_report::markdown::MarkdownReporter;
     use ane_report::json_report::JsonReporter;
+    use ane_report::markdown::MarkdownReporter;
 
     let input_path = PathBuf::from(input);
     let output_path = PathBuf::from(output);
@@ -3696,7 +4478,8 @@ fn run_report(input: &str, output: &str, format: &str) -> Result<(), String> {
         }
         (mp, input_path.clone())
     } else if input_path.is_file() {
-        let dir = input_path.parent()
+        let dir = input_path
+            .parent()
             .ok_or("Cannot determine parent directory of input file")?
             .to_path_buf();
         (input_path.clone(), dir)
@@ -3714,8 +4497,10 @@ fn run_report(input: &str, output: &str, format: &str) -> Result<(), String> {
     let bridge_result = if manifest_dir.join("result.json").exists() {
         let br_str = fs::read_to_string(manifest_dir.join("result.json"))
             .map_err(|e| format!("Failed to read result.json: {}", e))?;
-        Some(serde_json::from_str(&br_str)
-            .map_err(|e| format!("Failed to parse result.json: {}", e))?)
+        Some(
+            serde_json::from_str(&br_str)
+                .map_err(|e| format!("Failed to parse result.json: {}", e))?,
+        )
     } else {
         None
     };
@@ -3732,13 +4517,15 @@ fn run_report(input: &str, output: &str, format: &str) -> Result<(), String> {
     match format {
         "markdown" | "md" => {
             let reporter = MarkdownReporter::new();
-            reporter.generate_compilation_report(&manifest, bridge_result.as_ref(), output)
+            reporter
+                .generate_compilation_report(&manifest, bridge_result.as_ref(), output)
                 .map_err(|e| format!("Markdown report generation failed: {}", e))?;
 
             // Also generate knowledge report if knowledge update exists
             if let Some(ref ku) = knowledge_update {
                 let ku_path = output_path.with_extension("knowledge.md");
-                reporter.generate_knowledge_report(ku, ku_path.to_str().unwrap_or(""))
+                reporter
+                    .generate_knowledge_report(ku, ku_path.to_str().unwrap_or(""))
                     .map_err(|e| format!("Knowledge markdown report failed: {}", e))?;
                 println!("Knowledge report: {}", ku_path.display());
             }
@@ -3747,17 +4534,21 @@ fn run_report(input: &str, output: &str, format: &str) -> Result<(), String> {
         }
         "json" => {
             let reporter = JsonReporter::new();
-            let report = reporter.generate_compilation_report(&manifest, bridge_result.as_ref())
+            let report = reporter
+                .generate_compilation_report(&manifest, bridge_result.as_ref())
                 .map_err(|e| format!("JSON report generation failed: {}", e))?;
-            reporter.write_to_file(&report, output)
+            reporter
+                .write_to_file(&report, output)
                 .map_err(|e| format!("Failed to write JSON report: {}", e))?;
 
             // Also generate knowledge report if knowledge update exists
             if let Some(ref ku) = knowledge_update {
-                let ku_report = reporter.generate_knowledge_report(ku)
+                let ku_report = reporter
+                    .generate_knowledge_report(ku)
                     .map_err(|e| format!("Knowledge JSON report failed: {}", e))?;
                 let ku_path = output_path.with_extension("knowledge.json");
-                reporter.write_to_file(&ku_report, ku_path.to_str().unwrap_or(""))
+                reporter
+                    .write_to_file(&ku_report, ku_path.to_str().unwrap_or(""))
                     .map_err(|e| format!("Failed to write knowledge JSON report: {}", e))?;
                 println!("Knowledge report: {}", ku_path.display());
             }
@@ -3802,14 +4593,10 @@ fn find_knowledge_update(dir: &std::path::Path) -> Result<Option<serde_json::Val
 ///
 /// Opens a knowledge store and queries its contents using
 /// type, confidence, and scope filters.
-fn run_query(
-    store_path: &str,
-    filter: Option<&str>,
-    format: &str,
-) -> Result<(), String> {
-    use ane_knowledge::store::KnowledgeStore;
+fn run_query(store_path: &str, filter: Option<&str>, format: &str) -> Result<(), String> {
     use ane_knowledge::query::{KnowledgeQuery, KnowledgeQueryable};
     use ane_knowledge::shard_template;
+    use ane_knowledge::store::KnowledgeStore;
 
     println!("=== MILLer — Knowledge Query ===\n");
 
@@ -3830,7 +4617,8 @@ fn run_query(
         };
 
         if !knowledge_dir.is_empty() {
-            let loaded = store.load_seeds_from_directory(knowledge_dir)
+            let loaded = store
+                .load_seeds_from_directory(knowledge_dir)
                 .map_err(|e| format!("Failed to load seeds: {}", e))?;
             if loaded > 0 {
                 println!("  Loaded {} seed entries from {}", loaded, knowledge_dir);
@@ -3851,8 +4639,7 @@ fn run_query(
     };
 
     // Execute query
-    let results = store.query(&query)
-        .map_err(|e| format!("Query failed: {}", e))?;
+    let results = store.query(&query).map_err(|e| format!("Query failed: {}", e))?;
 
     println!("  Results: {} matching entries\n", results.len());
 
@@ -3868,10 +4655,15 @@ fn run_query(
                 println!("- Type: {:?}", unit.knowledge_type);
                 println!("- Confidence: {:.2}", unit.confidence);
                 println!("- Evidence: {:?} (count: {})", unit.evidence_source, unit.evidence_count);
-                println!("- Scope: devices={:?}, os={:?}, opset={:?}", 
-                    unit.scope.device_classes, unit.scope.os_versions, unit.scope.opset_versions);
+                println!(
+                    "- Scope: devices={:?}, os={:?}, opset={:?}",
+                    unit.scope.device_classes, unit.scope.os_versions, unit.scope.opset_versions
+                );
                 if !unit.payload.is_empty() {
-                    println!("- Payload: {}", serde_json::to_string(&unit.payload).unwrap_or_default());
+                    println!(
+                        "- Payload: {}",
+                        serde_json::to_string(&unit.payload).unwrap_or_default()
+                    );
                 }
                 println!();
             }
@@ -3879,9 +4671,14 @@ fn run_query(
         _ => {
             // Table format (default)
             for unit in &results {
-                println!("  {:40} {:?} conf={:.2} evidence={:?}/{}", 
-                    unit.id, unit.knowledge_type, unit.confidence, 
-                    unit.evidence_source, unit.evidence_count);
+                println!(
+                    "  {:40} {:?} conf={:.2} evidence={:?}/{}",
+                    unit.id,
+                    unit.knowledge_type,
+                    unit.confidence,
+                    unit.evidence_source,
+                    unit.evidence_count
+                );
             }
         }
     }
@@ -3897,17 +4694,24 @@ fn run_query(
         };
 
         if !knowledge_dir.is_empty() {
-            let templates = shard_template::load_shard_template_seeds(knowledge_dir)
-                .unwrap_or_default();
+            let templates =
+                shard_template::load_shard_template_seeds(knowledge_dir).unwrap_or_default();
             if !templates.is_empty() {
                 println!("\nShard Template Seeds:");
                 for t in &templates {
-                    println!("  {} (template: {}, partitions: {}, known_good: {}, confidence: {:.2})",
-                        t.seed_id, t.template.template_id,
-                        t.template.partition_spec.len(), t.known_good, t.confidence);
+                    println!(
+                        "  {} (template: {}, partitions: {}, known_good: {}, confidence: {:.2})",
+                        t.seed_id,
+                        t.template.template_id,
+                        t.template.partition_spec.len(),
+                        t.known_good,
+                        t.confidence
+                    );
                     for ps in &t.template.partition_spec {
-                        println!("    - {:?} layers {}-{} {:?}", 
-                            ps.role, ps.layer_start, ps.layer_end, ps.compute_units);
+                        println!(
+                            "    - {:?} layers {}-{} {:?}",
+                            ps.role, ps.layer_start, ps.layer_end, ps.compute_units
+                        );
                     }
                 }
             }
@@ -3924,8 +4728,8 @@ fn run_query(
 /// Supported syntax: `type=LegalityRule`, `min_conf=0.5`, `source=SyntheticRun`
 /// Multiple filters separated by commas.
 fn parse_query_filter(expr: &str) -> Result<ane_knowledge::query::KnowledgeQuery, String> {
+    use ane_ir::kir::{EvidenceSource, KnowledgeType};
     use ane_knowledge::query::KnowledgeQuery;
-    use ane_ir::kir::{KnowledgeType, EvidenceSource};
 
     let mut query = KnowledgeQuery::new();
 
@@ -3949,7 +4753,9 @@ fn parse_query_filter(expr: &str) -> Result<ane_knowledge::query::KnowledgeQuery
                     query = query.with_type(kt);
                 }
                 "min_conf" => {
-                    let conf: f32 = value.trim().parse()
+                    let conf: f32 = value
+                        .trim()
+                        .parse()
                         .map_err(|_| format!("Invalid confidence value: {}", value))?;
                     query = query.with_min_confidence(conf);
                 }
@@ -3966,7 +4772,12 @@ fn parse_query_filter(expr: &str) -> Result<ane_knowledge::query::KnowledgeQuery
                     };
                     query = query.with_evidence_source(source);
                 }
-                other => return Err(format!("Unknown filter key: '{}'. Supported: type, min_conf, source", other)),
+                other => {
+                    return Err(format!(
+                        "Unknown filter key: '{}'. Supported: type, min_conf, source",
+                        other
+                    ))
+                }
             }
         } else {
             return Err(format!("Invalid filter expression: '{}'. Use key=value format.", part));
@@ -3979,14 +4790,10 @@ fn parse_query_filter(expr: &str) -> Result<ane_knowledge::query::KnowledgeQuery
 /// Run the knowledge import subcommand.
 ///
 /// Imports knowledge from a snapshot file into a knowledge store.
-fn run_import(
-    source: &str,
-    store_path: &str,
-    validate: bool,
-) -> Result<(), String> {
-    use ane_knowledge::store::KnowledgeStore;
-    use ane_knowledge::snapshot::SnapshotImport;
+fn run_import(source: &str, store_path: &str, validate: bool) -> Result<(), String> {
     use ane_knowledge::shard_template;
+    use ane_knowledge::snapshot::SnapshotImport;
+    use ane_knowledge::store::KnowledgeStore;
 
     println!("=== MILLer — Knowledge Import ===\n");
 
@@ -4006,15 +4813,24 @@ fn run_import(
             // Convert validated templates to knowledge units and insert
             for template in &templates {
                 if validate && (template.confidence < 0.0 || template.confidence > 1.0) {
-                    eprintln!("  Skipping template '{}' — invalid confidence: {}", template.seed_id, template.confidence);
+                    eprintln!(
+                        "  Skipping template '{}' — invalid confidence: {}",
+                        template.seed_id, template.confidence
+                    );
                     continue;
                 }
 
                 // Build a KnowledgeUnit from the validated template
                 let mut payload = std::collections::HashMap::new();
-                payload.insert("template_id".to_string(), serde_json::json!(template.template.template_id));
+                payload.insert(
+                    "template_id".to_string(),
+                    serde_json::json!(template.template.template_id),
+                );
                 payload.insert("known_good".to_string(), serde_json::json!(template.known_good));
-                payload.insert("context_length".to_string(), serde_json::json!(template.template.context_length));
+                payload.insert(
+                    "context_length".to_string(),
+                    serde_json::json!(template.template.context_length),
+                );
                 if let Some(ref state_config) = template.template.state_config {
                     payload.insert("state_config".to_string(), serde_json::json!(state_config));
                 }
@@ -4032,9 +4848,13 @@ fn run_import(
                     payload,
                 };
 
-                store.insert_observation(unit)
-                    .map_err(|e| format!("Failed to insert template '{}': {}", template.seed_id, e))?;
-                println!("  Imported: {} (template: {})", template.seed_id, template.template.template_id);
+                store.insert_observation(unit).map_err(|e| {
+                    format!("Failed to insert template '{}': {}", template.seed_id, e)
+                })?;
+                println!(
+                    "  Imported: {} (template: {})",
+                    template.seed_id, template.template.template_id
+                );
             }
 
             let (seeds, observations) = store.counts();
@@ -4059,15 +4879,18 @@ fn run_import(
     }
 
     // Open/create the store
-    let mut store = KnowledgeStore::open(store_path)
-        .map_err(|e| format!("Failed to open store: {}", e))?;
+    let mut store =
+        KnowledgeStore::open(store_path).map_err(|e| format!("Failed to open store: {}", e))?;
 
     // Import the snapshot
     let stats = SnapshotImport::import_into_store(&mut store, &snapshot)
         .map_err(|e| format!("Import failed: {}", e))?;
 
     let (seeds, observations) = store.counts();
-    println!("  Imported {} seeds, {} observations from {}", stats.seeds_imported, stats.observations_imported, source);
+    println!(
+        "  Imported {} seeds, {} observations from {}",
+        stats.seeds_imported, stats.observations_imported, source
+    );
     println!("  Store now contains {} seeds, {} observations", seeds, observations);
 
     println!("\n=== Import complete ===");
@@ -4084,12 +4907,8 @@ fn run_import(
 ///
 /// Currently supports the `linear`, `lut`, and `decode` families. Other families remain
 /// open and unimplemented.
-fn run_generate_tasks(
-    family: &str,
-    output: &str,
-    seed: u64,
-) -> Result<(), String> {
-    use ane_lab::task_gen::{TaskGenerator, TaskFamilyId};
+fn run_generate_tasks(family: &str, output: &str, seed: u64) -> Result<(), String> {
+    use ane_lab::task_gen::{TaskFamilyId, TaskGenerator};
 
     println!("=== MILLer — Task Generation ===\n");
 
@@ -4106,23 +4925,22 @@ fn run_generate_tasks(
     let generator = TaskGenerator::with_seed(seed);
     let output_path = PathBuf::from(output);
 
-    let results = generator.generate_and_persist(&family_id, &output_path)
+    let results = generator
+        .generate_and_persist(&family_id, &output_path)
         .map_err(|e| format!("Task generation failed: {}", e))?;
 
     println!("[2/3] Generated {} task(s):", results.len());
     for (spec, path) in &results {
-        let task_hash = {
-            // Compute task hash inline
-            let hash = compute_task_hash(spec);
-            hash
-        };
+        let task_hash = compute_task_hash(spec);
         println!("  {} -> {} (hash: {})", spec.name, path.display(), task_hash);
     }
 
     println!("[3/3] Tasks written to: {}", output);
     println!("\nTo compile a generated task:");
-    println!("  ane-cli compile --input {}/LinearProjection/<task>.toml --output <out_dir>",
-        output);
+    println!(
+        "  ane-cli compile --input {}/LinearProjection/<task>.toml --output <out_dir>",
+        output
+    );
 
     println!("\n=== Task generation complete ===");
 
@@ -4136,6 +4954,7 @@ fn run_generate_tasks(
 /// conformance, and multi-function conformance. The Python bridge
 /// handles platform detection (macOS gets MLModelStructure/MLComputePlan,
 /// Linux gets spec-based fallback).
+#[allow(clippy::too_many_arguments)]
 fn run_verify(
     mlpackage_path: &str,
     output: &str,
@@ -4164,7 +4983,9 @@ fn run_verify(
     // Sprint 47: Auto-populate from compile manifest if not explicitly provided
     if let Some(ops_json) = mir_ops {
         match serde_json::from_str::<serde_json::Value>(ops_json) {
-            Ok(ops) => { payload["mir_ops"] = ops; }
+            Ok(ops) => {
+                payload["mir_ops"] = ops;
+            }
             Err(e) => println!("Warning: could not parse mir_ops JSON: {}. Skipping.", e),
         }
     } else {
@@ -4178,14 +4999,18 @@ fn run_verify(
                 if let Ok(manifest_val) = serde_json::from_str::<serde_json::Value>(&manifest_str) {
                     // Extract mir_ops from the first function's descriptor in the first package
                     if let Some(mir_ops_val) = manifest_val
-                        .get("packages").and_then(|p| p.get(0))
-                        .and_then(|pkg| pkg.get("functions")).and_then(|f| f.get(0))
+                        .get("packages")
+                        .and_then(|p| p.get(0))
+                        .and_then(|pkg| pkg.get("functions"))
+                        .and_then(|f| f.get(0))
                         .and_then(|func| func.get("mir_ops"))
                     {
-                        if mir_ops_val.as_array().map_or(false, |arr| !arr.is_empty()) {
+                        if mir_ops_val.as_array().is_some_and(|arr| !arr.is_empty()) {
                             payload["mir_ops"] = mir_ops_val.clone();
-                            println!("  Auto-populated mir_ops from compile manifest ({} ops)",
-                                mir_ops_val.as_array().map(|a| a.len()).unwrap_or(0));
+                            println!(
+                                "  Auto-populated mir_ops from compile manifest ({} ops)",
+                                mir_ops_val.as_array().map(|a| a.len()).unwrap_or(0)
+                            );
                         }
                     }
                 }
@@ -4208,15 +5033,18 @@ fn run_verify(
     // Dispatch to Python bridge
     println!("[1/3] Dispatching verify command via Python bridge...");
     let bridge = PythonBridge::new(python_path, bridge_script);
-    let result = bridge.execute_raw_payload(&payload)
+    let result = bridge
+        .execute_raw_payload(&payload)
         .map_err(|e| format!("Bridge invocation failed: {}", e))?;
 
     if result.status != "success" {
         if let Some(ref err) = result.error_message {
             println!("  Verification failed: {}", err);
         }
-        return Err(format!("Verify command failed: {}",
-            result.error_message.as_deref().unwrap_or("unknown error")));
+        return Err(format!(
+            "Verify command failed: {}",
+            result.error_message.as_deref().unwrap_or("unknown error")
+        ));
     }
 
     // Extract verification results from metadata
@@ -4262,8 +5090,7 @@ fn run_verify(
     }
     let json = serde_json::to_string_pretty(&result.metadata)
         .map_err(|e| format!("JSON serialization failed: {}", e))?;
-    fs::write(&output_path, json)
-        .map_err(|e| format!("Failed to write output: {}", e))?;
+    fs::write(&output_path, json).map_err(|e| format!("Failed to write output: {}", e))?;
 
     println!("  Verification artifacts written to: {}", output);
     println!("\n=== Verification complete ===");

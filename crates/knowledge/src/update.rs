@@ -8,8 +8,8 @@
 //! If the observation conflicts with an existing entry, the conflict
 //! is recorded (not auto-resolved for high-confidence entries).
 
-use ane_ir::kir::{KnowledgeUnit, KnowledgeType, EvidenceSource, KnowledgeScope};
-use anyhow::{Result, bail};
+use ane_ir::kir::{EvidenceSource, KnowledgeScope, KnowledgeType, KnowledgeUnit};
+use anyhow::{bail, Result};
 
 use crate::store::KnowledgeStore;
 use crate::ComputePlanObservation;
@@ -73,10 +73,7 @@ impl<'a> UpdatePipeline<'a> {
             );
         }
         if unit.evidence_count == 0 {
-            bail!(
-                "Knowledge unit evidence_count must be >= 1, got 0 for '{}'",
-                unit.id
-            );
+            bail!("Knowledge unit evidence_count must be >= 1, got 0 for '{}'", unit.id);
         }
         Ok(())
     }
@@ -103,11 +100,7 @@ pub fn initial_confidence(source: &EvidenceSource, evidence_count: usize) -> f32
     };
 
     // Slight bonus for multiple evidence points
-    let bonus = if evidence_count > 1 {
-        (evidence_count as f32).ln().max(0.0) * 0.02
-    } else {
-        0.0
-    };
+    let bonus = if evidence_count > 1 { (evidence_count as f32).ln().max(0.0) * 0.02 } else { 0.0 };
 
     (base + bonus).min(1.0)
 }
@@ -148,9 +141,7 @@ pub fn ingest_compute_plan_observations(
     for obs in observations {
         // Validate required fields
         if obs.op_pattern.is_empty() {
-            bail!(
-                "Compute plan observation op_pattern must not be empty"
-            );
+            bail!("Compute plan observation op_pattern must not be empty");
         }
         if obs.confidence < 0.0 || obs.confidence > 1.0 {
             bail!(
@@ -203,7 +194,7 @@ pub fn ingest_compute_plan_observations(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ane_ir::kir::{KnowledgeType, KnowledgeScope};
+    use ane_ir::kir::{KnowledgeScope, KnowledgeType};
     use std::collections::HashMap;
 
     fn make_unit(id: &str, confidence: f32, evidence_count: usize) -> KnowledgeUnit {
@@ -352,15 +343,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut store = KnowledgeStore::open(&tmp.path().join("store").to_string_lossy()).unwrap();
 
-        let observations = vec![
-            ComputePlanObservation {
-                op_pattern: "".to_string(),
-                device_class: "CPU".to_string(),
-                ane_placed: false,
-                confidence: 0.9,
-                evidence_count: 1,
-            },
-        ];
+        let observations = vec![ComputePlanObservation {
+            op_pattern: "".to_string(),
+            device_class: "CPU".to_string(),
+            ane_placed: false,
+            confidence: 0.9,
+            evidence_count: 1,
+        }];
 
         let result = ingest_compute_plan_observations(&mut store, observations);
         assert!(result.is_err());
@@ -372,15 +361,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut store = KnowledgeStore::open(&tmp.path().join("store").to_string_lossy()).unwrap();
 
-        let observations = vec![
-            ComputePlanObservation {
-                op_pattern: "linear_1".to_string(),
-                device_class: "NeuralEngine".to_string(),
-                ane_placed: true,
-                confidence: 1.5,
-                evidence_count: 1,
-            },
-        ];
+        let observations = vec![ComputePlanObservation {
+            op_pattern: "linear_1".to_string(),
+            device_class: "NeuralEngine".to_string(),
+            ane_placed: true,
+            confidence: 1.5,
+            evidence_count: 1,
+        }];
 
         let result = ingest_compute_plan_observations(&mut store, observations);
         assert!(result.is_err());

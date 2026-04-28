@@ -8,8 +8,8 @@
 //! suspicion levels represent what can honestly be concluded from
 //! available data, which is often very little.
 
-use crate::harness::{FallbackSuspicionLevel, FallbackSuspicionResult, SuspicionEvidence};
 use crate::device_meta::DeviceMetadata;
+use crate::harness::{FallbackSuspicionLevel, FallbackSuspicionResult, SuspicionEvidence};
 
 /// Fallback detection engine.
 ///
@@ -22,19 +22,21 @@ pub struct FallbackDetector {
     pub latency_threshold_ratio: f64,
 }
 
+impl Default for FallbackDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FallbackDetector {
     /// Create a new fallback detector with default thresholds.
     pub fn new() -> Self {
-        Self {
-            latency_threshold_ratio: 3.0,
-        }
+        Self { latency_threshold_ratio: 3.0 }
     }
 
     /// Create a new fallback detector with a custom latency threshold ratio.
     pub fn with_threshold_ratio(ratio: f64) -> Self {
-        Self {
-            latency_threshold_ratio: ratio,
-        }
+        Self { latency_threshold_ratio: ratio }
     }
 
     /// Detect fallback suspicion from timing data.
@@ -55,12 +57,16 @@ impl FallbackDetector {
         if !device_meta.is_device_backed() {
             evidence.push(SuspicionEvidence {
                 kind: "environment".to_string(),
-                description: "Run was not performed on Apple hardware; fallback assessment is not available".to_string(),
+                description:
+                    "Run was not performed on Apple hardware; fallback assessment is not available"
+                        .to_string(),
                 strength: 0.0,
             });
             return FallbackSuspicionResult {
                 suspicion_level: FallbackSuspicionLevel::Unavailable,
-                explanation: "Fallback assessment requires device-backed execution on Apple hardware".to_string(),
+                explanation:
+                    "Fallback assessment requires device-backed execution on Apple hardware"
+                        .to_string(),
                 evidence,
             };
         }
@@ -69,7 +75,9 @@ impl FallbackDetector {
         if !device_meta.compute_plan_available {
             evidence.push(SuspicionEvidence {
                 kind: "compute_plan_unavailable".to_string(),
-                description: "Compute plan inspection not available; cannot verify compute unit assignment".to_string(),
+                description:
+                    "Compute plan inspection not available; cannot verify compute unit assignment"
+                        .to_string(),
                 strength: 0.0,
             });
         }
@@ -99,7 +107,8 @@ impl FallbackDetector {
         } else {
             evidence.push(SuspicionEvidence {
                 kind: "no_baseline".to_string(),
-                description: "No expected ANE latency baseline available for comparison".to_string(),
+                description: "No expected ANE latency baseline available for comparison"
+                    .to_string(),
                 strength: 0.0,
             });
         }
@@ -119,26 +128,20 @@ impl FallbackDetector {
             }
         };
 
-        FallbackSuspicionResult {
-            suspicion_level,
-            explanation,
-            evidence,
-        }
+        FallbackSuspicionResult { suspicion_level, explanation, evidence }
     }
 
     /// Assess the overall suspicion level from accumulated evidence.
     fn assess_overall_level(&self, evidence: &[SuspicionEvidence]) -> FallbackSuspicionLevel {
         // If any evidence indicates we can't make an assessment, return Unavailable
-        let has_unavailable = evidence.iter().any(|e| {
-            e.kind == "environment" || e.kind == "no_baseline"
-        });
+        let has_unavailable =
+            evidence.iter().any(|e| e.kind == "environment" || e.kind == "no_baseline");
 
         if has_unavailable {
             // We have some evidence but not enough for any conclusion
             // Check if we have at least timing data
-            let has_timing = evidence.iter().any(|e| {
-                e.kind == "latency_anomaly" || e.kind == "latency_normal"
-            });
+            let has_timing =
+                evidence.iter().any(|e| e.kind == "latency_anomaly" || e.kind == "latency_normal");
             if !has_timing {
                 return FallbackSuspicionLevel::Unavailable;
             }

@@ -14,11 +14,13 @@
 //!         └── model.mlmodel   — Protobuf model definition
 //! ```
 
+use crate::weights::WeightBinBuilder;
+use ane_coreml_proto::{
+    CoreMlModel, PackageManifest, PackageManifestEntry, PackageManifestMetadata,
+};
 use anyhow::Result;
 use std::fs;
 use std::path::Path;
-use ane_coreml_proto::{CoreMlModel, PackageManifest, PackageManifestEntry, PackageManifestMetadata};
-use crate::weights::WeightBinBuilder;
 
 /// Writer for `.mlpackage` directory structures.
 ///
@@ -109,7 +111,8 @@ impl MlPackageWriter {
         fs::write(&weight_bin_path, &weight_result.data)?;
 
         // Step 2: Serialize and write the model protobuf
-        let model_proto = crate::mir_to_proto::model_to_protobuf_bytes(model, &weight_result.entries)?;
+        let model_proto =
+            crate::mir_to_proto::model_to_protobuf_bytes(model, &weight_result.entries)?;
         let mlmodel_path = model_dir.join("model.mlmodel");
         fs::write(&mlmodel_path, &model_proto)?;
 
@@ -140,19 +143,18 @@ impl MlPackageWriter {
 
     /// Build the Manifest.json content from a CoreMlModel.
     fn build_manifest(model: &CoreMlModel) -> PackageManifest {
-        let mut files = Vec::new();
-
-        // Model file
-        files.push(PackageManifestEntry {
-            path: "Model/com.apple.CoreML/model.mlmodel".to_string(),
-            role: "model".to_string(),
-        });
-
-        // Weight file
-        files.push(PackageManifestEntry {
-            path: "Data/com.apple.CoreML/weights/weight.bin".to_string(),
-            role: "weights".to_string(),
-        });
+        let files = vec![
+            // Model file
+            PackageManifestEntry {
+                path: "Model/com.apple.CoreML/model.mlmodel".to_string(),
+                role: "model".to_string(),
+            },
+            // Weight file
+            PackageManifestEntry {
+                path: "Data/com.apple.CoreML/weights/weight.bin".to_string(),
+                role: "weights".to_string(),
+            },
+        ];
 
         let mut user_defined = HashMap::new();
         for (k, v) in &model.user_defined_metadata {
@@ -160,14 +162,9 @@ impl MlPackageWriter {
         }
 
         // Add emission metadata
-        user_defined.insert(
-            "com.apple.coreml.mlemission".to_string(),
-            "MILLer/proto-direct".to_string(),
-        );
-        user_defined.insert(
-            "com.apple.coreml.emission.version".to_string(),
-            "1.0".to_string(),
-        );
+        user_defined
+            .insert("com.apple.coreml.mlemission".to_string(), "MILLer/proto-direct".to_string());
+        user_defined.insert("com.apple.coreml.emission.version".to_string(), "1.0".to_string());
 
         PackageManifest {
             schema_version: "1.0".to_string(),
@@ -189,7 +186,7 @@ impl MlPackageWriter {
 
     /// Compute SHA-256 hash of all files in a directory.
     fn hash_directory(path: &Path) -> Result<String> {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
 
         let mut hasher = Sha256::new();
         Self::hash_directory_recursive(path, path, &mut hasher)?;
@@ -265,7 +262,7 @@ use std::collections::HashMap;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ane_coreml_proto::{SpecVersion, CoreMlComputeUnit};
+    use ane_coreml_proto::{CoreMlComputeUnit, SpecVersion};
 
     #[test]
     fn test_build_manifest() {

@@ -90,7 +90,11 @@ pub struct ComputePlanPlacementInfo {
 pub struct NoKnowledge;
 
 impl PassKnowledgeQuery for NoKnowledge {
-    fn query_legality(&self, _op_pattern: &str, _scope: Option<&KnowledgeScope>) -> Option<LegalityInfo> {
+    fn query_legality(
+        &self,
+        _op_pattern: &str,
+        _scope: Option<&KnowledgeScope>,
+    ) -> Option<LegalityInfo> {
         None
     }
 
@@ -98,11 +102,20 @@ impl PassKnowledgeQuery for NoKnowledge {
         None
     }
 
-    fn query_precision_hazard(&self, _op_pattern: &str, _current_dtype: &str, _scope: Option<&KnowledgeScope>) -> Option<PrecisionHazardInfo> {
+    fn query_precision_hazard(
+        &self,
+        _op_pattern: &str,
+        _current_dtype: &str,
+        _scope: Option<&KnowledgeScope>,
+    ) -> Option<PrecisionHazardInfo> {
         None
     }
 
-    fn query_compute_plan_placement(&self, _op_pattern: &str, _scope: Option<&KnowledgeScope>) -> Option<ComputePlanPlacementInfo> {
+    fn query_compute_plan_placement(
+        &self,
+        _op_pattern: &str,
+        _scope: Option<&KnowledgeScope>,
+    ) -> Option<ComputePlanPlacementInfo> {
         None
     }
 }
@@ -117,7 +130,11 @@ pub trait PassKnowledgeQuery {
     ///
     /// Returns `None` if no knowledge is available for this op pattern.
     /// The `scope` parameter allows filtering by device class / OS / opset.
-    fn query_legality(&self, op_pattern: &str, scope: Option<&KnowledgeScope>) -> Option<LegalityInfo>;
+    fn query_legality(
+        &self,
+        op_pattern: &str,
+        scope: Option<&KnowledgeScope>,
+    ) -> Option<LegalityInfo>;
 
     /// Query risk information for a given op pattern.
     ///
@@ -134,7 +151,12 @@ pub trait PassKnowledgeQuery {
     /// This is the first concrete adaptation mechanism in the pipeline:
     /// stored empirical knowledge about precision hazards changes the
     /// compiler's precision decision.
-    fn query_precision_hazard(&self, op_pattern: &str, current_dtype: &str, scope: Option<&KnowledgeScope>) -> Option<PrecisionHazardInfo>;
+    fn query_precision_hazard(
+        &self,
+        op_pattern: &str,
+        current_dtype: &str,
+        scope: Option<&KnowledgeScope>,
+    ) -> Option<PrecisionHazardInfo>;
 
     /// Query compute plan placement for a given op pattern.
     ///
@@ -145,5 +167,9 @@ pub trait PassKnowledgeQuery {
     /// This is the Sprint 35 adaptation mechanism: deterministic
     /// compute plan evidence increases fallback_risk for ops that
     /// the planner assigns to CPU or GPU.
-    fn query_compute_plan_placement(&self, op_pattern: &str, scope: Option<&KnowledgeScope>) -> Option<ComputePlanPlacementInfo>;
+    fn query_compute_plan_placement(
+        &self,
+        op_pattern: &str,
+        scope: Option<&KnowledgeScope>,
+    ) -> Option<ComputePlanPlacementInfo>;
 }

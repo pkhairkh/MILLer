@@ -46,9 +46,10 @@
 //! - Io and Sampler entries are optional but valid
 //! - The seed is scoped and confidence-scored; it is NOT universal truth
 
-use ane_ir::pir::{ShardRole, ComputeUnits, ShardTemplate, ShardPartitionEntry};
-use ane_ir::kir::{KnowledgeScope, EvidenceSource};
-use anyhow::{Result, bail, Context};
+use ane_ir::kir::{EvidenceSource, KnowledgeScope};
+use ane_ir::mir::ComputeUnitHint;
+use ane_ir::pir::{ShardPartitionEntry, ShardRole, ShardTemplate};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -222,7 +223,11 @@ pub fn load_shard_template_seeds(dir: &str) -> Result<Vec<ValidatedShardTemplate
         let seed_file: ShardTemplateSeedFile = match serde_json::from_str(&json) {
             Ok(f) => f,
             Err(e) => {
-                eprintln!("Warning: skipping malformed shard template seed file {}: {}", path.display(), e);
+                eprintln!(
+                    "Warning: skipping malformed shard template seed file {}: {}",
+                    path.display(),
+                    e
+                );
                 continue;
             }
         };
@@ -236,7 +241,10 @@ pub fn load_shard_template_seeds(dir: &str) -> Result<Vec<ValidatedShardTemplate
             match validate_and_convert(&seed_entry) {
                 Ok(template) => templates.push(template),
                 Err(e) => {
-                    eprintln!("Warning: skipping invalid shard template seed entry '{}': {}", seed_entry.id, e);
+                    eprintln!(
+                        "Warning: skipping invalid shard template seed entry '{}': {}",
+                        seed_entry.id, e
+                    );
                 }
             }
         }
@@ -282,36 +290,44 @@ fn validate_and_convert(entry: &ShardTemplateSeedEntry) -> Result<ValidatedShard
 
         // Validate layer range
         if spec.layers.len() != 2 {
-            bail!("Partition spec for role '{}' must have exactly 2 layer bounds, got {}", spec.role, spec.layers.len());
+            bail!(
+                "Partition spec for role '{}' must have exactly 2 layer bounds, got {}",
+                spec.role,
+                spec.layers.len()
+            );
         }
         let layer_start = spec.layers[0];
         let layer_end = spec.layers[1];
         if layer_end < layer_start {
-            bail!("Partition spec for role '{}' has invalid layer range: [{}, {}]", spec.role, layer_start, layer_end);
+            bail!(
+                "Partition spec for role '{}' has invalid layer range: [{}, {}]",
+                spec.role,
+                layer_start,
+                layer_end
+            );
         }
 
-        let compute_units = ComputeUnits::from_str_flexible(&spec.compute_units)
+        let compute_units = ComputeUnitHint::from_str_flexible(&spec.compute_units)
             .ok_or_else(|| anyhow::anyhow!("Invalid compute units: '{}'", spec.compute_units))?;
 
-        partition_entries.push(ShardPartitionEntry {
-            role,
-            layer_start,
-            layer_end,
-            compute_units,
-        });
+        partition_entries.push(ShardPartitionEntry { role, layer_start, layer_end, compute_units });
     }
 
     // Validate IO model compute units
-    let io_compute_units: Option<ComputeUnits> = match entry.io_model.as_ref() {
-        Some(io) => Some(ComputeUnits::from_str_flexible(&io.compute_units)
-            .ok_or_else(|| anyhow::anyhow!("Invalid IO model compute units: '{}'", io.compute_units))?),
+    let io_compute_units: Option<ComputeUnitHint> = match entry.io_model.as_ref() {
+        Some(io) => {
+            Some(ComputeUnitHint::from_str_flexible(&io.compute_units).ok_or_else(|| {
+                anyhow::anyhow!("Invalid IO model compute units: '{}'", io.compute_units)
+            })?)
+        }
         None => None,
     };
 
     // Validate sampler compute units
-    let sampler_compute_units: Option<ComputeUnits> = match entry.sampler.as_ref() {
-        Some(s) => Some(ComputeUnits::from_str_flexible(&s.compute_units)
-            .ok_or_else(|| anyhow::anyhow!("Invalid sampler compute units: '{}'", s.compute_units))?),
+    let sampler_compute_units: Option<ComputeUnitHint> = match entry.sampler.as_ref() {
+        Some(s) => Some(ComputeUnitHint::from_str_flexible(&s.compute_units).ok_or_else(|| {
+            anyhow::anyhow!("Invalid sampler compute units: '{}'", s.compute_units)
+        })?),
         None => None,
     };
 
@@ -329,15 +345,19 @@ fn validate_and_convert(entry: &ShardTemplateSeedEntry) -> Result<ValidatedShard
     let evidence_source = parse_evidence_source(&entry.evidence_source);
 
     // Build scope
-    let scope = entry.scope.as_ref().map(|s| KnowledgeScope {
-        device_classes: s.device_classes.clone(),
-        os_versions: s.os_versions.clone(),
-        opset_versions: s.opset_versions.clone(),
-    }).unwrap_or_else(|| KnowledgeScope {
-        device_classes: vec!["unknown".to_string()],
-        os_versions: vec!["unknown".to_string()],
-        opset_versions: vec!["iOS18".to_string()],
-    });
+    let scope = entry
+        .scope
+        .as_ref()
+        .map(|s| KnowledgeScope {
+            device_classes: s.device_classes.clone(),
+            os_versions: s.os_versions.clone(),
+            opset_versions: s.opset_versions.clone(),
+        })
+        .unwrap_or_else(|| KnowledgeScope {
+            device_classes: vec!["unknown".to_string()],
+            os_versions: vec!["unknown".to_string()],
+            opset_versions: vec!["iOS18".to_string()],
+        });
 
     // Validate confidence
     if entry.confidence < 0.0 || entry.confidence > 1.0 {
@@ -392,7 +412,8 @@ mod tests {
         assert!(!templates.is_empty(), "Expected at least one shard template seed");
 
         // Directory iteration order is not guaranteed, so find the qwen3 entry by ID
-        let qwen3 = templates.iter()
+        let qwen3 = templates
+            .iter()
             .find(|t| t.seed_id == "shard_qwen3_three_shard_v1")
             .expect("Expected shard_qwen3_three_shard_v1 entry in seed files");
         assert_eq!(qwen3.seed_id, "shard_qwen3_three_shard_v1");
@@ -403,9 +424,12 @@ mod tests {
         assert_eq!(qwen3.template.partition_spec[2].role, ShardRole::Exit);
         assert_eq!(qwen3.template.partition_spec[0].layer_start, 0);
         assert_eq!(qwen3.template.partition_spec[0].layer_end, 10);
-        assert_eq!(qwen3.template.io_compute_units, Some(ComputeUnits::CPUAndGPU));
-        assert_eq!(qwen3.template.sampler_compute_units, Some(ComputeUnits::CPUAndGPU));
-        assert_eq!(qwen3.template.state_config, Some("per_shard_kv_reverse_ring_buffer".to_string()));
+        assert_eq!(qwen3.template.io_compute_units, Some(ComputeUnitHint::CPUAndGPU));
+        assert_eq!(qwen3.template.sampler_compute_units, Some(ComputeUnitHint::CPUAndGPU));
+        assert_eq!(
+            qwen3.template.state_config,
+            Some("per_shard_kv_reverse_ring_buffer".to_string())
+        );
         assert_eq!(qwen3.template.context_length, 4096);
         assert!(qwen3.known_good);
         assert!((qwen3.confidence - 0.92).abs() < 0.01);
@@ -413,8 +437,13 @@ mod tests {
         assert_eq!(qwen3.evidence_count, 15);
 
         // Also verify the decode_step template is loaded (directory order is arbitrary)
-        assert!(templates.len() >= 2, "Expected at least 2 shard template seeds, got {}", templates.len());
-        let decode_step = templates.iter()
+        assert!(
+            templates.len() >= 2,
+            "Expected at least 2 shard template seeds, got {}",
+            templates.len()
+        );
+        let decode_step = templates
+            .iter()
             .find(|t| t.seed_id == "shard_decode_step_three_shard_v1")
             .expect("Expected shard_decode_step_three_shard_v1 entry");
         assert_eq!(decode_step.template.template_id, "decode-step-three-shard-v1");
@@ -625,10 +654,10 @@ mod tests {
 
     #[test]
     fn test_shard_role_default_compute_units() {
-        assert_eq!(ShardRole::Entry.default_compute_units(), ComputeUnits::CPUAndNE);
-        assert_eq!(ShardRole::Interior.default_compute_units(), ComputeUnits::CPUAndNE);
-        assert_eq!(ShardRole::Exit.default_compute_units(), ComputeUnits::CPUAndNE);
-        assert_eq!(ShardRole::Io.default_compute_units(), ComputeUnits::CPUAndGPU);
-        assert_eq!(ShardRole::Sampler.default_compute_units(), ComputeUnits::CPUAndGPU);
+        assert_eq!(ShardRole::Entry.default_compute_units(), ComputeUnitHint::CPUAndNE);
+        assert_eq!(ShardRole::Interior.default_compute_units(), ComputeUnitHint::CPUAndNE);
+        assert_eq!(ShardRole::Exit.default_compute_units(), ComputeUnitHint::CPUAndNE);
+        assert_eq!(ShardRole::Io.default_compute_units(), ComputeUnitHint::CPUAndGPU);
+        assert_eq!(ShardRole::Sampler.default_compute_units(), ComputeUnitHint::CPUAndGPU);
     }
 }

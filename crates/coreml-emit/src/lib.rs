@@ -68,11 +68,11 @@
 //! where the full Rust toolchain and Core ML runtime are available.
 
 pub mod emitter;
+pub mod mir_to_proto;
 pub mod package;
 pub mod weights;
-pub mod mir_to_proto;
 
 pub use emitter::ProtoEmitter;
+pub use mir_to_proto::convert_mir_to_proto;
 pub use package::MlPackageWriter;
 pub use weights::WeightBinBuilder;
-pub use mir_to_proto::convert_mir_to_proto;

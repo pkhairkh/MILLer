@@ -7,7 +7,7 @@
 //! via the knowledge store. The ConflictDetector can also be used
 //! standalone to scan a set of entries.
 
-use ane_ir::kir::{KnowledgeUnit, KnowledgeType};
+use ane_ir::kir::{KnowledgeType, KnowledgeUnit};
 use anyhow::Result;
 
 use crate::store::KnowledgeEntry;
@@ -57,12 +57,16 @@ pub struct ConflictDetector {
     confidence_threshold: f32,
 }
 
+impl Default for ConflictDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConflictDetector {
     /// Create a new conflict detector with default settings.
     pub fn new() -> Self {
-        Self {
-            confidence_threshold: 0.4,
-        }
+        Self { confidence_threshold: 0.4 }
     }
 
     /// Detect conflicts among a set of knowledge entries.
@@ -150,7 +154,11 @@ impl ConflictDetector {
     }
 
     /// Determine resolution for a legality conflict.
-    fn resolve_legality_conflict(&self, a: &KnowledgeEntry, b: &KnowledgeEntry) -> ConflictResolution {
+    fn resolve_legality_conflict(
+        &self,
+        a: &KnowledgeEntry,
+        b: &KnowledgeEntry,
+    ) -> ConflictResolution {
         // If either entry is high-confidence, require manual review
         if a.unit.confidence >= 0.8 || b.unit.confidence >= 0.8 {
             return ConflictResolution::ManualReviewRequired;
@@ -184,11 +192,16 @@ fn scopes_overlap(a: &KnowledgeUnit, b: &KnowledgeUnit) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::{ConflictStatus, EntryOrigin, EntryProvenance, EntrySource};
     use ane_ir::kir::{EvidenceSource, KnowledgeScope};
-    use crate::store::{EntryProvenance, EntryOrigin, EntrySource, ConflictStatus};
     use std::collections::HashMap;
 
-    fn make_entry(id: &str, ane_legal: bool, confidence: f32, devices: Vec<&str>) -> KnowledgeEntry {
+    fn make_entry(
+        id: &str,
+        ane_legal: bool,
+        confidence: f32,
+        devices: Vec<&str>,
+    ) -> KnowledgeEntry {
         let mut payload = HashMap::new();
         payload.insert("ane_legal".to_string(), serde_json::json!(ane_legal));
         payload.insert("op_pattern".to_string(), serde_json::json!("mb.matmul"));
@@ -225,10 +238,8 @@ mod tests {
     #[test]
     fn test_no_conflicts_same_claim() {
         let detector = ConflictDetector::new();
-        let entries = vec![
-            make_entry("a", true, 0.5, vec!["M2"]),
-            make_entry("b", true, 0.6, vec!["M2"]),
-        ];
+        let entries =
+            vec![make_entry("a", true, 0.5, vec!["M2"]), make_entry("b", true, 0.6, vec!["M2"])];
         let conflicts = detector.detect(&entries).unwrap();
         assert!(conflicts.is_empty());
     }
@@ -236,10 +247,8 @@ mod tests {
     #[test]
     fn test_contradictory_legality() {
         let detector = ConflictDetector::new();
-        let entries = vec![
-            make_entry("a", true, 0.5, vec!["M2"]),
-            make_entry("b", false, 0.5, vec!["M2"]),
-        ];
+        let entries =
+            vec![make_entry("a", true, 0.5, vec!["M2"]), make_entry("b", false, 0.5, vec!["M2"])];
         let conflicts = detector.detect(&entries).unwrap();
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].conflict_type, ConflictType::ContradictoryLegality);
@@ -259,10 +268,8 @@ mod tests {
     #[test]
     fn test_high_confidence_requires_manual_review() {
         let detector = ConflictDetector::new();
-        let entries = vec![
-            make_entry("a", true, 0.9, vec!["M2"]),
-            make_entry("b", false, 0.5, vec!["M2"]),
-        ];
+        let entries =
+            vec![make_entry("a", true, 0.9, vec!["M2"]), make_entry("b", false, 0.5, vec!["M2"])];
         let conflicts = detector.detect(&entries).unwrap();
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].resolution, ConflictResolution::ManualReviewRequired);
@@ -271,10 +278,8 @@ mod tests {
     #[test]
     fn test_low_conflict_auto_resolved() {
         let detector = ConflictDetector::new();
-        let entries = vec![
-            make_entry("a", true, 0.3, vec!["M2"]),
-            make_entry("b", false, 0.5, vec!["M2"]),
-        ];
+        let entries =
+            vec![make_entry("a", true, 0.3, vec!["M2"]), make_entry("b", false, 0.5, vec!["M2"])];
         let conflicts = detector.detect(&entries).unwrap();
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].resolution, ConflictResolution::HigherConfidenceWins);

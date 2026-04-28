@@ -239,11 +239,24 @@ impl TaskOp {
                 format!("LinearProjection:input_dim={},output_dim={},batch_size={},has_bias={},dtype={}",
                     input_dim, output_dim, batch_size, has_bias, dtype)
             }
-            TaskOp::ShardedLinearPipeline { input_dim, hidden_dim, output_dim, batch_size, dtype } => {
+            TaskOp::ShardedLinearPipeline {
+                input_dim,
+                hidden_dim,
+                output_dim,
+                batch_size,
+                dtype,
+            } => {
                 format!("ShardedLinearPipeline:input_dim={},hidden_dim={},output_dim={},batch_size={},dtype={}",
                     input_dim, hidden_dim, output_dim, batch_size, dtype)
             }
-            TaskOp::LutProjection { vocab_size, embed_dim, num_groups, lut_bitwidth, batch_size, dtype } => {
+            TaskOp::LutProjection {
+                vocab_size,
+                embed_dim,
+                num_groups,
+                lut_bitwidth,
+                batch_size,
+                dtype,
+            } => {
                 format!("LutProjection:vocab_size={},embed_dim={},num_groups={},lut_bitwidth={},batch_size={},dtype={}",
                     vocab_size, embed_dim, num_groups, lut_bitwidth, batch_size, dtype)
             }
@@ -251,11 +264,25 @@ impl TaskOp {
                 format!("DecodeStep:embed_dim={},num_heads={},head_dim={},kv_len={},batch_size={},dtype={}",
                     embed_dim, num_heads, head_dim, kv_len, batch_size, dtype)
             }
-            TaskOp::ShardedDecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, dtype } => {
+            TaskOp::ShardedDecodeStep {
+                embed_dim,
+                num_heads,
+                head_dim,
+                kv_len,
+                batch_size,
+                dtype,
+            } => {
                 format!("ShardedDecodeStep:embed_dim={},num_heads={},head_dim={},kv_len={},batch_size={},dtype={}",
                     embed_dim, num_heads, head_dim, kv_len, batch_size, dtype)
             }
-            TaskOp::MlpBlock { input_dim, hidden_dim, output_dim, activation, batch_size, dtype } => {
+            TaskOp::MlpBlock {
+                input_dim,
+                hidden_dim,
+                output_dim,
+                activation,
+                batch_size,
+                dtype,
+            } => {
                 format!("MlpBlock:input_dim={},hidden_dim={},output_dim={},activation={},batch_size={},dtype={}",
                     input_dim, hidden_dim, output_dim, activation, batch_size, dtype)
             }
@@ -329,7 +356,13 @@ impl TaskOp {
                     "dtype": dtype,
                 })
             }
-            TaskOp::ShardedLinearPipeline { input_dim, hidden_dim, output_dim, batch_size, dtype } => {
+            TaskOp::ShardedLinearPipeline {
+                input_dim,
+                hidden_dim,
+                output_dim,
+                batch_size,
+                dtype,
+            } => {
                 serde_json::json!({
                     "input_dim": input_dim,
                     "hidden_dim": hidden_dim,
@@ -338,7 +371,14 @@ impl TaskOp {
                     "dtype": dtype,
                 })
             }
-            TaskOp::LutProjection { vocab_size, embed_dim, num_groups, lut_bitwidth, batch_size, dtype } => {
+            TaskOp::LutProjection {
+                vocab_size,
+                embed_dim,
+                num_groups,
+                lut_bitwidth,
+                batch_size,
+                dtype,
+            } => {
                 serde_json::json!({
                     "vocab_size": vocab_size,
                     "embed_dim": embed_dim,
@@ -358,7 +398,14 @@ impl TaskOp {
                     "dtype": dtype,
                 })
             }
-            TaskOp::ShardedDecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, dtype } => {
+            TaskOp::ShardedDecodeStep {
+                embed_dim,
+                num_heads,
+                head_dim,
+                kv_len,
+                batch_size,
+                dtype,
+            } => {
                 serde_json::json!({
                     "embed_dim": embed_dim,
                     "num_heads": num_heads,
@@ -368,7 +415,14 @@ impl TaskOp {
                     "dtype": dtype,
                 })
             }
-            TaskOp::MlpBlock { input_dim, hidden_dim, output_dim, activation, batch_size, dtype } => {
+            TaskOp::MlpBlock {
+                input_dim,
+                hidden_dim,
+                output_dim,
+                activation,
+                batch_size,
+                dtype,
+            } => {
                 serde_json::json!({
                     "input_dim": input_dim,
                     "hidden_dim": hidden_dim,
@@ -477,12 +531,11 @@ const FAMILY_PARSERS: &[(&str, FamilyParser)] = &[
 /// only requires adding an entry to FAMILY_PARSERS and implementing
 /// the parser function — no changes needed here.
 pub fn parse_synthetic_task(toml_text: &str) -> Result<SyntheticTaskSpec, String> {
-    let value: toml::Value = toml::from_str(toml_text)
-        .map_err(|e| format!("TOML parse error: {}", e))?;
+    let value: toml::Value =
+        toml::from_str(toml_text).map_err(|e| format!("TOML parse error: {}", e))?;
 
     // Navigate the synthetic task section
-    let synth = value.get("synthetic")
-        .ok_or("Missing [synthetic] section")?;
+    let synth = value.get("synthetic").ok_or("Missing [synthetic] section")?;
 
     // Try each registered family parser
     for (section_name, parser) in FAMILY_PARSERS {
@@ -497,8 +550,15 @@ pub fn parse_synthetic_task(toml_text: &str) -> Result<SyntheticTaskSpec, String
     }
 
     // Build a helpful error message listing all valid section names
-    let valid_sections: Vec<&str> = FAMILY_PARSERS.iter().map(|(name, _)| *name).chain(std::iter::once("linear_projection")).collect();
-    Err(format!("Missing [synthetic.<family>] section. Valid sections: {}", valid_sections.join(", ")))
+    let valid_sections: Vec<&str> = FAMILY_PARSERS
+        .iter()
+        .map(|(name, _)| *name)
+        .chain(std::iter::once("linear_projection"))
+        .collect();
+    Err(format!(
+        "Missing [synthetic.<family>] section. Valid sections: {}",
+        valid_sections.join(", ")
+    ))
 }
 
 /// Parse the legacy linear_projection format with [[cases]] arrays.
@@ -509,25 +569,23 @@ fn parse_linear_projection_legacy(
     synth: &toml::Value,
     root: &toml::Value,
 ) -> Result<SyntheticTaskSpec, String> {
-    let task_section = synth.get("linear_projection")
-        .ok_or("Missing [synthetic.linear_projection] section")?;
+    let task_section =
+        synth.get("linear_projection").ok_or("Missing [synthetic.linear_projection] section")?;
 
-    let name = task_section.get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unnamed")
-        .to_string();
+    let name = task_section.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed").to_string();
 
-    let family = task_section.get("family")
+    let family = task_section
+        .get("family")
         .and_then(|v| v.as_str())
         .unwrap_or("LinearProjection")
         .to_string();
 
-    let description = task_section.get("description")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let description =
+        task_section.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
 
     // Extract the first case for the vertical slice
-    let cases = task_section.get("cases")
+    let cases = task_section
+        .get("cases")
         .ok_or("Missing [[synthetic.linear_projection.cases]]")?
         .as_array()
         .ok_or("cases must be an array")?;
@@ -537,45 +595,29 @@ fn parse_linear_projection_legacy(
     }
 
     let case = &cases[0];
-    let input_shape = case.get("input_shape")
-        .and_then(|v| v.as_array())
-        .ok_or("Missing input_shape in case")?;
-    let weight_shape = case.get("weight_shape")
+    let input_shape =
+        case.get("input_shape").and_then(|v| v.as_array()).ok_or("Missing input_shape in case")?;
+    let weight_shape = case
+        .get("weight_shape")
         .and_then(|v| v.as_array())
         .ok_or("Missing weight_shape in case")?;
 
-    let input_dim = input_shape.get(1)
-        .and_then(|v| v.as_integer())
-        .ok_or("input_shape must have 2 elements")? as usize;
-    let output_dim = weight_shape.get(1)
+    let input_dim =
+        input_shape.get(1).and_then(|v| v.as_integer()).ok_or("input_shape must have 2 elements")?
+            as usize;
+    let output_dim = weight_shape
+        .get(1)
         .and_then(|v| v.as_integer())
         .ok_or("weight_shape must have 2 elements")? as usize;
-    let batch_size = input_shape.get(0)
-        .and_then(|v| v.as_integer())
-        .unwrap_or(1) as usize;
-    let dtype = case.get("dtype")
-        .and_then(|v| v.as_str())
-        .unwrap_or("fp16")
-        .to_string();
+    let batch_size = input_shape.first().and_then(|v| v.as_integer()).unwrap_or(1) as usize;
+    let dtype = case.get("dtype").and_then(|v| v.as_str()).unwrap_or("fp16").to_string();
 
-    let op = TaskOp::LinearProjection {
-        input_dim,
-        output_dim,
-        batch_size,
-        has_bias: true,
-        dtype,
-    };
+    let op = TaskOp::LinearProjection { input_dim, output_dim, batch_size, has_bias: true, dtype };
 
     // Parse measurement section
     let measurement = parse_measurement(root);
 
-    Ok(SyntheticTaskSpec {
-        name,
-        family,
-        description,
-        op,
-        measurement,
-    })
+    Ok(SyntheticTaskSpec { name, family, description, op, measurement })
 }
 
 /// Parse a sharded linear pipeline task from the TOML `[synthetic.sharded_linear_pipeline]` section.
@@ -610,42 +652,35 @@ fn parse_attention(
     task_section: &toml::Value,
     root: &toml::Value,
 ) -> Result<SyntheticTaskSpec, String> {
-    let name = task_section.get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("attention")
-        .to_string();
+    let name = task_section.get("name").and_then(|v| v.as_str()).unwrap_or("attention").to_string();
 
-    let family = task_section.get("family")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Attention")
-        .to_string();
+    let family =
+        task_section.get("family").and_then(|v| v.as_str()).unwrap_or("Attention").to_string();
 
-    let description = task_section.get("description")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let description =
+        task_section.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
 
-    let embed_dim = task_section.get("embed_dim")
+    let embed_dim = task_section
+        .get("embed_dim")
         .and_then(|v| v.as_integer())
         .ok_or("Missing embed_dim in attention")? as usize;
-    let num_heads = task_section.get("num_heads")
+    let num_heads = task_section
+        .get("num_heads")
         .and_then(|v| v.as_integer())
         .ok_or("Missing num_heads in attention")? as usize;
-    let seq_len = task_section.get("seq_len")
+    let seq_len = task_section
+        .get("seq_len")
         .and_then(|v| v.as_integer())
         .ok_or("Missing seq_len in attention")? as usize;
-    let batch_size = task_section.get("batch_size")
-        .and_then(|v| v.as_integer())
-        .unwrap_or(1) as usize;
-    let dtype = task_section.get("dtype")
-        .and_then(|v| v.as_str())
-        .unwrap_or("fp16")
-        .to_string();
+    let batch_size =
+        task_section.get("batch_size").and_then(|v| v.as_integer()).unwrap_or(1) as usize;
+    let dtype = task_section.get("dtype").and_then(|v| v.as_str()).unwrap_or("fp16").to_string();
 
     // Validate embed_dim / num_heads divisibility
     if num_heads == 0 {
         return Err("num_heads must be > 0 in attention".to_string());
     }
-    if embed_dim % num_heads != 0 {
+    if !embed_dim.is_multiple_of(num_heads) {
         return Err(format!(
             "Invalid attention config: embed_dim {} is not divisible by num_heads {}",
             embed_dim, num_heads
@@ -653,24 +688,11 @@ fn parse_attention(
     }
     let head_dim = embed_dim / num_heads;
 
-    let op = TaskOp::Attention {
-        embed_dim,
-        num_heads,
-        head_dim,
-        seq_len,
-        batch_size,
-        dtype,
-    };
+    let op = TaskOp::Attention { embed_dim, num_heads, head_dim, seq_len, batch_size, dtype };
 
     let measurement = parse_measurement(root);
 
-    Ok(SyntheticTaskSpec {
-        name,
-        family,
-        description,
-        op,
-        measurement,
-    })
+    Ok(SyntheticTaskSpec { name, family, description, op, measurement })
 }
 
 /// Parse an MLP block task from the TOML `[synthetic.mlp_block]` section.
@@ -692,67 +714,42 @@ fn parse_mlp_block(
     task_section: &toml::Value,
     root: &toml::Value,
 ) -> Result<SyntheticTaskSpec, String> {
-    let name = task_section.get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("mlp_block")
-        .to_string();
+    let name = task_section.get("name").and_then(|v| v.as_str()).unwrap_or("mlp_block").to_string();
 
-    let family = task_section.get("family")
-        .and_then(|v| v.as_str())
-        .unwrap_or("MlpBlock")
-        .to_string();
+    let family =
+        task_section.get("family").and_then(|v| v.as_str()).unwrap_or("MlpBlock").to_string();
 
-    let description = task_section.get("description")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let description =
+        task_section.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
 
-    let input_dim = task_section.get("input_dim")
+    let input_dim = task_section
+        .get("input_dim")
         .and_then(|v| v.as_integer())
         .ok_or("Missing input_dim in mlp_block")? as usize;
-    let hidden_dim = task_section.get("hidden_dim")
+    let hidden_dim = task_section
+        .get("hidden_dim")
         .and_then(|v| v.as_integer())
         .ok_or("Missing hidden_dim in mlp_block")? as usize;
-    let output_dim = task_section.get("output_dim")
+    let output_dim = task_section
+        .get("output_dim")
         .and_then(|v| v.as_integer())
         .ok_or("Missing output_dim in mlp_block")? as usize;
-    let activation = task_section.get("activation")
-        .and_then(|v| v.as_str())
-        .unwrap_or("gelu")
-        .to_string();
-    let batch_size = task_section.get("batch_size")
-        .and_then(|v| v.as_integer())
-        .unwrap_or(1) as usize;
-    let dtype = task_section.get("dtype")
-        .and_then(|v| v.as_str())
-        .unwrap_or("fp16")
-        .to_string();
+    let activation =
+        task_section.get("activation").and_then(|v| v.as_str()).unwrap_or("gelu").to_string();
+    let batch_size =
+        task_section.get("batch_size").and_then(|v| v.as_integer()).unwrap_or(1) as usize;
+    let dtype = task_section.get("dtype").and_then(|v| v.as_str()).unwrap_or("fp16").to_string();
 
     // Validate activation
     if activation != "gelu" && activation != "relu" {
-        return Err(format!(
-            "Invalid activation '{}': must be 'gelu' or 'relu'",
-            activation
-        ));
+        return Err(format!("Invalid activation '{}': must be 'gelu' or 'relu'", activation));
     }
 
-    let op = TaskOp::MlpBlock {
-        input_dim,
-        hidden_dim,
-        output_dim,
-        activation,
-        batch_size,
-        dtype,
-    };
+    let op = TaskOp::MlpBlock { input_dim, hidden_dim, output_dim, activation, batch_size, dtype };
 
     let measurement = parse_measurement(root);
 
-    Ok(SyntheticTaskSpec {
-        name,
-        family,
-        description,
-        op,
-        measurement,
-    })
+    Ok(SyntheticTaskSpec { name, family, description, op, measurement })
 }
 
 /// Parse a sharded linear pipeline task from the TOML `[synthetic.sharded_linear_pipeline]` section.
@@ -773,65 +770,56 @@ fn parse_sharded_pipeline(
     task_section: &toml::Value,
     root: &toml::Value,
 ) -> Result<SyntheticTaskSpec, String> {
-    let name = task_section.get("name")
+    let name = task_section
+        .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("sharded_linear_pipeline")
         .to_string();
 
-    let family = task_section.get("family")
+    let family = task_section
+        .get("family")
         .and_then(|v| v.as_str())
         .unwrap_or("ShardedLinearPipeline")
         .to_string();
 
-    let description = task_section.get("description")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let description =
+        task_section.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
 
-    let input_dim = task_section.get("input_dim")
+    let input_dim = task_section
+        .get("input_dim")
         .and_then(|v| v.as_integer())
         .ok_or("Missing input_dim in sharded_linear_pipeline")? as usize;
-    let hidden_dim = task_section.get("hidden_dim")
+    let hidden_dim = task_section
+        .get("hidden_dim")
         .and_then(|v| v.as_integer())
         .ok_or("Missing hidden_dim in sharded_linear_pipeline")? as usize;
-    let output_dim = task_section.get("output_dim")
+    let output_dim = task_section
+        .get("output_dim")
         .and_then(|v| v.as_integer())
         .ok_or("Missing output_dim in sharded_linear_pipeline")? as usize;
-    let batch_size = task_section.get("batch_size")
-        .and_then(|v| v.as_integer())
-        .unwrap_or(1) as usize;
-    let dtype = task_section.get("dtype")
-        .and_then(|v| v.as_str())
-        .unwrap_or("fp16")
-        .to_string();
+    let batch_size =
+        task_section.get("batch_size").and_then(|v| v.as_integer()).unwrap_or(1) as usize;
+    let dtype = task_section.get("dtype").and_then(|v| v.as_str()).unwrap_or("fp16").to_string();
 
-    let op = TaskOp::ShardedLinearPipeline {
-        input_dim,
-        hidden_dim,
-        output_dim,
-        batch_size,
-        dtype,
-    };
+    let op = TaskOp::ShardedLinearPipeline { input_dim, hidden_dim, output_dim, batch_size, dtype };
 
     let measurement = parse_measurement(root);
 
-    Ok(SyntheticTaskSpec {
-        name,
-        family,
-        description,
-        op,
-        measurement,
-    })
+    Ok(SyntheticTaskSpec { name, family, description, op, measurement })
 }
 
 /// Parse the optional `[measurement]` section from the TOML root.
 fn parse_measurement(root: &toml::Value) -> MeasurementConfig {
     root.get("measurement")
         .map(|m| MeasurementConfig {
-            warmup_iterations: m.get("warmup_iterations")
-                .and_then(|v| v.as_integer()).unwrap_or(5) as usize,
-            measured_iterations: m.get("measured_iterations")
-                .and_then(|v| v.as_integer()).unwrap_or(20) as usize,
-            metrics: m.get("metrics")
+            warmup_iterations: m.get("warmup_iterations").and_then(|v| v.as_integer()).unwrap_or(5)
+                as usize,
+            measured_iterations: m
+                .get("measured_iterations")
+                .and_then(|v| v.as_integer())
+                .unwrap_or(20) as usize,
+            metrics: m
+                .get("metrics")
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
@@ -862,39 +850,34 @@ fn parse_lut_projection(
     task_section: &toml::Value,
     root: &toml::Value,
 ) -> Result<SyntheticTaskSpec, String> {
-    let name = task_section.get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("lut_projection")
-        .to_string();
+    let name =
+        task_section.get("name").and_then(|v| v.as_str()).unwrap_or("lut_projection").to_string();
 
-    let family = task_section.get("family")
-        .and_then(|v| v.as_str())
-        .unwrap_or("LutProjection")
-        .to_string();
+    let family =
+        task_section.get("family").and_then(|v| v.as_str()).unwrap_or("LutProjection").to_string();
 
-    let description = task_section.get("description")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let description =
+        task_section.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
 
-    let vocab_size = task_section.get("vocab_size")
+    let vocab_size = task_section
+        .get("vocab_size")
         .and_then(|v| v.as_integer())
         .ok_or("Missing vocab_size in lut_projection")? as usize;
-    let embed_dim = task_section.get("embed_dim")
+    let embed_dim = task_section
+        .get("embed_dim")
         .and_then(|v| v.as_integer())
         .ok_or("Missing embed_dim in lut_projection")? as usize;
-    let num_groups = task_section.get("num_groups")
+    let num_groups = task_section
+        .get("num_groups")
         .and_then(|v| v.as_integer())
         .ok_or("Missing num_groups in lut_projection")? as usize;
-    let lut_bitwidth = task_section.get("lut_bitwidth")
+    let lut_bitwidth = task_section
+        .get("lut_bitwidth")
         .and_then(|v| v.as_integer())
         .ok_or("Missing lut_bitwidth in lut_projection")? as usize;
-    let batch_size = task_section.get("batch_size")
-        .and_then(|v| v.as_integer())
-        .unwrap_or(1) as usize;
-    let dtype = task_section.get("dtype")
-        .and_then(|v| v.as_str())
-        .unwrap_or("fp16")
-        .to_string();
+    let batch_size =
+        task_section.get("batch_size").and_then(|v| v.as_integer()).unwrap_or(1) as usize;
+    let dtype = task_section.get("dtype").and_then(|v| v.as_str()).unwrap_or("fp16").to_string();
 
     // Validate lut_bitwidth: only 1, 2, 3, 4, 6, 8 are valid per Core ML Tools
     if !matches!(lut_bitwidth, 1 | 2 | 3 | 4 | 6 | 8) {
@@ -915,13 +898,7 @@ fn parse_lut_projection(
 
     let measurement = parse_measurement(root);
 
-    Ok(SyntheticTaskSpec {
-        name,
-        family,
-        description,
-        op,
-        measurement,
-    })
+    Ok(SyntheticTaskSpec { name, family, description, op, measurement })
 }
 
 /// Parse a decode step task from the TOML `[synthetic.decode_step]` section.
@@ -942,42 +919,36 @@ fn parse_decode_step(
     task_section: &toml::Value,
     root: &toml::Value,
 ) -> Result<SyntheticTaskSpec, String> {
-    let name = task_section.get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("decode_step")
-        .to_string();
+    let name =
+        task_section.get("name").and_then(|v| v.as_str()).unwrap_or("decode_step").to_string();
 
-    let family = task_section.get("family")
-        .and_then(|v| v.as_str())
-        .unwrap_or("DecodeStep")
-        .to_string();
+    let family =
+        task_section.get("family").and_then(|v| v.as_str()).unwrap_or("DecodeStep").to_string();
 
-    let description = task_section.get("description")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let description =
+        task_section.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
 
-    let embed_dim = task_section.get("embed_dim")
+    let embed_dim = task_section
+        .get("embed_dim")
         .and_then(|v| v.as_integer())
         .ok_or("Missing embed_dim in decode_step")? as usize;
-    let num_heads = task_section.get("num_heads")
+    let num_heads = task_section
+        .get("num_heads")
         .and_then(|v| v.as_integer())
         .ok_or("Missing num_heads in decode_step")? as usize;
-    let kv_len = task_section.get("kv_len")
+    let kv_len = task_section
+        .get("kv_len")
         .and_then(|v| v.as_integer())
         .ok_or("Missing kv_len in decode_step")? as usize;
-    let batch_size = task_section.get("batch_size")
-        .and_then(|v| v.as_integer())
-        .unwrap_or(1) as usize;
-    let dtype = task_section.get("dtype")
-        .and_then(|v| v.as_str())
-        .unwrap_or("fp16")
-        .to_string();
+    let batch_size =
+        task_section.get("batch_size").and_then(|v| v.as_integer()).unwrap_or(1) as usize;
+    let dtype = task_section.get("dtype").and_then(|v| v.as_str()).unwrap_or("fp16").to_string();
 
     // Validate embed_dim / num_heads divisibility
     if num_heads == 0 {
         return Err("num_heads must be > 0 in decode_step".to_string());
     }
-    if embed_dim % num_heads != 0 {
+    if !embed_dim.is_multiple_of(num_heads) {
         return Err(format!(
             "Invalid decode_step config: embed_dim {} is not divisible by num_heads {}",
             embed_dim, num_heads
@@ -985,24 +956,11 @@ fn parse_decode_step(
     }
     let head_dim = embed_dim / num_heads;
 
-    let op = TaskOp::DecodeStep {
-        embed_dim,
-        num_heads,
-        head_dim,
-        kv_len,
-        batch_size,
-        dtype,
-    };
+    let op = TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, dtype };
 
     let measurement = parse_measurement(root);
 
-    Ok(SyntheticTaskSpec {
-        name,
-        family,
-        description,
-        op,
-        measurement,
-    })
+    Ok(SyntheticTaskSpec { name, family, description, op, measurement })
 }
 
 /// Parse a sharded decode step task from the TOML `[synthetic.sharded_decode_step]` section.
@@ -1023,42 +981,42 @@ fn parse_sharded_decode_step(
     task_section: &toml::Value,
     root: &toml::Value,
 ) -> Result<SyntheticTaskSpec, String> {
-    let name = task_section.get("name")
+    let name = task_section
+        .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("sharded_decode_step")
         .to_string();
 
-    let family = task_section.get("family")
+    let family = task_section
+        .get("family")
         .and_then(|v| v.as_str())
         .unwrap_or("ShardedDecodeStep")
         .to_string();
 
-    let description = task_section.get("description")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    let description =
+        task_section.get("description").and_then(|v| v.as_str()).map(|s| s.to_string());
 
-    let embed_dim = task_section.get("embed_dim")
+    let embed_dim = task_section
+        .get("embed_dim")
         .and_then(|v| v.as_integer())
         .ok_or("Missing embed_dim in sharded_decode_step")? as usize;
-    let num_heads = task_section.get("num_heads")
+    let num_heads = task_section
+        .get("num_heads")
         .and_then(|v| v.as_integer())
         .ok_or("Missing num_heads in sharded_decode_step")? as usize;
-    let kv_len = task_section.get("kv_len")
+    let kv_len = task_section
+        .get("kv_len")
         .and_then(|v| v.as_integer())
         .ok_or("Missing kv_len in sharded_decode_step")? as usize;
-    let batch_size = task_section.get("batch_size")
-        .and_then(|v| v.as_integer())
-        .unwrap_or(1) as usize;
-    let dtype = task_section.get("dtype")
-        .and_then(|v| v.as_str())
-        .unwrap_or("fp16")
-        .to_string();
+    let batch_size =
+        task_section.get("batch_size").and_then(|v| v.as_integer()).unwrap_or(1) as usize;
+    let dtype = task_section.get("dtype").and_then(|v| v.as_str()).unwrap_or("fp16").to_string();
 
     // Validate embed_dim / num_heads divisibility
     if num_heads == 0 {
         return Err("num_heads must be > 0 in sharded_decode_step".to_string());
     }
-    if embed_dim % num_heads != 0 {
+    if !embed_dim.is_multiple_of(num_heads) {
         return Err(format!(
             "Invalid sharded_decode_step config: embed_dim {} is not divisible by num_heads {}",
             embed_dim, num_heads
@@ -1066,24 +1024,12 @@ fn parse_sharded_decode_step(
     }
     let head_dim = embed_dim / num_heads;
 
-    let op = TaskOp::ShardedDecodeStep {
-        embed_dim,
-        num_heads,
-        head_dim,
-        kv_len,
-        batch_size,
-        dtype,
-    };
+    let op =
+        TaskOp::ShardedDecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, dtype };
 
     let measurement = parse_measurement(root);
 
-    Ok(SyntheticTaskSpec {
-        name,
-        family,
-        description,
-        op,
-        measurement,
-    })
+    Ok(SyntheticTaskSpec { name, family, description, op, measurement })
 }
 
 #[cfg(test)]
@@ -1112,7 +1058,13 @@ metrics = ["Latency"]
         assert_eq!(spec.name, "test_shard");
         assert_eq!(spec.family, "ShardedLinearPipeline");
         match spec.op {
-            TaskOp::ShardedLinearPipeline { input_dim, hidden_dim, output_dim, batch_size, dtype } => {
+            TaskOp::ShardedLinearPipeline {
+                input_dim,
+                hidden_dim,
+                output_dim,
+                batch_size,
+                dtype,
+            } => {
                 assert_eq!(input_dim, 64);
                 assert_eq!(hidden_dim, 48);
                 assert_eq!(output_dim, 32);
@@ -1180,7 +1132,14 @@ metrics = ["Latency"]
         assert_eq!(spec.name, "test_lut");
         assert_eq!(spec.family, "LutProjection");
         match spec.op {
-            TaskOp::LutProjection { vocab_size, embed_dim, num_groups, lut_bitwidth, batch_size, dtype } => {
+            TaskOp::LutProjection {
+                vocab_size,
+                embed_dim,
+                num_groups,
+                lut_bitwidth,
+                batch_size,
+                dtype,
+            } => {
                 assert_eq!(vocab_size, 32000);
                 assert_eq!(embed_dim, 512);
                 assert_eq!(num_groups, 64);
@@ -1295,7 +1254,14 @@ metrics = ["Latency"]
         assert_eq!(spec.name, "test_sharded_decode");
         assert_eq!(spec.family, "ShardedDecodeStep");
         match spec.op {
-            TaskOp::ShardedDecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, dtype } => {
+            TaskOp::ShardedDecodeStep {
+                embed_dim,
+                num_heads,
+                head_dim,
+                kv_len,
+                batch_size,
+                dtype,
+            } => {
                 assert_eq!(embed_dim, 128);
                 assert_eq!(num_heads, 4);
                 assert_eq!(head_dim, 32); // 128 / 4
@@ -1353,7 +1319,14 @@ metrics = ["Latency"]
         assert_eq!(spec.name, "mlp_block_128_512_128");
         assert_eq!(spec.family, "MlpBlock");
         match spec.op {
-            TaskOp::MlpBlock { input_dim, hidden_dim, output_dim, activation, batch_size, dtype } => {
+            TaskOp::MlpBlock {
+                input_dim,
+                hidden_dim,
+                output_dim,
+                activation,
+                batch_size,
+                dtype,
+            } => {
                 assert_eq!(input_dim, 128);
                 assert_eq!(hidden_dim, 512);
                 assert_eq!(output_dim, 128);

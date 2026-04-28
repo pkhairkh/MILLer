@@ -1,0 +1,438 @@
+{
+  "version": 1,
+  "source": "ane-constraints-docs/04-operation-support/per-op-per-family-support-matrix.md",
+  "cpu_only_ops": [
+    {
+      "mil_name": "acos",
+      "reason_code": "TrigInverse"
+    },
+    {
+      "mil_name": "acosh",
+      "reason_code": "TrigInverse"
+    },
+    {
+      "mil_name": "asin",
+      "reason_code": "TrigInverse"
+    },
+    {
+      "mil_name": "asinh",
+      "reason_code": "TrigInverse"
+    },
+    {
+      "mil_name": "atan",
+      "reason_code": "TrigInverse"
+    },
+    {
+      "mil_name": "atanh",
+      "reason_code": "TrigInverse"
+    },
+    {
+      "mil_name": "atan2",
+      "reason_code": "TrigInverse"
+    },
+    {
+      "mil_name": "tan",
+      "reason_code": "TrigInverse"
+    },
+    {
+      "mil_name": "sinh",
+      "reason_code": "Hyperbolic"
+    },
+    {
+      "mil_name": "cosh",
+      "reason_code": "Hyperbolic"
+    },
+    {
+      "mil_name": "and",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "or",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "xor",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "nand",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "nor",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "xnor",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "bitwise_and",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "bitwise_or",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "bitwise_xor",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "bitwise_not",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "left_shift",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "right_shift",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "popcount",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "create_complex",
+      "reason_code": "ComplexNumber"
+    },
+    {
+      "mil_name": "real_part",
+      "reason_code": "ComplexNumber"
+    },
+    {
+      "mil_name": "imaginary_part",
+      "reason_code": "ComplexNumber"
+    },
+    {
+      "mil_name": "conjugate",
+      "reason_code": "ComplexNumber"
+    },
+    {
+      "mil_name": "fast_fourier_transform",
+      "reason_code": "Fft"
+    },
+    {
+      "mil_name": "hermitean_to_real_fft",
+      "reason_code": "Fft"
+    },
+    {
+      "mil_name": "real_to_hermitean_fft",
+      "reason_code": "Fft"
+    },
+    {
+      "mil_name": "matrix_decomposition_lu",
+      "reason_code": "MatrixAlgebra"
+    },
+    {
+      "mil_name": "matrix_inverse",
+      "reason_code": "MatrixAlgebra"
+    },
+    {
+      "mil_name": "matrix_solver_lu",
+      "reason_code": "MatrixAlgebra"
+    },
+    {
+      "mil_name": "gru",
+      "reason_code": "Rnn"
+    },
+    {
+      "mil_name": "lstm",
+      "reason_code": "Rnn"
+    },
+    {
+      "mil_name": "rnn_activation",
+      "reason_code": "Rnn"
+    },
+    {
+      "mil_name": "singlegate_rnn",
+      "reason_code": "Rnn"
+    },
+    {
+      "mil_name": "bias_add_grad",
+      "reason_code": "Gradient"
+    },
+    {
+      "mil_name": "conv_grad",
+      "reason_code": "Gradient"
+    },
+    {
+      "mil_name": "pooling_max_gradient",
+      "reason_code": "Gradient"
+    },
+    {
+      "mil_name": "pooling_avg_gradient",
+      "reason_code": "Gradient"
+    },
+    {
+      "mil_name": "relu_grad",
+      "reason_code": "Gradient"
+    },
+    {
+      "mil_name": "sigmoid_grad",
+      "reason_code": "Gradient"
+    },
+    {
+      "mil_name": "tanh_grad",
+      "reason_code": "Gradient"
+    },
+    {
+      "mil_name": "linear_grad",
+      "reason_code": "Gradient"
+    },
+    {
+      "mil_name": "cumulative_maximum",
+      "reason_code": "Cumulative"
+    },
+    {
+      "mil_name": "cumulative_minimum",
+      "reason_code": "Cumulative"
+    },
+    {
+      "mil_name": "cumulative_product",
+      "reason_code": "Cumulative"
+    },
+    {
+      "mil_name": "cumulative_sum",
+      "reason_code": "Cumulative"
+    },
+    {
+      "mil_name": "random_normal",
+      "reason_code": "Random"
+    },
+    {
+      "mil_name": "random_truncated_normal",
+      "reason_code": "Random"
+    },
+    {
+      "mil_name": "random_uniform",
+      "reason_code": "Random"
+    },
+    {
+      "mil_name": "random_categorical",
+      "reason_code": "Random"
+    },
+    {
+      "mil_name": "random_bernoulli",
+      "reason_code": "Random"
+    },
+    {
+      "mil_name": "if",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "for",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "while_loop",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "call",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "condition",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "yield",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "scatter",
+      "reason_code": "Scatter"
+    },
+    {
+      "mil_name": "scatter_along_axis",
+      "reason_code": "Scatter"
+    },
+    {
+      "mil_name": "scatter_nd",
+      "reason_code": "Scatter"
+    },
+    {
+      "mil_name": "sparse_tensor_storage",
+      "reason_code": "Sparse"
+    },
+    {
+      "mil_name": "materialize_sparse_tensor",
+      "reason_code": "Sparse"
+    },
+    {
+      "mil_name": "buffer_tensor",
+      "reason_code": "Sparse"
+    },
+    {
+      "mil_name": "shape",
+      "reason_code": "ShapeQuery"
+    },
+    {
+      "mil_name": "rank",
+      "reason_code": "ShapeQuery"
+    },
+    {
+      "mil_name": "size",
+      "reason_code": "ShapeQuery"
+    },
+    {
+      "mil_name": "dimension_size",
+      "reason_code": "ShapeQuery"
+    },
+    {
+      "mil_name": "logical_and",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "logical_or",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "logical_xor",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "logical_not",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "equal",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "not_equal",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "greater",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "greater_equal",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "less",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "less_equal",
+      "reason_code": "Logical"
+    },
+    {
+      "mil_name": "erf",
+      "reason_code": "Miscellaneous"
+    },
+    {
+      "mil_name": "non_maximum_suppression",
+      "reason_code": "Miscellaneous"
+    },
+    {
+      "mil_name": "dict",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "has_key",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "dict_read",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "dict_write",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "list_read",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "list_write",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "list_gather",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "list_scatter",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "make_list",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "list_length",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "read_cell",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "write_cell",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "mil_name": "constexpr_blockwise_shift_scale",
+      "reason_code": "Miscellaneous"
+    },
+    {
+      "mil_name": "constexpr_sparse_blockwise_shift_scale",
+      "reason_code": "Miscellaneous"
+    },
+    {
+      "mil_name": "band_part",
+      "reason_code": "Miscellaneous"
+    },
+    {
+      "mil_name": "one_hot",
+      "reason_code": "Miscellaneous"
+    },
+    {
+      "mil_name": "softplus",
+      "reason_code": "Miscellaneous"
+    },
+    {
+      "mil_name": "softsign",
+      "reason_code": "Miscellaneous"
+    },
+    {
+      "mil_name": "modulo",
+      "reason_code": "Miscellaneous"
+    },
+    {
+      "mil_name": "non_zero",
+      "reason_code": "Miscellaneous"
+    },
+    {
+      "mil_name": "clamp",
+      "reason_code": "Miscellaneous"
+    },
+    {
+      "mil_name": "prelu",
+      "reason_code": "Miscellaneous"
+    },
+    {
+      "mil_name": "topk_grad",
+      "reason_code": "Gradient"
+    },
+    {
+      "mil_name": "gather_grad",
+      "reason_code": "Gradient"
+    },
+    {
+      "mil_name": "scatter_along_axis_grad",
+      "reason_code": "Gradient"
+    },
+    {
+      "mil_name": "reverse_sequence",
+      "reason_code": "Miscellaneous"
+    }
+  ]
+}

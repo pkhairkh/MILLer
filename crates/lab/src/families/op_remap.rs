@@ -20,9 +20,9 @@
 //! way to test that alternative formulations produce equivalent results, making
 //! it possible to verify that op remappings are correctness-preserving.
 
-use ane_ir::task_spec::{SyntheticTaskSpec, TaskOp, MeasurementConfig};
-use anyhow::Result;
 use super::TaskFamilyTrait;
+use ane_ir::task_spec::{MeasurementConfig, SyntheticTaskSpec, TaskOp};
+use anyhow::Result;
 
 /// Configuration for the op-remap family generator.
 #[derive(Debug, Clone)]
@@ -107,10 +107,7 @@ impl Default for OpRemapFamilyConfig {
 impl OpRemapFamilyConfig {
     /// Create a new config with the given seed.
     pub fn new(seed: u64) -> Self {
-        Self {
-            seed,
-            ..Default::default()
-        }
+        Self { seed, ..Default::default() }
     }
 
     /// Create a config with custom strategies.
@@ -148,16 +145,12 @@ pub struct OpRemapFamily {
 impl OpRemapFamily {
     /// Create a new op-remap family generator with default config.
     pub fn new() -> Self {
-        Self {
-            config: OpRemapFamilyConfig::default(),
-        }
+        Self { config: OpRemapFamilyConfig::default() }
     }
 
     /// Create an op-remap family generator with the given seed.
     pub fn with_seed(seed: u64) -> Self {
-        Self {
-            config: OpRemapFamilyConfig::new(seed),
-        }
+        Self { config: OpRemapFamilyConfig::new(seed) }
     }
 
     /// Create an op-remap family generator with custom config.
@@ -181,8 +174,8 @@ impl OpRemapFamily {
         for strategy in &self.config.strategies {
             let strategy_name = strategy.strategy_name();
 
-            for (&input_dim, &output_dim) in self.config.input_dims.iter()
-                .zip(self.config.output_dims.iter())
+            for (&input_dim, &output_dim) in
+                self.config.input_dims.iter().zip(self.config.output_dims.iter())
             {
                 for batch_size in &self.config.batch_sizes {
                     for dtype in &self.config.dtypes {
@@ -325,9 +318,18 @@ mod tests {
 
         let names: Vec<&str> = tasks.iter().map(|t| t.name.as_str()).collect();
         assert!(names.iter().any(|n| n.contains("_linear_")), "Must have linear strategy tasks");
-        assert!(names.iter().any(|n| n.contains("_matmul_add_")), "Must have matmul_add strategy tasks");
-        assert!(names.iter().any(|n| n.contains("_native_gelu_")), "Must have native_gelu strategy tasks");
-        assert!(names.iter().any(|n| n.contains("_handrolled_gelu_")), "Must have handrolled_gelu strategy tasks");
+        assert!(
+            names.iter().any(|n| n.contains("_matmul_add_")),
+            "Must have matmul_add strategy tasks"
+        );
+        assert!(
+            names.iter().any(|n| n.contains("_native_gelu_")),
+            "Must have native_gelu strategy tasks"
+        );
+        assert!(
+            names.iter().any(|n| n.contains("_handrolled_gelu_")),
+            "Must have handrolled_gelu strategy tasks"
+        );
     }
 
     #[test]
@@ -347,7 +349,9 @@ mod tests {
         for task in &tasks {
             match &task.op {
                 TaskOp::LinearProjection { .. } => {} // correct
-                other => panic!("Expected LinearProjection for projection strategy, got {:?}", other),
+                other => {
+                    panic!("Expected LinearProjection for projection strategy, got {:?}", other)
+                }
             }
         }
     }
@@ -392,11 +396,8 @@ mod tests {
         assert_eq!(tasks.len(), 4);
 
         for task in &tasks {
-            match &task.op {
-                TaskOp::LinearProjection { has_bias, .. } => {
-                    assert!(!has_bias, "Custom config should have has_bias=false");
-                }
-                _ => {}
+            if let TaskOp::LinearProjection { has_bias, .. } = &task.op {
+                assert!(!has_bias, "Custom config should have has_bias=false");
             }
         }
     }

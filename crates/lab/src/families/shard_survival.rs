@@ -28,9 +28,9 @@
 //! `TaskOp::ShardedDecodeStep` so the existing sharded compilation
 //! pipeline can process them directly.
 
-use ane_ir::task_spec::{SyntheticTaskSpec, TaskOp, MeasurementConfig};
-use anyhow::Result;
 use super::TaskFamilyTrait;
+use ane_ir::task_spec::{MeasurementConfig, SyntheticTaskSpec, TaskOp};
+use anyhow::Result;
 
 /// Configuration for the shard-survival family generator.
 #[derive(Debug, Clone)]
@@ -50,19 +50,10 @@ pub struct ShardSurvivalFamilyConfig {
 pub enum ShardTestConfig {
     /// 3-shard linear pipeline: Entry/Interior/Exit.
     /// Fields: (input_dim, hidden_dim, output_dim)
-    LinearPipeline {
-        input_dim: usize,
-        hidden_dim: usize,
-        output_dim: usize,
-    },
+    LinearPipeline { input_dim: usize, hidden_dim: usize, output_dim: usize },
     /// 3-shard decode-step pipeline: QKV/Attention/Output.
     /// Fields: (embed_dim, num_heads, head_dim, kv_len)
-    DecodeStepPipeline {
-        embed_dim: usize,
-        num_heads: usize,
-        head_dim: usize,
-        kv_len: usize,
-    },
+    DecodeStepPipeline { embed_dim: usize, num_heads: usize, head_dim: usize, kv_len: usize },
 }
 
 impl ShardTestConfig {
@@ -85,16 +76,8 @@ impl Default for ShardSurvivalFamilyConfig {
             seed: 42,
             configs: vec![
                 // Linear pipeline variants
-                ShardTestConfig::LinearPipeline {
-                    input_dim: 64,
-                    hidden_dim: 48,
-                    output_dim: 32,
-                },
-                ShardTestConfig::LinearPipeline {
-                    input_dim: 128,
-                    hidden_dim: 96,
-                    output_dim: 64,
-                },
+                ShardTestConfig::LinearPipeline { input_dim: 64, hidden_dim: 48, output_dim: 32 },
+                ShardTestConfig::LinearPipeline { input_dim: 128, hidden_dim: 96, output_dim: 64 },
                 // Decode-step pipeline variants
                 ShardTestConfig::DecodeStepPipeline {
                     embed_dim: 64,
@@ -118,10 +101,7 @@ impl Default for ShardSurvivalFamilyConfig {
 impl ShardSurvivalFamilyConfig {
     /// Create a new config with the given seed.
     pub fn new(seed: u64) -> Self {
-        Self {
-            seed,
-            ..Default::default()
-        }
+        Self { seed, ..Default::default() }
     }
 
     /// Create a config with custom shard configurations.
@@ -152,16 +132,12 @@ pub struct ShardSurvivalFamily {
 impl ShardSurvivalFamily {
     /// Create a new shard-survival family generator with default config.
     pub fn new() -> Self {
-        Self {
-            config: ShardSurvivalFamilyConfig::default(),
-        }
+        Self { config: ShardSurvivalFamilyConfig::default() }
     }
 
     /// Create a shard-survival family generator with the given seed.
     pub fn with_seed(seed: u64) -> Self {
-        Self {
-            config: ShardSurvivalFamilyConfig::new(seed),
-        }
+        Self { config: ShardSurvivalFamilyConfig::new(seed) }
     }
 
     /// Create a shard-survival family generator with custom config.
@@ -188,10 +164,8 @@ impl ShardSurvivalFamily {
 
             for batch_size in &self.config.batch_sizes {
                 for dtype in &self.config.dtypes {
-                    let task_name = format!(
-                        "shard_survival_{}_b{}_{}",
-                        config_name, batch_size, dtype
-                    );
+                    let task_name =
+                        format!("shard_survival_{}_b{}_{}", config_name, batch_size, dtype);
 
                     let (op, description) = match shard_config {
                         ShardTestConfig::LinearPipeline { input_dim, hidden_dim, output_dim } => {
@@ -324,20 +298,21 @@ mod tests {
 
         let names: Vec<&str> = tasks.iter().map(|t| t.name.as_str()).collect();
         assert!(names.iter().any(|n| n.contains("_linear_")), "Must have linear pipeline tasks");
-        assert!(names.iter().any(|n| n.contains("_decode_")), "Must have decode-step pipeline tasks");
+        assert!(
+            names.iter().any(|n| n.contains("_decode_")),
+            "Must have decode-step pipeline tasks"
+        );
     }
 
     #[test]
     fn test_linear_configs_use_sharded_linear_pipeline_op() {
         let config = ShardSurvivalFamilyConfig {
             seed: 42,
-            configs: vec![
-                ShardTestConfig::LinearPipeline {
-                    input_dim: 64,
-                    hidden_dim: 48,
-                    output_dim: 32,
-                },
-            ],
+            configs: vec![ShardTestConfig::LinearPipeline {
+                input_dim: 64,
+                hidden_dim: 48,
+                output_dim: 32,
+            }],
             batch_sizes: vec![1],
             dtypes: vec!["fp16".to_string()],
         };
@@ -356,14 +331,12 @@ mod tests {
     fn test_decode_step_configs_use_sharded_decode_step_op() {
         let config = ShardSurvivalFamilyConfig {
             seed: 42,
-            configs: vec![
-                ShardTestConfig::DecodeStepPipeline {
-                    embed_dim: 64,
-                    num_heads: 4,
-                    head_dim: 16,
-                    kv_len: 32,
-                },
-            ],
+            configs: vec![ShardTestConfig::DecodeStepPipeline {
+                embed_dim: 64,
+                num_heads: 4,
+                head_dim: 16,
+                kv_len: 32,
+            }],
             batch_sizes: vec![1],
             dtypes: vec!["fp16".to_string()],
         };
@@ -382,13 +355,11 @@ mod tests {
     fn test_custom_config() {
         let config = ShardSurvivalFamilyConfig {
             seed: 99,
-            configs: vec![
-                ShardTestConfig::LinearPipeline {
-                    input_dim: 256,
-                    hidden_dim: 192,
-                    output_dim: 128,
-                },
-            ],
+            configs: vec![ShardTestConfig::LinearPipeline {
+                input_dim: 256,
+                hidden_dim: 192,
+                output_dim: 128,
+            }],
             batch_sizes: vec![1, 2],
             dtypes: vec!["fp16".to_string(), "fp32".to_string()],
         };

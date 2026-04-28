@@ -9,12 +9,16 @@
 //! - KIR: Backend-Knowledge Representation IR
 //! - TaskSpec: Concrete task specification types
 
-pub mod sir;
 pub mod air;
+pub mod ane_engine;
+pub mod ane_hw_limits;
+pub mod ane_layout;
+pub mod ane_target;
+pub mod kir;
+pub mod linear_slice;
 pub mod mir;
 pub mod pir;
 pub mod prof_ir;
-pub mod kir;
-pub mod task_spec;
-pub mod linear_slice;
 pub mod serialize;
+pub mod sir;
+pub mod task_spec;

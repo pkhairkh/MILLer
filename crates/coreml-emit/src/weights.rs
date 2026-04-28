@@ -14,10 +14,10 @@
 //! their own copy. This produces smaller mlpackages than coremltools 9.0,
 //! which duplicates constants per function boundary.
 
-use anyhow::{Result, bail};
-use sha2::{Sha256, Digest};
+use ane_coreml_proto::{CoreMlDataType, SharedWeightRef, WeightEntry};
+use anyhow::{bail, Result};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use ane_coreml_proto::{WeightEntry, SharedWeightRef, CoreMlDataType};
 
 /// SHA-256 content hash for weight deduplication.
 type ContentHash = [u8; 32];
@@ -97,6 +97,12 @@ pub struct WeightBinResult {
     pub content_deduplicated_count: usize,
     /// Bytes saved by content-hash deduplication.
     pub content_deduplicated_bytes: u64,
+}
+
+impl Default for WeightBinBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WeightBinBuilder {
@@ -179,7 +185,11 @@ impl WeightBinBuilder {
                     "Weight '{}' already exists with different shape/dtype. \
                      Existing: shape={:?}, dtype={:?}. \
                      New: shape={:?}, dtype={:?}.",
-                    name, existing.shape, existing.dtype, shape, dtype
+                    name,
+                    existing.shape,
+                    existing.dtype,
+                    shape,
+                    dtype
                 );
             }
             // Track name-based deduplication metrics
@@ -253,14 +263,11 @@ impl WeightBinBuilder {
         data: Vec<u8>,
         referencing_functions: Vec<String>,
     ) -> Result<SharedWeightRef> {
-        let _offset = self.add_weight(name, shape, dtype.clone(), data)?;
+        let _offset = self.add_weight(name, shape, dtype, data)?;
 
         let entry = self.entries[self.name_to_index[name]].clone();
 
-        Ok(SharedWeightRef {
-            weight: entry,
-            referencing_functions,
-        })
+        Ok(SharedWeightRef { weight: entry, referencing_functions })
     }
 
     /// Build the weight.bin binary data.
@@ -293,7 +300,7 @@ impl WeightBinBuilder {
             // Add padding
             if aligned_offset > current_pos {
                 let padding = (aligned_offset - current_pos) as usize;
-                data.extend(std::iter::repeat(0u8).take(padding));
+                data.extend(std::iter::repeat_n(0u8, padding));
             }
 
             entry.offset = aligned_offset;
@@ -340,7 +347,7 @@ fn align_up(value: u64, alignment: u64) -> u64 {
     if alignment == 0 {
         return value;
     }
-    (value + alignment - 1) / alignment * alignment
+    value.div_ceil(alignment) * alignment
 }
 
 #[cfg(test)]
@@ -352,12 +359,9 @@ mod tests {
         let mut builder = WeightBinBuilder::new();
 
         let data = vec![1u8; 64];
-        let offset = builder.add_weight(
-            "weight_0",
-            vec![4, 16],
-            CoreMlDataType::Float16,
-            data.clone(),
-        ).unwrap();
+        let offset = builder
+            .add_weight("weight_0", vec![4, 16], CoreMlDataType::Float16, data.clone())
+            .unwrap();
 
         assert_eq!(offset, 0); // First weight starts at offset 0
 
@@ -371,20 +375,14 @@ mod tests {
         let mut builder = WeightBinBuilder::new();
 
         let data = vec![42u8; 128];
-        let offset1 = builder.add_weight(
-            "shared_weight",
-            vec![8, 16],
-            CoreMlDataType::Float16,
-            data.clone(),
-        ).unwrap();
+        let offset1 = builder
+            .add_weight("shared_weight", vec![8, 16], CoreMlDataType::Float16, data.clone())
+            .unwrap();
 
         // Adding the same weight again should return the same offset
-        let offset2 = builder.add_weight(
-            "shared_weight",
-            vec![8, 16],
-            CoreMlDataType::Float16,
-            data.clone(),
-        ).unwrap();
+        let offset2 = builder
+            .add_weight("shared_weight", vec![8, 16], CoreMlDataType::Float16, data.clone())
+            .unwrap();
 
         assert_eq!(offset1, offset2);
 
@@ -398,21 +396,13 @@ mod tests {
 
         // Add a weight that's not a multiple of 16
         let data1 = vec![1u8; 10];
-        let offset1 = builder.add_weight(
-            "weight_0",
-            vec![10],
-            CoreMlDataType::UInt8,
-            data1,
-        ).unwrap();
+        let offset1 =
+            builder.add_weight("weight_0", vec![10], CoreMlDataType::UInt8, data1).unwrap();
 
         // Second weight should be aligned to 16 bytes
         let data2 = vec![2u8; 32];
-        let offset2 = builder.add_weight(
-            "weight_1",
-            vec![16],
-            CoreMlDataType::Float16,
-            data2,
-        ).unwrap();
+        let offset2 =
+            builder.add_weight("weight_1", vec![16], CoreMlDataType::Float16, data2).unwrap();
 
         assert_eq!(offset1, 0);
         assert_eq!(offset2, 16); // Aligned to 16 bytes
@@ -426,12 +416,7 @@ mod tests {
         let mut builder = WeightBinBuilder::new();
 
         let data = vec![1u8; 64];
-        builder.add_weight(
-            "weight_0",
-            vec![4, 16],
-            CoreMlDataType::Float16,
-            data,
-        ).unwrap();
+        builder.add_weight("weight_0", vec![4, 16], CoreMlDataType::Float16, data).unwrap();
 
         // Same name, different shape — should fail
         let data2 = vec![1u8; 64];
@@ -450,13 +435,15 @@ mod tests {
         let mut builder = WeightBinBuilder::new();
 
         let data = vec![42u8; 256];
-        let shared = builder.add_shared_weight(
-            "shared_projection_weight",
-            vec![128, 128],
-            CoreMlDataType::Float16,
-            data,
-            vec!["embedding".to_string(), "decode_step".to_string()],
-        ).unwrap();
+        let shared = builder
+            .add_shared_weight(
+                "shared_projection_weight",
+                vec![128, 128],
+                CoreMlDataType::Float16,
+                data,
+                vec!["embedding".to_string(), "decode_step".to_string()],
+            )
+            .unwrap();
 
         assert_eq!(shared.referencing_functions.len(), 2);
         assert_eq!(shared.weight.name, "shared_projection_weight");
@@ -482,17 +469,25 @@ mod tests {
 
         // Add a unique weight
         let data_a = vec![1u8; 64];
-        builder.add_weight("weight_a", vec![4, 16], CoreMlDataType::Float16, data_a.clone()).unwrap();
+        builder
+            .add_weight("weight_a", vec![4, 16], CoreMlDataType::Float16, data_a.clone())
+            .unwrap();
 
         // Add a shared weight (first occurrence)
         let data_shared = vec![42u8; 128];
-        builder.add_weight("shared_proj", vec![8, 16], CoreMlDataType::Float16, data_shared.clone()).unwrap();
+        builder
+            .add_weight("shared_proj", vec![8, 16], CoreMlDataType::Float16, data_shared.clone())
+            .unwrap();
 
         // Deduplicate: add the same shared weight again (second occurrence)
-        builder.add_weight("shared_proj", vec![8, 16], CoreMlDataType::Float16, data_shared.clone()).unwrap();
+        builder
+            .add_weight("shared_proj", vec![8, 16], CoreMlDataType::Float16, data_shared.clone())
+            .unwrap();
 
         // Deduplicate again: third occurrence of the same weight
-        builder.add_weight("shared_proj", vec![8, 16], CoreMlDataType::Float16, data_shared.clone()).unwrap();
+        builder
+            .add_weight("shared_proj", vec![8, 16], CoreMlDataType::Float16, data_shared.clone())
+            .unwrap();
 
         let result = builder.build();
 
@@ -500,16 +495,22 @@ mod tests {
         assert_eq!(result.entries.len(), 2);
 
         // 2 deduplication events (2nd and 3rd additions of shared_proj)
-        assert_eq!(result.deduplicated_count, 2,
-            "Should track 2 deduplication events for 3 total additions of the same name");
+        assert_eq!(
+            result.deduplicated_count, 2,
+            "Should track 2 deduplication events for 3 total additions of the same name"
+        );
 
         // 128 bytes saved per dedup × 2 = 256 bytes saved
-        assert_eq!(result.deduplicated_bytes, 256,
-            "Should track 256 bytes saved (128 bytes × 2 dedup events)");
+        assert_eq!(
+            result.deduplicated_bytes, 256,
+            "Should track 256 bytes saved (128 bytes × 2 dedup events)"
+        );
 
         // Total size should be 64 + 128 = 192 (not 64 + 128*3 = 448)
-        assert_eq!(result.total_size, 192,
-            "Total size should reflect deduplicated storage, not naive concatenation");
+        assert_eq!(
+            result.total_size, 192,
+            "Total size should reflect deduplicated storage, not naive concatenation"
+        );
     }
 
     /// Test that no deduplication produces zero metrics.
@@ -539,8 +540,22 @@ mod tests {
         // --- Without content-hash dedup (default): different names, identical content → stored separately ---
         let mut builder_no_dedup = WeightBinBuilder::new();
         let content = vec![42u8; 256];
-        builder_no_dedup.add_weight("embedding_projection_w", vec![128, 16], CoreMlDataType::Float16, content.clone()).unwrap();
-        builder_no_dedup.add_weight("decode_step_projection_w", vec![128, 16], CoreMlDataType::Float16, content.clone()).unwrap();
+        builder_no_dedup
+            .add_weight(
+                "embedding_projection_w",
+                vec![128, 16],
+                CoreMlDataType::Float16,
+                content.clone(),
+            )
+            .unwrap();
+        builder_no_dedup
+            .add_weight(
+                "decode_step_projection_w",
+                vec![128, 16],
+                CoreMlDataType::Float16,
+                content.clone(),
+            )
+            .unwrap();
 
         let result_no_dedup = builder_no_dedup.build();
         assert_eq!(result_no_dedup.entries.len(), 2,
@@ -551,20 +566,37 @@ mod tests {
         // --- With content-hash dedup enabled: different names, identical content → deduplicated ---
         let mut builder = WeightBinBuilder::new().with_content_dedup();
 
-        builder.add_weight("embedding_projection_w", vec![128, 16], CoreMlDataType::Float16, content.clone()).unwrap();
-        builder.add_weight("decode_step_projection_w", vec![128, 16], CoreMlDataType::Float16, content.clone()).unwrap();
+        builder
+            .add_weight(
+                "embedding_projection_w",
+                vec![128, 16],
+                CoreMlDataType::Float16,
+                content.clone(),
+            )
+            .unwrap();
+        builder
+            .add_weight(
+                "decode_step_projection_w",
+                vec![128, 16],
+                CoreMlDataType::Float16,
+                content.clone(),
+            )
+            .unwrap();
 
         let result = builder.build();
 
         // Only one entry should exist (second was content-deduped)
-        assert_eq!(result.entries.len(), 1,
-            "Content-hash dedup: different names with identical content should produce one entry");
-        assert_eq!(result.deduplicated_count, 0,
-            "No name-based dedup expected (names are different)");
-        assert_eq!(result.content_deduplicated_count, 1,
-            "One content-hash dedup event");
-        assert_eq!(result.content_deduplicated_bytes, 256,
-            "256 bytes saved by content-hash dedup");
+        assert_eq!(
+            result.entries.len(),
+            1,
+            "Content-hash dedup: different names with identical content should produce one entry"
+        );
+        assert_eq!(
+            result.deduplicated_count, 0,
+            "No name-based dedup expected (names are different)"
+        );
+        assert_eq!(result.content_deduplicated_count, 1, "One content-hash dedup event");
+        assert_eq!(result.content_deduplicated_bytes, 256, "256 bytes saved by content-hash dedup");
 
         // Verify the content-deduped entry has the correct size
         assert_eq!(result.entries[0].size, 256);
@@ -576,15 +608,22 @@ mod tests {
         let mut builder = WeightBinBuilder::new().with_content_dedup();
 
         let content = vec![7u8; 128];
-        builder.add_weight("shared_w", vec![8, 16], CoreMlDataType::Float16, content.clone()).unwrap();
-        builder.add_weight("shared_w", vec![8, 16], CoreMlDataType::Float16, content.clone()).unwrap();
+        builder
+            .add_weight("shared_w", vec![8, 16], CoreMlDataType::Float16, content.clone())
+            .unwrap();
+        builder
+            .add_weight("shared_w", vec![8, 16], CoreMlDataType::Float16, content.clone())
+            .unwrap();
 
         let result = builder.build();
 
         assert_eq!(result.entries.len(), 1, "Same name → one entry");
         assert_eq!(result.deduplicated_count, 1, "One name-based dedup event");
         assert_eq!(result.deduplicated_bytes, 128, "128 bytes saved by name dedup");
-        assert_eq!(result.content_deduplicated_count, 0, "No content-hash dedup (name matched first)");
+        assert_eq!(
+            result.content_deduplicated_count, 0,
+            "No content-hash dedup (name matched first)"
+        );
     }
 
     /// Test that content-hash dedup does NOT deduplicate when shapes differ.
@@ -594,15 +633,20 @@ mod tests {
 
         // Same bytes, different shapes → NOT deduplicated
         let content = vec![0u8; 64];
-        builder.add_weight("weight_a", vec![4, 16], CoreMlDataType::Float16, content.clone()).unwrap();
-        builder.add_weight("weight_b", vec![8, 8], CoreMlDataType::Float16, content.clone()).unwrap();
+        builder
+            .add_weight("weight_a", vec![4, 16], CoreMlDataType::Float16, content.clone())
+            .unwrap();
+        builder
+            .add_weight("weight_b", vec![8, 8], CoreMlDataType::Float16, content.clone())
+            .unwrap();
 
         let result = builder.build();
 
-        assert_eq!(result.entries.len(), 2,
-            "Same content, different shape → stored separately");
-        assert_eq!(result.content_deduplicated_count, 0,
-            "No content-hash dedup when shapes differ");
+        assert_eq!(result.entries.len(), 2, "Same content, different shape → stored separately");
+        assert_eq!(
+            result.content_deduplicated_count, 0,
+            "No content-hash dedup when shapes differ"
+        );
     }
 
     /// Test that content-hash dedup does NOT deduplicate when dtypes differ.
@@ -617,10 +661,11 @@ mod tests {
 
         let result = builder.build();
 
-        assert_eq!(result.entries.len(), 2,
-            "Same content, different dtype → stored separately");
-        assert_eq!(result.content_deduplicated_count, 0,
-            "No content-hash dedup when dtypes differ");
+        assert_eq!(result.entries.len(), 2, "Same content, different dtype → stored separately");
+        assert_eq!(
+            result.content_deduplicated_count, 0,
+            "No content-hash dedup when dtypes differ"
+        );
     }
 
     /// Test the coremltools gap: different function namespaces produce
@@ -635,26 +680,63 @@ mod tests {
 
         // --- coremltools 9.0 path: no content dedup → duplicated ---
         let mut no_dedup = WeightBinBuilder::new();
-        no_dedup.add_weight("embedding_projection_w", vec![512, 512], CoreMlDataType::Float16, weight_data.clone()).unwrap();
-        no_dedup.add_weight("decode_step_projection_w", vec![512, 512], CoreMlDataType::Float16, weight_data.clone()).unwrap();
+        no_dedup
+            .add_weight(
+                "embedding_projection_w",
+                vec![512, 512],
+                CoreMlDataType::Float16,
+                weight_data.clone(),
+            )
+            .unwrap();
+        no_dedup
+            .add_weight(
+                "decode_step_projection_w",
+                vec![512, 512],
+                CoreMlDataType::Float16,
+                weight_data.clone(),
+            )
+            .unwrap();
         let no_dedup_result = no_dedup.build();
 
         // --- Proto-direct with content dedup: shared ---
         let mut with_dedup = WeightBinBuilder::new().with_content_dedup();
-        with_dedup.add_weight("embedding_projection_w", vec![512, 512], CoreMlDataType::Float16, weight_data.clone()).unwrap();
-        with_dedup.add_weight("decode_step_projection_w", vec![512, 512], CoreMlDataType::Float16, weight_data.clone()).unwrap();
+        with_dedup
+            .add_weight(
+                "embedding_projection_w",
+                vec![512, 512],
+                CoreMlDataType::Float16,
+                weight_data.clone(),
+            )
+            .unwrap();
+        with_dedup
+            .add_weight(
+                "decode_step_projection_w",
+                vec![512, 512],
+                CoreMlDataType::Float16,
+                weight_data.clone(),
+            )
+            .unwrap();
         let with_dedup_result = with_dedup.build();
 
         // Content-dedup path produces one entry, coremltools-style produces two
-        assert_eq!(with_dedup_result.entries.len(), 1,
-            "Content dedup: one entry for two differently-named weights with identical content");
-        assert_eq!(no_dedup_result.entries.len(), 2,
-            "No content dedup: two entries for two differently-named weights");
+        assert_eq!(
+            with_dedup_result.entries.len(),
+            1,
+            "Content dedup: one entry for two differently-named weights with identical content"
+        );
+        assert_eq!(
+            no_dedup_result.entries.len(),
+            2,
+            "No content dedup: two entries for two differently-named weights"
+        );
 
         // Proto-direct + content dedup is smaller by exactly one weight's worth
-        assert!(with_dedup_result.total_size < no_dedup_result.total_size,
+        assert!(
+            with_dedup_result.total_size < no_dedup_result.total_size,
             "Content-dedup path ({}) must be smaller than coremltools-style path ({})",
-            with_dedup_result.total_size, no_dedup_result.total_size);
+            with_dedup_result.total_size,
+            no_dedup_result.total_size
+        );
         assert_eq!(with_dedup_result.content_deduplicated_count, 1);
         assert_eq!(with_dedup_result.content_deduplicated_bytes, 1024);
     }
@@ -664,13 +746,16 @@ mod tests {
     fn test_content_dedup_different_content_not_deduped() {
         let mut builder = WeightBinBuilder::new().with_content_dedup();
 
-        builder.add_weight("weight_a", vec![8, 16], CoreMlDataType::Float16, vec![1u8; 256]).unwrap();
-        builder.add_weight("weight_b", vec![8, 16], CoreMlDataType::Float16, vec![2u8; 256]).unwrap();
+        builder
+            .add_weight("weight_a", vec![8, 16], CoreMlDataType::Float16, vec![1u8; 256])
+            .unwrap();
+        builder
+            .add_weight("weight_b", vec![8, 16], CoreMlDataType::Float16, vec![2u8; 256])
+            .unwrap();
 
         let result = builder.build();
 
-        assert_eq!(result.entries.len(), 2,
-            "Different content → stored separately");
+        assert_eq!(result.entries.len(), 2, "Different content → stored separately");
         assert_eq!(result.content_deduplicated_count, 0);
     }
 
@@ -686,21 +771,52 @@ mod tests {
 
         // --- Proto-direct path: shared weight ---
         let mut shared_builder = WeightBinBuilder::new();
-        shared_builder.add_weight("projection_w", vec![512, 512], CoreMlDataType::Float16, weight_data.clone()).unwrap();
+        shared_builder
+            .add_weight(
+                "projection_w",
+                vec![512, 512],
+                CoreMlDataType::Float16,
+                weight_data.clone(),
+            )
+            .unwrap();
         // Second function references the same weight (deduplicated)
-        shared_builder.add_weight("projection_w", vec![512, 512], CoreMlDataType::Float16, weight_data.clone()).unwrap();
+        shared_builder
+            .add_weight(
+                "projection_w",
+                vec![512, 512],
+                CoreMlDataType::Float16,
+                weight_data.clone(),
+            )
+            .unwrap();
         let shared_result = shared_builder.build();
 
         // --- coremltools 9.0 path: duplicated weight ---
         let mut dup_builder = WeightBinBuilder::new();
-        dup_builder.add_weight("embedding_projection_w", vec![512, 512], CoreMlDataType::Float16, weight_data.clone()).unwrap();
-        dup_builder.add_weight("decode_step_projection_w", vec![512, 512], CoreMlDataType::Float16, weight_data.clone()).unwrap();
+        dup_builder
+            .add_weight(
+                "embedding_projection_w",
+                vec![512, 512],
+                CoreMlDataType::Float16,
+                weight_data.clone(),
+            )
+            .unwrap();
+        dup_builder
+            .add_weight(
+                "decode_step_projection_w",
+                vec![512, 512],
+                CoreMlDataType::Float16,
+                weight_data.clone(),
+            )
+            .unwrap();
         let dup_result = dup_builder.build();
 
         // Proto-direct saves exactly the weight size (1024 bytes)
-        assert!(shared_result.total_size < dup_result.total_size,
+        assert!(
+            shared_result.total_size < dup_result.total_size,
             "Proto-direct shared path ({}) must be smaller than duplicated path ({})",
-            shared_result.total_size, dup_result.total_size);
+            shared_result.total_size,
+            dup_result.total_size
+        );
         assert_eq!(shared_result.deduplicated_count, 1, "One deduplication event");
         assert_eq!(shared_result.deduplicated_bytes, 1024, "1024 bytes saved");
         assert_eq!(dup_result.deduplicated_count, 0, "No dedup in coremltools-style path");

@@ -34,18 +34,12 @@ pub struct DriftDetector {
 impl DriftDetector {
     /// Create a new drift detector with default thresholds.
     pub fn new() -> Self {
-        Self {
-            cosine_threshold: 1e-3,
-            max_error_threshold: 1e-2,
-        }
+        Self { cosine_threshold: 1e-3, max_error_threshold: 1e-2 }
     }
 
     /// Create a drift detector with custom thresholds.
     pub fn with_thresholds(cosine_threshold: f64, max_error_threshold: f64) -> Self {
-        Self {
-            cosine_threshold,
-            max_error_threshold,
-        }
+        Self { cosine_threshold, max_error_threshold }
     }
 
     /// Compute drift metrics between a baseline (FP32 reference) and
@@ -134,7 +128,11 @@ impl DriftDetector {
             // If one or both vectors are zero, cosine distance is undefined.
             // Report 0.0 if both are zero (no drift), 1.0 if only one is zero
             // (maximal drift).
-            if norm_a == 0.0 && norm_b == 0.0 { 0.0 } else { 1.0 }
+            if norm_a == 0.0 && norm_b == 0.0 {
+                0.0
+            } else {
+                1.0
+            }
         };
 
         // P99 of relative errors
@@ -147,8 +145,8 @@ impl DriftDetector {
             rel_errors[idx]
         };
 
-        let has_drift = max_abs > self.max_error_threshold
-            || cosine_distance > self.cosine_threshold;
+        let has_drift =
+            max_abs > self.max_error_threshold || cosine_distance > self.cosine_threshold;
 
         DriftReport {
             drift_report_schema_version: DRIFT_REPORT_SCHEMA_VERSION.to_string(),
@@ -175,9 +173,7 @@ impl DriftDetector {
         DriftReport {
             drift_report_schema_version: DRIFT_REPORT_SCHEMA_VERSION.to_string(),
             has_drift: false,
-            computation_status: DriftComputationStatus::Unavailable {
-                reason: reason.to_string(),
-            },
+            computation_status: DriftComputationStatus::Unavailable { reason: reason.to_string() },
             max_absolute_error: f64::NAN,
             mean_absolute_error: f64::NAN,
             rmse: f64::NAN,

@@ -33,11 +33,11 @@
 //! up weight data by path. If no resolver is provided, empty data is used
 //! (suitable for structure-only conversions).
 
-use anyhow::Result;
 use ane_coreml_proto::mir_compat::{
     ComputeUnitHintCompat, MilDtypeCompat, MirGraphCompat, MirOpCompat,
 };
 use ane_ir::mir::{ComputeUnitHint, MilDtype, MirGraph, MirNode, MirOp};
+use anyhow::Result;
 use std::collections::HashMap;
 
 /// Resolver for weight data referenced by `MILConst.value_path`.
@@ -172,12 +172,7 @@ pub fn mir_op_to_compat(
                 }
             };
 
-            Ok(MirOpCompat::Const {
-                name: name.clone(),
-                data,
-                dtype: compat_dtype,
-                shape,
-            })
+            Ok(MirOpCompat::Const { name: name.clone(), data, dtype: compat_dtype, shape })
         }
 
         MirOp::MILLinear { name, x, weight, bias } => Ok(MirOpCompat::Linear {
@@ -187,46 +182,31 @@ pub fn mir_op_to_compat(
             bias_name: bias.clone(),
         }),
 
-        MirOp::MILMatMul { name, x, y } => Ok(MirOpCompat::MatMul {
-            name: name.clone(),
-            x: x.0.clone(),
-            y: y.0.clone(),
-        }),
+        MirOp::MILMatMul { name, x, y } => {
+            Ok(MirOpCompat::MatMul { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
 
-        MirOp::MILAdd { name, x, y } => Ok(MirOpCompat::Add {
-            name: name.clone(),
-            x: x.0.clone(),
-            y: y.0.clone(),
-        }),
+        MirOp::MILAdd { name, x, y } => {
+            Ok(MirOpCompat::Add { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
 
-        MirOp::MILMul { name, x, y } => Ok(MirOpCompat::Mul {
-            name: name.clone(),
-            x: x.0.clone(),
-            y: y.0.clone(),
-        }),
+        MirOp::MILMul { name, x, y } => {
+            Ok(MirOpCompat::Mul { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
 
-        MirOp::MILSub { name, x, y } => Ok(MirOpCompat::Sub {
-            name: name.clone(),
-            x: x.0.clone(),
-            y: y.0.clone(),
-        }),
+        MirOp::MILSub { name, x, y } => {
+            Ok(MirOpCompat::Sub { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
 
-        MirOp::MILAbs { name, x } => Ok(MirOpCompat::Abs {
-            name: name.clone(),
-            x: x.0.clone(),
-        }),
+        MirOp::MILAbs { name, x } => Ok(MirOpCompat::Abs { name: name.clone(), x: x.0.clone() }),
 
-        MirOp::MILMaximum { name, x, y } => Ok(MirOpCompat::Maximum {
-            name: name.clone(),
-            x: x.0.clone(),
-            y: y.0.clone(),
-        }),
+        MirOp::MILMaximum { name, x, y } => {
+            Ok(MirOpCompat::Maximum { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
 
-        MirOp::MILMinimum { name, x, y } => Ok(MirOpCompat::Minimum {
-            name: name.clone(),
-            x: x.0.clone(),
-            y: y.0.clone(),
-        }),
+        MirOp::MILMinimum { name, x, y } => {
+            Ok(MirOpCompat::Minimum { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
 
         MirOp::MILReshape { name, x, shape } => Ok(MirOpCompat::Reshape {
             name: name.clone(),
@@ -240,7 +220,16 @@ pub fn mir_op_to_compat(
             perm: perm.iter().map(|&d| d as i64).collect(),
         }),
 
-        MirOp::MILSliceByIndex { name, x, begin, end, stride: _, begin_mask: _, end_mask: _, squeeze_mask: _ } => Ok(MirOpCompat::SliceByIndex {
+        MirOp::MILSliceByIndex {
+            name,
+            x,
+            begin,
+            end,
+            stride: _,
+            begin_mask: _,
+            end_mask: _,
+            squeeze_mask: _,
+        } => Ok(MirOpCompat::SliceByIndex {
             name: name.clone(),
             x: x.0.clone(),
             begin: begin.clone(),
@@ -253,26 +242,27 @@ pub fn mir_op_to_compat(
             axis: *axis as i64,
         }),
 
-        MirOp::MILSoftmax { name, x, axis } => Ok(MirOpCompat::Softmax {
-            name: name.clone(),
-            x: x.0.clone(),
-            axis: *axis as i64,
-        }),
-
-        MirOp::MILGelu { name, x, mode } => Ok(MirOpCompat::Gelu {
-            name: name.clone(),
-            x: x.0.clone(),
-            mode: mode.clone(),
-        }),
-
-        MirOp::MILScaledDotProductAttention { name, query, key, value, attention_mask: _, scale: _ } => {
-            Ok(MirOpCompat::ScaledDotProductAttention {
-                name: name.clone(),
-                query: query.0.clone(),
-                key: key.0.clone(),
-                value: value.0.clone(),
-            })
+        MirOp::MILSoftmax { name, x, axis } => {
+            Ok(MirOpCompat::Softmax { name: name.clone(), x: x.0.clone(), axis: *axis as i64 })
         }
+
+        MirOp::MILGelu { name, x, mode } => {
+            Ok(MirOpCompat::Gelu { name: name.clone(), x: x.0.clone(), mode: mode.clone() })
+        }
+
+        MirOp::MILScaledDotProductAttention {
+            name,
+            query,
+            key,
+            value,
+            attention_mask: _,
+            scale: _,
+        } => Ok(MirOpCompat::ScaledDotProductAttention {
+            name: name.clone(),
+            query: query.0.clone(),
+            key: key.0.clone(),
+            value: value.0.clone(),
+        }),
 
         MirOp::MILReadState { name, state_id, shape, dtype } => {
             // Propagate dtype from the MIR node's dtype field.
@@ -308,32 +298,24 @@ pub fn mir_op_to_compat(
             keep_dims: *keep_dims,
         }),
 
-        MirOp::MILRsqrt { name, x } => Ok(MirOpCompat::Rsqrt {
-            name: name.clone(),
-            x: x.0.clone(),
-        }),
+        MirOp::MILRsqrt { name, x } => {
+            Ok(MirOpCompat::Rsqrt { name: name.clone(), x: x.0.clone() })
+        }
 
-        MirOp::MILRealDiv { name, x, y } => Ok(MirOpCompat::RealDiv {
-            name: name.clone(),
-            x: x.0.clone(),
-            y: y.0.clone(),
-        }),
+        MirOp::MILRealDiv { name, x, y } => {
+            Ok(MirOpCompat::RealDiv { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
 
-        MirOp::MILLayerNorm {
-            name,
-            x,
-            weight,
-            bias,
-            epsilon,
-            axes,
-        } => Ok(MirOpCompat::LayerNorm {
-            name: name.clone(),
-            x: x.0.clone(),
-            weight_name: weight.clone(),
-            bias_name: bias.clone(),
-            epsilon: *epsilon,
-            axes: axes.iter().map(|&d| d as i64).collect(),
-        }),
+        MirOp::MILLayerNorm { name, x, weight, bias, epsilon, axes } => {
+            Ok(MirOpCompat::LayerNorm {
+                name: name.clone(),
+                x: x.0.clone(),
+                weight_name: weight.clone(),
+                bias_name: bias.clone(),
+                epsilon: *epsilon,
+                axes: axes.iter().map(|&d| d as i64).collect(),
+            })
+        }
 
         MirOp::MILTopk { name, x, k, axis } => Ok(MirOpCompat::Topk {
             name: name.clone(),
@@ -342,15 +324,9 @@ pub fn mir_op_to_compat(
             axis: *axis as i64,
         }),
 
-        MirOp::MILCos { name, x } => Ok(MirOpCompat::Cos {
-            name: name.clone(),
-            x: x.0.clone(),
-        }),
+        MirOp::MILCos { name, x } => Ok(MirOpCompat::Cos { name: name.clone(), x: x.0.clone() }),
 
-        MirOp::MILSin { name, x } => Ok(MirOpCompat::Sin {
-            name: name.clone(),
-            x: x.0.clone(),
-        }),
+        MirOp::MILSin { name, x } => Ok(MirOpCompat::Sin { name: name.clone(), x: x.0.clone() }),
 
         MirOp::MILCast { name, x, dtype } => Ok(MirOpCompat::Cast {
             name: name.clone(),
@@ -363,29 +339,19 @@ pub fn mir_op_to_compat(
             name: name.clone(),
             x: x.0.clone(),
             update: update.0.clone(),
-            begin: begin.iter().map(|&v| v as i64).collect(),
-            end: end.iter().map(|&v| v as i64).collect(),
+            begin: begin.to_vec(),
+            end: end.to_vec(),
         }),
 
-        MirOp::MILExp { name, x } => Ok(MirOpCompat::Exp {
-            name: name.clone(),
-            x: x.0.clone(),
-        }),
+        MirOp::MILExp { name, x } => Ok(MirOpCompat::Exp { name: name.clone(), x: x.0.clone() }),
 
-        MirOp::MILSigmoid { name, x } => Ok(MirOpCompat::Sigmoid {
-            name: name.clone(),
-            x: x.0.clone(),
-        }),
+        MirOp::MILSigmoid { name, x } => {
+            Ok(MirOpCompat::Sigmoid { name: name.clone(), x: x.0.clone() })
+        }
 
-        MirOp::MILTanh { name, x } => Ok(MirOpCompat::Tanh {
-            name: name.clone(),
-            x: x.0.clone(),
-        }),
+        MirOp::MILTanh { name, x } => Ok(MirOpCompat::Tanh { name: name.clone(), x: x.0.clone() }),
 
-        MirOp::MILRelu { name, x } => Ok(MirOpCompat::Relu {
-            name: name.clone(),
-            x: x.0.clone(),
-        }),
+        MirOp::MILRelu { name, x } => Ok(MirOpCompat::Relu { name: name.clone(), x: x.0.clone() }),
 
         MirOp::MILWhere { name, condition, x, y } => Ok(MirOpCompat::Where {
             name: name.clone(),
@@ -395,7 +361,16 @@ pub fn mir_op_to_compat(
         }),
 
         // ─── Sprint 54: Previously unsupported ops now have MirOpCompat equivalents ───
-        MirOp::MILConv { name, x, weight, pad_type, groups, strides: _, pad_amounts: _, dilations: _ } => Ok(MirOpCompat::Conv {
+        MirOp::MILConv {
+            name,
+            x,
+            weight,
+            pad_type,
+            groups,
+            strides: _,
+            pad_amounts: _,
+            dilations: _,
+        } => Ok(MirOpCompat::Conv {
             name: name.clone(),
             x: x.0.clone(),
             weight: weight.0.clone(),
@@ -425,11 +400,7 @@ pub fn mir_op_to_compat(
         // and serialized parameters for flexible proto emission.
         other => {
             let (op_kind, name, params) = mir_op_to_unsupported(other);
-            Ok(MirOpCompat::Unsupported {
-                op_kind,
-                name,
-                params_json: params,
-            })
+            Ok(MirOpCompat::Unsupported { op_kind, name, params_json: params })
         }
     }
 }
@@ -441,7 +412,9 @@ pub fn mir_op_to_compat(
 fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
     match op {
         MirOp::MILEinsum { name, .. } => ("einsum".into(), name.clone(), "{}".into()),
-        MirOp::MILConvTranspose { name, .. } => ("conv_transpose".into(), name.clone(), "{}".into()),
+        MirOp::MILConvTranspose { name, .. } => {
+            ("conv_transpose".into(), name.clone(), "{}".into())
+        }
         MirOp::MILFloorDiv { name, .. } => ("floor_div".into(), name.clone(), "{}".into()),
         MirOp::MILMod { name, .. } => ("mod".into(), name.clone(), "{}".into()),
         MirOp::MILPow { name, .. } => ("pow".into(), name.clone(), "{}".into()),
@@ -458,61 +431,107 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILSigmoid { name, .. } => ("sigmoid".into(), name.clone(), "{}".into()),
         MirOp::MILTanh { name, .. } => ("tanh".into(), name.clone(), "{}".into()),
         MirOp::MILRelu6 { name, .. } => ("relu6".into(), name.clone(), "{}".into()),
-        MirOp::MILLeakyRelu { name, alpha, .. } => ("leaky_relu".into(), name.clone(), format!("{{\"alpha\":{alpha}}}")),
-        MirOp::MILSigmoidHard { name, alpha, beta, .. } => ("sigmoid_hard".into(), name.clone(), format!("{{\"alpha\":{alpha},\"beta\":{beta}}}")),
-        MirOp::MILThresholdedRelu { name, alpha, .. } => ("thresholded_relu".into(), name.clone(), format!("{{\"alpha\":{alpha}}}")),
-        MirOp::MILClampedRelu { name, alpha, beta, .. } => ("clamped_relu".into(), name.clone(), format!("{{\"alpha\":{alpha},\"beta\":{beta}}}")),
-        MirOp::MILLinearActivation { name, alpha, beta, .. } => ("linear_activation".into(), name.clone(), format!("{{\"alpha\":{alpha},\"beta\":{beta}}}")),
-        MirOp::MILPrelu { name, alpha, .. } => ("prelu".into(), name.clone(), format!("{{\"alpha\":\"{alpha}\"}}")),
+        MirOp::MILLeakyRelu { name, alpha, .. } => {
+            ("leaky_relu".into(), name.clone(), format!("{{\"alpha\":{alpha}}}"))
+        }
+        MirOp::MILSigmoidHard { name, alpha, beta, .. } => {
+            ("sigmoid_hard".into(), name.clone(), format!("{{\"alpha\":{alpha},\"beta\":{beta}}}"))
+        }
+        MirOp::MILThresholdedRelu { name, alpha, .. } => {
+            ("thresholded_relu".into(), name.clone(), format!("{{\"alpha\":{alpha}}}"))
+        }
+        MirOp::MILClampedRelu { name, alpha, beta, .. } => {
+            ("clamped_relu".into(), name.clone(), format!("{{\"alpha\":{alpha},\"beta\":{beta}}}"))
+        }
+        MirOp::MILLinearActivation { name, alpha, beta, .. } => (
+            "linear_activation".into(),
+            name.clone(),
+            format!("{{\"alpha\":{alpha},\"beta\":{beta}}}"),
+        ),
+        MirOp::MILPrelu { name, alpha, .. } => {
+            ("prelu".into(), name.clone(), format!("{{\"alpha\":\"{alpha}\"}}"))
+        }
         MirOp::MILSoftsign { name, .. } => ("softsign".into(), name.clone(), "{}".into()),
         MirOp::MILSilu { name, .. } => ("silu".into(), name.clone(), "{}".into()),
-        MirOp::MILScaledTanh { name, alpha, beta, .. } => ("scaled_tanh".into(), name.clone(), format!("{{\"alpha\":{alpha},\"beta\":{beta}}}")),
-        MirOp::MILElu { name, alpha, .. } => ("elu".into(), name.clone(), format!("{{\"alpha\":{alpha}}}")),
+        MirOp::MILScaledTanh { name, alpha, beta, .. } => {
+            ("scaled_tanh".into(), name.clone(), format!("{{\"alpha\":{alpha},\"beta\":{beta}}}"))
+        }
+        MirOp::MILElu { name, alpha, .. } => {
+            ("elu".into(), name.clone(), format!("{{\"alpha\":{alpha}}}"))
+        }
         MirOp::MILSoftplus { name, .. } => ("softplus".into(), name.clone(), "{}".into()),
-        MirOp::MILSoftplusParametric { name, alpha, beta, .. } => ("softplus_parametric".into(), name.clone(), format!("{{\"alpha\":\"{alpha}\",\"beta\":\"{beta}\"}}")),
-        MirOp::MILClip { name, min_val, max_val, .. } => ("clip".into(), name.clone(), format!("{{\"min_val\":{min_val},\"max_val\":{max_val}}}")),
+        MirOp::MILSoftplusParametric { name, alpha, beta, .. } => (
+            "softplus_parametric".into(),
+            name.clone(),
+            format!("{{\"alpha\":\"{alpha}\",\"beta\":\"{beta}\"}}"),
+        ),
+        MirOp::MILClip { name, min_val, max_val, .. } => (
+            "clip".into(),
+            name.clone(),
+            format!("{{\"min_val\":{min_val},\"max_val\":{max_val}}}"),
+        ),
         MirOp::MILSquare { name, .. } => ("square".into(), name.clone(), "{}".into()),
-        MirOp::MILThreshold { name, alpha, .. } => ("threshold".into(), name.clone(), format!("{{\"alpha\":{alpha}}}")),
+        MirOp::MILThreshold { name, alpha, .. } => {
+            ("threshold".into(), name.clone(), format!("{{\"alpha\":{alpha}}}"))
+        }
         MirOp::MILSqrt { name, .. } => ("sqrt".into(), name.clone(), "{}".into()),
-        MirOp::MILInverse { name, epsilon, .. } => ("inverse".into(), name.clone(), format!("{{\"epsilon\":{epsilon}}}")),
+        MirOp::MILInverse { name, epsilon, .. } => {
+            ("inverse".into(), name.clone(), format!("{{\"epsilon\":{epsilon}}}"))
+        }
         MirOp::MILCeil { name, .. } => ("ceil".into(), name.clone(), "{}".into()),
         MirOp::MILFloor { name, .. } => ("floor".into(), name.clone(), "{}".into()),
         MirOp::MILRound { name, .. } => ("round".into(), name.clone(), "{}".into()),
         MirOp::MILExp2 { name, .. } => ("exp2".into(), name.clone(), "{}".into()),
-        MirOp::MILLog { name, epsilon, .. } => ("log".into(), name.clone(), format!("{{\"epsilon\":{epsilon}}}")),
+        MirOp::MILLog { name, epsilon, .. } => {
+            ("log".into(), name.clone(), format!("{{\"epsilon\":{epsilon}}}"))
+        }
         MirOp::MILSign { name, .. } => ("sign".into(), name.clone(), "{}".into()),
         MirOp::MILTan { name, .. } => ("tan".into(), name.clone(), "{}".into()),
         MirOp::MILAcos { name, .. } => ("acos".into(), name.clone(), "{}".into()),
         MirOp::MILAsin { name, .. } => ("asin".into(), name.clone(), "{}".into()),
         MirOp::MILAtan { name, .. } => ("atan".into(), name.clone(), "{}".into()),
         MirOp::MILCosh { name, .. } => ("cosh".into(), name.clone(), "{}".into()),
-        MirOp::MLSinh { name, .. } => ("sinh".into(), name.clone(), "{}".into()),
-        MirOp::MILTanhInverse { name, .. } => ("atanh".into(), name.clone(), "{}".into()),
+        MirOp::MILSinh { name, .. } => ("sinh".into(), name.clone(), "{}".into()),
+        MirOp::MILAtanh { name, .. } => ("atanh".into(), name.clone(), "{}".into()),
         MirOp::MILErf { name, .. } => ("erf".into(), name.clone(), "{}".into()),
         MirOp::MILLogicalNot { name, .. } => ("logical_not".into(), name.clone(), "{}".into()),
         MirOp::MILSelect { name, .. } => ("select".into(), name.clone(), "{}".into()),
         MirOp::MILReduceMax { name, .. } => ("reduce_max".into(), name.clone(), "{}".into()),
         MirOp::MILReduceMin { name, .. } => ("reduce_min".into(), name.clone(), "{}".into()),
         MirOp::MILReduceProd { name, .. } => ("reduce_prod".into(), name.clone(), "{}".into()),
-        MirOp::MILReduceSumSquare { name, .. } => ("reduce_sum_square".into(), name.clone(), "{}".into()),
+        MirOp::MILReduceSumSquare { name, .. } => {
+            ("reduce_sum_square".into(), name.clone(), "{}".into())
+        }
         MirOp::MILReduceL2Norm { name, .. } => ("reduce_l2_norm".into(), name.clone(), "{}".into()),
         MirOp::MILReduceL1Norm { name, .. } => ("reduce_l1_norm".into(), name.clone(), "{}".into()),
-        MirOp::MILReduceLogSumExp { name, .. } => ("reduce_log_sum_exp".into(), name.clone(), "{}".into()),
+        MirOp::MILReduceLogSumExp { name, .. } => {
+            ("reduce_log_sum_exp".into(), name.clone(), "{}".into())
+        }
         MirOp::MILReduceLogSum { name, .. } => ("reduce_log_sum".into(), name.clone(), "{}".into()),
         MirOp::MILReduceArgmax { name, .. } => ("reduce_argmax".into(), name.clone(), "{}".into()),
         MirOp::MILReduceArgmin { name, .. } => ("reduce_argmin".into(), name.clone(), "{}".into()),
         MirOp::MILBatchNorm { name, .. } => ("batch_norm".into(), name.clone(), "{}".into()),
         MirOp::MILInstanceNorm { name, .. } => ("instance_norm".into(), name.clone(), "{}".into()),
         MirOp::MILL2Norm { name, .. } => ("l2_norm".into(), name.clone(), "{}".into()),
-        MirOp::MILLocalResponseNorm { name, .. } => ("local_response_norm".into(), name.clone(), "{}".into()),
+        MirOp::MILLocalResponseNorm { name, .. } => {
+            ("local_response_norm".into(), name.clone(), "{}".into())
+        }
         MirOp::MILMaxPool { name, .. } => ("max_pool".into(), name.clone(), "{}".into()),
         MirOp::MILAvgPool { name, .. } => ("avg_pool".into(), name.clone(), "{}".into()),
         MirOp::MILL2Pool { name, .. } => ("l2_pool".into(), name.clone(), "{}".into()),
         MirOp::MILResize { name, .. } => ("resize".into(), name.clone(), "{}".into()),
-        MirOp::MILResizeNearestNeighbor { name, .. } => ("resize_nearest_neighbor".into(), name.clone(), "{}".into()),
-        MirOp::MILResizeBilinear { name, .. } => ("resize_bilinear".into(), name.clone(), "{}".into()),
-        MirOp::MILUpsampleNearestNeighbor { name, .. } => ("upsample_nearest_neighbor".into(), name.clone(), "{}".into()),
-        MirOp::MILUpsampleBilinear { name, .. } => ("upsample_bilinear".into(), name.clone(), "{}".into()),
+        MirOp::MILResizeNearestNeighbor { name, .. } => {
+            ("resize_nearest_neighbor".into(), name.clone(), "{}".into())
+        }
+        MirOp::MILResizeBilinear { name, .. } => {
+            ("resize_bilinear".into(), name.clone(), "{}".into())
+        }
+        MirOp::MILUpsampleNearestNeighbor { name, .. } => {
+            ("upsample_nearest_neighbor".into(), name.clone(), "{}".into())
+        }
+        MirOp::MILUpsampleBilinear { name, .. } => {
+            ("upsample_bilinear".into(), name.clone(), "{}".into())
+        }
         MirOp::MILCropResize { name, .. } => ("crop_resize".into(), name.clone(), "{}".into()),
         MirOp::MILAffine { name, .. } => ("affine".into(), name.clone(), "{}".into()),
         MirOp::MILResample { name, .. } => ("resample".into(), name.clone(), "{}".into()),
@@ -521,13 +540,19 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILSqueeze { name, .. } => ("squeeze".into(), name.clone(), "{}".into()),
         MirOp::MILFlatten2d { name, .. } => ("flatten2d".into(), name.clone(), "{}".into()),
         MirOp::MILReverse { name, .. } => ("reverse".into(), name.clone(), "{}".into()),
-        MirOp::MILReverseSequence { name, .. } => ("reverse_sequence".into(), name.clone(), "{}".into()),
+        MirOp::MILReverseSequence { name, .. } => {
+            ("reverse_sequence".into(), name.clone(), "{}".into())
+        }
         MirOp::MILSliceBySize { name, .. } => ("slice_by_size".into(), name.clone(), "{}".into()),
-        MirOp::MILSlidingWindows { name, .. } => ("sliding_windows".into(), name.clone(), "{}".into()),
+        MirOp::MILSlidingWindows { name, .. } => {
+            ("sliding_windows".into(), name.clone(), "{}".into())
+        }
         MirOp::MILDepthToSpace { name, .. } => ("depth_to_space".into(), name.clone(), "{}".into()),
         MirOp::MILSpaceToDepth { name, .. } => ("space_to_depth".into(), name.clone(), "{}".into()),
         MirOp::MILPixelShuffle { name, .. } => ("pixel_shuffle".into(), name.clone(), "{}".into()),
-        MirOp::MILPixelUnshuffle { name, .. } => ("pixel_unshuffle".into(), name.clone(), "{}".into()),
+        MirOp::MILPixelUnshuffle { name, .. } => {
+            ("pixel_unshuffle".into(), name.clone(), "{}".into())
+        }
         MirOp::MILBatchToSpace { name, .. } => ("batch_to_space".into(), name.clone(), "{}".into()),
         MirOp::MILSpaceToBatch { name, .. } => ("space_to_batch".into(), name.clone(), "{}".into()),
         MirOp::MILPad { name, .. } => ("pad".into(), name.clone(), "{}".into()),
@@ -544,21 +569,41 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILRange1d { name, .. } => ("range_1d".into(), name.clone(), "{}".into()),
         MirOp::MILShape { name, .. } => ("shape".into(), name.clone(), "{}".into()),
         MirOp::MILCrop { name, .. } => ("crop".into(), name.clone(), "{}".into()),
-        MirOp::MILGatherAlongAxis { name, .. } => ("gather_along_axis".into(), name.clone(), "{}".into()),
+        MirOp::MILGatherAlongAxis { name, .. } => {
+            ("gather_along_axis".into(), name.clone(), "{}".into())
+        }
         MirOp::MILGatherNd { name, .. } => ("gather_nd".into(), name.clone(), "{}".into()),
         MirOp::MILScatter { name, .. } => ("scatter".into(), name.clone(), "{}".into()),
-        MirOp::MILScatterAlongAxis { name, .. } => ("scatter_along_axis".into(), name.clone(), "{}".into()),
+        MirOp::MILScatterAlongAxis { name, .. } => {
+            ("scatter_along_axis".into(), name.clone(), "{}".into())
+        }
         MirOp::MILScatterNd { name, .. } => ("scatter_nd".into(), name.clone(), "{}".into()),
-        MirOp::MILNonMaximumSuppression { name, .. } => ("non_maximum_suppression".into(), name.clone(), "{}".into()),
+        MirOp::MILNonMaximumSuppression { name, .. } => {
+            ("non_maximum_suppression".into(), name.clone(), "{}".into())
+        }
         MirOp::MILQuantize { name, .. } => ("quantize".into(), name.clone(), "{}".into()),
         MirOp::MILDequantize { name, .. } => ("dequantize".into(), name.clone(), "{}".into()),
-        MirOp::MILConstexprAffineDequantize { name, .. } => ("constexpr_affine_dequantize".into(), name.clone(), "{}".into()),
-        MirOp::MILConstexprBlockwiseShiftScale { name, .. } => ("constexpr_blockwise_shift_scale".into(), name.clone(), "{}".into()),
-        MirOp::MILConstexprLutToDense { name, .. } => ("constexpr_lut_to_dense".into(), name.clone(), "{}".into()),
-        MirOp::MILConstexprSparseToDense { name, .. } => ("constexpr_sparse_to_dense".into(), name.clone(), "{}".into()),
-        MirOp::MILConstexprCast { name, .. } => ("constexpr_cast".into(), name.clone(), "{}".into()),
-        MirOp::MILConstexprLutToSparse { name, .. } => ("constexpr_lut_to_sparse".into(), name.clone(), "{}".into()),
-        MirOp::MILConstexprSparseBlockwiseShiftScale { name, .. } => ("constexpr_sparse_blockwise_shift_scale".into(), name.clone(), "{}".into()),
+        MirOp::MILConstexprAffineDequantize { name, .. } => {
+            ("constexpr_affine_dequantize".into(), name.clone(), "{}".into())
+        }
+        MirOp::MILConstexprBlockwiseShiftScale { name, .. } => {
+            ("constexpr_blockwise_shift_scale".into(), name.clone(), "{}".into())
+        }
+        MirOp::MILConstexprLutToDense { name, .. } => {
+            ("constexpr_lut_to_dense".into(), name.clone(), "{}".into())
+        }
+        MirOp::MILConstexprSparseToDense { name, .. } => {
+            ("constexpr_sparse_to_dense".into(), name.clone(), "{}".into())
+        }
+        MirOp::MILConstexprCast { name, .. } => {
+            ("constexpr_cast".into(), name.clone(), "{}".into())
+        }
+        MirOp::MILConstexprLutToSparse { name, .. } => {
+            ("constexpr_lut_to_sparse".into(), name.clone(), "{}".into())
+        }
+        MirOp::MILConstexprSparseBlockwiseShiftScale { name, .. } => {
+            ("constexpr_sparse_blockwise_shift_scale".into(), name.clone(), "{}".into())
+        }
         MirOp::MILRnn { name, .. } => ("rnn".into(), name.clone(), "{}".into()),
         MirOp::MILGru { name, .. } => ("gru".into(), name.clone(), "{}".into()),
         MirOp::MILLstm { name, .. } => ("lstm".into(), name.clone(), "{}".into()),
@@ -570,10 +615,16 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILListRead { name, .. } => ("list_read".into(), name.clone(), "{}".into()),
         MirOp::MILListGather { name, .. } => ("list_gather".into(), name.clone(), "{}".into()),
         MirOp::MILListScatter { name, .. } => ("list_scatter".into(), name.clone(), "{}".into()),
-        MirOp::MILRandomBernoulli { name, .. } => ("random_bernoulli".into(), name.clone(), "{}".into()),
+        MirOp::MILRandomBernoulli { name, .. } => {
+            ("random_bernoulli".into(), name.clone(), "{}".into())
+        }
         MirOp::MILRandomNormal { name, .. } => ("random_normal".into(), name.clone(), "{}".into()),
-        MirOp::MILRandomUniform { name, .. } => ("random_uniform".into(), name.clone(), "{}".into()),
-        MirOp::MILRandomCategorical { name, .. } => ("random_categorical".into(), name.clone(), "{}".into()),
+        MirOp::MILRandomUniform { name, .. } => {
+            ("random_uniform".into(), name.clone(), "{}".into())
+        }
+        MirOp::MILRandomCategorical { name, .. } => {
+            ("random_categorical".into(), name.clone(), "{}".into())
+        }
         MirOp::MILStateWrite { name, .. } => ("state_write".into(), name.clone(), "{}".into()),
         MirOp::MILClassify { name, .. } => ("classify".into(), name.clone(), "{}".into()),
         // All explicitly handled MirOp variants above; this arm catches
@@ -589,10 +640,10 @@ pub fn mil_dtype_to_compat(dtype: &MilDtype) -> MilDtypeCompat {
         MilDtype::Fp32 => MilDtypeCompat::Fp32,
         MilDtype::Int32 => MilDtypeCompat::Int32,
         MilDtype::UInt8 => MilDtypeCompat::UInt8,
-        MilDtype::Bool => MilDtypeCompat::UInt8,  // No Bool compat; approximate as UInt8
-        MilDtype::Fp64 => MilDtypeCompat::Fp32,   // No Fp64 compat; downcast to Fp32
-        MilDtype::Int8 => MilDtypeCompat::Int32,   // No Int8 compat; promote to Int32
-        MilDtype::Int16 => MilDtypeCompat::Int32,   // No Int16 compat; promote to Int32
+        MilDtype::Bool => MilDtypeCompat::UInt8, // No Bool compat; approximate as UInt8
+        MilDtype::Fp64 => MilDtypeCompat::Fp32,  // No Fp64 compat; downcast to Fp32
+        MilDtype::Int8 => MilDtypeCompat::Int32, // No Int8 compat; promote to Int32
+        MilDtype::Int16 => MilDtypeCompat::Int32, // No Int16 compat; promote to Int32
     }
 }
 
@@ -688,16 +739,8 @@ mod tests {
     fn test_mir_graph_to_compat_with_resolver() {
         let graph = make_test_graph();
         let mut resolver = HashMapWeightResolver::new();
-        resolver.add(
-            "weights/weight.bin".to_string(),
-            vec![1u8; 32 * 64 * 2],
-            vec![32, 64],
-        );
-        resolver.add(
-            "weights/bias.bin".to_string(),
-            vec![2u8; 32 * 2],
-            vec![32],
-        );
+        resolver.add("weights/weight.bin".to_string(), vec![1u8; 32 * 64 * 2], vec![32, 64]);
+        resolver.add("weights/bias.bin".to_string(), vec![2u8; 32 * 2], vec![32]);
 
         let compat = mir_graph_to_compat(&graph, &resolver).unwrap();
 
@@ -754,10 +797,7 @@ mod tests {
             compute_unit_hint_to_compat(&ComputeUnitHint::CPUOnly),
             ComputeUnitHintCompat::CPUOnly
         );
-        assert_eq!(
-            compute_unit_hint_to_compat(&ComputeUnitHint::All),
-            ComputeUnitHintCompat::All
-        );
+        assert_eq!(compute_unit_hint_to_compat(&ComputeUnitHint::All), ComputeUnitHintCompat::All);
     }
 
     #[test]
@@ -767,11 +807,7 @@ mod tests {
         // Test all supported MirOp variants
         let test_cases: Vec<(MirOp, &[usize])> = vec![
             (
-                MirOp::MILConst {
-                    name: "c".into(),
-                    value_path: "w".into(),
-                    dtype: MilDtype::Fp16,
-                },
+                MirOp::MILConst { name: "c".into(), value_path: "w".into(), dtype: MilDtype::Fp16 },
                 &[4, 4],
             ),
             (
@@ -815,13 +851,7 @@ mod tests {
                 },
                 &[],
             ),
-            (
-                MirOp::MILAbs {
-                    name: "abs".into(),
-                    x: MirNodeId("x".into()),
-                },
-                &[],
-            ),
+            (MirOp::MILAbs { name: "abs".into(), x: MirNodeId("x".into()) }, &[]),
             (
                 MirOp::MILMaximum {
                     name: "max".into(),
@@ -839,11 +869,7 @@ mod tests {
                 &[],
             ),
             (
-                MirOp::MILReshape {
-                    name: "r".into(),
-                    x: MirNodeId("x".into()),
-                    shape: vec![2, 4],
-                },
+                MirOp::MILReshape { name: "r".into(), x: MirNodeId("x".into()), shape: vec![2, 4] },
                 &[],
             ),
             (
@@ -875,20 +901,9 @@ mod tests {
                 },
                 &[],
             ),
+            (MirOp::MILSoftmax { name: "sm".into(), x: MirNodeId("x".into()), axis: -1 }, &[]),
             (
-                MirOp::MILSoftmax {
-                    name: "sm".into(),
-                    x: MirNodeId("x".into()),
-                    axis: -1,
-                },
-                &[],
-            ),
-            (
-                MirOp::MILGelu {
-                    name: "g".into(),
-                    x: MirNodeId("x".into()),
-                    mode: "exact".into(),
-                },
+                MirOp::MILGelu { name: "g".into(), x: MirNodeId("x".into()), mode: "exact".into() },
                 &[],
             ),
             (
@@ -937,13 +952,7 @@ mod tests {
                 },
                 &[],
             ),
-            (
-                MirOp::MILRsqrt {
-                    name: "rsqrt".into(),
-                    x: MirNodeId("x".into()),
-                },
-                &[],
-            ),
+            (MirOp::MILRsqrt { name: "rsqrt".into(), x: MirNodeId("x".into()) }, &[]),
             (
                 MirOp::MILRealDiv {
                     name: "rd".into(),
@@ -963,29 +972,9 @@ mod tests {
                 },
                 &[],
             ),
-            (
-                MirOp::MILTopk {
-                    name: "tk".into(),
-                    x: MirNodeId("x".into()),
-                    k: 5,
-                    axis: -1,
-                },
-                &[],
-            ),
-            (
-                MirOp::MILCos {
-                    name: "cos".into(),
-                    x: MirNodeId("x".into()),
-                },
-                &[],
-            ),
-            (
-                MirOp::MILSin {
-                    name: "sin".into(),
-                    x: MirNodeId("x".into()),
-                },
-                &[],
-            ),
+            (MirOp::MILTopk { name: "tk".into(), x: MirNodeId("x".into()), k: 5, axis: -1 }, &[]),
+            (MirOp::MILCos { name: "cos".into(), x: MirNodeId("x".into()) }, &[]),
+            (MirOp::MILSin { name: "sin".into(), x: MirNodeId("x".into()) }, &[]),
             (
                 MirOp::MILCast {
                     name: "cast".into(),
@@ -1187,8 +1176,11 @@ mod tests {
         let compat = mir_node_to_compat(&node, &resolver).unwrap();
         match compat {
             MirOpCompat::ReadState { dtype, .. } => {
-                assert_eq!(dtype, MilDtypeCompat::Fp32,
-                    "ReadState compat should propagate Fp32 from node dtype, not hardcode Fp16");
+                assert_eq!(
+                    dtype,
+                    MilDtypeCompat::Fp32,
+                    "ReadState compat should propagate Fp32 from node dtype, not hardcode Fp16"
+                );
             }
             _ => panic!("Expected ReadState compat"),
         }
@@ -1211,8 +1203,11 @@ mod tests {
         let compat_fp16 = mir_node_to_compat(&node_fp16, &resolver).unwrap();
         match compat_fp16 {
             MirOpCompat::ReadState { dtype, .. } => {
-                assert_eq!(dtype, MilDtypeCompat::Fp16,
-                    "ReadState compat with Fp16 node dtype should remain Fp16");
+                assert_eq!(
+                    dtype,
+                    MilDtypeCompat::Fp16,
+                    "ReadState compat with Fp16 node dtype should remain Fp16"
+                );
             }
             _ => panic!("Expected ReadState compat"),
         }

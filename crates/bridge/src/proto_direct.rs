@@ -21,13 +21,13 @@
 //! emitted mlpackage directory without requiring macOS or the Core ML runtime.
 //! It checks the directory structure, required files, and basic integrity.
 
-use anyhow::Result;
+use crate::mir_to_compat::{mir_graph_to_compat, EmptyWeightResolver};
 use ane_coreml_emit::ProtoEmitter;
 use ane_coreml_proto::mir_compat::MirGraphCompat;
 use ane_ir::mir::MirGraph;
 use ane_ir::pir::ShardSpec;
 use ane_passes::role_mir::RoleMirBuilder;
-use crate::mir_to_compat::{mir_graph_to_compat, EmptyWeightResolver};
+use anyhow::Result;
 use std::fs;
 use std::path::Path;
 
@@ -76,10 +76,7 @@ pub struct ProtoDirectValidation {
 /// This is the simplest emission path: one function, one graph.
 /// The output is written to `output_path` as a complete `.mlpackage`
 /// directory structure.
-pub fn emit_proto_direct(
-    graph: &MirGraphCompat,
-    output_path: &str,
-) -> Result<ProtoDirectResult> {
+pub fn emit_proto_direct(graph: &MirGraphCompat, output_path: &str) -> Result<ProtoDirectResult> {
     let emitter = ProtoEmitter::new();
     let emit_result = emitter.emit_mir_graph(graph, output_path)?;
 
@@ -106,11 +103,8 @@ pub fn emit_proto_direct_multifunction(
     output_path: &str,
 ) -> Result<ProtoDirectResult> {
     let emitter = ProtoEmitter::new();
-    let emit_result = emitter.emit_multifunction_with_shared_weights(
-        graphs,
-        shared_weight_names,
-        output_path,
-    )?;
+    let emit_result =
+        emitter.emit_multifunction_with_shared_weights(graphs, shared_weight_names, output_path)?;
 
     Ok(ProtoDirectResult {
         mlpackage_path: emit_result.package_result.path,
@@ -217,15 +211,10 @@ pub fn validate_proto_direct_package(mlpackage_path: &str) -> Result<ProtoDirect
     }
 
     // 2. Directory name ends with .mlpackage
-    let dir_name = pkg_path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
+    let dir_name =
+        pkg_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     if !dir_name.ends_with(".mlpackage") {
-        warnings.push(format!(
-            "Directory name '{}' does not end with .mlpackage",
-            dir_name
-        ));
+        warnings.push(format!("Directory name '{}' does not end with .mlpackage", dir_name));
     }
 
     // 3. Manifest.json
@@ -299,9 +288,9 @@ pub fn validate_proto_direct_package(mlpackage_path: &str) -> Result<ProtoDirect
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ane_coreml_proto::mir_compat::MilDtypeCompat;
     use ane_coreml_emit::mir_to_proto::build_linear_projection_mir;
     use ane_coreml_emit::mir_to_proto::build_multifunction_shared_weights_mir;
+    use ane_coreml_proto::mir_compat::MilDtypeCompat;
     use tempfile::TempDir;
 
     fn make_linear_graph() -> MirGraphCompat {
@@ -327,9 +316,7 @@ mod tests {
         assert!(output_path.exists());
         assert!(output_path.join("Manifest.json").exists());
         assert!(output_path.join("Model/com.apple.CoreML/model.mlmodel").exists());
-        assert!(output_path
-            .join("Data/com.apple.CoreML/weights/weight.bin")
-            .exists());
+        assert!(output_path.join("Data/com.apple.CoreML/weights/weight.bin").exists());
     }
 
     #[test]
@@ -373,38 +360,24 @@ mod tests {
         // Create a directory that looks like an mlpackage but is missing files
         fs::create_dir_all(malformed_path.join("Model/com.apple.CoreML")).unwrap();
         // Write an empty model file
-        fs::write(
-            malformed_path.join("Model/com.apple.CoreML/model.mlmodel"),
-            b"",
-        )
-        .unwrap();
+        fs::write(malformed_path.join("Model/com.apple.CoreML/model.mlmodel"), b"").unwrap();
         // No Manifest.json, empty model file
 
-        let validation =
-            validate_proto_direct_package(malformed_path.to_str().unwrap()).unwrap();
+        let validation = validate_proto_direct_package(malformed_path.to_str().unwrap()).unwrap();
 
         assert!(!validation.is_valid);
         assert!(!validation.errors.is_empty());
         // Should report missing Manifest.json
-        assert!(validation
-            .errors
-            .iter()
-            .any(|e| e.contains("Manifest.json")));
+        assert!(validation.errors.iter().any(|e| e.contains("Manifest.json")));
         // Should report empty model.mlmodel
-        assert!(validation
-            .errors
-            .iter()
-            .any(|e| e.contains("model.mlmodel is empty")));
+        assert!(validation.errors.iter().any(|e| e.contains("model.mlmodel is empty")));
     }
 
     #[test]
     fn test_validate_nonexistent_path() {
         let validation = validate_proto_direct_package("/nonexistent/path.mlpackage").unwrap();
         assert!(!validation.is_valid);
-        assert!(validation
-            .errors
-            .iter()
-            .any(|e| e.contains("does not exist")));
+        assert!(validation.errors.iter().any(|e| e.contains("does not exist")));
     }
 
     #[test]
@@ -420,13 +393,21 @@ mod tests {
     // ─── Sprint 48: Role-specific shard emission tests ───────────────────────
 
     fn make_entry_spec() -> ShardSpec {
-        use ane_ir::pir::{ShardOpProfile, ShardRole, TensorSpec, ComputeUnits};
+        use ane_ir::pir::{ComputeUnitHint, ShardOpProfile, ShardRole, TensorSpec};
         ShardSpec {
             shard_name: "test_entry".into(),
             role: ShardRole::Entry,
-            input_specs: vec![TensorSpec { name: "x".into(), shape: vec![1, 64], dtype: "fp16".into() }],
-            output_specs: vec![TensorSpec { name: "output".into(), shape: vec![1, 48], dtype: "fp16".into() }],
-            compute_units: ComputeUnits::CPUAndNE,
+            input_specs: vec![TensorSpec {
+                name: "x".into(),
+                shape: vec![1, 64],
+                dtype: "fp16".into(),
+            }],
+            output_specs: vec![TensorSpec {
+                name: "output".into(),
+                shape: vec![1, 48],
+                dtype: "fp16".into(),
+            }],
+            compute_units: ComputeUnitHint::CPUAndNE,
             op_profile: ShardOpProfile::EntryLinear {
                 needs_reshape: true,
                 reshape_target: Some(vec![1, 48]),
@@ -435,27 +416,41 @@ mod tests {
     }
 
     fn make_interior_spec() -> ShardSpec {
-        use ane_ir::pir::{ShardOpProfile, ShardRole, TensorSpec, ComputeUnits, ActivationType};
+        use ane_ir::pir::{ActivationType, ComputeUnitHint, ShardOpProfile, ShardRole, TensorSpec};
         ShardSpec {
             shard_name: "test_interior".into(),
             role: ShardRole::Interior,
-            input_specs: vec![TensorSpec { name: "x".into(), shape: vec![1, 48], dtype: "fp16".into() }],
-            output_specs: vec![TensorSpec { name: "output".into(), shape: vec![1, 48], dtype: "fp16".into() }],
-            compute_units: ComputeUnits::CPUAndNE,
-            op_profile: ShardOpProfile::InteriorLinear {
-                activation: ActivationType::GeluTanh,
-            },
+            input_specs: vec![TensorSpec {
+                name: "x".into(),
+                shape: vec![1, 48],
+                dtype: "fp16".into(),
+            }],
+            output_specs: vec![TensorSpec {
+                name: "output".into(),
+                shape: vec![1, 48],
+                dtype: "fp16".into(),
+            }],
+            compute_units: ComputeUnitHint::CPUAndNE,
+            op_profile: ShardOpProfile::InteriorLinear { activation: ActivationType::GeluTanh },
         }
     }
 
     fn make_exit_spec() -> ShardSpec {
-        use ane_ir::pir::{ShardOpProfile, ShardRole, TensorSpec, ComputeUnits};
+        use ane_ir::pir::{ComputeUnitHint, ShardOpProfile, ShardRole, TensorSpec};
         ShardSpec {
             shard_name: "test_exit".into(),
             role: ShardRole::Exit,
-            input_specs: vec![TensorSpec { name: "x".into(), shape: vec![1, 48], dtype: "fp16".into() }],
-            output_specs: vec![TensorSpec { name: "output".into(), shape: vec![1, 32], dtype: "fp16".into() }],
-            compute_units: ComputeUnits::CPUAndNE,
+            input_specs: vec![TensorSpec {
+                name: "x".into(),
+                shape: vec![1, 48],
+                dtype: "fp16".into(),
+            }],
+            output_specs: vec![TensorSpec {
+                name: "output".into(),
+                shape: vec![1, 32],
+                dtype: "fp16".into(),
+            }],
+            compute_units: ComputeUnitHint::CPUAndNE,
             op_profile: ShardOpProfile::ExitLinear { ln_epsilon: 1e-5 },
         }
     }
@@ -466,10 +461,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let output_path = tmp.path().join("entry_shard.mlpackage");
 
-        let result = emit_role_shard_proto_direct(
-            &make_entry_spec(),
-            output_path.to_str().unwrap(),
-        ).unwrap();
+        let result =
+            emit_role_shard_proto_direct(&make_entry_spec(), output_path.to_str().unwrap())
+                .unwrap();
 
         assert_eq!(result.emission_method, "proto-direct");
         assert_eq!(result.function_count, 1);
@@ -483,10 +477,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let output_path = tmp.path().join("interior_shard.mlpackage");
 
-        let result = emit_role_shard_proto_direct(
-            &make_interior_spec(),
-            output_path.to_str().unwrap(),
-        ).unwrap();
+        let result =
+            emit_role_shard_proto_direct(&make_interior_spec(), output_path.to_str().unwrap())
+                .unwrap();
 
         assert_eq!(result.emission_method, "proto-direct");
         assert_eq!(result.function_count, 1);
@@ -499,10 +492,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let output_path = tmp.path().join("exit_shard.mlpackage");
 
-        let result = emit_role_shard_proto_direct(
-            &make_exit_spec(),
-            output_path.to_str().unwrap(),
-        ).unwrap();
+        let result =
+            emit_role_shard_proto_direct(&make_exit_spec(), output_path.to_str().unwrap()).unwrap();
 
         assert_eq!(result.emission_method, "proto-direct");
         assert_eq!(result.function_count, 1);
@@ -520,34 +511,35 @@ mod tests {
         let interior_path = tmp.path().join("interior.mlpackage");
         let exit_path = tmp.path().join("exit.mlpackage");
 
-        let entry_result = emit_role_shard_proto_direct(
-            &make_entry_spec(),
-            entry_path.to_str().unwrap(),
-        ).unwrap();
+        let entry_result =
+            emit_role_shard_proto_direct(&make_entry_spec(), entry_path.to_str().unwrap()).unwrap();
 
-        let interior_result = emit_role_shard_proto_direct(
-            &make_interior_spec(),
-            interior_path.to_str().unwrap(),
-        ).unwrap();
+        let interior_result =
+            emit_role_shard_proto_direct(&make_interior_spec(), interior_path.to_str().unwrap())
+                .unwrap();
 
-        let exit_result = emit_role_shard_proto_direct(
-            &make_exit_spec(),
-            exit_path.to_str().unwrap(),
-        ).unwrap();
+        let exit_result =
+            emit_role_shard_proto_direct(&make_exit_spec(), exit_path.to_str().unwrap()).unwrap();
 
         // All three must have different content hashes (different op structures)
-        assert_ne!(entry_result.content_hash, interior_result.content_hash,
-            "Entry and Interior shards must have different content hashes");
-        assert_ne!(entry_result.content_hash, exit_result.content_hash,
-            "Entry and Exit shards must have different content hashes");
-        assert_ne!(interior_result.content_hash, exit_result.content_hash,
-            "Interior and Exit shards must have different content hashes");
+        assert_ne!(
+            entry_result.content_hash, interior_result.content_hash,
+            "Entry and Interior shards must have different content hashes"
+        );
+        assert_ne!(
+            entry_result.content_hash, exit_result.content_hash,
+            "Entry and Exit shards must have different content hashes"
+        );
+        assert_ne!(
+            interior_result.content_hash, exit_result.content_hash,
+            "Interior and Exit shards must have different content hashes"
+        );
     }
 
     /// Sprint 48 test: emit_mir_graph_proto_direct works for compiler MIR.
     #[test]
     fn test_emit_mir_graph_proto_direct() {
-        use ane_ir::mir::{MirNode, MirNodeId, MirOp, MilDtype, ComputeUnitHint};
+        use ane_ir::mir::{ComputeUnitHint, MilDtype, MirNode, MirNodeId, MirOp};
         let tmp = TempDir::new().unwrap();
         let output_path = tmp.path().join("mir_graph.mlpackage");
 

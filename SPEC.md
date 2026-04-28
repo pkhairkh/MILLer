@@ -1292,7 +1292,10 @@ MILLer/
 │   │       ├── lib.rs
 │   │       ├── canonicalize.rs
 │   │       ├── staticize.rs
-│   │       ├── state_topology.rs
+│   │       │                         # state_topology.rs removed (Sprint 58):
+│   │       │                         #   State topology validation is planned
+│   │       │                         #   future work for KV-cache state
+│   │       │                         #   ownership analysis
 │   │       ├── shard_plan.rs
 │   │       ├── precision_policy.rs
 │   │       ├── legality_rewrite.rs

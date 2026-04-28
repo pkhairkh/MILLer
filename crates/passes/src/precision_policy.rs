@@ -13,9 +13,9 @@
 //! This is a concrete, testable adaptation: the compiler changes
 //! its decision because stored knowledge says the default is unsafe.
 
+use crate::knowledge_query::PassKnowledgeQuery;
 use ane_ir::sir::SirGraph;
 use anyhow::Result;
-use crate::knowledge_query::PassKnowledgeQuery;
 
 /// Default precision for operations without specific knowledge.
 const DEFAULT_DTYPE: &str = "fp16";
@@ -63,6 +63,12 @@ pub struct PrecisionPolicyPass {
     pub hazard_confidence_threshold: f32,
     /// Records of all adaptations made during this pass run.
     pub adaptations: Vec<PrecisionAdaptation>,
+}
+
+impl Default for PrecisionPolicyPass {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PrecisionPolicyPass {
@@ -119,7 +125,11 @@ impl PrecisionPolicyPass {
     /// Without knowledge, all nodes use fp16 and no adaptations
     /// are recorded. This ensures behavior is identical to the
     /// pre-adaptation pass when no knowledge store is available.
-    pub fn run(&mut self, input: SirGraph, knowledge_query: &dyn PassKnowledgeQuery) -> Result<SirGraph> {
+    pub fn run(
+        &mut self,
+        input: SirGraph,
+        knowledge_query: &dyn PassKnowledgeQuery,
+    ) -> Result<SirGraph> {
         // Reset adaptations for this run
         self.adaptations.clear();
 
@@ -164,11 +174,7 @@ impl PrecisionPolicyPass {
             node
         }).collect();
 
-        Ok(SirGraph {
-            nodes,
-            inputs: input.inputs,
-            outputs: input.outputs,
-        })
+        Ok(SirGraph { nodes, inputs: input.inputs, outputs: input.outputs })
     }
 
     /// Get the adapted dtype for a given op, considering all adaptations.
@@ -176,7 +182,8 @@ impl PrecisionPolicyPass {
     /// Returns the recommended dtype if an adaptation was recorded for
     /// this op, otherwise returns the default dtype.
     pub fn adapted_dtype_for(&self, node_name: &str) -> &str {
-        self.adaptations.iter()
+        self.adaptations
+            .iter()
             .find(|a| a.node_name == node_name)
             .map(|a| a.adapted_dtype.as_str())
             .unwrap_or(&self.default_dtype)
@@ -191,22 +198,39 @@ impl PrecisionPolicyPass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::knowledge_query::{LegalityInfo, RiskInfo, PrecisionHazardInfo, ComputePlanPlacementInfo, NoKnowledge};
-    use ane_ir::sir::{SirGraph, SirNode, SirNodeId, SirOp, SirMetadata, TaskOrigin, ElementWiseOp};
+    use crate::knowledge_query::{
+        ComputePlanPlacementInfo, LegalityInfo, NoKnowledge, PrecisionHazardInfo, RiskInfo,
+    };
+    use ane_ir::sir::{
+        ElementWiseOp, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin,
+    };
 
     /// A mock knowledge query that reports a precision hazard for LinearProjection.
     struct MockPrecisionHazardKnowledge;
 
     impl PassKnowledgeQuery for MockPrecisionHazardKnowledge {
-        fn query_legality(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<LegalityInfo> {
+        fn query_legality(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<LegalityInfo> {
             None
         }
 
-        fn query_risk(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<RiskInfo> {
+        fn query_risk(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<RiskInfo> {
             None
         }
 
-        fn query_precision_hazard(&self, op_pattern: &str, _current_dtype: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<PrecisionHazardInfo> {
+        fn query_precision_hazard(
+            &self,
+            op_pattern: &str,
+            _current_dtype: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<PrecisionHazardInfo> {
             if op_pattern == "LinearProjection" {
                 Some(PrecisionHazardInfo {
                     op_pattern: "LinearProjection".to_string(),
@@ -222,7 +246,11 @@ mod tests {
             }
         }
 
-        fn query_compute_plan_placement(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<ComputePlanPlacementInfo> {
+        fn query_compute_plan_placement(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<ComputePlanPlacementInfo> {
             None
         }
     }
@@ -231,15 +259,28 @@ mod tests {
     struct MockLowConfidenceHazardKnowledge;
 
     impl PassKnowledgeQuery for MockLowConfidenceHazardKnowledge {
-        fn query_legality(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<LegalityInfo> {
+        fn query_legality(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<LegalityInfo> {
             None
         }
 
-        fn query_risk(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<RiskInfo> {
+        fn query_risk(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<RiskInfo> {
             None
         }
 
-        fn query_precision_hazard(&self, op_pattern: &str, _current_dtype: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<PrecisionHazardInfo> {
+        fn query_precision_hazard(
+            &self,
+            op_pattern: &str,
+            _current_dtype: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<PrecisionHazardInfo> {
             if op_pattern == "LinearProjection" {
                 Some(PrecisionHazardInfo {
                     op_pattern: "LinearProjection".to_string(),
@@ -255,7 +296,11 @@ mod tests {
             }
         }
 
-        fn query_compute_plan_placement(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<ComputePlanPlacementInfo> {
+        fn query_compute_plan_placement(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<ComputePlanPlacementInfo> {
             None
         }
     }
@@ -264,19 +309,36 @@ mod tests {
     struct MockSafeKnowledge;
 
     impl PassKnowledgeQuery for MockSafeKnowledge {
-        fn query_legality(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<LegalityInfo> {
+        fn query_legality(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<LegalityInfo> {
             None
         }
 
-        fn query_risk(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<RiskInfo> {
+        fn query_risk(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<RiskInfo> {
             None
         }
 
-        fn query_precision_hazard(&self, _op_pattern: &str, _current_dtype: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<PrecisionHazardInfo> {
+        fn query_precision_hazard(
+            &self,
+            _op_pattern: &str,
+            _current_dtype: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<PrecisionHazardInfo> {
             None
         }
 
-        fn query_compute_plan_placement(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<ComputePlanPlacementInfo> {
+        fn query_compute_plan_placement(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<ComputePlanPlacementInfo> {
             None
         }
     }
@@ -288,7 +350,12 @@ mod tests {
                     id: SirNodeId("weight".into()),
                     op: SirOp::ElementWise { op: ElementWiseOp::Mul, inputs: vec![] },
                     name: "weight".into(),
-                    metadata: SirMetadata { task_origin: TaskOrigin::Synthetic, model_id: None, quality_contract: None, precision_override: None },
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
                 },
                 SirNode {
                     id: SirNodeId("output".into()),
@@ -298,7 +365,12 @@ mod tests {
                         bias: Some("bias".into()),
                     },
                     name: "linear_out".into(),
-                    metadata: SirMetadata { task_origin: TaskOrigin::Synthetic, model_id: None, quality_contract: None, precision_override: None },
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
                 },
             ],
             inputs: vec![SirNodeId("input".into())],
@@ -323,8 +395,15 @@ mod tests {
         let _result = pass.run(sir.clone(), &hazard_knowledge).unwrap();
 
         // Verify an adaptation was recorded for the linear projection node
-        assert!(pass.has_adaptations(), "Pass must record adaptations when hazard knowledge is present");
-        assert_eq!(pass.adaptations.len(), 1, "Exactly one adaptation for the LinearProjection node");
+        assert!(
+            pass.has_adaptations(),
+            "Pass must record adaptations when hazard knowledge is present"
+        );
+        assert_eq!(
+            pass.adaptations.len(),
+            1,
+            "Exactly one adaptation for the LinearProjection node"
+        );
 
         let adaptation = &pass.adaptations[0];
         assert_eq!(adaptation.node_name, "linear_out");
@@ -429,6 +508,9 @@ mod tests {
         let hazard = MockPrecisionHazardKnowledge; // confidence 0.7
         let _ = pass.run(sir, &hazard).unwrap();
 
-        assert!(!pass.has_adaptations(), "Hazard below custom threshold must not trigger adaptation");
+        assert!(
+            !pass.has_adaptations(),
+            "Hazard below custom threshold must not trigger adaptation"
+        );
     }
 }

@@ -4,15 +4,15 @@
 //! including storage, querying, confidence tracking, conflict resolution,
 //! and shard template seed loading.
 
-pub mod store;
-pub mod query;
-pub mod update;
+pub mod compute_plan_verify;
 pub mod confidence;
 pub mod conflict;
-pub mod transfer;
-pub mod snapshot;
+pub mod query;
 pub mod shard_template;
-pub mod compute_plan_verify;
+pub mod snapshot;
+pub mod store;
+pub mod transfer;
+pub mod update;
 
 use serde::{Deserialize, Serialize};
 

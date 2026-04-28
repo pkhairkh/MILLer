@@ -8,8 +8,8 @@
 use std::io::Result;
 
 fn main() -> Result<()> {
-    let proto_include = "proto";           // Root for import resolution
-    let proto_dir = "proto/coreml";        // Where the .proto files live
+    let proto_include = "proto"; // Root for import resolution
+    let proto_dir = "proto/coreml"; // Where the .proto files live
     let proto_files = [
         format!("{}/DataStructures.proto", proto_dir),
         format!("{}/MIL.proto", proto_dir),

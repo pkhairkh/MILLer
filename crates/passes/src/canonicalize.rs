@@ -16,6 +16,12 @@ pub struct CanonicalizePass {
     // No configuration needed for pass-through
 }
 
+impl Default for CanonicalizePass {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CanonicalizePass {
     pub fn new() -> Self {
         Self {}

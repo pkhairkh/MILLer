@@ -21,9 +21,9 @@
 //! can be compiled, verified, and profiled through the existing pipeline to
 //! discover ANE placement boundaries and fallback patterns.
 
-use ane_ir::task_spec::{SyntheticTaskSpec, TaskOp, MeasurementConfig};
-use anyhow::Result;
 use super::TaskFamilyTrait;
+use ane_ir::task_spec::{MeasurementConfig, SyntheticTaskSpec, TaskOp};
+use anyhow::Result;
 
 /// Configuration for the shape-hostile family generator.
 #[derive(Debug, Clone)]
@@ -107,10 +107,7 @@ impl Default for ShapeHostileFamilyConfig {
 impl ShapeHostileFamilyConfig {
     /// Create a new config with the given seed.
     pub fn new(seed: u64) -> Self {
-        Self {
-            seed,
-            ..Default::default()
-        }
+        Self { seed, ..Default::default() }
     }
 
     /// Create a config with custom patterns.
@@ -153,16 +150,12 @@ pub struct ShapeHostileFamily {
 impl ShapeHostileFamily {
     /// Create a new shape-hostile family generator with default config.
     pub fn new() -> Self {
-        Self {
-            config: ShapeHostileFamilyConfig::default(),
-        }
+        Self { config: ShapeHostileFamilyConfig::default() }
     }
 
     /// Create a shape-hostile family generator with the given seed.
     pub fn with_seed(seed: u64) -> Self {
-        Self {
-            config: ShapeHostileFamilyConfig::new(seed),
-        }
+        Self { config: ShapeHostileFamilyConfig::new(seed) }
     }
 
     /// Create a shape-hostile family generator with custom config.
@@ -294,8 +287,10 @@ mod tests {
             assert_eq!(parsed.family, task.family);
             // All shape-hostile tasks are LinearProjection under the hood
             match (&parsed.op, &task.op) {
-                (TaskOp::LinearProjection { input_dim: i1, output_dim: o1, .. },
-                 TaskOp::LinearProjection { input_dim: i2, output_dim: o2, .. }) => {
+                (
+                    TaskOp::LinearProjection { input_dim: i1, output_dim: o1, .. },
+                    TaskOp::LinearProjection { input_dim: i2, output_dim: o2, .. },
+                ) => {
                     assert_eq!((i1, o1), (i2, o2));
                 }
                 _ => panic!("Expected LinearProjection"),

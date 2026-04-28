@@ -20,9 +20,7 @@ pub struct Packager {
 impl Packager {
     /// Create a new packager.
     pub fn new(output_dir: &str) -> Self {
-        Self {
-            output_dir: output_dir.to_string(),
-        }
+        Self { output_dir: output_dir.to_string() }
     }
 
     /// Package all artifacts described in the manifest into a zip archive.
@@ -68,7 +66,7 @@ impl Packager {
             // Directory validation: must contain at least one file
             let file_count = count_files_recursive(path);
             Ok(file_count > 0)
-        } else if path.extension().map_or(false, |e| e == "zip") {
+        } else if path.extension().is_some_and(|e| e == "zip") {
             // Zip validation: must be a valid zip with at least one entry
             self.validate_zip(path)
         } else {
@@ -116,7 +114,7 @@ impl Packager {
     fn validate_zip(&self, zip_path: &Path) -> Result<bool> {
         let file = fs::File::open(zip_path)?;
         let archive = zip::ZipArchive::new(file)?;
-        Ok(archive.len() > 0)
+        Ok(!archive.is_empty())
     }
 }
 

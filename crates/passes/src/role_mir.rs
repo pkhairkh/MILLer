@@ -16,25 +16,13 @@
 //! the same role but different op profiles produce genuinely different
 //! MIR graphs, not just different-dimension clones of the same ops.
 
-use ane_ir::mir::{MirGraph, MirNode, MirNodeId, MirOp, MilDtype, ComputeUnitHint};
-use ane_ir::pir::{ShardOpProfile, ShardSpec, ActivationType, ComputeUnits};
+use ane_ir::mir::{ComputeUnitHint, MilDtype, MirGraph, MirNode, MirNodeId, MirOp};
+use ane_ir::pir::{ActivationType, ShardOpProfile, ShardSpec};
 use anyhow::Result;
 
-/// Convert a PIR `ComputeUnits` to a MIR `ComputeUnitHint`.
-///
-/// This is the canonical mapping used by `RoleMirBuilder` and any
-/// other path that needs to derive a MIR compute hint from a shard
-/// specification. Sprint 57: before this function existed,
-/// `RoleMirBuilder` always defaulted to `CPUAndNE`, ignoring the
-/// shard spec's actual `compute_units` field.
-fn compute_units_to_hint(cu: &ComputeUnits) -> ComputeUnitHint {
-    match cu {
-        ComputeUnits::CPUAndNE => ComputeUnitHint::CPUAndNE,
-        ComputeUnits::CPUAndGPU => ComputeUnitHint::CPUAndGPU,
-        ComputeUnits::CPUOnly => ComputeUnitHint::CPUOnly,
-        ComputeUnits::All => ComputeUnitHint::All,
-    }
-}
+// Sprint 58 (S58.3): compute_units_to_hint() removed.
+// ComputeUnits and ComputeUnitHint are now the same type (ComputeUnitHint),
+// so no conversion is needed.
 
 /// Builder that produces role-specific MIR graphs from shard specifications.
 ///
@@ -56,13 +44,16 @@ pub struct RoleMirBuilder {
     default_compute_hint: ComputeUnitHint,
 }
 
+impl Default for RoleMirBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RoleMirBuilder {
     /// Create a new builder with fp16 dtype and CPU+NE compute hint.
     pub fn new() -> Self {
-        Self {
-            default_dtype: MilDtype::Fp16,
-            default_compute_hint: ComputeUnitHint::CPUAndNE,
-        }
+        Self { default_dtype: MilDtype::Fp16, default_compute_hint: ComputeUnitHint::CPUAndNE }
     }
 
     /// Create a builder with a custom dtype.
@@ -95,14 +86,16 @@ impl RoleMirBuilder {
         // instead of always using the builder's default (which was CPUAndNE).
         // This ensures knowledge-driven compute unit adaptation (e.g., from
         // ShardPlanPass) propagates through RoleMirBuilder to MIR nodes.
-        let compute_hint = compute_units_to_hint(&spec.compute_units);
+        let compute_hint = spec.compute_units.clone();
 
         match &spec.op_profile {
             ShardOpProfile::EntryLinear { needs_reshape, reshape_target } => {
                 // Entry shard: Const (weight) → Linear → optional Reshape
                 let weight_name = format!("{}_weight", spec.shard_name);
                 let weight_id = MirNodeId(weight_name.clone());
-                let output_dim = spec.output_specs.get(0)
+                let output_dim = spec
+                    .output_specs
+                    .first()
                     .map(|s| s.shape.iter().product::<usize>())
                     .unwrap_or(64);
 
@@ -114,9 +107,13 @@ impl RoleMirBuilder {
                         dtype: self.default_dtype.clone(),
                     },
                     dtype: self.default_dtype.clone(),
-                    shape: vec![output_dim, spec.input_specs.get(0)
-                        .map(|s| s.shape.iter().product::<usize>())
-                        .unwrap_or(64)],
+                    shape: vec![
+                        output_dim,
+                        spec.input_specs
+                            .first()
+                            .map(|s| s.shape.iter().product::<usize>())
+                            .unwrap_or(64),
+                    ],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
                 });
@@ -132,7 +129,7 @@ impl RoleMirBuilder {
                         bias: None,
                     },
                     dtype: self.default_dtype.clone(),
-                    shape: spec.output_specs.get(0).map(|s| s.shape.clone()).unwrap_or_default(),
+                    shape: spec.output_specs.first().map(|s| s.shape.clone()).unwrap_or_default(),
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
                 });
@@ -175,7 +172,9 @@ impl RoleMirBuilder {
                 // Interior shard: Const → Linear → Activation
                 let weight_name = format!("{}_weight", spec.shard_name);
                 let weight_id = MirNodeId(weight_name.clone());
-                let hidden_dim = spec.input_specs.get(0)
+                let hidden_dim = spec
+                    .input_specs
+                    .first()
                     .map(|s| s.shape.get(1).copied().unwrap_or(48))
                     .unwrap_or(48);
 
@@ -203,7 +202,7 @@ impl RoleMirBuilder {
                         bias: None,
                     },
                     dtype: self.default_dtype.clone(),
-                    shape: spec.output_specs.get(0).map(|s| s.shape.clone()).unwrap_or_default(),
+                    shape: spec.output_specs.first().map(|s| s.shape.clone()).unwrap_or_default(),
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
                 });
@@ -221,7 +220,11 @@ impl RoleMirBuilder {
                                 mode: "TANH_APPROXIMATION".into(),
                             },
                             dtype: self.default_dtype.clone(),
-                            shape: spec.output_specs.get(0).map(|s| s.shape.clone()).unwrap_or_default(),
+                            shape: spec
+                                .output_specs
+                                .first()
+                                .map(|s| s.shape.clone())
+                                .unwrap_or_default(),
                             compute_unit_hint: Some(compute_hint.clone()),
                             air_source: None,
                         });
@@ -232,12 +235,13 @@ impl RoleMirBuilder {
                         let relu_id = MirNodeId(format!("{}_relu_out", spec.shard_name));
                         nodes.push(MirNode {
                             id: relu_id.clone(),
-                            op: MirOp::MILRelu {
-                                name: relu_name,
-                                x: linear_id,
-                            },
+                            op: MirOp::MILRelu { name: relu_name, x: linear_id },
                             dtype: self.default_dtype.clone(),
-                            shape: spec.output_specs.get(0).map(|s| s.shape.clone()).unwrap_or_default(),
+                            shape: spec
+                                .output_specs
+                                .first()
+                                .map(|s| s.shape.clone())
+                                .unwrap_or_default(),
                             compute_unit_hint: Some(compute_hint.clone()),
                             air_source: None,
                         });
@@ -259,7 +263,9 @@ impl RoleMirBuilder {
                 // Exit shard: Const (weight) → Linear → LayerNorm
                 let weight_name = format!("{}_weight", spec.shard_name);
                 let weight_id = MirNodeId(weight_name.clone());
-                let output_dim = spec.output_specs.get(0)
+                let output_dim = spec
+                    .output_specs
+                    .first()
                     .map(|s| s.shape.get(1).copied().unwrap_or(32))
                     .unwrap_or(32);
 
@@ -271,9 +277,13 @@ impl RoleMirBuilder {
                         dtype: self.default_dtype.clone(),
                     },
                     dtype: self.default_dtype.clone(),
-                    shape: vec![output_dim, spec.input_specs.get(0)
-                        .map(|s| s.shape.get(1).copied().unwrap_or(48))
-                        .unwrap_or(48)],
+                    shape: vec![
+                        output_dim,
+                        spec.input_specs
+                            .first()
+                            .map(|s| s.shape.get(1).copied().unwrap_or(48))
+                            .unwrap_or(48),
+                    ],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
                 });
@@ -289,7 +299,7 @@ impl RoleMirBuilder {
                         bias: None,
                     },
                     dtype: self.default_dtype.clone(),
-                    shape: spec.output_specs.get(0).map(|s| s.shape.clone()).unwrap_or_default(),
+                    shape: spec.output_specs.first().map(|s| s.shape.clone()).unwrap_or_default(),
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
                 });
@@ -309,7 +319,7 @@ impl RoleMirBuilder {
                         axes: vec![1],
                     },
                     dtype: self.default_dtype.clone(),
-                    shape: spec.output_specs.get(0).map(|s| s.shape.clone()).unwrap_or_default(),
+                    shape: spec.output_specs.first().map(|s| s.shape.clone()).unwrap_or_default(),
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
                 });
@@ -364,12 +374,7 @@ impl RoleMirBuilder {
                 let split_id = MirNodeId(format!("{}_qkv_split_out", spec.shard_name));
                 nodes.push(MirNode {
                     id: split_id.clone(),
-                    op: MirOp::MILSplit {
-                        name: split_name,
-                        x: linear_id,
-                        axis: 1,
-                        num_splits: 3,
-                    },
+                    op: MirOp::MILSplit { name: split_name, x: linear_id, axis: 1, num_splits: 3 },
                     dtype: self.default_dtype.clone(),
                     shape: vec![1, embed_dim],
                     compute_unit_hint: Some(compute_hint.clone()),
@@ -440,7 +445,7 @@ impl RoleMirBuilder {
                         scale: None,
                     },
                     dtype: self.default_dtype.clone(),
-                    shape: spec.output_specs.get(0).map(|s| s.shape.clone()).unwrap_or_default(),
+                    shape: spec.output_specs.first().map(|s| s.shape.clone()).unwrap_or_default(),
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
                 });
@@ -476,7 +481,9 @@ impl RoleMirBuilder {
                 // Output projection: Linear + optional LayerNorm
                 let weight_name = format!("{}_out_weight", spec.shard_name);
                 let weight_id = MirNodeId(weight_name.clone());
-                let embed_dim = spec.input_specs.get(0)
+                let embed_dim = spec
+                    .input_specs
+                    .first()
                     .map(|s| s.shape.get(1).copied().unwrap_or(128))
                     .unwrap_or(128);
 
@@ -504,7 +511,7 @@ impl RoleMirBuilder {
                         bias: None,
                     },
                     dtype: self.default_dtype.clone(),
-                    shape: spec.output_specs.get(0).map(|s| s.shape.clone()).unwrap_or_default(),
+                    shape: spec.output_specs.first().map(|s| s.shape.clone()).unwrap_or_default(),
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
                 });
@@ -524,7 +531,11 @@ impl RoleMirBuilder {
                             axes: vec![1],
                         },
                         dtype: self.default_dtype.clone(),
-                        shape: spec.output_specs.get(0).map(|s| s.shape.clone()).unwrap_or_default(),
+                        shape: spec
+                            .output_specs
+                            .first()
+                            .map(|s| s.shape.clone())
+                            .unwrap_or_default(),
                         compute_unit_hint: Some(compute_hint.clone()),
                         air_source: None,
                     });
@@ -574,7 +585,7 @@ impl RoleMirBuilder {
                         axis: 0,
                     },
                     dtype: self.default_dtype.clone(),
-                    shape: spec.output_specs.get(0).map(|s| s.shape.clone()).unwrap_or_default(),
+                    shape: spec.output_specs.first().map(|s| s.shape.clone()).unwrap_or_default(),
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
                 });
@@ -595,12 +606,7 @@ impl RoleMirBuilder {
 
                 nodes.push(MirNode {
                     id: topk_id.clone(),
-                    op: MirOp::MILTopk {
-                        name: topk_name,
-                        x: input_id.clone(),
-                        k: *k,
-                        axis: -1,
-                    },
+                    op: MirOp::MILTopk { name: topk_name, x: input_id.clone(), k: *k, axis: -1 },
                     dtype: self.default_dtype.clone(),
                     shape: vec![1, *k],
                     compute_unit_hint: Some(compute_hint.clone()), // Sampler compute hint from spec
@@ -612,11 +618,7 @@ impl RoleMirBuilder {
 
                 nodes.push(MirNode {
                     id: softmax_id.clone(),
-                    op: MirOp::MILSoftmax {
-                        name: softmax_name,
-                        x: topk_id,
-                        axis: -1,
-                    },
+                    op: MirOp::MILSoftmax { name: softmax_name, x: topk_id, axis: -1 },
                     dtype: self.default_dtype.clone(),
                     shape: vec![1, *k],
                     compute_unit_hint: Some(compute_hint.clone()),
@@ -636,7 +638,9 @@ impl RoleMirBuilder {
                 // Backward-compatible: single linear, same as pre-Sprint-43 behavior
                 let weight_name = format!("{}_weight", spec.shard_name);
                 let weight_id = MirNodeId(weight_name.clone());
-                let output_dim = spec.output_specs.get(0)
+                let output_dim = spec
+                    .output_specs
+                    .first()
                     .map(|s| s.shape.get(1).copied().unwrap_or(32))
                     .unwrap_or(32);
 
@@ -648,9 +652,13 @@ impl RoleMirBuilder {
                         dtype: self.default_dtype.clone(),
                     },
                     dtype: self.default_dtype.clone(),
-                    shape: vec![output_dim, spec.input_specs.get(0)
-                        .map(|s| s.shape.get(1).copied().unwrap_or(64))
-                        .unwrap_or(64)],
+                    shape: vec![
+                        output_dim,
+                        spec.input_specs
+                            .first()
+                            .map(|s| s.shape.get(1).copied().unwrap_or(64))
+                            .unwrap_or(64),
+                    ],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
                 });
@@ -666,7 +674,7 @@ impl RoleMirBuilder {
                         bias: None,
                     },
                     dtype: self.default_dtype.clone(),
-                    shape: spec.output_specs.get(0).map(|s| s.shape.clone()).unwrap_or_default(),
+                    shape: spec.output_specs.first().map(|s| s.shape.clone()).unwrap_or_default(),
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
                 });
@@ -688,48 +696,53 @@ impl RoleMirBuilder {
     /// Two shards with genuinely different op structures will produce different
     /// op type signatures.
     pub fn op_type_signature(graph: &MirGraph) -> Vec<String> {
-        let mut sig: Vec<String> = graph.nodes.iter().map(|n| {
-            match &n.op {
-                MirOp::MILConst { .. } => "Const",
-                MirOp::MILLinear { .. } => "Linear",
-                MirOp::MILMatMul { .. } => "MatMul",
-                MirOp::MILAdd { .. } => "Add",
-                MirOp::MILMul { .. } => "Mul",
-                MirOp::MILSub { .. } => "Sub",
-                MirOp::MILAbs { .. } => "Abs",
-                MirOp::MILMaximum { .. } => "Maximum",
-                MirOp::MILMinimum { .. } => "Minimum",
-                MirOp::MILReshape { .. } => "Reshape",
-                MirOp::MILTranspose { .. } => "Transpose",
-                MirOp::MILSplit { .. } => "Split",
-                MirOp::MILConcat { .. } => "Concat",
-                MirOp::MILSoftmax { .. } => "Softmax",
-                MirOp::MILGelu { .. } => "Gelu",
-                MirOp::MILScaledDotProductAttention { .. } => "SDPA",
-                MirOp::MILSliceByIndex { .. } => "SliceByIndex",
-                MirOp::MILReadState { .. } => "ReadState",
-                MirOp::MILCoremlUpdateState { .. } => "UpdateState",
-                MirOp::MILReduceMean { .. } => "ReduceMean",
-                MirOp::MILReduceSum { .. } => "ReduceSum",
-                MirOp::MILRsqrt { .. } => "Rsqrt",
-                MirOp::MILRealDiv { .. } => "RealDiv",
-                MirOp::MILLayerNorm { .. } => "LayerNorm",
-                MirOp::MILTopk { .. } => "Topk",
-                MirOp::MILGather { .. } => "Gather",
-                MirOp::MILCos { .. } => "Cos",
-                MirOp::MILSin { .. } => "Sin",
-                MirOp::MILCast { .. } => "Cast",
-                MirOp::MILConv { .. } => "Conv",
-                MirOp::MILStateWrite { .. } => "StateWrite",
-                MirOp::MILSliceUpdate { .. } => "SliceUpdate",
-                MirOp::MILExp { .. } => "Exp",
-                MirOp::MILSigmoid { .. } => "Sigmoid",
-                MirOp::MILTanh { .. } => "Tanh",
-                MirOp::MILRelu { .. } => "Relu",
-                MirOp::MILWhere { .. } => "Where",
-                _ => "Other",
-            }.to_string()
-        }).collect();
+        let mut sig: Vec<String> = graph
+            .nodes
+            .iter()
+            .map(|n| {
+                match &n.op {
+                    MirOp::MILConst { .. } => "Const",
+                    MirOp::MILLinear { .. } => "Linear",
+                    MirOp::MILMatMul { .. } => "MatMul",
+                    MirOp::MILAdd { .. } => "Add",
+                    MirOp::MILMul { .. } => "Mul",
+                    MirOp::MILSub { .. } => "Sub",
+                    MirOp::MILAbs { .. } => "Abs",
+                    MirOp::MILMaximum { .. } => "Maximum",
+                    MirOp::MILMinimum { .. } => "Minimum",
+                    MirOp::MILReshape { .. } => "Reshape",
+                    MirOp::MILTranspose { .. } => "Transpose",
+                    MirOp::MILSplit { .. } => "Split",
+                    MirOp::MILConcat { .. } => "Concat",
+                    MirOp::MILSoftmax { .. } => "Softmax",
+                    MirOp::MILGelu { .. } => "Gelu",
+                    MirOp::MILScaledDotProductAttention { .. } => "SDPA",
+                    MirOp::MILSliceByIndex { .. } => "SliceByIndex",
+                    MirOp::MILReadState { .. } => "ReadState",
+                    MirOp::MILCoremlUpdateState { .. } => "UpdateState",
+                    MirOp::MILReduceMean { .. } => "ReduceMean",
+                    MirOp::MILReduceSum { .. } => "ReduceSum",
+                    MirOp::MILRsqrt { .. } => "Rsqrt",
+                    MirOp::MILRealDiv { .. } => "RealDiv",
+                    MirOp::MILLayerNorm { .. } => "LayerNorm",
+                    MirOp::MILTopk { .. } => "Topk",
+                    MirOp::MILGather { .. } => "Gather",
+                    MirOp::MILCos { .. } => "Cos",
+                    MirOp::MILSin { .. } => "Sin",
+                    MirOp::MILCast { .. } => "Cast",
+                    MirOp::MILConv { .. } => "Conv",
+                    MirOp::MILStateWrite { .. } => "StateWrite",
+                    MirOp::MILSliceUpdate { .. } => "SliceUpdate",
+                    MirOp::MILExp { .. } => "Exp",
+                    MirOp::MILSigmoid { .. } => "Sigmoid",
+                    MirOp::MILTanh { .. } => "Tanh",
+                    MirOp::MILRelu { .. } => "Relu",
+                    MirOp::MILWhere { .. } => "Where",
+                    _ => "Other",
+                }
+                .to_string()
+            })
+            .collect();
         sig.sort();
         sig.dedup();
         sig
@@ -739,15 +752,23 @@ impl RoleMirBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ane_ir::pir::{TensorSpec, ComputeUnits, ShardRole};
+    use ane_ir::pir::{ComputeUnitHint, ShardRole, TensorSpec};
 
     fn make_entry_spec() -> ShardSpec {
         ShardSpec {
             shard_name: "test_entry".into(),
             role: ShardRole::Entry,
-            input_specs: vec![TensorSpec { name: "x".into(), shape: vec![1, 64], dtype: "fp16".into() }],
-            output_specs: vec![TensorSpec { name: "output".into(), shape: vec![1, 48], dtype: "fp16".into() }],
-            compute_units: ComputeUnits::CPUAndNE,
+            input_specs: vec![TensorSpec {
+                name: "x".into(),
+                shape: vec![1, 64],
+                dtype: "fp16".into(),
+            }],
+            output_specs: vec![TensorSpec {
+                name: "output".into(),
+                shape: vec![1, 48],
+                dtype: "fp16".into(),
+            }],
+            compute_units: ComputeUnitHint::CPUAndNE,
             op_profile: ShardOpProfile::EntryLinear {
                 needs_reshape: true,
                 reshape_target: Some(vec![1, 48]),
@@ -759,12 +780,18 @@ mod tests {
         ShardSpec {
             shard_name: "test_interior".into(),
             role: ShardRole::Interior,
-            input_specs: vec![TensorSpec { name: "x".into(), shape: vec![1, 48], dtype: "fp16".into() }],
-            output_specs: vec![TensorSpec { name: "output".into(), shape: vec![1, 48], dtype: "fp16".into() }],
-            compute_units: ComputeUnits::CPUAndNE,
-            op_profile: ShardOpProfile::InteriorLinear {
-                activation: ActivationType::GeluTanh,
-            },
+            input_specs: vec![TensorSpec {
+                name: "x".into(),
+                shape: vec![1, 48],
+                dtype: "fp16".into(),
+            }],
+            output_specs: vec![TensorSpec {
+                name: "output".into(),
+                shape: vec![1, 48],
+                dtype: "fp16".into(),
+            }],
+            compute_units: ComputeUnitHint::CPUAndNE,
+            op_profile: ShardOpProfile::InteriorLinear { activation: ActivationType::GeluTanh },
         }
     }
 
@@ -772,9 +799,17 @@ mod tests {
         ShardSpec {
             shard_name: "test_exit".into(),
             role: ShardRole::Exit,
-            input_specs: vec![TensorSpec { name: "x".into(), shape: vec![1, 48], dtype: "fp16".into() }],
-            output_specs: vec![TensorSpec { name: "output".into(), shape: vec![1, 32], dtype: "fp16".into() }],
-            compute_units: ComputeUnits::CPUAndNE,
+            input_specs: vec![TensorSpec {
+                name: "x".into(),
+                shape: vec![1, 48],
+                dtype: "fp16".into(),
+            }],
+            output_specs: vec![TensorSpec {
+                name: "output".into(),
+                shape: vec![1, 32],
+                dtype: "fp16".into(),
+            }],
+            compute_units: ComputeUnitHint::CPUAndNE,
             op_profile: ShardOpProfile::ExitLinear { ln_epsilon: 1e-5 },
         }
     }
@@ -802,12 +837,16 @@ mod tests {
         assert_ne!(entry_sig, interior_sig,
             "Entry and Interior must have different op type signatures. Entry: {:?}, Interior: {:?}",
             entry_sig, interior_sig);
-        assert_ne!(entry_sig, exit_sig,
+        assert_ne!(
+            entry_sig, exit_sig,
             "Entry and Exit must have different op type signatures. Entry: {:?}, Exit: {:?}",
-            entry_sig, exit_sig);
-        assert_ne!(interior_sig, exit_sig,
+            entry_sig, exit_sig
+        );
+        assert_ne!(
+            interior_sig, exit_sig,
             "Interior and Exit must have different op type signatures. Interior: {:?}, Exit: {:?}",
-            interior_sig, exit_sig);
+            interior_sig, exit_sig
+        );
     }
 
     /// Verify Entry shard has Reshape op (unique to Entry).
@@ -847,17 +886,28 @@ mod tests {
         let spec = ShardSpec {
             shard_name: "legacy".into(),
             role: ShardRole::Interior,
-            input_specs: vec![TensorSpec { name: "x".into(), shape: vec![1, 48], dtype: "fp16".into() }],
-            output_specs: vec![TensorSpec { name: "output".into(), shape: vec![1, 48], dtype: "fp16".into() }],
-            compute_units: ComputeUnits::CPUAndNE,
+            input_specs: vec![TensorSpec {
+                name: "x".into(),
+                shape: vec![1, 48],
+                dtype: "fp16".into(),
+            }],
+            output_specs: vec![TensorSpec {
+                name: "output".into(),
+                shape: vec![1, 48],
+                dtype: "fp16".into(),
+            }],
+            compute_units: ComputeUnitHint::CPUAndNE,
             op_profile: ShardOpProfile::LinearOnly,
         };
 
         let mir = builder.build_mir(&spec).unwrap();
         let sig = RoleMirBuilder::op_type_signature(&mir);
 
-        assert_eq!(sig, vec!["Const", "Linear"],
-            "LinearOnly profile must produce exactly [Const, Linear]");
+        assert_eq!(
+            sig,
+            vec!["Const", "Linear"],
+            "LinearOnly profile must produce exactly [Const, Linear]"
+        );
     }
 
     /// Test decode-step pipeline: QKV, Attention, OutputProjection all differ.
@@ -868,28 +918,55 @@ mod tests {
         let qkv_spec = ShardSpec {
             shard_name: "qkv".into(),
             role: ShardRole::Entry,
-            input_specs: vec![TensorSpec { name: "x".into(), shape: vec![1, 128], dtype: "fp16".into() }],
-            output_specs: vec![TensorSpec { name: "qkv".into(), shape: vec![1, 384], dtype: "fp16".into() }],
-            compute_units: ComputeUnits::CPUAndNE,
+            input_specs: vec![TensorSpec {
+                name: "x".into(),
+                shape: vec![1, 128],
+                dtype: "fp16".into(),
+            }],
+            output_specs: vec![TensorSpec {
+                name: "qkv".into(),
+                shape: vec![1, 384],
+                dtype: "fp16".into(),
+            }],
+            compute_units: ComputeUnitHint::CPUAndNE,
             op_profile: ShardOpProfile::QkvProjection { num_heads: 4, head_dim: 32 },
         };
 
         let attn_spec = ShardSpec {
             shard_name: "attn".into(),
             role: ShardRole::Interior,
-            input_specs: vec![TensorSpec { name: "qkv".into(), shape: vec![1, 384], dtype: "fp16".into() }],
-            output_specs: vec![TensorSpec { name: "attn_out".into(), shape: vec![1, 128], dtype: "fp16".into() }],
-            compute_units: ComputeUnits::CPUAndNE,
+            input_specs: vec![TensorSpec {
+                name: "qkv".into(),
+                shape: vec![1, 384],
+                dtype: "fp16".into(),
+            }],
+            output_specs: vec![TensorSpec {
+                name: "attn_out".into(),
+                shape: vec![1, 128],
+                dtype: "fp16".into(),
+            }],
+            compute_units: ComputeUnitHint::CPUAndNE,
             op_profile: ShardOpProfile::AttentionComputation { causal: true, stateful: true },
         };
 
         let out_spec = ShardSpec {
             shard_name: "out_proj".into(),
             role: ShardRole::Exit,
-            input_specs: vec![TensorSpec { name: "attn_out".into(), shape: vec![1, 128], dtype: "fp16".into() }],
-            output_specs: vec![TensorSpec { name: "output".into(), shape: vec![1, 128], dtype: "fp16".into() }],
-            compute_units: ComputeUnits::CPUAndNE,
-            op_profile: ShardOpProfile::OutputProjection { with_norm: true, ln_epsilon: Some(1e-5) },
+            input_specs: vec![TensorSpec {
+                name: "attn_out".into(),
+                shape: vec![1, 128],
+                dtype: "fp16".into(),
+            }],
+            output_specs: vec![TensorSpec {
+                name: "output".into(),
+                shape: vec![1, 128],
+                dtype: "fp16".into(),
+            }],
+            compute_units: ComputeUnitHint::CPUAndNE,
+            op_profile: ShardOpProfile::OutputProjection {
+                with_norm: true,
+                ln_epsilon: Some(1e-5),
+            },
         };
 
         let qkv_mir = builder.build_mir(&qkv_spec).unwrap();
@@ -900,9 +977,17 @@ mod tests {
         let attn_sig = RoleMirBuilder::op_type_signature(&attn_mir);
         let out_sig = RoleMirBuilder::op_type_signature(&out_mir);
 
-        assert_ne!(qkv_sig, attn_sig, "QKV and Attention must differ: {:?} vs {:?}", qkv_sig, attn_sig);
+        assert_ne!(
+            qkv_sig, attn_sig,
+            "QKV and Attention must differ: {:?} vs {:?}",
+            qkv_sig, attn_sig
+        );
         assert_ne!(qkv_sig, out_sig, "QKV and Output must differ: {:?} vs {:?}", qkv_sig, out_sig);
-        assert_ne!(attn_sig, out_sig, "Attention and Output must differ: {:?} vs {:?}", attn_sig, out_sig);
+        assert_ne!(
+            attn_sig, out_sig,
+            "Attention and Output must differ: {:?} vs {:?}",
+            attn_sig, out_sig
+        );
 
         // QKV should have Split, Attention should have SDPA + state ops
         assert!(qkv_sig.contains(&"Split".to_string()), "QKV must include Split");
@@ -919,18 +1004,34 @@ mod tests {
         let io_spec = ShardSpec {
             shard_name: "io".into(),
             role: ShardRole::Io,
-            input_specs: vec![TensorSpec { name: "x".into(), shape: vec![1], dtype: "fp16".into() }],
-            output_specs: vec![TensorSpec { name: "output".into(), shape: vec![1, 128], dtype: "fp16".into() }],
-            compute_units: ComputeUnits::CPUAndGPU,
+            input_specs: vec![TensorSpec {
+                name: "x".into(),
+                shape: vec![1],
+                dtype: "fp16".into(),
+            }],
+            output_specs: vec![TensorSpec {
+                name: "output".into(),
+                shape: vec![1, 128],
+                dtype: "fp16".into(),
+            }],
+            compute_units: ComputeUnitHint::CPUAndGPU,
             op_profile: ShardOpProfile::IoEmbedding { with_lm_head: false },
         };
 
         let sampler_spec = ShardSpec {
             shard_name: "sampler".into(),
             role: ShardRole::Sampler,
-            input_specs: vec![TensorSpec { name: "x".into(), shape: vec![1, 32000], dtype: "fp16".into() }],
-            output_specs: vec![TensorSpec { name: "output".into(), shape: vec![1, 5], dtype: "fp16".into() }],
-            compute_units: ComputeUnits::CPUAndGPU,
+            input_specs: vec![TensorSpec {
+                name: "x".into(),
+                shape: vec![1, 32000],
+                dtype: "fp16".into(),
+            }],
+            output_specs: vec![TensorSpec {
+                name: "output".into(),
+                shape: vec![1, 5],
+                dtype: "fp16".into(),
+            }],
+            compute_units: ComputeUnitHint::CPUAndGPU,
             op_profile: ShardOpProfile::SamplerTopk { k: 5 },
         };
 
@@ -947,12 +1048,20 @@ mod tests {
 
         // Both should use CPU+GPU hints
         for node in &io_mir.nodes {
-            assert_eq!(node.compute_unit_hint, Some(ComputeUnitHint::CPUAndGPU),
-                "IO node {} must use CPUAndGPU", node.id.0);
+            assert_eq!(
+                node.compute_unit_hint,
+                Some(ComputeUnitHint::CPUAndGPU),
+                "IO node {} must use CPUAndGPU",
+                node.id.0
+            );
         }
         for node in &sampler_mir.nodes {
-            assert_eq!(node.compute_unit_hint, Some(ComputeUnitHint::CPUAndGPU),
-                "Sampler node {} must use CPUAndGPU", node.id.0);
+            assert_eq!(
+                node.compute_unit_hint,
+                Some(ComputeUnitHint::CPUAndGPU),
+                "Sampler node {} must use CPUAndGPU",
+                node.id.0
+            );
         }
     }
 
@@ -962,14 +1071,18 @@ mod tests {
     fn test_compute_units_from_spec_propagates_to_mir_nodes() {
         let builder = RoleMirBuilder::new();
         let mut spec = make_entry_spec();
-        spec.compute_units = ComputeUnits::CPUAndGPU;
+        spec.compute_units = ComputeUnitHint::CPUAndGPU;
 
         let mir = builder.build_mir(&spec).unwrap();
 
         for node in &mir.nodes {
-            assert_eq!(node.compute_unit_hint, Some(ComputeUnitHint::CPUAndGPU),
+            assert_eq!(
+                node.compute_unit_hint,
+                Some(ComputeUnitHint::CPUAndGPU),
                 "All nodes should use CPUAndGPU from spec, but {} has {:?}",
-                node.id.0, node.compute_unit_hint);
+                node.id.0,
+                node.compute_unit_hint
+            );
         }
     }
 }

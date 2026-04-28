@@ -15,6 +15,12 @@ pub struct StaticizePass {
     // No configuration needed for pass-through
 }
 
+impl Default for StaticizePass {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StaticizePass {
     pub fn new() -> Self {
         Self {}

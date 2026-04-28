@@ -27,11 +27,12 @@
 //! correctly lowers to `MILLinear` in the MIL lower pass, matching the
 //! canonical Core ML emission path.
 
-use ane_ir::sir::{SirGraph, SirOp, ElementWiseOp, MilDtypeRepr};
+use crate::cpu_only_ops;
+use crate::knowledge_query::PassKnowledgeQuery;
 use ane_ir::air::{AirGraph, AirNode, AirNodeId, AirOp};
 use ane_ir::mir::MilDtype;
+use ane_ir::sir::{ElementWiseOp, SirGraph, SirOp};
 use anyhow::Result;
-use crate::knowledge_query::PassKnowledgeQuery;
 
 /// Task dimensions needed by AIR decomposition functions.
 ///
@@ -64,12 +65,24 @@ pub struct DecompositionContext {
 
 impl DecompositionContext {
     /// Construct a context from an Attention task spec.
-    pub fn for_attention(batch_size: usize, embed_dim: usize, num_heads: usize, head_dim: usize, seq_len: usize) -> Self {
+    pub fn for_attention(
+        batch_size: usize,
+        embed_dim: usize,
+        num_heads: usize,
+        head_dim: usize,
+        seq_len: usize,
+    ) -> Self {
         Self { batch_size, embed_dim, num_heads, head_dim, seq_len }
     }
 
     /// Construct a context from a DecodeStep task spec.
-    pub fn for_decode_step(batch_size: usize, embed_dim: usize, num_heads: usize, head_dim: usize, kv_len: usize) -> Self {
+    pub fn for_decode_step(
+        batch_size: usize,
+        embed_dim: usize,
+        num_heads: usize,
+        head_dim: usize,
+        kv_len: usize,
+    ) -> Self {
         Self { batch_size, embed_dim, num_heads, head_dim, seq_len: kv_len }
     }
 }
@@ -77,6 +90,12 @@ impl DecompositionContext {
 /// Legality Rewrite pass implementation.
 pub struct LegalityRewritePass {
     // No configuration needed for the linear projection case
+}
+
+impl Default for LegalityRewritePass {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LegalityRewritePass {
@@ -97,7 +116,12 @@ impl LegalityRewritePass {
     /// The `ctx` parameter carries task dimensions for truthful shape
     /// emission. When `None`, placeholder zero-filled shapes are used
     /// (backward-compatible with pre-Sprint-56 behavior).
-    pub fn run(&self, input: SirGraph, knowledge_query: &dyn PassKnowledgeQuery, ctx: Option<&DecompositionContext>) -> Result<AirGraph> {
+    pub fn run(
+        &self,
+        input: SirGraph,
+        knowledge_query: &dyn PassKnowledgeQuery,
+        ctx: Option<&DecompositionContext>,
+    ) -> Result<AirGraph> {
         let mut air_nodes = Vec::new();
         let mut sir_to_air = std::collections::HashMap::new();
 
@@ -112,7 +136,8 @@ impl LegalityRewritePass {
                     // The Python emitter uses mb.linear (Sprint 31), and the
                     // MIL lower pass maps Conv1x1AsLinear → MILLinear. Using
                     // MatMul here was inconsistent with the emission path.
-                    let a_id = sir_to_air.get(sir_input)
+                    let a_id = sir_to_air
+                        .get(sir_input)
                         .cloned()
                         .unwrap_or_else(|| AirNodeId(sir_input.0.clone()));
                     let air_id = AirNodeId(sir_node.id.0.clone());
@@ -132,43 +157,63 @@ impl LegalityRewritePass {
                 SirOp::AttentionBlock { q, k, v, mask: _, rope: _ } => {
                     let attn_ctx = ctx.and_then(|c| {
                         // Only use the context if it has non-zero embed_dim (meaningful dimensions)
-                        if c.embed_dim > 0 { Some(c.clone()) } else { None }
+                        if c.embed_dim > 0 {
+                            Some(c.clone())
+                        } else {
+                            None
+                        }
                     });
                     let (final_id, nodes) = Self::decompose_attention_block(
-                        sir_node, q, k, v, &sir_to_air, knowledge_query, attn_ctx.as_ref(),
+                        sir_node,
+                        q,
+                        k,
+                        v,
+                        &sir_to_air,
+                        knowledge_query,
+                        attn_ctx.as_ref(),
                     );
                     (final_id, nodes, "mb.scaled_dot_product_attention")
                 }
                 SirOp::DecodeStep { token, state_map } => {
-                    let ds_ctx = ctx.and_then(|c| {
-                        if c.embed_dim > 0 { Some(c.clone()) } else { None }
-                    });
+                    let ds_ctx =
+                        ctx.and_then(|c| if c.embed_dim > 0 { Some(c.clone()) } else { None });
                     let (final_id, nodes) = Self::decompose_decode_step(
-                        sir_node, token, state_map, &sir_to_air, knowledge_query, ds_ctx.as_ref(),
+                        sir_node,
+                        token,
+                        state_map,
+                        &sir_to_air,
+                        knowledge_query,
+                        ds_ctx.as_ref(),
                     );
                     (final_id, nodes, "mb.scaled_dot_product_attention")
                 }
                 SirOp::RMSNorm { input, weight, epsilon } => {
                     let (final_id, nodes) = Self::decompose_rms_norm(
-                        sir_node, input, weight, *epsilon, &sir_to_air, knowledge_query,
+                        sir_node,
+                        input,
+                        weight,
+                        *epsilon,
+                        &sir_to_air,
+                        knowledge_query,
                     );
                     (final_id, nodes, "mb.layer_norm")
                 }
                 SirOp::RoPETransform { input, tables: _ } => {
-                    let (final_id, nodes) = Self::decompose_rope(
-                        sir_node, input, &sir_to_air, knowledge_query,
-                    );
+                    let (final_id, nodes) =
+                        Self::decompose_rope(sir_node, input, &sir_to_air, knowledge_query);
                     (final_id, nodes, "mb.cos")
                 }
                 SirOp::Sampler { logits, temperature: _, top_p: _, rep_penalty: _ } => {
-                    let (final_id, nodes) = Self::decompose_sampler(
-                        sir_node, logits, &sir_to_air, knowledge_query,
-                    );
+                    let (final_id, nodes) =
+                        Self::decompose_sampler(sir_node, logits, &sir_to_air, knowledge_query);
                     (final_id, nodes, "mb.topk")
                 }
                 SirOp::ElementWise { op, inputs } => {
-                    let air_inputs: Vec<AirNodeId> = inputs.iter()
-                        .map(|id| sir_to_air.get(id).cloned().unwrap_or_else(|| AirNodeId(id.0.clone())))
+                    let air_inputs: Vec<AirNodeId> = inputs
+                        .iter()
+                        .map(|id| {
+                            sir_to_air.get(id).cloned().unwrap_or_else(|| AirNodeId(id.0.clone()))
+                        })
                         .collect();
                     let pattern = match op {
                         ElementWiseOp::Add => "mb.add",
@@ -180,10 +225,7 @@ impl LegalityRewritePass {
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
-                        AirOp::ElementWise {
-                            op: op.clone(),
-                            inputs: air_inputs,
-                        },
+                        AirOp::ElementWise { op: op.clone(), inputs: air_inputs },
                         sir_node,
                         pattern,
                         knowledge_query,
@@ -191,14 +233,14 @@ impl LegalityRewritePass {
                     (air_id, nodes, pattern)
                 }
                 SirOp::Reshape { input, target_shape } => {
-                    let air_input = sir_to_air.get(input).cloned().unwrap_or_else(|| AirNodeId(input.0.clone()));
+                    let air_input = sir_to_air
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| AirNodeId(input.0.clone()));
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
-                        AirOp::Reshape {
-                            input: air_input,
-                            target_shape: target_shape.clone(),
-                        },
+                        AirOp::Reshape { input: air_input, target_shape: target_shape.clone() },
                         sir_node,
                         "mb.reshape",
                         knowledge_query,
@@ -206,14 +248,14 @@ impl LegalityRewritePass {
                     (air_id, nodes, "mb.reshape")
                 }
                 SirOp::Transpose { input, perm } => {
-                    let air_input = sir_to_air.get(input).cloned().unwrap_or_else(|| AirNodeId(input.0.clone()));
+                    let air_input = sir_to_air
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| AirNodeId(input.0.clone()));
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
-                        AirOp::Transpose {
-                            input: air_input,
-                            perm: perm.clone(),
-                        },
+                        AirOp::Transpose { input: air_input, perm: perm.clone() },
                         sir_node,
                         "mb.transpose",
                         knowledge_query,
@@ -221,15 +263,14 @@ impl LegalityRewritePass {
                     (air_id, nodes, "mb.transpose")
                 }
                 SirOp::Split { input, axis, num_splits } => {
-                    let air_input = sir_to_air.get(input).cloned().unwrap_or_else(|| AirNodeId(input.0.clone()));
+                    let air_input = sir_to_air
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| AirNodeId(input.0.clone()));
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
-                        AirOp::Split {
-                            input: air_input,
-                            axis: *axis,
-                            num_splits: *num_splits,
-                        },
+                        AirOp::Split { input: air_input, axis: *axis, num_splits: *num_splits },
                         sir_node,
                         "mb.split",
                         knowledge_query,
@@ -237,16 +278,16 @@ impl LegalityRewritePass {
                     (air_id, nodes, "mb.split")
                 }
                 SirOp::Concat { inputs, axis } => {
-                    let air_inputs: Vec<AirNodeId> = inputs.iter()
-                        .map(|id| sir_to_air.get(id).cloned().unwrap_or_else(|| AirNodeId(id.0.clone())))
+                    let air_inputs: Vec<AirNodeId> = inputs
+                        .iter()
+                        .map(|id| {
+                            sir_to_air.get(id).cloned().unwrap_or_else(|| AirNodeId(id.0.clone()))
+                        })
                         .collect();
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
-                        AirOp::Concat {
-                            inputs: air_inputs,
-                            axis: *axis,
-                        },
+                        AirOp::Concat { inputs: air_inputs, axis: *axis },
                         sir_node,
                         "mb.concat",
                         knowledge_query,
@@ -254,14 +295,14 @@ impl LegalityRewritePass {
                     (air_id, nodes, "mb.concat")
                 }
                 SirOp::Softmax { input, axis } => {
-                    let air_input = sir_to_air.get(input).cloned().unwrap_or_else(|| AirNodeId(input.0.clone()));
+                    let air_input = sir_to_air
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| AirNodeId(input.0.clone()));
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
-                        AirOp::Softmax {
-                            input: air_input,
-                            axis: *axis,
-                        },
+                        AirOp::Softmax { input: air_input, axis: *axis },
                         sir_node,
                         "mb.softmax",
                         knowledge_query,
@@ -284,14 +325,14 @@ impl LegalityRewritePass {
                     (air_id, nodes, "mb.read_state")
                 }
                 SirOp::StateWrite { state_id, offset: _, value } => {
-                    let air_value = sir_to_air.get(value).cloned().unwrap_or_else(|| AirNodeId(value.0.clone()));
+                    let air_value = sir_to_air
+                        .get(value)
+                        .cloned()
+                        .unwrap_or_else(|| AirNodeId(value.0.clone()));
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
-                        AirOp::StateWriteFixed {
-                            state_id: state_id.clone(),
-                            value: air_value,
-                        },
+                        AirOp::StateWriteFixed { state_id: state_id.clone(), value: air_value },
                         sir_node,
                         "mb.coreml_update_state",
                         knowledge_query,
@@ -300,7 +341,8 @@ impl LegalityRewritePass {
                 }
                 // ─── All new 1:1 passthrough ops ─────────────────
                 op => {
-                    let (air_op, pattern) = Self::sir_to_air_passthrough(op, &sir_node.id, &sir_to_air);
+                    let (air_op, pattern) =
+                        Self::sir_to_air_passthrough(op, &sir_node.id, &sir_to_air);
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
@@ -317,10 +359,14 @@ impl LegalityRewritePass {
             air_nodes.extend(decomposed_nodes);
         }
 
-        let air_inputs: Vec<AirNodeId> = input.inputs.iter()
+        let air_inputs: Vec<AirNodeId> = input
+            .inputs
+            .iter()
             .map(|id| sir_to_air.get(id).cloned().unwrap_or_else(|| AirNodeId(id.0.clone())))
             .collect();
-        let air_outputs: Vec<AirNodeId> = input.outputs.iter()
+        let air_outputs: Vec<AirNodeId> = input
+            .outputs
+            .iter()
             .map(|id| sir_to_air.get(id).cloned().unwrap_or_else(|| AirNodeId(id.0.clone())))
             .collect();
 
@@ -340,17 +386,38 @@ impl LegalityRewritePass {
         op_pattern: &str,
         knowledge_query: &dyn PassKnowledgeQuery,
     ) -> AirNode {
+        // ─── CPU_ONLY hard gate (Sprint 60) ─────────────────────────
+        // Ops in the CPU_ONLY set NEVER land on ANE — no amount of
+        // soft scoring can override this. If the MIL op name (stripped
+        // of its "mb." prefix) is in the CPU_ONLY set, force confidence
+        // to 0.0 and skip the knowledge query entirely.
+        let mil_name = op_pattern.strip_prefix("mb.").unwrap_or(op_pattern);
+        if cpu_only_ops::is_cpu_only(mil_name) {
+            return AirNode {
+                id,
+                op,
+                name: sir_node.name.clone(),
+                legality_confidence: 0.0,
+                sir_source: Some(sir_node.id.clone()),
+                fallback_risk: 1.0,
+                drift_risk: 1.0,
+                precision_override: sir_node.metadata.precision_override.clone(),
+            };
+        }
+
         let (legality_confidence, fallback_risk, drift_risk) =
             match knowledge_query.query_legality(op_pattern, None) {
-                Some(info) if info.ane_legal => {
-                    (info.confidence, (1.0 - info.confidence).min(1.0), (1.0 - info.confidence).min(1.0) * 0.5)
-                }
-                Some(info) => {
-                    ((1.0 - info.confidence).max(0.0), info.confidence.min(1.0), info.confidence.min(1.0) * 0.8)
-                }
-                None => {
-                    (0.5, 0.1, 0.05)
-                }
+                Some(info) if info.ane_legal => (
+                    info.confidence,
+                    (1.0 - info.confidence).min(1.0),
+                    (1.0 - info.confidence).min(1.0) * 0.5,
+                ),
+                Some(info) => (
+                    (1.0 - info.confidence).max(0.0),
+                    info.confidence.min(1.0),
+                    info.confidence.min(1.0) * 0.8,
+                ),
+                None => (0.5, 0.1, 0.05),
             };
 
         AirNode {
@@ -438,7 +505,11 @@ impl LegalityRewritePass {
                 input: last_id.clone(),
                 begin: vec![0, 0, 0],
                 end: vec![batch, seq, embed],
-                stride: vec![], begin_mask: vec![], end_mask: vec![], squeeze_mask: vec![] },
+                stride: vec![],
+                begin_mask: vec![],
+                end_mask: vec![],
+                squeeze_mask: vec![],
+            },
             sir_node,
             "mb.slice_by_index",
             kq,
@@ -451,7 +522,11 @@ impl LegalityRewritePass {
                 input: last_id.clone(),
                 begin: vec![0, 0, embed],
                 end: vec![batch, seq, 2 * embed],
-                stride: vec![], begin_mask: vec![], end_mask: vec![], squeeze_mask: vec![] },
+                stride: vec![],
+                begin_mask: vec![],
+                end_mask: vec![],
+                squeeze_mask: vec![],
+            },
             sir_node,
             "mb.slice_by_index",
             kq,
@@ -464,7 +539,11 @@ impl LegalityRewritePass {
                 input: last_id,
                 begin: vec![0, 0, 2 * embed],
                 end: vec![batch, seq, 3 * embed],
-                stride: vec![], begin_mask: vec![], end_mask: vec![], squeeze_mask: vec![] },
+                stride: vec![],
+                begin_mask: vec![],
+                end_mask: vec![],
+                squeeze_mask: vec![],
+            },
             sir_node,
             "mb.slice_by_index",
             kq,
@@ -474,22 +553,37 @@ impl LegalityRewritePass {
         let q_4d_id = AirNodeId(format!("{base}_q_4d"));
         nodes.push(Self::make_air_node(
             q_4d_id.clone(),
-            AirOp::Reshape { input: q_id, target_shape: vec![batch as usize, seq as usize, heads as usize, head_dim as usize] },
-            sir_node, "mb.reshape", kq,
+            AirOp::Reshape {
+                input: q_id,
+                target_shape: vec![batch as usize, seq as usize, heads as usize, head_dim as usize],
+            },
+            sir_node,
+            "mb.reshape",
+            kq,
         ));
 
         let k_4d_id = AirNodeId(format!("{base}_k_4d"));
         nodes.push(Self::make_air_node(
             k_4d_id.clone(),
-            AirOp::Reshape { input: k_id, target_shape: vec![batch as usize, seq as usize, heads as usize, head_dim as usize] },
-            sir_node, "mb.reshape", kq,
+            AirOp::Reshape {
+                input: k_id,
+                target_shape: vec![batch as usize, seq as usize, heads as usize, head_dim as usize],
+            },
+            sir_node,
+            "mb.reshape",
+            kq,
         ));
 
         let v_4d_id = AirNodeId(format!("{base}_v_4d"));
         nodes.push(Self::make_air_node(
             v_4d_id.clone(),
-            AirOp::Reshape { input: v_id, target_shape: vec![batch as usize, seq as usize, heads as usize, head_dim as usize] },
-            sir_node, "mb.reshape", kq,
+            AirOp::Reshape {
+                input: v_id,
+                target_shape: vec![batch as usize, seq as usize, heads as usize, head_dim as usize],
+            },
+            sir_node,
+            "mb.reshape",
+            kq,
         ));
 
         // Steps 8-10: Transpose to [batch, heads, seq, head_dim]
@@ -497,21 +591,27 @@ impl LegalityRewritePass {
         nodes.push(Self::make_air_node(
             q_t_id.clone(),
             AirOp::Transpose { input: q_4d_id, perm: vec![0, 2, 1, 3] },
-            sir_node, "mb.transpose", kq,
+            sir_node,
+            "mb.transpose",
+            kq,
         ));
 
         let k_t_id = AirNodeId(format!("{base}_k_t"));
         nodes.push(Self::make_air_node(
             k_t_id.clone(),
             AirOp::Transpose { input: k_4d_id, perm: vec![0, 2, 1, 3] },
-            sir_node, "mb.transpose", kq,
+            sir_node,
+            "mb.transpose",
+            kq,
         ));
 
         let v_t_id = AirNodeId(format!("{base}_v_t"));
         nodes.push(Self::make_air_node(
             v_t_id.clone(),
             AirOp::Transpose { input: v_4d_id, perm: vec![0, 2, 1, 3] },
-            sir_node, "mb.transpose", kq,
+            sir_node,
+            "mb.transpose",
+            kq,
         ));
 
         // Step 11: Scaled dot-product attention
@@ -522,7 +622,9 @@ impl LegalityRewritePass {
                 query: q_t_id,
                 key: k_t_id,
                 value: v_t_id,
-                attention_mask: None, scale: None },
+                attention_mask: None,
+                scale: None,
+            },
             sir_node,
             "mb.scaled_dot_product_attention",
             kq,
@@ -532,8 +634,13 @@ impl LegalityRewritePass {
         let attn_flat_id = AirNodeId(format!("{base}_attn_flat"));
         nodes.push(Self::make_air_node(
             attn_flat_id.clone(),
-            AirOp::Reshape { input: attn_id, target_shape: vec![batch as usize, seq as usize, embed as usize] },
-            sir_node, "mb.reshape", kq,
+            AirOp::Reshape {
+                input: attn_id,
+                target_shape: vec![batch as usize, seq as usize, embed as usize],
+            },
+            sir_node,
+            "mb.reshape",
+            kq,
         ));
 
         // Step 13: Output projection
@@ -584,7 +691,8 @@ impl LegalityRewritePass {
         ctx: Option<&DecompositionContext>,
     ) -> (AirNodeId, Vec<AirNode>) {
         let base = &sir_node.id.0;
-        let token_air = sir_to_air.get(token_sir).cloned().unwrap_or_else(|| AirNodeId(token_sir.0.clone()));
+        let token_air =
+            sir_to_air.get(token_sir).cloned().unwrap_or_else(|| AirNodeId(token_sir.0.clone()));
 
         // Extract dimensions from context or use placeholders
         let (batch, embed, heads, head_dim, kv_len) = match ctx {
@@ -610,7 +718,9 @@ impl LegalityRewritePass {
                 weight: format!("{base}_w_qkv"),
                 pad_type: "valid".into(),
             },
-            sir_node, "mb.linear", kq,
+            sir_node,
+            "mb.linear",
+            kq,
         ));
 
         // Steps 2-4: Slice Q, K, V
@@ -618,22 +728,52 @@ impl LegalityRewritePass {
         let q_id = AirNodeId(format!("{base}_q"));
         nodes.push(Self::make_air_node(
             q_id.clone(),
-            AirOp::SliceByIndex { input: qkv_id.clone(), begin: vec![0, 0], end: vec![batch, embed] , stride: vec![], begin_mask: vec![], end_mask: vec![], squeeze_mask: vec![] },
-            sir_node, "mb.slice_by_index", kq,
+            AirOp::SliceByIndex {
+                input: qkv_id.clone(),
+                begin: vec![0, 0],
+                end: vec![batch, embed],
+                stride: vec![],
+                begin_mask: vec![],
+                end_mask: vec![],
+                squeeze_mask: vec![],
+            },
+            sir_node,
+            "mb.slice_by_index",
+            kq,
         ));
 
         let k_id = AirNodeId(format!("{base}_k_new"));
         nodes.push(Self::make_air_node(
             k_id.clone(),
-            AirOp::SliceByIndex { input: qkv_id.clone(), begin: vec![0, embed], end: vec![batch, 2 * embed] , stride: vec![], begin_mask: vec![], end_mask: vec![], squeeze_mask: vec![] },
-            sir_node, "mb.slice_by_index", kq,
+            AirOp::SliceByIndex {
+                input: qkv_id.clone(),
+                begin: vec![0, embed],
+                end: vec![batch, 2 * embed],
+                stride: vec![],
+                begin_mask: vec![],
+                end_mask: vec![],
+                squeeze_mask: vec![],
+            },
+            sir_node,
+            "mb.slice_by_index",
+            kq,
         ));
 
         let v_id = AirNodeId(format!("{base}_v_new"));
         nodes.push(Self::make_air_node(
             v_id.clone(),
-            AirOp::SliceByIndex { input: qkv_id, begin: vec![0, 2 * embed], end: vec![batch, 3 * embed] , stride: vec![], begin_mask: vec![], end_mask: vec![], squeeze_mask: vec![] },
-            sir_node, "mb.slice_by_index", kq,
+            AirOp::SliceByIndex {
+                input: qkv_id,
+                begin: vec![0, 2 * embed],
+                end: vec![batch, 3 * embed],
+                stride: vec![],
+                begin_mask: vec![],
+                end_mask: vec![],
+                squeeze_mask: vec![],
+            },
+            sir_node,
+            "mb.slice_by_index",
+            kq,
         ));
 
         // Steps 5-6: State reads for KV cache
@@ -650,7 +790,9 @@ impl LegalityRewritePass {
                 shape: vec![kv_len as usize, embed as usize],
                 dtype: ane_ir::mir::MilDtype::Fp16,
             },
-            sir_node, "mb.read_state", kq,
+            sir_node,
+            "mb.read_state",
+            kq,
         ));
 
         let v_cache_id = AirNodeId(format!("{base}_v_cache_read"));
@@ -661,7 +803,9 @@ impl LegalityRewritePass {
                 shape: vec![kv_len as usize, embed as usize],
                 dtype: ane_ir::mir::MilDtype::Fp16,
             },
-            sir_node, "mb.read_state", kq,
+            sir_node,
+            "mb.read_state",
+            kq,
         ));
 
         // Steps 7-9: Reshape for multi-head attention
@@ -671,22 +815,37 @@ impl LegalityRewritePass {
         let q_4d_id = AirNodeId(format!("{base}_q_4d"));
         nodes.push(Self::make_air_node(
             q_4d_id.clone(),
-            AirOp::Reshape { input: q_id, target_shape: vec![batch as usize, heads as usize, 1, head_dim as usize] },
-            sir_node, "mb.reshape", kq,
+            AirOp::Reshape {
+                input: q_id,
+                target_shape: vec![batch as usize, heads as usize, 1, head_dim as usize],
+            },
+            sir_node,
+            "mb.reshape",
+            kq,
         ));
 
         let k_4d_id = AirNodeId(format!("{base}_k_4d"));
         nodes.push(Self::make_air_node(
             k_4d_id.clone(),
-            AirOp::Reshape { input: k_cache_id, target_shape: vec![1, heads as usize, kv_len as usize, head_dim as usize] },
-            sir_node, "mb.reshape", kq,
+            AirOp::Reshape {
+                input: k_cache_id,
+                target_shape: vec![1, heads as usize, kv_len as usize, head_dim as usize],
+            },
+            sir_node,
+            "mb.reshape",
+            kq,
         ));
 
         let v_4d_id = AirNodeId(format!("{base}_v_4d"));
         nodes.push(Self::make_air_node(
             v_4d_id.clone(),
-            AirOp::Reshape { input: v_cache_id, target_shape: vec![1, heads as usize, kv_len as usize, head_dim as usize] },
-            sir_node, "mb.reshape", kq,
+            AirOp::Reshape {
+                input: v_cache_id,
+                target_shape: vec![1, heads as usize, kv_len as usize, head_dim as usize],
+            },
+            sir_node,
+            "mb.reshape",
+            kq,
         ));
 
         // Step 10: Scaled dot-product attention
@@ -697,8 +856,12 @@ impl LegalityRewritePass {
                 query: q_4d_id,
                 key: k_4d_id,
                 value: v_4d_id,
-                attention_mask: None, scale: None },
-            sir_node, "mb.scaled_dot_product_attention", kq,
+                attention_mask: None,
+                scale: None,
+            },
+            sir_node,
+            "mb.scaled_dot_product_attention",
+            kq,
         ));
 
         // Step 11: Reshape back
@@ -706,7 +869,9 @@ impl LegalityRewritePass {
         nodes.push(Self::make_air_node(
             attn_flat_id.clone(),
             AirOp::Reshape { input: attn_id, target_shape: vec![batch as usize, embed as usize] },
-            sir_node, "mb.reshape", kq,
+            sir_node,
+            "mb.reshape",
+            kq,
         ));
 
         // Step 12: Output projection
@@ -718,28 +883,28 @@ impl LegalityRewritePass {
                 weight: format!("{base}_w_out"),
                 pad_type: "valid".into(),
             },
-            sir_node, "mb.linear", kq,
+            sir_node,
+            "mb.linear",
+            kq,
         ));
 
         // Steps 13-14: State writes to update KV cache
         let k_write_id = AirNodeId(format!("{base}_k_cache_write"));
         nodes.push(Self::make_air_node(
             k_write_id.clone(),
-            AirOp::StateWriteFixed {
-                state_id: k_state_id,
-                value: k_id,
-            },
-            sir_node, "mb.coreml_update_state", kq,
+            AirOp::StateWriteFixed { state_id: k_state_id, value: k_id },
+            sir_node,
+            "mb.coreml_update_state",
+            kq,
         ));
 
         let v_write_id = AirNodeId(format!("{base}_v_cache_write"));
         nodes.push(Self::make_air_node(
             v_write_id.clone(),
-            AirOp::StateWriteFixed {
-                state_id: v_state_id,
-                value: v_id,
-            },
-            sir_node, "mb.coreml_update_state", kq,
+            AirOp::StateWriteFixed { state_id: v_state_id, value: v_id },
+            sir_node,
+            "mb.coreml_update_state",
+            kq,
         ));
 
         // The primary output of the decode step is the output projection
@@ -762,7 +927,8 @@ impl LegalityRewritePass {
         kq: &dyn PassKnowledgeQuery,
     ) -> (AirNodeId, Vec<AirNode>) {
         let base = &sir_node.id.0;
-        let input_air = sir_to_air.get(input_sir).cloned().unwrap_or_else(|| AirNodeId(input_sir.0.clone()));
+        let input_air =
+            sir_to_air.get(input_sir).cloned().unwrap_or_else(|| AirNodeId(input_sir.0.clone()));
 
         let mut nodes = Vec::new();
 
@@ -778,7 +944,9 @@ impl LegalityRewritePass {
                 axes: vec![1], // normalize over last dimension
                 keep_dims: true,
             },
-            sir_node, "mb.reduce_mean", kq,
+            sir_node,
+            "mb.reduce_mean",
+            kq,
         ));
 
         // Step 2: Rsqrt of mean
@@ -786,18 +954,19 @@ impl LegalityRewritePass {
         nodes.push(Self::make_air_node(
             rsqrt_id.clone(),
             AirOp::Rsqrt { input: mean_id },
-            sir_node, "mb.rsqrt", kq,
+            sir_node,
+            "mb.rsqrt",
+            kq,
         ));
 
         // Step 3: x * rsqrt(x^2_mean)
         let normed_id = AirNodeId(format!("{base}_normed"));
         nodes.push(Self::make_air_node(
             normed_id.clone(),
-            AirOp::ElementWise {
-                op: ElementWiseOp::Mul,
-                inputs: vec![input_air, rsqrt_id],
-            },
-            sir_node, "mb.mul", kq,
+            AirOp::ElementWise { op: ElementWiseOp::Mul, inputs: vec![input_air, rsqrt_id] },
+            sir_node,
+            "mb.mul",
+            kq,
         ));
 
         // Step 4: normed * weight (gamma)
@@ -808,7 +977,9 @@ impl LegalityRewritePass {
                 op: ElementWiseOp::Mul,
                 inputs: vec![normed_id, AirNodeId(weight.into())],
             },
-            sir_node, "mb.mul", kq,
+            sir_node,
+            "mb.mul",
+            kq,
         ));
 
         (out_id, nodes)
@@ -832,7 +1003,8 @@ impl LegalityRewritePass {
         kq: &dyn PassKnowledgeQuery,
     ) -> (AirNodeId, Vec<AirNode>) {
         let base = &sir_node.id.0;
-        let input_air = sir_to_air.get(input_sir).cloned().unwrap_or_else(|| AirNodeId(input_sir.0.clone()));
+        let input_air =
+            sir_to_air.get(input_sir).cloned().unwrap_or_else(|| AirNodeId(input_sir.0.clone()));
 
         let mut nodes = Vec::new();
 
@@ -840,44 +1012,45 @@ impl LegalityRewritePass {
         nodes.push(Self::make_air_node(
             cos_id.clone(),
             AirOp::Cos { input: input_air.clone() },
-            sir_node, "mb.cos", kq,
+            sir_node,
+            "mb.cos",
+            kq,
         ));
 
         let sin_id = AirNodeId(format!("{base}_sin"));
         nodes.push(Self::make_air_node(
             sin_id.clone(),
             AirOp::Sin { input: input_air.clone() },
-            sir_node, "mb.sin", kq,
+            sir_node,
+            "mb.sin",
+            kq,
         ));
 
         let x_cos_id = AirNodeId(format!("{base}_x_cos"));
         nodes.push(Self::make_air_node(
             x_cos_id.clone(),
-            AirOp::ElementWise {
-                op: ElementWiseOp::Mul,
-                inputs: vec![input_air.clone(), cos_id],
-            },
-            sir_node, "mb.mul", kq,
+            AirOp::ElementWise { op: ElementWiseOp::Mul, inputs: vec![input_air.clone(), cos_id] },
+            sir_node,
+            "mb.mul",
+            kq,
         ));
 
         let x_sin_id = AirNodeId(format!("{base}_x_sin"));
         nodes.push(Self::make_air_node(
             x_sin_id.clone(),
-            AirOp::ElementWise {
-                op: ElementWiseOp::Mul,
-                inputs: vec![input_air, sin_id],
-            },
-            sir_node, "mb.mul", kq,
+            AirOp::ElementWise { op: ElementWiseOp::Mul, inputs: vec![input_air, sin_id] },
+            sir_node,
+            "mb.mul",
+            kq,
         ));
 
         let out_id = AirNodeId(sir_node.id.0.clone());
         nodes.push(Self::make_air_node(
             out_id.clone(),
-            AirOp::ElementWise {
-                op: ElementWiseOp::Add,
-                inputs: vec![x_cos_id, x_sin_id],
-            },
-            sir_node, "mb.add", kq,
+            AirOp::ElementWise { op: ElementWiseOp::Add, inputs: vec![x_cos_id, x_sin_id] },
+            sir_node,
+            "mb.add",
+            kq,
         ));
 
         (out_id, nodes)
@@ -898,7 +1071,8 @@ impl LegalityRewritePass {
         kq: &dyn PassKnowledgeQuery,
     ) -> (AirNodeId, Vec<AirNode>) {
         let base = &sir_node.id.0;
-        let logits_air = sir_to_air.get(logits_sir).cloned().unwrap_or_else(|| AirNodeId(logits_sir.0.clone()));
+        let logits_air =
+            sir_to_air.get(logits_sir).cloned().unwrap_or_else(|| AirNodeId(logits_sir.0.clone()));
 
         let mut nodes = Vec::new();
 
@@ -908,19 +1082,20 @@ impl LegalityRewritePass {
             AirOp::Topk {
                 input: logits_air,
                 k: 1,     // default: top-1 sampling
-                axis: -1,  // last dimension
+                axis: -1, // last dimension
             },
-            sir_node, "mb.topk", kq,
+            sir_node,
+            "mb.topk",
+            kq,
         ));
 
         let softmax_id = AirNodeId(format!("{base}_softmax"));
         nodes.push(Self::make_air_node(
             softmax_id.clone(),
-            AirOp::Softmax {
-                input: topk_id,
-                axis: -1,
-            },
-            sir_node, "mb.softmax", kq,
+            AirOp::Softmax { input: topk_id, axis: -1 },
+            sir_node,
+            "mb.softmax",
+            kq,
         ));
 
         let out_id = AirNodeId(sir_node.id.0.clone());
@@ -931,25 +1106,15 @@ impl LegalityRewritePass {
                 indices: AirNodeId(format!("{base}_topk_idx")),
                 axis: -1,
             },
-            sir_node, "mb.gather", kq,
+            sir_node,
+            "mb.gather",
+            kq,
         ));
 
         (out_id, nodes)
     }
 
-    /// Convert MilDtypeRepr (SIR) to MilDtype (AIR/MIR).
-    fn dtype_repr_to_mir(d: &MilDtypeRepr) -> MilDtype {
-        match d {
-            MilDtypeRepr::Fp16 => MilDtype::Fp16,
-            MilDtypeRepr::Fp32 => MilDtype::Fp32,
-            MilDtypeRepr::Int32 => MilDtype::Int32,
-            MilDtypeRepr::UInt8 => MilDtype::UInt8,
-            MilDtypeRepr::Bool => MilDtype::Bool,
-            MilDtypeRepr::Fp64 => MilDtype::Fp64,
-            MilDtypeRepr::Int8 => MilDtype::Int8,
-            MilDtypeRepr::Int16 => MilDtype::Int16,
-        }
-    }
+    // Sprint 58 (S58.2): dtype_repr_to_mir() removed — SIR now uses MilDtype directly.
 
     /// 1:1 passthrough from SirOp to AirOp for all non-decomposing ops.
     ///
@@ -962,24 +1127,57 @@ impl LegalityRewritePass {
         let aid = |sid: &ane_ir::sir::SirNodeId| -> AirNodeId {
             sir_to_air.get(sid).cloned().unwrap_or_else(|| AirNodeId(sid.0.clone()))
         };
-        let aids = |sids: &[ane_ir::sir::SirNodeId]| -> Vec<AirNodeId> {
-            sids.iter().map(|id| aid(id)).collect()
-        };
+        let aids =
+            |sids: &[ane_ir::sir::SirNodeId]| -> Vec<AirNodeId> { sids.iter().map(&aid).collect() };
         let _base = &node_id.0;
 
         match op {
             // ─── Constants ───────────────────────────────────────
-            SirOp::Const { value_path, dtype } => (AirOp::Const { value_path: value_path.clone(), dtype: Self::dtype_repr_to_mir(dtype) }, "mb.const"),
+            SirOp::Const { value_path, dtype } => {
+                (AirOp::Const { value_path: value_path.clone(), dtype: dtype.clone() }, "mb.const")
+            }
 
             // ─── Linear / FC ─────────────────────────────────────
             SirOp::MatMul { a, b } => (AirOp::MatMul { a: aid(a), b: aid(b) }, "mb.matmul"),
-            SirOp::Einsum { inputs, equation } => (AirOp::Einsum { inputs: aids(inputs), equation: equation.clone() }, "mb.einsum"),
+            SirOp::Einsum { inputs, equation } => {
+                (AirOp::Einsum { inputs: aids(inputs), equation: equation.clone() }, "mb.einsum")
+            }
 
             // ─── Convolution ─────────────────────────────────────
-            SirOp::Conv { input, weight, pad_type, groups, strides, pad_amounts, dilations } =>
-                (AirOp::Conv { input: aid(input), weight: aid(weight), pad_type: pad_type.clone(), groups: *groups, strides: strides.clone(), pad_amounts: pad_amounts.clone(), dilations: dilations.clone() }, "mb.conv"),
-            SirOp::ConvTranspose { input, weight, pad_type, groups, strides, pad_amounts, dilations, output_shape } =>
-                (AirOp::ConvTranspose { input: aid(input), weight: aid(weight), pad_type: pad_type.clone(), groups: *groups, strides: strides.clone(), pad_amounts: pad_amounts.clone(), dilations: dilations.clone(), output_shape: output_shape.clone() }, "mb.conv_transpose"),
+            SirOp::Conv { input, weight, pad_type, groups, strides, pad_amounts, dilations } => (
+                AirOp::Conv {
+                    input: aid(input),
+                    weight: aid(weight),
+                    pad_type: pad_type.clone(),
+                    groups: *groups,
+                    strides: strides.clone(),
+                    pad_amounts: pad_amounts.clone(),
+                    dilations: dilations.clone(),
+                },
+                "mb.conv",
+            ),
+            SirOp::ConvTranspose {
+                input,
+                weight,
+                pad_type,
+                groups,
+                strides,
+                pad_amounts,
+                dilations,
+                output_shape,
+            } => (
+                AirOp::ConvTranspose {
+                    input: aid(input),
+                    weight: aid(weight),
+                    pad_type: pad_type.clone(),
+                    groups: *groups,
+                    strides: strides.clone(),
+                    pad_amounts: pad_amounts.clone(),
+                    dilations: dilations.clone(),
+                    output_shape: output_shape.clone(),
+                },
+                "mb.conv_transpose",
+            ),
 
             // ─── Elementwise Binary ──────────────────────────────
             SirOp::Add { x, y } => (AirOp::Add { x: aid(x), y: aid(y) }, "mb.add"),
@@ -994,12 +1192,22 @@ impl LegalityRewritePass {
             SirOp::Equal { x, y } => (AirOp::Equal { x: aid(x), y: aid(y) }, "mb.equal"),
             SirOp::NotEqual { x, y } => (AirOp::NotEqual { x: aid(x), y: aid(y) }, "mb.not_equal"),
             SirOp::Greater { x, y } => (AirOp::Greater { x: aid(x), y: aid(y) }, "mb.greater"),
-            SirOp::GreaterEqual { x, y } => (AirOp::GreaterEqual { x: aid(x), y: aid(y) }, "mb.greater_equal"),
+            SirOp::GreaterEqual { x, y } => {
+                (AirOp::GreaterEqual { x: aid(x), y: aid(y) }, "mb.greater_equal")
+            }
             SirOp::Less { x, y } => (AirOp::Less { x: aid(x), y: aid(y) }, "mb.less"),
-            SirOp::LessEqual { x, y } => (AirOp::LessEqual { x: aid(x), y: aid(y) }, "mb.less_equal"),
-            SirOp::LogicalAnd { x, y } => (AirOp::LogicalAnd { x: aid(x), y: aid(y) }, "mb.logical_and"),
-            SirOp::LogicalOr { x, y } => (AirOp::LogicalOr { x: aid(x), y: aid(y) }, "mb.logical_or"),
-            SirOp::LogicalXor { x, y } => (AirOp::LogicalXor { x: aid(x), y: aid(y) }, "mb.logical_xor"),
+            SirOp::LessEqual { x, y } => {
+                (AirOp::LessEqual { x: aid(x), y: aid(y) }, "mb.less_equal")
+            }
+            SirOp::LogicalAnd { x, y } => {
+                (AirOp::LogicalAnd { x: aid(x), y: aid(y) }, "mb.logical_and")
+            }
+            SirOp::LogicalOr { x, y } => {
+                (AirOp::LogicalOr { x: aid(x), y: aid(y) }, "mb.logical_or")
+            }
+            SirOp::LogicalXor { x, y } => {
+                (AirOp::LogicalXor { x: aid(x), y: aid(y) }, "mb.logical_xor")
+            }
 
             // ─── Elementwise Unary ───────────────────────────────
             SirOp::Abs { input } => (AirOp::Abs { input: aid(input) }, "mb.abs"),
@@ -1008,31 +1216,68 @@ impl LegalityRewritePass {
             SirOp::Tanh { input } => (AirOp::Tanh { input: aid(input) }, "mb.tanh"),
             SirOp::Relu { input } => (AirOp::Relu { input: aid(input) }, "mb.relu"),
             SirOp::Relu6 { input } => (AirOp::Relu6 { input: aid(input) }, "mb.relu6"),
-            SirOp::LeakyRelu { input, alpha } => (AirOp::LeakyRelu { input: aid(input), alpha: *alpha }, "mb.leaky_relu"),
-            SirOp::SigmoidHard { input, alpha, beta } => (AirOp::SigmoidHard { input: aid(input), alpha: *alpha, beta: *beta }, "mb.sigmoid_hard"),
-            SirOp::ThresholdedRelu { input, alpha } => (AirOp::ThresholdedRelu { input: aid(input), alpha: *alpha }, "mb.thresholded_relu"),
-            SirOp::ClampedRelu { input, alpha, beta } => (AirOp::ClampedRelu { input: aid(input), alpha: *alpha, beta: *beta }, "mb.clamped_relu"),
-            SirOp::LinearActivation { input, alpha, beta } => (AirOp::LinearActivation { input: aid(input), alpha: *alpha, beta: *beta }, "mb.linear_activation"),
-            SirOp::Prelu { input, alpha } => (AirOp::Prelu { input: aid(input), alpha: alpha.clone() }, "mb.prelu"),
+            SirOp::LeakyRelu { input, alpha } => {
+                (AirOp::LeakyRelu { input: aid(input), alpha: *alpha }, "mb.leaky_relu")
+            }
+            SirOp::SigmoidHard { input, alpha, beta } => (
+                AirOp::SigmoidHard { input: aid(input), alpha: *alpha, beta: *beta },
+                "mb.sigmoid_hard",
+            ),
+            SirOp::ThresholdedRelu { input, alpha } => {
+                (AirOp::ThresholdedRelu { input: aid(input), alpha: *alpha }, "mb.thresholded_relu")
+            }
+            SirOp::ClampedRelu { input, alpha, beta } => (
+                AirOp::ClampedRelu { input: aid(input), alpha: *alpha, beta: *beta },
+                "mb.clamped_relu",
+            ),
+            SirOp::LinearActivation { input, alpha, beta } => (
+                AirOp::LinearActivation { input: aid(input), alpha: *alpha, beta: *beta },
+                "mb.linear_activation",
+            ),
+            SirOp::Prelu { input, alpha } => {
+                (AirOp::Prelu { input: aid(input), alpha: alpha.clone() }, "mb.prelu")
+            }
             SirOp::Softsign { input } => (AirOp::Softsign { input: aid(input) }, "mb.softsign"),
             SirOp::Silu { input } => (AirOp::Silu { input: aid(input) }, "mb.silu"),
-            SirOp::ScaledTanh { input, alpha, beta } => (AirOp::ScaledTanh { input: aid(input), alpha: *alpha, beta: *beta }, "mb.scaled_tanh"),
-            SirOp::Elu { input, alpha } => (AirOp::Elu { input: aid(input), alpha: *alpha }, "mb.elu"),
+            SirOp::ScaledTanh { input, alpha, beta } => (
+                AirOp::ScaledTanh { input: aid(input), alpha: *alpha, beta: *beta },
+                "mb.scaled_tanh",
+            ),
+            SirOp::Elu { input, alpha } => {
+                (AirOp::Elu { input: aid(input), alpha: *alpha }, "mb.elu")
+            }
             SirOp::Softplus { input } => (AirOp::Softplus { input: aid(input) }, "mb.softplus"),
-            SirOp::SoftplusParametric { input, alpha, beta } => (AirOp::SoftplusParametric { input: aid(input), alpha: alpha.clone(), beta: beta.clone() }, "mb.softplus_parametric"),
-            SirOp::Gelu { input, mode } => (AirOp::Gelu { input: aid(input), mode: mode.clone() }, "mb.gelu"),
-            SirOp::Clip { input, min_val, max_val } => (AirOp::Clip { input: aid(input), min_val: *min_val, max_val: *max_val }, "mb.clip"),
+            SirOp::SoftplusParametric { input, alpha, beta } => (
+                AirOp::SoftplusParametric {
+                    input: aid(input),
+                    alpha: alpha.clone(),
+                    beta: beta.clone(),
+                },
+                "mb.softplus_parametric",
+            ),
+            SirOp::Gelu { input, mode } => {
+                (AirOp::Gelu { input: aid(input), mode: mode.clone() }, "mb.gelu")
+            }
+            SirOp::Clip { input, min_val, max_val } => {
+                (AirOp::Clip { input: aid(input), min_val: *min_val, max_val: *max_val }, "mb.clip")
+            }
             SirOp::Square { input } => (AirOp::Square { input: aid(input) }, "mb.square"),
-            SirOp::Threshold { input, alpha } => (AirOp::Threshold { input: aid(input), alpha: *alpha }, "mb.threshold"),
+            SirOp::Threshold { input, alpha } => {
+                (AirOp::Threshold { input: aid(input), alpha: *alpha }, "mb.threshold")
+            }
             SirOp::Sqrt { input } => (AirOp::Sqrt { input: aid(input) }, "mb.sqrt"),
             SirOp::Rsqrt { input } => (AirOp::Rsqrt { input: aid(input) }, "mb.rsqrt"),
-            SirOp::Inverse { input, epsilon } => (AirOp::Inverse { input: aid(input), epsilon: *epsilon }, "mb.inverse"),
+            SirOp::Inverse { input, epsilon } => {
+                (AirOp::Inverse { input: aid(input), epsilon: *epsilon }, "mb.inverse")
+            }
             SirOp::Ceil { input } => (AirOp::Ceil { input: aid(input) }, "mb.ceil"),
             SirOp::Floor { input } => (AirOp::Floor { input: aid(input) }, "mb.floor"),
             SirOp::Round { input } => (AirOp::Round { input: aid(input) }, "mb.round"),
             SirOp::Exp { input } => (AirOp::Exp { input: aid(input) }, "mb.exp"),
             SirOp::Exp2 { input } => (AirOp::Exp2 { input: aid(input) }, "mb.exp2"),
-            SirOp::Log { input, epsilon } => (AirOp::Log { input: aid(input), epsilon: *epsilon }, "mb.log"),
+            SirOp::Log { input, epsilon } => {
+                (AirOp::Log { input: aid(input), epsilon: *epsilon }, "mb.log")
+            }
             SirOp::Sign { input } => (AirOp::Sign { input: aid(input) }, "mb.sign"),
             SirOp::Cos { input } => (AirOp::Cos { input: aid(input) }, "mb.cos"),
             SirOp::Sin { input } => (AirOp::Sin { input: aid(input) }, "mb.sin"),
@@ -1044,178 +1289,736 @@ impl LegalityRewritePass {
             SirOp::Sinh { input } => (AirOp::Sinh { input: aid(input) }, "mb.sinh"),
             SirOp::Atanh { input } => (AirOp::Atanh { input: aid(input) }, "mb.atanh"),
             SirOp::Erf { input } => (AirOp::Erf { input: aid(input) }, "mb.erf"),
-            SirOp::LogicalNot { input } => (AirOp::LogicalNot { input: aid(input) }, "mb.logical_not"),
-            SirOp::Cast { input, dtype } => (AirOp::Cast { input: aid(input), dtype: Self::dtype_repr_to_mir(dtype) }, "mb.cast"),
-            SirOp::Select { condition, x, y } => (AirOp::Select { condition: aid(condition), x: aid(x), y: aid(y) }, "mb.select"),
-            SirOp::Where { condition, x, y } => (AirOp::Where { condition: aid(condition), x: aid(x), y: aid(y) }, "mb.where"),
-            SirOp::Softmax { input, axis } => (AirOp::Softmax { input: aid(input), axis: *axis }, "mb.softmax"),
+            SirOp::LogicalNot { input } => {
+                (AirOp::LogicalNot { input: aid(input) }, "mb.logical_not")
+            }
+            SirOp::Cast { input, dtype } => {
+                (AirOp::Cast { input: aid(input), dtype: dtype.clone() }, "mb.cast")
+            }
+            SirOp::Select { condition, x, y } => {
+                (AirOp::Select { condition: aid(condition), x: aid(x), y: aid(y) }, "mb.select")
+            }
+            SirOp::Where { condition, x, y } => {
+                (AirOp::Where { condition: aid(condition), x: aid(x), y: aid(y) }, "mb.where")
+            }
+            SirOp::Softmax { input, axis } => {
+                (AirOp::Softmax { input: aid(input), axis: *axis }, "mb.softmax")
+            }
 
             // ─── Reduction ───────────────────────────────────────
-            SirOp::ReduceSum { input, axes, keep_dims } => (AirOp::ReduceSum { input: aid(input), axes: axes.clone(), keep_dims: *keep_dims }, "mb.reduce_sum"),
-            SirOp::ReduceMean { input, axes, keep_dims } => (AirOp::ReduceMean { input: aid(input), axes: axes.clone(), keep_dims: *keep_dims }, "mb.reduce_mean"),
-            SirOp::ReduceMax { input, axes, keep_dims } => (AirOp::ReduceMax { input: aid(input), axes: axes.clone(), keep_dims: *keep_dims }, "mb.reduce_max"),
-            SirOp::ReduceMin { input, axes, keep_dims } => (AirOp::ReduceMin { input: aid(input), axes: axes.clone(), keep_dims: *keep_dims }, "mb.reduce_min"),
-            SirOp::ReduceProd { input, axes, keep_dims } => (AirOp::ReduceProd { input: aid(input), axes: axes.clone(), keep_dims: *keep_dims }, "mb.reduce_prod"),
-            SirOp::ReduceSumSquare { input, axes, keep_dims } => (AirOp::ReduceSumSquare { input: aid(input), axes: axes.clone(), keep_dims: *keep_dims }, "mb.reduce_sum_square"),
-            SirOp::ReduceL2Norm { input, axes, keep_dims } => (AirOp::ReduceL2Norm { input: aid(input), axes: axes.clone(), keep_dims: *keep_dims }, "mb.reduce_l2_norm"),
-            SirOp::ReduceL1Norm { input, axes, keep_dims } => (AirOp::ReduceL1Norm { input: aid(input), axes: axes.clone(), keep_dims: *keep_dims }, "mb.reduce_l1_norm"),
-            SirOp::ReduceLogSumExp { input, axes, keep_dims } => (AirOp::ReduceLogSumExp { input: aid(input), axes: axes.clone(), keep_dims: *keep_dims }, "mb.reduce_log_sum_exp"),
-            SirOp::ReduceLogSum { input, axes, keep_dims } => (AirOp::ReduceLogSum { input: aid(input), axes: axes.clone(), keep_dims: *keep_dims }, "mb.reduce_log_sum"),
-            SirOp::ReduceArgmax { input, axis, keep_dims } => (AirOp::ReduceArgmax { input: aid(input), axis: *axis, keep_dims: *keep_dims }, "mb.reduce_argmax"),
-            SirOp::ReduceArgmin { input, axis, keep_dims } => (AirOp::ReduceArgmin { input: aid(input), axis: *axis, keep_dims: *keep_dims }, "mb.reduce_argmin"),
+            SirOp::ReduceSum { input, axes, keep_dims } => (
+                AirOp::ReduceSum { input: aid(input), axes: axes.clone(), keep_dims: *keep_dims },
+                "mb.reduce_sum",
+            ),
+            SirOp::ReduceMean { input, axes, keep_dims } => (
+                AirOp::ReduceMean { input: aid(input), axes: axes.clone(), keep_dims: *keep_dims },
+                "mb.reduce_mean",
+            ),
+            SirOp::ReduceMax { input, axes, keep_dims } => (
+                AirOp::ReduceMax { input: aid(input), axes: axes.clone(), keep_dims: *keep_dims },
+                "mb.reduce_max",
+            ),
+            SirOp::ReduceMin { input, axes, keep_dims } => (
+                AirOp::ReduceMin { input: aid(input), axes: axes.clone(), keep_dims: *keep_dims },
+                "mb.reduce_min",
+            ),
+            SirOp::ReduceProd { input, axes, keep_dims } => (
+                AirOp::ReduceProd { input: aid(input), axes: axes.clone(), keep_dims: *keep_dims },
+                "mb.reduce_prod",
+            ),
+            SirOp::ReduceSumSquare { input, axes, keep_dims } => (
+                AirOp::ReduceSumSquare {
+                    input: aid(input),
+                    axes: axes.clone(),
+                    keep_dims: *keep_dims,
+                },
+                "mb.reduce_sum_square",
+            ),
+            SirOp::ReduceL2Norm { input, axes, keep_dims } => (
+                AirOp::ReduceL2Norm {
+                    input: aid(input),
+                    axes: axes.clone(),
+                    keep_dims: *keep_dims,
+                },
+                "mb.reduce_l2_norm",
+            ),
+            SirOp::ReduceL1Norm { input, axes, keep_dims } => (
+                AirOp::ReduceL1Norm {
+                    input: aid(input),
+                    axes: axes.clone(),
+                    keep_dims: *keep_dims,
+                },
+                "mb.reduce_l1_norm",
+            ),
+            SirOp::ReduceLogSumExp { input, axes, keep_dims } => (
+                AirOp::ReduceLogSumExp {
+                    input: aid(input),
+                    axes: axes.clone(),
+                    keep_dims: *keep_dims,
+                },
+                "mb.reduce_log_sum_exp",
+            ),
+            SirOp::ReduceLogSum { input, axes, keep_dims } => (
+                AirOp::ReduceLogSum {
+                    input: aid(input),
+                    axes: axes.clone(),
+                    keep_dims: *keep_dims,
+                },
+                "mb.reduce_log_sum",
+            ),
+            SirOp::ReduceArgmax { input, axis, keep_dims } => (
+                AirOp::ReduceArgmax { input: aid(input), axis: *axis, keep_dims: *keep_dims },
+                "mb.reduce_argmax",
+            ),
+            SirOp::ReduceArgmin { input, axis, keep_dims } => (
+                AirOp::ReduceArgmin { input: aid(input), axis: *axis, keep_dims: *keep_dims },
+                "mb.reduce_argmin",
+            ),
 
             // ─── Normalization ───────────────────────────────────
-            SirOp::BatchNorm { input, mean, variance, gamma, beta, epsilon } =>
-                (AirOp::BatchNorm { input: aid(input), mean: mean.clone(), variance: variance.clone(), gamma: gamma.clone(), beta: beta.clone(), epsilon: *epsilon }, "mb.batch_norm"),
-            SirOp::InstanceNorm { input, gamma, beta, epsilon } =>
-                (AirOp::InstanceNorm { input: aid(input), gamma: gamma.clone(), beta: beta.clone(), epsilon: *epsilon }, "mb.instance_norm"),
-            SirOp::LayerNorm { input, weight, bias, epsilon, axes } =>
-                (AirOp::LayerNorm { input: aid(input), weight: weight.clone(), bias: bias.clone(), epsilon: *epsilon, axes: axes.clone() }, "mb.layer_norm"),
-            SirOp::L2Norm { input, epsilon, axes } =>
-                (AirOp::L2Norm { input: aid(input), epsilon: *epsilon, axes: axes.clone() }, "mb.l2_norm"),
-            SirOp::LocalResponseNorm { input, size, alpha, beta, k } =>
-                (AirOp::LocalResponseNorm { input: aid(input), size: *size, alpha: *alpha, beta: *beta, k: *k }, "mb.local_response_norm"),
+            SirOp::BatchNorm { input, mean, variance, gamma, beta, epsilon } => (
+                AirOp::BatchNorm {
+                    input: aid(input),
+                    mean: mean.clone(),
+                    variance: variance.clone(),
+                    gamma: gamma.clone(),
+                    beta: beta.clone(),
+                    epsilon: *epsilon,
+                },
+                "mb.batch_norm",
+            ),
+            SirOp::InstanceNorm { input, gamma, beta, epsilon } => (
+                AirOp::InstanceNorm {
+                    input: aid(input),
+                    gamma: gamma.clone(),
+                    beta: beta.clone(),
+                    epsilon: *epsilon,
+                },
+                "mb.instance_norm",
+            ),
+            SirOp::LayerNorm { input, weight, bias, epsilon, axes } => (
+                AirOp::LayerNorm {
+                    input: aid(input),
+                    weight: weight.clone(),
+                    bias: bias.clone(),
+                    epsilon: *epsilon,
+                    axes: axes.clone(),
+                },
+                "mb.layer_norm",
+            ),
+            SirOp::L2Norm { input, epsilon, axes } => (
+                AirOp::L2Norm { input: aid(input), epsilon: *epsilon, axes: axes.clone() },
+                "mb.l2_norm",
+            ),
+            SirOp::LocalResponseNorm { input, size, alpha, beta, k } => (
+                AirOp::LocalResponseNorm {
+                    input: aid(input),
+                    size: *size,
+                    alpha: *alpha,
+                    beta: *beta,
+                    k: *k,
+                },
+                "mb.local_response_norm",
+            ),
 
             // ─── Pooling ─────────────────────────────────────────
-            SirOp::MaxPool { input, kernel_sizes, strides, pad_types, pad_amounts } =>
-                (AirOp::MaxPool { input: aid(input), kernel_sizes: kernel_sizes.clone(), strides: strides.clone(), pad_types: pad_types.clone(), pad_amounts: pad_amounts.clone() }, "mb.max_pool"),
-            SirOp::AvgPool { input, kernel_sizes, strides, pad_types, pad_amounts, count_include_padding } =>
-                (AirOp::AvgPool { input: aid(input), kernel_sizes: kernel_sizes.clone(), strides: strides.clone(), pad_types: pad_types.clone(), pad_amounts: pad_amounts.clone(), count_include_padding: *count_include_padding }, "mb.avg_pool"),
-            SirOp::L2Pool { input, kernel_sizes, strides, pad_types, pad_amounts } =>
-                (AirOp::L2Pool { input: aid(input), kernel_sizes: kernel_sizes.clone(), strides: strides.clone(), pad_types: pad_types.clone(), pad_amounts: pad_amounts.clone() }, "mb.l2_pool"),
+            SirOp::MaxPool { input, kernel_sizes, strides, pad_types, pad_amounts } => (
+                AirOp::MaxPool {
+                    input: aid(input),
+                    kernel_sizes: kernel_sizes.clone(),
+                    strides: strides.clone(),
+                    pad_types: pad_types.clone(),
+                    pad_amounts: pad_amounts.clone(),
+                },
+                "mb.max_pool",
+            ),
+            SirOp::AvgPool {
+                input,
+                kernel_sizes,
+                strides,
+                pad_types,
+                pad_amounts,
+                count_include_padding,
+            } => (
+                AirOp::AvgPool {
+                    input: aid(input),
+                    kernel_sizes: kernel_sizes.clone(),
+                    strides: strides.clone(),
+                    pad_types: pad_types.clone(),
+                    pad_amounts: pad_amounts.clone(),
+                    count_include_padding: *count_include_padding,
+                },
+                "mb.avg_pool",
+            ),
+            SirOp::L2Pool { input, kernel_sizes, strides, pad_types, pad_amounts } => (
+                AirOp::L2Pool {
+                    input: aid(input),
+                    kernel_sizes: kernel_sizes.clone(),
+                    strides: strides.clone(),
+                    pad_types: pad_types.clone(),
+                    pad_amounts: pad_amounts.clone(),
+                },
+                "mb.l2_pool",
+            ),
 
             // ─── Image Resizing ──────────────────────────────────
-            SirOp::Resize { input, target_size, mode, sampling_mode, nearest_rounding_mode } =>
-                (AirOp::Resize { input: aid(input), target_size: target_size.clone(), mode: mode.clone(), sampling_mode: sampling_mode.clone(), nearest_rounding_mode: nearest_rounding_mode.clone() }, "mb.resize"),
-            SirOp::ResizeNearestNeighbor { input, target_height, target_width } =>
-                (AirOp::ResizeNearestNeighbor { input: aid(input), target_height: *target_height, target_width: *target_width }, "mb.resize_nearest_neighbor"),
-            SirOp::ResizeBilinear { input, target_height, target_width, align_corners } =>
-                (AirOp::ResizeBilinear { input: aid(input), target_height: *target_height, target_width: *target_width, align_corners: *align_corners }, "mb.resize_bilinear"),
-            SirOp::UpsampleNearestNeighbor { input, scale } =>
-                (AirOp::UpsampleNearestNeighbor { input: aid(input), scale: scale.clone() }, "mb.upsample_nearest_neighbor"),
-            SirOp::UpsampleBilinear { input, scale, align_corners, half_pixel_centers } =>
-                (AirOp::UpsampleBilinear { input: aid(input), scale: scale.clone(), align_corners: *align_corners, half_pixel_centers: *half_pixel_centers }, "mb.upsample_bilinear"),
-            SirOp::CropResize { input, boxes, box_indices, crop_height, crop_width } =>
-                (AirOp::CropResize { input: aid(input), boxes: aid(boxes), box_indices: aid(box_indices), crop_height: *crop_height, crop_width: *crop_width }, "mb.crop_resize"),
-            SirOp::Affine { input, transform, output_height, output_width, sampling_mode, pad_value } =>
-                (AirOp::Affine { input: aid(input), transform: aid(transform), output_height: *output_height, output_width: *output_width, sampling_mode: sampling_mode.clone(), pad_value: *pad_value }, "mb.affine"),
-            SirOp::Resample { input, coordinates, sampling_mode, pad_value } =>
-                (AirOp::Resample { input: aid(input), coordinates: aid(coordinates), sampling_mode: sampling_mode.clone(), pad_value: *pad_value }, "mb.resample"),
+            SirOp::Resize { input, target_size, mode, sampling_mode, nearest_rounding_mode } => (
+                AirOp::Resize {
+                    input: aid(input),
+                    target_size: target_size.clone(),
+                    mode: mode.clone(),
+                    sampling_mode: sampling_mode.clone(),
+                    nearest_rounding_mode: nearest_rounding_mode.clone(),
+                },
+                "mb.resize",
+            ),
+            SirOp::ResizeNearestNeighbor { input, target_height, target_width } => (
+                AirOp::ResizeNearestNeighbor {
+                    input: aid(input),
+                    target_height: *target_height,
+                    target_width: *target_width,
+                },
+                "mb.resize_nearest_neighbor",
+            ),
+            SirOp::ResizeBilinear { input, target_height, target_width, align_corners } => (
+                AirOp::ResizeBilinear {
+                    input: aid(input),
+                    target_height: *target_height,
+                    target_width: *target_width,
+                    align_corners: *align_corners,
+                },
+                "mb.resize_bilinear",
+            ),
+            SirOp::UpsampleNearestNeighbor { input, scale } => (
+                AirOp::UpsampleNearestNeighbor { input: aid(input), scale: scale.clone() },
+                "mb.upsample_nearest_neighbor",
+            ),
+            SirOp::UpsampleBilinear { input, scale, align_corners, half_pixel_centers } => (
+                AirOp::UpsampleBilinear {
+                    input: aid(input),
+                    scale: scale.clone(),
+                    align_corners: *align_corners,
+                    half_pixel_centers: *half_pixel_centers,
+                },
+                "mb.upsample_bilinear",
+            ),
+            SirOp::CropResize { input, boxes, box_indices, crop_height, crop_width } => (
+                AirOp::CropResize {
+                    input: aid(input),
+                    boxes: aid(boxes),
+                    box_indices: aid(box_indices),
+                    crop_height: *crop_height,
+                    crop_width: *crop_width,
+                },
+                "mb.crop_resize",
+            ),
+            SirOp::Affine {
+                input,
+                transform,
+                output_height,
+                output_width,
+                sampling_mode,
+                pad_value,
+            } => (
+                AirOp::Affine {
+                    input: aid(input),
+                    transform: aid(transform),
+                    output_height: *output_height,
+                    output_width: *output_width,
+                    sampling_mode: sampling_mode.clone(),
+                    pad_value: *pad_value,
+                },
+                "mb.affine",
+            ),
+            SirOp::Resample { input, coordinates, sampling_mode, pad_value } => (
+                AirOp::Resample {
+                    input: aid(input),
+                    coordinates: aid(coordinates),
+                    sampling_mode: sampling_mode.clone(),
+                    pad_value: *pad_value,
+                },
+                "mb.resample",
+            ),
 
             // ─── Tensor Transform ────────────────────────────────
-            SirOp::Reshape { input, target_shape } => (AirOp::Reshape { input: aid(input), target_shape: target_shape.clone() }, "mb.reshape"),
-            SirOp::ReshapeLike { input, ref_tensor } => (AirOp::ReshapeLike { input: aid(input), ref_tensor: aid(ref_tensor) }, "mb.reshape_like"),
-            SirOp::Transpose { input, perm } => (AirOp::Transpose { input: aid(input), perm: perm.clone() }, "mb.transpose"),
-            SirOp::Split { input, axis, num_splits } => (AirOp::Split { input: aid(input), axis: *axis, num_splits: *num_splits }, "mb.split"),
-            SirOp::Concat { inputs, axis } => (AirOp::Concat { inputs: aids(inputs), axis: *axis }, "mb.concat"),
-            SirOp::ExpandDims { input, axis } => (AirOp::ExpandDims { input: aid(input), axis: axis.clone() }, "mb.expand_dims"),
-            SirOp::Squeeze { input, axis } => (AirOp::Squeeze { input: aid(input), axis: axis.clone() }, "mb.squeeze"),
-            SirOp::Flatten2d { input, axis } => (AirOp::Flatten2d { input: aid(input), axis: *axis }, "mb.flatten2d"),
-            SirOp::Reverse { input, axes } => (AirOp::Reverse { input: aid(input), axes: axes.clone() }, "mb.reverse"),
-            SirOp::ReverseSequence { input, lengths, batch_axis, seq_axis } => (AirOp::ReverseSequence { input: aid(input), lengths: aid(lengths), batch_axis: *batch_axis, seq_axis: *seq_axis }, "mb.reverse_sequence"),
-            SirOp::SliceByIndex { input, begin, end, stride, begin_mask, end_mask, squeeze_mask } => (AirOp::SliceByIndex { input: aid(input), begin: begin.clone(), end: end.clone(), stride: stride.clone(), begin_mask: begin_mask.clone(), end_mask: end_mask.clone(), squeeze_mask: squeeze_mask.clone() }, "mb.slice_by_index"),
-            SirOp::SliceBySize { input, begin, size } => (AirOp::SliceBySize { input: aid(input), begin: begin.clone(), size: size.clone() }, "mb.slice_by_size"),
-            SirOp::SlidingWindows { input, axis, window_size, stride } => (AirOp::SlidingWindows { input: aid(input), axis: *axis, window_size: *window_size, stride: *stride }, "mb.sliding_windows"),
-            SirOp::DepthToSpace { input, block_size } => (AirOp::DepthToSpace { input: aid(input), block_size: *block_size }, "mb.depth_to_space"),
-            SirOp::SpaceToDepth { input, block_size } => (AirOp::SpaceToDepth { input: aid(input), block_size: *block_size }, "mb.space_to_depth"),
-            SirOp::PixelShuffle { input, upscale_factor } => (AirOp::PixelShuffle { input: aid(input), upscale_factor: *upscale_factor }, "mb.pixel_shuffle"),
-            SirOp::PixelUnshuffle { input, downscale_factor } => (AirOp::PixelUnshuffle { input: aid(input), downscale_factor: *downscale_factor }, "mb.pixel_unshuffle"),
-            SirOp::BatchToSpace { input, block_shape, crops } => (AirOp::BatchToSpace { input: aid(input), block_shape: block_shape.clone(), crops: crops.clone() }, "mb.batch_to_space"),
-            SirOp::SpaceToBatch { input, block_shape, paddings } => (AirOp::SpaceToBatch { input: aid(input), block_shape: block_shape.clone(), paddings: paddings.clone() }, "mb.space_to_batch"),
-            SirOp::Pad { input, pad_amounts, mode, constant_value } => (AirOp::Pad { input: aid(input), pad_amounts: pad_amounts.clone(), mode: mode.clone(), constant_value: *constant_value }, "mb.pad"),
-            SirOp::Stack { values, axis } => (AirOp::Stack { values: aids(values), axis: *axis }, "mb.stack"),
-            SirOp::Tile { input, reps } => (AirOp::Tile { input: aid(input), reps: reps.clone() }, "mb.tile"),
-            SirOp::Cumsum { input, axis, exclusive, reverse } => (AirOp::Cumsum { input: aid(input), axis: *axis, exclusive: *exclusive, reverse: *reverse }, "mb.cumsum"),
-            SirOp::Fill { shape, value, dtype } => (AirOp::Fill { shape: shape.clone(), value: *value, dtype: Self::dtype_repr_to_mir(dtype) }, "mb.fill"),
-            SirOp::FillLike { ref_tensor, value, dtype } => (AirOp::FillLike { ref_tensor: aid(ref_tensor), value: *value, dtype: Self::dtype_repr_to_mir(dtype) }, "mb.fill_like"),
+            SirOp::Reshape { input, target_shape } => (
+                AirOp::Reshape { input: aid(input), target_shape: target_shape.clone() },
+                "mb.reshape",
+            ),
+            SirOp::ReshapeLike { input, ref_tensor } => (
+                AirOp::ReshapeLike { input: aid(input), ref_tensor: aid(ref_tensor) },
+                "mb.reshape_like",
+            ),
+            SirOp::Transpose { input, perm } => {
+                (AirOp::Transpose { input: aid(input), perm: perm.clone() }, "mb.transpose")
+            }
+            SirOp::Split { input, axis, num_splits } => (
+                AirOp::Split { input: aid(input), axis: *axis, num_splits: *num_splits },
+                "mb.split",
+            ),
+            SirOp::Concat { inputs, axis } => {
+                (AirOp::Concat { inputs: aids(inputs), axis: *axis }, "mb.concat")
+            }
+            SirOp::ExpandDims { input, axis } => {
+                (AirOp::ExpandDims { input: aid(input), axis: axis.clone() }, "mb.expand_dims")
+            }
+            SirOp::Squeeze { input, axis } => {
+                (AirOp::Squeeze { input: aid(input), axis: axis.clone() }, "mb.squeeze")
+            }
+            SirOp::Flatten2d { input, axis } => {
+                (AirOp::Flatten2d { input: aid(input), axis: *axis }, "mb.flatten2d")
+            }
+            SirOp::Reverse { input, axes } => {
+                (AirOp::Reverse { input: aid(input), axes: axes.clone() }, "mb.reverse")
+            }
+            SirOp::ReverseSequence { input, lengths, batch_axis, seq_axis } => (
+                AirOp::ReverseSequence {
+                    input: aid(input),
+                    lengths: aid(lengths),
+                    batch_axis: *batch_axis,
+                    seq_axis: *seq_axis,
+                },
+                "mb.reverse_sequence",
+            ),
+            SirOp::SliceByIndex {
+                input,
+                begin,
+                end,
+                stride,
+                begin_mask,
+                end_mask,
+                squeeze_mask,
+            } => (
+                AirOp::SliceByIndex {
+                    input: aid(input),
+                    begin: begin.clone(),
+                    end: end.clone(),
+                    stride: stride.clone(),
+                    begin_mask: begin_mask.clone(),
+                    end_mask: end_mask.clone(),
+                    squeeze_mask: squeeze_mask.clone(),
+                },
+                "mb.slice_by_index",
+            ),
+            SirOp::SliceBySize { input, begin, size } => (
+                AirOp::SliceBySize { input: aid(input), begin: begin.clone(), size: size.clone() },
+                "mb.slice_by_size",
+            ),
+            SirOp::SlidingWindows { input, axis, window_size, stride } => (
+                AirOp::SlidingWindows {
+                    input: aid(input),
+                    axis: *axis,
+                    window_size: *window_size,
+                    stride: *stride,
+                },
+                "mb.sliding_windows",
+            ),
+            SirOp::DepthToSpace { input, block_size } => (
+                AirOp::DepthToSpace { input: aid(input), block_size: *block_size },
+                "mb.depth_to_space",
+            ),
+            SirOp::SpaceToDepth { input, block_size } => (
+                AirOp::SpaceToDepth { input: aid(input), block_size: *block_size },
+                "mb.space_to_depth",
+            ),
+            SirOp::PixelShuffle { input, upscale_factor } => (
+                AirOp::PixelShuffle { input: aid(input), upscale_factor: *upscale_factor },
+                "mb.pixel_shuffle",
+            ),
+            SirOp::PixelUnshuffle { input, downscale_factor } => (
+                AirOp::PixelUnshuffle { input: aid(input), downscale_factor: *downscale_factor },
+                "mb.pixel_unshuffle",
+            ),
+            SirOp::BatchToSpace { input, block_shape, crops } => (
+                AirOp::BatchToSpace {
+                    input: aid(input),
+                    block_shape: block_shape.clone(),
+                    crops: crops.clone(),
+                },
+                "mb.batch_to_space",
+            ),
+            SirOp::SpaceToBatch { input, block_shape, paddings } => (
+                AirOp::SpaceToBatch {
+                    input: aid(input),
+                    block_shape: block_shape.clone(),
+                    paddings: paddings.clone(),
+                },
+                "mb.space_to_batch",
+            ),
+            SirOp::Pad { input, pad_amounts, mode, constant_value } => (
+                AirOp::Pad {
+                    input: aid(input),
+                    pad_amounts: pad_amounts.clone(),
+                    mode: mode.clone(),
+                    constant_value: *constant_value,
+                },
+                "mb.pad",
+            ),
+            SirOp::Stack { values, axis } => {
+                (AirOp::Stack { values: aids(values), axis: *axis }, "mb.stack")
+            }
+            SirOp::Tile { input, reps } => {
+                (AirOp::Tile { input: aid(input), reps: reps.clone() }, "mb.tile")
+            }
+            SirOp::Cumsum { input, axis, exclusive, reverse } => (
+                AirOp::Cumsum {
+                    input: aid(input),
+                    axis: *axis,
+                    exclusive: *exclusive,
+                    reverse: *reverse,
+                },
+                "mb.cumsum",
+            ),
+            SirOp::Fill { shape, value, dtype } => (
+                AirOp::Fill { shape: shape.clone(), value: *value, dtype: dtype.clone() },
+                "mb.fill",
+            ),
+            SirOp::FillLike { ref_tensor, value, dtype } => (
+                AirOp::FillLike {
+                    ref_tensor: aid(ref_tensor),
+                    value: *value,
+                    dtype: dtype.clone(),
+                },
+                "mb.fill_like",
+            ),
             SirOp::Identity { input } => (AirOp::Identity { input: aid(input) }, "mb.identity"),
-            SirOp::OneHot { indices, one_hot_vector_size, on_value, off_value, axis, dtype } => (AirOp::OneHot { indices: aid(indices), one_hot_vector_size: *one_hot_vector_size, on_value: *on_value, off_value: *off_value, axis: *axis, dtype: Self::dtype_repr_to_mir(dtype) }, "mb.one_hot"),
+            SirOp::OneHot { indices, one_hot_vector_size, on_value, off_value, axis, dtype } => (
+                AirOp::OneHot {
+                    indices: aid(indices),
+                    one_hot_vector_size: *one_hot_vector_size,
+                    on_value: *on_value,
+                    off_value: *off_value,
+                    axis: *axis,
+                    dtype: dtype.clone(),
+                },
+                "mb.one_hot",
+            ),
             SirOp::NonZero { input } => (AirOp::NonZero { input: aid(input) }, "mb.non_zero"),
-            SirOp::Argsort { input, axis, ascending } => (AirOp::Argsort { input: aid(input), axis: *axis, ascending: *ascending }, "mb.argsort"),
-            SirOp::BandPart { input, num_lower, num_upper } => (AirOp::BandPart { input: aid(input), num_lower: *num_lower, num_upper: *num_upper }, "mb.band_part"),
-            SirOp::Range1d { start, end, step } => (AirOp::Range1d { start: *start, end: *end, step: *step }, "mb.range_1d"),
+            SirOp::Argsort { input, axis, ascending } => (
+                AirOp::Argsort { input: aid(input), axis: *axis, ascending: *ascending },
+                "mb.argsort",
+            ),
+            SirOp::BandPart { input, num_lower, num_upper } => (
+                AirOp::BandPart { input: aid(input), num_lower: *num_lower, num_upper: *num_upper },
+                "mb.band_part",
+            ),
+            SirOp::Range1d { start, end, step } => {
+                (AirOp::Range1d { start: *start, end: *end, step: *step }, "mb.range_1d")
+            }
             SirOp::Shape { input } => (AirOp::Shape { input: aid(input) }, "mb.shape"),
-            SirOp::Crop { input, crop_height, crop_width, offset_height, offset_width } => (AirOp::Crop { input: aid(input), crop_height: *crop_height, crop_width: *crop_width, offset_height: *offset_height, offset_width: *offset_width }, "mb.crop"),
+            SirOp::Crop { input, crop_height, crop_width, offset_height, offset_width } => (
+                AirOp::Crop {
+                    input: aid(input),
+                    crop_height: *crop_height,
+                    crop_width: *crop_width,
+                    offset_height: *offset_height,
+                    offset_width: *offset_width,
+                },
+                "mb.crop",
+            ),
 
             // ─── Scatter / Gather ────────────────────────────────
-            SirOp::Gather { input, indices, axis } => (AirOp::Gather { input: aid(input), indices: aid(indices), axis: *axis }, "mb.gather"),
-            SirOp::GatherAlongAxis { input, indices, axis } => (AirOp::GatherAlongAxis { input: aid(input), indices: aid(indices), axis: *axis }, "mb.gather_along_axis"),
-            SirOp::GatherNd { input, indices } => (AirOp::GatherNd { input: aid(input), indices: aid(indices) }, "mb.gather_nd"),
-            SirOp::Scatter { input, indices, updates, axis, mode } => (AirOp::Scatter { input: aid(input), indices: aid(indices), updates: aid(updates), axis: *axis, mode: mode.clone() }, "mb.scatter"),
-            SirOp::ScatterAlongAxis { input, indices, updates, axis } => (AirOp::ScatterAlongAxis { input: aid(input), indices: aid(indices), updates: aid(updates), axis: *axis }, "mb.scatter_along_axis"),
-            SirOp::ScatterNd { input, indices, updates } => (AirOp::ScatterNd { input: aid(input), indices: aid(indices), updates: aid(updates) }, "mb.scatter_nd"),
-            SirOp::NonMaximumSuppression { boxes, scores, iou_threshold, score_threshold, max_detections } =>
-                (AirOp::NonMaximumSuppression { boxes: aid(boxes), scores: aid(scores), iou_threshold: *iou_threshold, score_threshold: *score_threshold, max_detections: *max_detections }, "mb.non_maximum_suppression"),
+            SirOp::Gather { input, indices, axis } => (
+                AirOp::Gather { input: aid(input), indices: aid(indices), axis: *axis },
+                "mb.gather",
+            ),
+            SirOp::GatherAlongAxis { input, indices, axis } => (
+                AirOp::GatherAlongAxis { input: aid(input), indices: aid(indices), axis: *axis },
+                "mb.gather_along_axis",
+            ),
+            SirOp::GatherNd { input, indices } => {
+                (AirOp::GatherNd { input: aid(input), indices: aid(indices) }, "mb.gather_nd")
+            }
+            SirOp::Scatter { input, indices, updates, axis, mode } => (
+                AirOp::Scatter {
+                    input: aid(input),
+                    indices: aid(indices),
+                    updates: aid(updates),
+                    axis: *axis,
+                    mode: mode.clone(),
+                },
+                "mb.scatter",
+            ),
+            SirOp::ScatterAlongAxis { input, indices, updates, axis } => (
+                AirOp::ScatterAlongAxis {
+                    input: aid(input),
+                    indices: aid(indices),
+                    updates: aid(updates),
+                    axis: *axis,
+                },
+                "mb.scatter_along_axis",
+            ),
+            SirOp::ScatterNd { input, indices, updates } => (
+                AirOp::ScatterNd {
+                    input: aid(input),
+                    indices: aid(indices),
+                    updates: aid(updates),
+                },
+                "mb.scatter_nd",
+            ),
+            SirOp::NonMaximumSuppression {
+                boxes,
+                scores,
+                iou_threshold,
+                score_threshold,
+                max_detections,
+            } => (
+                AirOp::NonMaximumSuppression {
+                    boxes: aid(boxes),
+                    scores: aid(scores),
+                    iou_threshold: *iou_threshold,
+                    score_threshold: *score_threshold,
+                    max_detections: *max_detections,
+                },
+                "mb.non_maximum_suppression",
+            ),
 
             // ─── Attention ───────────────────────────────────────
-            SirOp::ScaledDotProductAttention { query, key, value, attention_mask, scale } =>
-                (AirOp::ScaledDotProductAttention { query: aid(query), key: aid(key), value: aid(value), attention_mask: attention_mask.as_ref().map(aid), scale: *scale }, "mb.scaled_dot_product_attention"),
+            SirOp::ScaledDotProductAttention { query, key, value, attention_mask, scale } => (
+                AirOp::ScaledDotProductAttention {
+                    query: aid(query),
+                    key: aid(key),
+                    value: aid(value),
+                    attention_mask: attention_mask.as_ref().map(aid),
+                    scale: *scale,
+                },
+                "mb.scaled_dot_product_attention",
+            ),
 
             // ─── Quantization ────────────────────────────────────
-            SirOp::Quantize { input, scale, zero_point, axis, output_dtype } =>
-                (AirOp::Quantize { input: aid(input), scale: *scale, zero_point: *zero_point, axis: *axis, output_dtype: Self::dtype_repr_to_mir(output_dtype) }, "mb.quantize"),
-            SirOp::Dequantize { input, scale, zero_point, axis, output_dtype } =>
-                (AirOp::Dequantize { input: aid(input), scale: *scale, zero_point: *zero_point, axis: *axis, output_dtype: Self::dtype_repr_to_mir(output_dtype) }, "mb.dequantize"),
+            SirOp::Quantize { input, scale, zero_point, axis, output_dtype } => (
+                AirOp::Quantize {
+                    input: aid(input),
+                    scale: *scale,
+                    zero_point: *zero_point,
+                    axis: *axis,
+                    output_dtype: output_dtype.clone(),
+                },
+                "mb.quantize",
+            ),
+            SirOp::Dequantize { input, scale, zero_point, axis, output_dtype } => (
+                AirOp::Dequantize {
+                    input: aid(input),
+                    scale: *scale,
+                    zero_point: *zero_point,
+                    axis: *axis,
+                    output_dtype: output_dtype.clone(),
+                },
+                "mb.dequantize",
+            ),
 
             // ─── Constexpr / Compression ─────────────────────────
-            SirOp::ConstexprAffineDequantize { quantized_data, scale, zero_point, axis } =>
-                (AirOp::ConstexprAffineDequantize { quantized_data: quantized_data.clone(), scale: *scale, zero_point: *zero_point, axis: *axis }, "mb.constexpr_affine_dequantize"),
-            SirOp::ConstexprBlockwiseShiftScale { data, scale, offset, block_size } =>
-                (AirOp::ConstexprBlockwiseShiftScale { data: data.clone(), scale: scale.clone(), offset: offset.clone(), block_size: block_size.clone() }, "mb.constexpr_blockwise_shift_scale"),
-            SirOp::ConstexprLutToDense { indices, lut, num_bits } =>
-                (AirOp::ConstexprLutToDense { indices: indices.clone(), lut: lut.clone(), num_bits: *num_bits }, "mb.constexpr_lut_to_dense"),
-            SirOp::ConstexprSparseToDense { nonzero_data, shape, default_value } =>
-                (AirOp::ConstexprSparseToDense { nonzero_data: nonzero_data.clone(), shape: shape.clone(), default_value: *default_value }, "mb.constexpr_sparse_to_dense"),
-            SirOp::ConstexprCast { data, dtype } =>
-                (AirOp::ConstexprCast { data: data.clone(), dtype: Self::dtype_repr_to_mir(dtype) }, "mb.constexpr_cast"),
-            SirOp::ConstexprLutToSparse { data, num_bits } =>
-                (AirOp::ConstexprLutToSparse { data: data.clone(), num_bits: *num_bits }, "mb.constexpr_lut_to_sparse"),
-            SirOp::ConstexprSparseBlockwiseShiftScale { data, scale, offset, block_size, block_axis } =>
-                (AirOp::ConstexprSparseBlockwiseShiftScale { data: data.clone(), scale: scale.clone(), offset: offset.clone(), block_size: block_size.clone(), block_axis: *block_axis }, "mb.constexpr_sparse_blockwise_shift_scale"),
+            SirOp::ConstexprAffineDequantize { quantized_data, scale, zero_point, axis } => (
+                AirOp::ConstexprAffineDequantize {
+                    quantized_data: quantized_data.clone(),
+                    scale: *scale,
+                    zero_point: *zero_point,
+                    axis: *axis,
+                },
+                "mb.constexpr_affine_dequantize",
+            ),
+            SirOp::ConstexprBlockwiseShiftScale { data, scale, offset, block_size } => (
+                AirOp::ConstexprBlockwiseShiftScale {
+                    data: data.clone(),
+                    scale: scale.clone(),
+                    offset: offset.clone(),
+                    block_size: block_size.clone(),
+                },
+                "mb.constexpr_blockwise_shift_scale",
+            ),
+            SirOp::ConstexprLutToDense { indices, lut, num_bits } => (
+                AirOp::ConstexprLutToDense {
+                    indices: indices.clone(),
+                    lut: lut.clone(),
+                    num_bits: *num_bits,
+                },
+                "mb.constexpr_lut_to_dense",
+            ),
+            SirOp::ConstexprSparseToDense { nonzero_data, shape, default_value } => (
+                AirOp::ConstexprSparseToDense {
+                    nonzero_data: nonzero_data.clone(),
+                    shape: shape.clone(),
+                    default_value: *default_value,
+                },
+                "mb.constexpr_sparse_to_dense",
+            ),
+            SirOp::ConstexprCast { data, dtype } => (
+                AirOp::ConstexprCast { data: data.clone(), dtype: dtype.clone() },
+                "mb.constexpr_cast",
+            ),
+            SirOp::ConstexprLutToSparse { data, num_bits } => (
+                AirOp::ConstexprLutToSparse { data: data.clone(), num_bits: *num_bits },
+                "mb.constexpr_lut_to_sparse",
+            ),
+            SirOp::ConstexprSparseBlockwiseShiftScale {
+                data,
+                scale,
+                offset,
+                block_size,
+                block_axis,
+            } => (
+                AirOp::ConstexprSparseBlockwiseShiftScale {
+                    data: data.clone(),
+                    scale: scale.clone(),
+                    offset: offset.clone(),
+                    block_size: block_size.clone(),
+                    block_axis: *block_axis,
+                },
+                "mb.constexpr_sparse_blockwise_shift_scale",
+            ),
 
             // ─── Recurrent ───────────────────────────────────────
-            SirOp::Rnn { input, initial_h, weight_ih, weight_hh, bias, mode, output_sequence } =>
-                (AirOp::Rnn { input: aid(input), initial_h: aid(initial_h), weight_ih: weight_ih.clone(), weight_hh: weight_hh.clone(), bias: bias.clone(), mode: mode.clone(), output_sequence: *output_sequence }, "mb.rnn"),
-            SirOp::Gru { input, initial_h, weight_ih, weight_hh, bias, reset_after, output_sequence } =>
-                (AirOp::Gru { input: aid(input), initial_h: aid(initial_h), weight_ih: weight_ih.clone(), weight_hh: weight_hh.clone(), bias: bias.clone(), reset_after: *reset_after, output_sequence: *output_sequence }, "mb.gru"),
-            SirOp::Lstm { input, initial_h, initial_c, weight_ih, weight_hh, bias, output_sequence } =>
-                (AirOp::Lstm { input: aid(input), initial_h: aid(initial_h), initial_c: aid(initial_c), weight_ih: weight_ih.clone(), weight_hh: weight_hh.clone(), bias: bias.clone(), output_sequence: *output_sequence }, "mb.lstm"),
+            SirOp::Rnn { input, initial_h, weight_ih, weight_hh, bias, mode, output_sequence } => (
+                AirOp::Rnn {
+                    input: aid(input),
+                    initial_h: aid(initial_h),
+                    weight_ih: weight_ih.clone(),
+                    weight_hh: weight_hh.clone(),
+                    bias: bias.clone(),
+                    mode: mode.clone(),
+                    output_sequence: *output_sequence,
+                },
+                "mb.rnn",
+            ),
+            SirOp::Gru {
+                input,
+                initial_h,
+                weight_ih,
+                weight_hh,
+                bias,
+                reset_after,
+                output_sequence,
+            } => (
+                AirOp::Gru {
+                    input: aid(input),
+                    initial_h: aid(initial_h),
+                    weight_ih: weight_ih.clone(),
+                    weight_hh: weight_hh.clone(),
+                    bias: bias.clone(),
+                    reset_after: *reset_after,
+                    output_sequence: *output_sequence,
+                },
+                "mb.gru",
+            ),
+            SirOp::Lstm {
+                input,
+                initial_h,
+                initial_c,
+                weight_ih,
+                weight_hh,
+                bias,
+                output_sequence,
+            } => (
+                AirOp::Lstm {
+                    input: aid(input),
+                    initial_h: aid(initial_h),
+                    initial_c: aid(initial_c),
+                    weight_ih: weight_ih.clone(),
+                    weight_hh: weight_hh.clone(),
+                    bias: bias.clone(),
+                    output_sequence: *output_sequence,
+                },
+                "mb.lstm",
+            ),
 
             // ─── Control Flow ────────────────────────────────────
-            SirOp::Cond { pred, true_graph, false_graph } =>
-                (AirOp::Cond { pred: aid(pred), true_graph: true_graph.clone(), false_graph: false_graph.clone() }, "mb.cond"),
-            SirOp::WhileLoop { condition, body, loop_vars } =>
-                (AirOp::WhileLoop { condition: condition.clone(), body: body.clone(), loop_vars: aids(loop_vars) }, "mb.while_loop"),
-            SirOp::MakeList { elems, dtype } =>
-                (AirOp::MakeList { elems: aids(elems), dtype: Self::dtype_repr_to_mir(dtype) }, "mb.make_list"),
+            SirOp::Cond { pred, true_graph, false_graph } => (
+                AirOp::Cond {
+                    pred: aid(pred),
+                    true_graph: true_graph.clone(),
+                    false_graph: false_graph.clone(),
+                },
+                "mb.cond",
+            ),
+            SirOp::WhileLoop { condition, body, loop_vars } => (
+                AirOp::WhileLoop {
+                    condition: condition.clone(),
+                    body: body.clone(),
+                    loop_vars: aids(loop_vars),
+                },
+                "mb.while_loop",
+            ),
+            SirOp::MakeList { elems, dtype } => {
+                (AirOp::MakeList { elems: aids(elems), dtype: dtype.clone() }, "mb.make_list")
+            }
             SirOp::ListLength { ls } => (AirOp::ListLength { ls: aid(ls) }, "mb.list_length"),
-            SirOp::ListWrite { ls, index, value } => (AirOp::ListWrite { ls: aid(ls), index: aid(index), value: aid(value) }, "mb.list_write"),
-            SirOp::ListRead { ls, index } => (AirOp::ListRead { ls: aid(ls), index: aid(index) }, "mb.list_read"),
-            SirOp::ListGather { ls, indices } => (AirOp::ListGather { ls: aid(ls), indices: aid(indices) }, "mb.list_gather"),
-            SirOp::ListScatter { ls, indices, values } => (AirOp::ListScatter { ls: aid(ls), indices: aid(indices), values: aid(values) }, "mb.list_scatter"),
+            SirOp::ListWrite { ls, index, value } => (
+                AirOp::ListWrite { ls: aid(ls), index: aid(index), value: aid(value) },
+                "mb.list_write",
+            ),
+            SirOp::ListRead { ls, index } => {
+                (AirOp::ListRead { ls: aid(ls), index: aid(index) }, "mb.list_read")
+            }
+            SirOp::ListGather { ls, indices } => {
+                (AirOp::ListGather { ls: aid(ls), indices: aid(indices) }, "mb.list_gather")
+            }
+            SirOp::ListScatter { ls, indices, values } => (
+                AirOp::ListScatter { ls: aid(ls), indices: aid(indices), values: aid(values) },
+                "mb.list_scatter",
+            ),
 
             // ─── Random ──────────────────────────────────────────
-            SirOp::RandomBernoulli { shape, prob, seed, dtype } =>
-                (AirOp::RandomBernoulli { shape: shape.clone(), prob: *prob, seed: *seed, dtype: Self::dtype_repr_to_mir(dtype) }, "mb.random_bernoulli"),
-            SirOp::RandomNormal { shape, mean, stddev, seed, dtype } =>
-                (AirOp::RandomNormal { shape: shape.clone(), mean: *mean, stddev: *stddev, seed: *seed, dtype: Self::dtype_repr_to_mir(dtype) }, "mb.random_normal"),
-            SirOp::RandomUniform { shape, low, high, seed, dtype } =>
-                (AirOp::RandomUniform { shape: shape.clone(), low: *low, high: *high, seed: *seed, dtype: Self::dtype_repr_to_mir(dtype) }, "mb.random_uniform"),
-            SirOp::RandomCategorical { logits, num_samples, seed, dtype } =>
-                (AirOp::RandomCategorical { logits: aid(logits), num_samples: *num_samples, seed: *seed, dtype: Self::dtype_repr_to_mir(dtype) }, "mb.random_categorical"),
+            SirOp::RandomBernoulli { shape, prob, seed, dtype } => (
+                AirOp::RandomBernoulli {
+                    shape: shape.clone(),
+                    prob: *prob,
+                    seed: *seed,
+                    dtype: dtype.clone(),
+                },
+                "mb.random_bernoulli",
+            ),
+            SirOp::RandomNormal { shape, mean, stddev, seed, dtype } => (
+                AirOp::RandomNormal {
+                    shape: shape.clone(),
+                    mean: *mean,
+                    stddev: *stddev,
+                    seed: *seed,
+                    dtype: dtype.clone(),
+                },
+                "mb.random_normal",
+            ),
+            SirOp::RandomUniform { shape, low, high, seed, dtype } => (
+                AirOp::RandomUniform {
+                    shape: shape.clone(),
+                    low: *low,
+                    high: *high,
+                    seed: *seed,
+                    dtype: dtype.clone(),
+                },
+                "mb.random_uniform",
+            ),
+            SirOp::RandomCategorical { logits, num_samples, seed, dtype } => (
+                AirOp::RandomCategorical {
+                    logits: aid(logits),
+                    num_samples: *num_samples,
+                    seed: *seed,
+                    dtype: dtype.clone(),
+                },
+                "mb.random_categorical",
+            ),
 
             // ─── Topk / Classify ─────────────────────────────────
-            SirOp::Topk { input, k, axis } => (AirOp::Topk { input: aid(input), k: *k, axis: *axis }, "mb.topk"),
+            SirOp::Topk { input, k, axis } => {
+                (AirOp::Topk { input: aid(input), k: *k, axis: *axis }, "mb.topk")
+            }
             SirOp::Classify { input } => (AirOp::Classify { input: aid(input) }, "mb.classify"),
 
             // ─── Legacy compat (handled explicitly above, fallback) ──
-            SirOp::ElementWise { .. } => (AirOp::ElementWise { op: ElementWiseOp::Add, inputs: vec![] }, "mb.add"),
+            SirOp::ElementWise { .. } => {
+                (AirOp::ElementWise { op: ElementWiseOp::Add, inputs: vec![] }, "mb.add")
+            }
 
             // ─── Composite ops (should be handled by decompositions, not here) ──
-            SirOp::LinearProjection { .. } | SirOp::AttentionBlock { .. } | SirOp::RMSNorm { .. } |
-            SirOp::RoPETransform { .. } | SirOp::DecodeStep { .. } | SirOp::Sampler { .. } |
-            SirOp::StateRead { .. } | SirOp::StateWrite { .. } =>
-                unreachable!("composite ops should be handled by explicit decompositions above"),
+            SirOp::LinearProjection { .. }
+            | SirOp::AttentionBlock { .. }
+            | SirOp::RMSNorm { .. }
+            | SirOp::RoPETransform { .. }
+            | SirOp::DecodeStep { .. }
+            | SirOp::Sampler { .. }
+            | SirOp::StateRead { .. }
+            | SirOp::StateWrite { .. } => {
+                unreachable!("composite ops should be handled by explicit decompositions above")
+            }
         }
     }
 }
@@ -1223,14 +2026,21 @@ impl LegalityRewritePass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::knowledge_query::{PassKnowledgeQuery, LegalityInfo, RiskInfo, PrecisionHazardInfo, ComputePlanPlacementInfo, NoKnowledge};
-    use ane_ir::sir::{SirGraph, SirNode, SirNodeId, SirOp, SirMetadata, TaskOrigin};
+    use crate::knowledge_query::{
+        ComputePlanPlacementInfo, LegalityInfo, NoKnowledge, PassKnowledgeQuery,
+        PrecisionHazardInfo, RiskInfo,
+    };
+    use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
 
     /// A mock knowledge query that reports mb.linear as ANE-legal with high confidence.
     struct MockLinearLegalKnowledge;
 
     impl PassKnowledgeQuery for MockLinearLegalKnowledge {
-        fn query_legality(&self, op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<LegalityInfo> {
+        fn query_legality(
+            &self,
+            op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<LegalityInfo> {
             if op_pattern == "mb.linear" {
                 Some(LegalityInfo {
                     ane_legal: true,
@@ -1243,15 +2053,28 @@ mod tests {
             }
         }
 
-        fn query_risk(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<RiskInfo> {
+        fn query_risk(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<RiskInfo> {
             None
         }
 
-        fn query_precision_hazard(&self, _op_pattern: &str, _current_dtype: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<PrecisionHazardInfo> {
+        fn query_precision_hazard(
+            &self,
+            _op_pattern: &str,
+            _current_dtype: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<PrecisionHazardInfo> {
             None
         }
 
-        fn query_compute_plan_placement(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<ComputePlanPlacementInfo> {
+        fn query_compute_plan_placement(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<ComputePlanPlacementInfo> {
             None
         }
     }
@@ -1260,7 +2083,11 @@ mod tests {
     struct MockLinearIllegalKnowledge;
 
     impl PassKnowledgeQuery for MockLinearIllegalKnowledge {
-        fn query_legality(&self, op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<LegalityInfo> {
+        fn query_legality(
+            &self,
+            op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<LegalityInfo> {
             if op_pattern == "mb.linear" {
                 Some(LegalityInfo {
                     ane_legal: false,
@@ -1273,15 +2100,28 @@ mod tests {
             }
         }
 
-        fn query_risk(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<RiskInfo> {
+        fn query_risk(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<RiskInfo> {
             None
         }
 
-        fn query_precision_hazard(&self, _op_pattern: &str, _current_dtype: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<PrecisionHazardInfo> {
+        fn query_precision_hazard(
+            &self,
+            _op_pattern: &str,
+            _current_dtype: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<PrecisionHazardInfo> {
             None
         }
 
-        fn query_compute_plan_placement(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<ComputePlanPlacementInfo> {
+        fn query_compute_plan_placement(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<ComputePlanPlacementInfo> {
             None
         }
     }
@@ -1293,7 +2133,12 @@ mod tests {
                     id: SirNodeId("weight".into()),
                     op: SirOp::ElementWise { op: ElementWiseOp::Mul, inputs: vec![] },
                     name: "weight".into(),
-                    metadata: SirMetadata { task_origin: TaskOrigin::Synthetic, model_id: None, quality_contract: None, precision_override: None },
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
                 },
                 SirNode {
                     id: SirNodeId("output".into()),
@@ -1303,7 +2148,12 @@ mod tests {
                         bias: Some("bias".into()),
                     },
                     name: "linear_out".into(),
-                    metadata: SirMetadata { task_origin: TaskOrigin::Synthetic, model_id: None, quality_contract: None, precision_override: None },
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
                 },
             ],
             inputs: vec![SirNodeId("input".into())],
@@ -1327,13 +2177,19 @@ mod tests {
         let air_illegal = pass.run(sir.clone(), &illegal_knowledge, None).unwrap();
 
         // After the Sprint 36 fix, LinearProjection → Conv1x1AsLinear (not MatMul)
-        let lp_node_no_knowledge: Vec<_> = air_no_knowledge.nodes.iter()
+        let lp_node_no_knowledge: Vec<_> = air_no_knowledge
+            .nodes
+            .iter()
             .filter(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }))
             .collect();
-        let lp_node_legal: Vec<_> = air_legal.nodes.iter()
+        let lp_node_legal: Vec<_> = air_legal
+            .nodes
+            .iter()
             .filter(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }))
             .collect();
-        let lp_node_illegal: Vec<_> = air_illegal.nodes.iter()
+        let lp_node_illegal: Vec<_> = air_illegal
+            .nodes
+            .iter()
             .filter(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }))
             .collect();
 
@@ -1348,13 +2204,15 @@ mod tests {
         assert!(
             legal_conf > no_k_conf,
             "Legal knowledge ({}) should produce higher confidence than NoKnowledge ({})",
-            legal_conf, no_k_conf
+            legal_conf,
+            no_k_conf
         );
 
         assert!(
             illegal_conf < no_k_conf,
             "Illegal knowledge ({}) should produce lower confidence than NoKnowledge ({})",
-            illegal_conf, no_k_conf
+            illegal_conf,
+            no_k_conf
         );
 
         let no_k_risk = lp_node_no_knowledge[0].fallback_risk;
@@ -1373,7 +2231,9 @@ mod tests {
         let no_knowledge = NoKnowledge;
         let air = pass.run(sir, &no_knowledge, None).unwrap();
 
-        let lp_node = air.nodes.iter()
+        let lp_node = air
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }))
             .expect("Expected Conv1x1AsLinear node");
 
@@ -1395,7 +2255,10 @@ mod tests {
         let has_matmul = air.nodes.iter().any(|n| matches!(n.op, AirOp::MatMul { .. }));
         let has_conv1x1 = air.nodes.iter().any(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }));
 
-        assert!(!has_matmul, "LinearProjection should NOT lower to MatMul — use Conv1x1AsLinear instead");
+        assert!(
+            !has_matmul,
+            "LinearProjection should NOT lower to MatMul — use Conv1x1AsLinear instead"
+        );
         assert!(has_conv1x1, "LinearProjection should lower to Conv1x1AsLinear");
     }
 
@@ -1419,42 +2282,55 @@ mod tests {
         let no_knowledge = NoKnowledge;
         let air = pass.run(sir_adapted, &no_knowledge, None).unwrap();
 
-        let linear_air_node = air.nodes.iter()
+        let linear_air_node = air
+            .nodes
+            .iter()
             .find(|n| n.name == "linear_out")
             .expect("Expected linear_out AIR node");
-        assert_eq!(linear_air_node.precision_override, Some("fp32".to_string()),
-            "Precision override must propagate from SIR to AIR");
+        assert_eq!(
+            linear_air_node.precision_override,
+            Some("fp32".to_string()),
+            "Precision override must propagate from SIR to AIR"
+        );
 
         let mil_lower = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let mirs = mil_lower.run(&air, &shard_plan).unwrap();
 
         // After the fix, Conv1x1AsLinear → MILLinear (not MatMul)
-        let linear_node = mirs[0].nodes.iter()
+        let linear_node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILLinear { .. }))
             .expect("Expected MILLinear node");
-        assert_eq!(linear_node.dtype, MilDtype::Fp32,
-            "MILLinear node dtype must be fp32 when AIR precision_override is fp32");
+        assert_eq!(
+            linear_node.dtype,
+            MilDtype::Fp32,
+            "MILLinear node dtype must be fp32 when AIR precision_override is fp32"
+        );
     }
 
     /// Test that AttentionBlock decomposes into the expected AIR ops.
     #[test]
     fn test_attention_block_decomposition() {
         let sir = SirGraph {
-            nodes: vec![
-                SirNode {
-                    id: SirNodeId("attn".into()),
-                    op: SirOp::AttentionBlock {
-                        q: SirNodeId("input".into()),
-                        k: SirNodeId("input".into()),
-                        v: SirNodeId("input".into()),
-                        mask: None,
-                        rope: None,
-                    },
-                    name: "attn".into(),
-                    metadata: SirMetadata { task_origin: TaskOrigin::Synthetic, model_id: None, quality_contract: None, precision_override: None },
+            nodes: vec![SirNode {
+                id: SirNodeId("attn".into()),
+                op: SirOp::AttentionBlock {
+                    q: SirNodeId("input".into()),
+                    k: SirNodeId("input".into()),
+                    v: SirNodeId("input".into()),
+                    mask: None,
+                    rope: None,
                 },
-            ],
+                name: "attn".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("attn".into())],
         };
@@ -1467,12 +2343,25 @@ mod tests {
         let has_slice = air.nodes.iter().any(|n| matches!(n.op, AirOp::SliceByIndex { .. }));
         let has_reshape = air.nodes.iter().any(|n| matches!(n.op, AirOp::Reshape { .. }));
         let has_transpose = air.nodes.iter().any(|n| matches!(n.op, AirOp::Transpose { .. }));
-        let has_sdpa = air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
+        let has_sdpa =
+            air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
 
-        assert!(has_qkv, "AttentionBlock decomposition must include Conv1x1AsLinear for QKV projection");
-        assert!(has_slice, "AttentionBlock decomposition must include SliceByIndex for Q/K/V split");
-        assert!(has_reshape, "AttentionBlock decomposition must include Reshape for multi-head layout");
-        assert!(has_transpose, "AttentionBlock decomposition must include Transpose for multi-head layout");
+        assert!(
+            has_qkv,
+            "AttentionBlock decomposition must include Conv1x1AsLinear for QKV projection"
+        );
+        assert!(
+            has_slice,
+            "AttentionBlock decomposition must include SliceByIndex for Q/K/V split"
+        );
+        assert!(
+            has_reshape,
+            "AttentionBlock decomposition must include Reshape for multi-head layout"
+        );
+        assert!(
+            has_transpose,
+            "AttentionBlock decomposition must include Transpose for multi-head layout"
+        );
         assert!(has_sdpa, "AttentionBlock decomposition must include ScaledDotProductAttention");
     }
 
@@ -1480,17 +2369,20 @@ mod tests {
     #[test]
     fn test_decode_step_decomposition() {
         let sir = SirGraph {
-            nodes: vec![
-                SirNode {
-                    id: SirNodeId("decode".into()),
-                    op: SirOp::DecodeStep {
-                        token: SirNodeId("input".into()),
-                        state_map: vec!["k_cache".into(), "v_cache".into()],
-                    },
-                    name: "decode".into(),
-                    metadata: SirMetadata { task_origin: TaskOrigin::Synthetic, model_id: None, quality_contract: None, precision_override: None },
+            nodes: vec![SirNode {
+                id: SirNodeId("decode".into()),
+                op: SirOp::DecodeStep {
+                    token: SirNodeId("input".into()),
+                    state_map: vec!["k_cache".into(), "v_cache".into()],
                 },
-            ],
+                name: "decode".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("decode".into())],
         };
@@ -1499,32 +2391,46 @@ mod tests {
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
         let has_state_read = air.nodes.iter().any(|n| matches!(n.op, AirOp::StateReadFixed { .. }));
-        let has_state_write = air.nodes.iter().any(|n| matches!(n.op, AirOp::StateWriteFixed { .. }));
-        let has_sdpa = air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
+        let has_state_write =
+            air.nodes.iter().any(|n| matches!(n.op, AirOp::StateWriteFixed { .. }));
+        let has_sdpa =
+            air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
         let has_linear = air.nodes.iter().any(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }));
 
-        assert!(has_state_read, "DecodeStep decomposition must include StateReadFixed for KV cache");
-        assert!(has_state_write, "DecodeStep decomposition must include StateWriteFixed for KV cache update");
+        assert!(
+            has_state_read,
+            "DecodeStep decomposition must include StateReadFixed for KV cache"
+        );
+        assert!(
+            has_state_write,
+            "DecodeStep decomposition must include StateWriteFixed for KV cache update"
+        );
         assert!(has_sdpa, "DecodeStep decomposition must include ScaledDotProductAttention");
-        assert!(has_linear, "DecodeStep decomposition must include Conv1x1AsLinear for QKV and output projections");
+        assert!(
+            has_linear,
+            "DecodeStep decomposition must include Conv1x1AsLinear for QKV and output projections"
+        );
     }
 
     /// Test that RMSNorm decomposes into ReduceMean + Rsqrt + Mul + Mul.
     #[test]
     fn test_rms_norm_decomposition() {
         let sir = SirGraph {
-            nodes: vec![
-                SirNode {
-                    id: SirNodeId("norm".into()),
-                    op: SirOp::RMSNorm {
-                        input: SirNodeId("input".into()),
-                        weight: "gamma".into(),
-                        epsilon: 1e-5,
-                    },
-                    name: "norm".into(),
-                    metadata: SirMetadata { task_origin: TaskOrigin::Synthetic, model_id: None, quality_contract: None, precision_override: None },
+            nodes: vec![SirNode {
+                id: SirNodeId("norm".into()),
+                op: SirOp::RMSNorm {
+                    input: SirNodeId("input".into()),
+                    weight: "gamma".into(),
+                    epsilon: 1e-5,
                 },
-            ],
+                name: "norm".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("norm".into())],
         };
@@ -1534,7 +2440,10 @@ mod tests {
 
         let has_reduce_mean = air.nodes.iter().any(|n| matches!(n.op, AirOp::ReduceMean { .. }));
         let has_rsqrt = air.nodes.iter().any(|n| matches!(n.op, AirOp::Rsqrt { .. }));
-        let has_mul = air.nodes.iter().any(|n| matches!(n.op, AirOp::ElementWise { op: ElementWiseOp::Mul, .. }));
+        let has_mul = air
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, AirOp::ElementWise { op: ElementWiseOp::Mul, .. }));
 
         assert!(has_reduce_mean, "RMSNorm decomposition must include ReduceMean");
         assert!(has_rsqrt, "RMSNorm decomposition must include Rsqrt");
@@ -1545,17 +2454,20 @@ mod tests {
     #[test]
     fn test_rope_decomposition() {
         let sir = SirGraph {
-            nodes: vec![
-                SirNode {
-                    id: SirNodeId("rope".into()),
-                    op: SirOp::RoPETransform {
-                        input: SirNodeId("input".into()),
-                        tables: "rope_tables".into(),
-                    },
-                    name: "rope".into(),
-                    metadata: SirMetadata { task_origin: TaskOrigin::Synthetic, model_id: None, quality_contract: None, precision_override: None },
+            nodes: vec![SirNode {
+                id: SirNodeId("rope".into()),
+                op: SirOp::RoPETransform {
+                    input: SirNodeId("input".into()),
+                    tables: "rope_tables".into(),
                 },
-            ],
+                name: "rope".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("rope".into())],
         };
@@ -1574,19 +2486,22 @@ mod tests {
     #[test]
     fn test_sampler_decomposition() {
         let sir = SirGraph {
-            nodes: vec![
-                SirNode {
-                    id: SirNodeId("sampler".into()),
-                    op: SirOp::Sampler {
-                        logits: SirNodeId("input".into()),
-                        temperature: 1.0,
-                        top_p: 0.9,
-                        rep_penalty: 1.0,
-                    },
-                    name: "sampler".into(),
-                    metadata: SirMetadata { task_origin: TaskOrigin::Synthetic, model_id: None, quality_contract: None, precision_override: None },
+            nodes: vec![SirNode {
+                id: SirNodeId("sampler".into()),
+                op: SirOp::Sampler {
+                    logits: SirNodeId("input".into()),
+                    temperature: 1.0,
+                    top_p: 0.9,
+                    rep_penalty: 1.0,
                 },
-            ],
+                name: "sampler".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("sampler".into())],
         };
@@ -1609,20 +2524,23 @@ mod tests {
     #[test]
     fn test_attention_decomposition_with_context_has_real_shapes() {
         let sir = SirGraph {
-            nodes: vec![
-                SirNode {
-                    id: SirNodeId("attn".into()),
-                    op: SirOp::AttentionBlock {
-                        q: SirNodeId("input".into()),
-                        k: SirNodeId("input".into()),
-                        v: SirNodeId("input".into()),
-                        mask: None,
-                        rope: None,
-                    },
-                    name: "attn".into(),
-                    metadata: SirMetadata { task_origin: TaskOrigin::Synthetic, model_id: None, quality_contract: None, precision_override: None },
+            nodes: vec![SirNode {
+                id: SirNodeId("attn".into()),
+                op: SirOp::AttentionBlock {
+                    q: SirNodeId("input".into()),
+                    k: SirNodeId("input".into()),
+                    v: SirNodeId("input".into()),
+                    mask: None,
+                    rope: None,
                 },
-            ],
+                name: "attn".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("attn".into())],
         };
@@ -1633,21 +2551,21 @@ mod tests {
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // Find the Q slice: should have begin=[0,0,0], end=[2,16,128]
-        let q_slice = air.nodes.iter()
-            .find(|n| n.id.0 == "attn_q")
-            .expect("Expected attn_q node");
+        let q_slice = air.nodes.iter().find(|n| n.id.0 == "attn_q").expect("Expected attn_q node");
         match &q_slice.op {
             AirOp::SliceByIndex { begin, end, .. } => {
                 assert_eq!(begin, &vec![0, 0, 0], "Q slice begin should be [0, 0, 0]");
-                assert_eq!(end, &vec![2, 16, 128], "Q slice end should be [batch, seq, embed] = [2, 16, 128]");
+                assert_eq!(
+                    end,
+                    &vec![2, 16, 128],
+                    "Q slice end should be [batch, seq, embed] = [2, 16, 128]"
+                );
             }
             other => panic!("Expected SliceByIndex for attn_q, got {:?}", other),
         }
 
         // Find the K slice: should have begin=[0,0,128], end=[2,16,256]
-        let k_slice = air.nodes.iter()
-            .find(|n| n.id.0 == "attn_k")
-            .expect("Expected attn_k node");
+        let k_slice = air.nodes.iter().find(|n| n.id.0 == "attn_k").expect("Expected attn_k node");
         match &k_slice.op {
             AirOp::SliceByIndex { begin, end, .. } => {
                 assert_eq!(begin, &vec![0, 0, 128], "K slice begin should be [0, 0, embed]");
@@ -1657,23 +2575,32 @@ mod tests {
         }
 
         // Find a reshape node and verify it has [batch, seq, heads, head_dim]
-        let q_4d = air.nodes.iter()
-            .find(|n| n.id.0 == "attn_q_4d")
-            .expect("Expected attn_q_4d node");
+        let q_4d =
+            air.nodes.iter().find(|n| n.id.0 == "attn_q_4d").expect("Expected attn_q_4d node");
         match &q_4d.op {
             AirOp::Reshape { target_shape, .. } => {
-                assert_eq!(target_shape, &vec![2, 16, 4, 32], "Q reshape should be [batch, seq, heads, head_dim] = [2, 16, 4, 32]");
+                assert_eq!(
+                    target_shape,
+                    &vec![2, 16, 4, 32],
+                    "Q reshape should be [batch, seq, heads, head_dim] = [2, 16, 4, 32]"
+                );
             }
             other => panic!("Expected Reshape for attn_q_4d, got {:?}", other),
         }
 
         // Verify attn_flat reshape has [batch, seq, embed]
-        let attn_flat = air.nodes.iter()
+        let attn_flat = air
+            .nodes
+            .iter()
             .find(|n| n.id.0 == "attn_attn_flat")
             .expect("Expected attn_attn_flat node");
         match &attn_flat.op {
             AirOp::Reshape { target_shape, .. } => {
-                assert_eq!(target_shape, &vec![2, 16, 128], "attn_flat reshape should be [batch, seq, embed] = [2, 16, 128]");
+                assert_eq!(
+                    target_shape,
+                    &vec![2, 16, 128],
+                    "attn_flat reshape should be [batch, seq, embed] = [2, 16, 128]"
+                );
             }
             other => panic!("Expected Reshape for attn_attn_flat, got {:?}", other),
         }
@@ -1683,20 +2610,23 @@ mod tests {
     #[test]
     fn test_attention_decomposition_without_context_has_placeholder_shapes() {
         let sir = SirGraph {
-            nodes: vec![
-                SirNode {
-                    id: SirNodeId("attn".into()),
-                    op: SirOp::AttentionBlock {
-                        q: SirNodeId("input".into()),
-                        k: SirNodeId("input".into()),
-                        v: SirNodeId("input".into()),
-                        mask: None,
-                        rope: None,
-                    },
-                    name: "attn".into(),
-                    metadata: SirMetadata { task_origin: TaskOrigin::Synthetic, model_id: None, quality_contract: None, precision_override: None },
+            nodes: vec![SirNode {
+                id: SirNodeId("attn".into()),
+                op: SirOp::AttentionBlock {
+                    q: SirNodeId("input".into()),
+                    k: SirNodeId("input".into()),
+                    v: SirNodeId("input".into()),
+                    mask: None,
+                    rope: None,
                 },
-            ],
+                name: "attn".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("attn".into())],
         };
@@ -1705,12 +2635,14 @@ mod tests {
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
         // Without context, slices should have zero-filled end bounds
-        let q_slice = air.nodes.iter()
-            .find(|n| n.id.0 == "attn_q")
-            .expect("Expected attn_q node");
+        let q_slice = air.nodes.iter().find(|n| n.id.0 == "attn_q").expect("Expected attn_q node");
         match &q_slice.op {
             AirOp::SliceByIndex { end, .. } => {
-                assert_eq!(end, &vec![0, 0, 0], "Without context, Q slice end should be placeholder [0, 0, 0]");
+                assert_eq!(
+                    end,
+                    &vec![0, 0, 0],
+                    "Without context, Q slice end should be placeholder [0, 0, 0]"
+                );
             }
             _ => panic!("Expected SliceByIndex"),
         }
@@ -1720,17 +2652,20 @@ mod tests {
     #[test]
     fn test_decode_step_decomposition_with_context_has_real_shapes() {
         let sir = SirGraph {
-            nodes: vec![
-                SirNode {
-                    id: SirNodeId("decode".into()),
-                    op: SirOp::DecodeStep {
-                        token: SirNodeId("input".into()),
-                        state_map: vec!["k_cache".into(), "v_cache".into()],
-                    },
-                    name: "decode".into(),
-                    metadata: SirMetadata { task_origin: TaskOrigin::Synthetic, model_id: None, quality_contract: None, precision_override: None },
+            nodes: vec![SirNode {
+                id: SirNodeId("decode".into()),
+                op: SirOp::DecodeStep {
+                    token: SirNodeId("input".into()),
+                    state_map: vec!["k_cache".into(), "v_cache".into()],
                 },
-            ],
+                name: "decode".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("decode".into())],
         };
@@ -1741,9 +2676,8 @@ mod tests {
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // Q slice: begin=[0,0], end=[1,128]
-        let q_slice = air.nodes.iter()
-            .find(|n| n.id.0 == "decode_q")
-            .expect("Expected decode_q node");
+        let q_slice =
+            air.nodes.iter().find(|n| n.id.0 == "decode_q").expect("Expected decode_q node");
         match &q_slice.op {
             AirOp::SliceByIndex { begin, end, .. } => {
                 assert_eq!(begin, &vec![0, 0]);
@@ -1753,45 +2687,63 @@ mod tests {
         }
 
         // K cache state read: shape=[64, 128]
-        let k_cache_read = air.nodes.iter()
+        let k_cache_read = air
+            .nodes
+            .iter()
             .find(|n| n.id.0 == "decode_k_cache_read")
             .expect("Expected decode_k_cache_read node");
         match &k_cache_read.op {
             AirOp::StateReadFixed { shape, .. } => {
-                assert_eq!(shape, &vec![64, 128], "K cache state shape should be [kv_len, embed_dim] = [64, 128]");
+                assert_eq!(
+                    shape,
+                    &vec![64, 128],
+                    "K cache state shape should be [kv_len, embed_dim] = [64, 128]"
+                );
             }
             other => panic!("Expected StateReadFixed for k_cache_read, got {:?}", other),
         }
 
         // Q reshape: [batch, heads, 1, head_dim] = [1, 4, 1, 32]
-        let q_4d = air.nodes.iter()
-            .find(|n| n.id.0 == "decode_q_4d")
-            .expect("Expected decode_q_4d node");
+        let q_4d =
+            air.nodes.iter().find(|n| n.id.0 == "decode_q_4d").expect("Expected decode_q_4d node");
         match &q_4d.op {
             AirOp::Reshape { target_shape, .. } => {
-                assert_eq!(target_shape, &vec![1, 4, 1, 32], "Q 4D reshape should be [batch, heads, 1, head_dim] = [1, 4, 1, 32]");
+                assert_eq!(
+                    target_shape,
+                    &vec![1, 4, 1, 32],
+                    "Q 4D reshape should be [batch, heads, 1, head_dim] = [1, 4, 1, 32]"
+                );
             }
             other => panic!("Expected Reshape for decode_q_4d, got {:?}", other),
         }
 
         // K reshape: [1, heads, kv_len, head_dim] = [1, 4, 64, 32]
-        let k_4d = air.nodes.iter()
-            .find(|n| n.id.0 == "decode_k_4d")
-            .expect("Expected decode_k_4d node");
+        let k_4d =
+            air.nodes.iter().find(|n| n.id.0 == "decode_k_4d").expect("Expected decode_k_4d node");
         match &k_4d.op {
             AirOp::Reshape { target_shape, .. } => {
-                assert_eq!(target_shape, &vec![1, 4, 64, 32], "K 4D reshape should be [1, heads, kv_len, head_dim] = [1, 4, 64, 32]");
+                assert_eq!(
+                    target_shape,
+                    &vec![1, 4, 64, 32],
+                    "K 4D reshape should be [1, heads, kv_len, head_dim] = [1, 4, 64, 32]"
+                );
             }
             other => panic!("Expected Reshape for decode_k_4d, got {:?}", other),
         }
 
         // attn_flat reshape: [batch, embed] = [1, 128]
-        let attn_flat = air.nodes.iter()
+        let attn_flat = air
+            .nodes
+            .iter()
             .find(|n| n.id.0 == "decode_attn_flat")
             .expect("Expected decode_attn_flat node");
         match &attn_flat.op {
             AirOp::Reshape { target_shape, .. } => {
-                assert_eq!(target_shape, &vec![1, 128], "attn_flat reshape should be [batch, embed] = [1, 128]");
+                assert_eq!(
+                    target_shape,
+                    &vec![1, 128],
+                    "attn_flat reshape should be [batch, embed] = [1, 128]"
+                );
             }
             other => panic!("Expected Reshape for decode_attn_flat, got {:?}", other),
         }
@@ -1801,17 +2753,20 @@ mod tests {
     #[test]
     fn test_decode_step_decomposition_without_context_has_placeholder_shapes() {
         let sir = SirGraph {
-            nodes: vec![
-                SirNode {
-                    id: SirNodeId("decode".into()),
-                    op: SirOp::DecodeStep {
-                        token: SirNodeId("input".into()),
-                        state_map: vec!["k_cache".into(), "v_cache".into()],
-                    },
-                    name: "decode".into(),
-                    metadata: SirMetadata { task_origin: TaskOrigin::Synthetic, model_id: None, quality_contract: None, precision_override: None },
+            nodes: vec![SirNode {
+                id: SirNodeId("decode".into()),
+                op: SirOp::DecodeStep {
+                    token: SirNodeId("input".into()),
+                    state_map: vec!["k_cache".into(), "v_cache".into()],
                 },
-            ],
+                name: "decode".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("decode".into())],
         };
@@ -1820,12 +2775,18 @@ mod tests {
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
         // Without context, state read shapes should be zero
-        let k_cache_read = air.nodes.iter()
+        let k_cache_read = air
+            .nodes
+            .iter()
             .find(|n| n.id.0 == "decode_k_cache_read")
             .expect("Expected decode_k_cache_read node");
         match &k_cache_read.op {
             AirOp::StateReadFixed { shape, .. } => {
-                assert_eq!(shape, &vec![0, 0], "Without context, state shape should be placeholder [0, 0]");
+                assert_eq!(
+                    shape,
+                    &vec![0, 0],
+                    "Without context, state shape should be placeholder [0, 0]"
+                );
             }
             other => panic!("Expected StateReadFixed, got {:?}", other),
         }

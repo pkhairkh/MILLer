@@ -1,0 +1,1677 @@
+{
+  "version": "1.0.0",
+  "source": "ane-constraints-docs/04-operation-support/",
+  "description": "Per-family ANE op legality matrix. Each entry documents whether a MIL op can land on the ANE for a given AneFamily, and what constraints apply.",
+  "ane_landing_ops": [
+    {
+      "mil_name": "linear",
+      "anec_dialect": "ANELinear",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["input_rank_lt_5", "fp16_or_fp32_weight"]
+    },
+    {
+      "mil_name": "matmul",
+      "anec_dialect": "ANEMatMul",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "fp16_inputs"]
+    },
+    {
+      "mil_name": "einsum",
+      "anec_dialect": "ANEMatMul",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "partial",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["limited_equation_set", "rank_le_5"]
+    },
+    {
+      "mil_name": "conv",
+      "anec_dialect": "ANEConv",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "kernel_limit_per_family", "dilation_limit_per_family"]
+    },
+    {
+      "mil_name": "conv_transpose",
+      "anec_dialect": "ANEConv",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "no_dilation"]
+    },
+    {
+      "mil_name": "scaled_dot_product_attention",
+      "anec_dialect": "ANEScaledDotProductAttention",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "unreliable",
+        "A13": "unreliable",
+        "A14": "unreliable",
+        "A15": "unreliable",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["3_or_4_inputs", "operand_rank_le_4", "k_v_shape_equality", "reliable_only_a16_plus"]
+    },
+    {
+      "mil_name": "max_pool",
+      "anec_dialect": "ANEPool",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "avg_pool",
+      "anec_dialect": "ANEPool",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "l2_pool",
+      "anec_dialect": "ANEPool",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "resize",
+      "anec_dialect": "ANEResize",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "partial",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["bilinear_or_nearest", "rank_4_only"]
+    },
+    {
+      "mil_name": "resize_nearest_neighbor",
+      "anec_dialect": "ANEResize",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_4_only"]
+    },
+    {
+      "mil_name": "resize_bilinear",
+      "anec_dialect": "ANEResize",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_4_only"]
+    },
+    {
+      "mil_name": "upsample_nearest_neighbor",
+      "anec_dialect": "ANEResize",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_4_only"]
+    },
+    {
+      "mil_name": "upsample_bilinear",
+      "anec_dialect": "ANEResize",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_4_only"]
+    },
+    {
+      "mil_name": "crop_resize",
+      "anec_dialect": "ANEResize",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_4_only"]
+    },
+    {
+      "mil_name": "resample",
+      "anec_dialect": "ANEResample",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "depth_to_space",
+      "anec_dialect": "ANEDepthSpace",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_4_only"]
+    },
+    {
+      "mil_name": "space_to_depth",
+      "anec_dialect": "ANEDepthSpace",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_4_only"]
+    },
+    {
+      "mil_name": "pixel_shuffle",
+      "anec_dialect": "ANEDepthSpace",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_4_only"]
+    },
+    {
+      "mil_name": "pixel_unshuffle",
+      "anec_dialect": "ANEDepthSpace",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_4_only"]
+    },
+    {
+      "mil_name": "batch_to_space",
+      "anec_dialect": "ANEBatchSpace",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "space_to_batch",
+      "anec_dialect": "ANEBatchSpace",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "add",
+      "anec_dialect": "PEFUSEDElementwiseBinary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "fp16_only_broadcast",
+        "A12": "fp16_only_broadcast",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["broadcast_fp16_only_pre_a13", "rank_le_5"]
+    },
+    {
+      "mil_name": "mul",
+      "anec_dialect": "PEFUSEDElementwiseBinary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "fp16_only_broadcast",
+        "A12": "fp16_only_broadcast",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["broadcast_fp16_only_pre_a13", "rank_le_5"]
+    },
+    {
+      "mil_name": "sub",
+      "anec_dialect": "PEFUSEDElementwiseBinary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "fp16_only_broadcast",
+        "A12": "fp16_only_broadcast",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["broadcast_fp16_only_pre_a13", "rank_le_5"]
+    },
+    {
+      "mil_name": "maximum",
+      "anec_dialect": "PEFUSEDElementwiseBinary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "unsupported",
+        "A13": "unsupported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["a14_plus_elementwise_binary", "rank_le_5"]
+    },
+    {
+      "mil_name": "minimum",
+      "anec_dialect": "PEFUSEDElementwiseBinary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "unsupported",
+        "A13": "unsupported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["a14_plus_elementwise_binary", "rank_le_5"]
+    },
+    {
+      "mil_name": "real_div",
+      "anec_dialect": "PEFUSEDElementwiseBinary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "unsupported",
+        "A13": "unsupported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["a14_plus_elementwise_binary", "rank_le_5"]
+    },
+    {
+      "mil_name": "floor_div",
+      "anec_dialect": "PEFUSEDElementwiseBinary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "unsupported",
+        "A13": "unsupported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["a14_plus_elementwise_binary", "rank_le_5"]
+    },
+    {
+      "mil_name": "mod",
+      "anec_dialect": "PEFUSEDElementwiseBinary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "unsupported",
+        "A13": "unsupported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["a14_plus_elementwise_binary", "rank_le_5"]
+    },
+    {
+      "mil_name": "pow",
+      "anec_dialect": "PEFUSEDElementwiseBinary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "unsupported",
+        "A13": "unsupported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["a14_plus_elementwise_binary", "rank_le_5"]
+    },
+    {
+      "mil_name": "equal",
+      "anec_dialect": "PEFUSEDCompare",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "unsupported",
+        "A13": "unsupported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["a14_plus", "rank_le_5"]
+    },
+    {
+      "mil_name": "not_equal",
+      "anec_dialect": "PEFUSEDCompare",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "unsupported",
+        "A13": "unsupported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["a14_plus", "rank_le_5"]
+    },
+    {
+      "mil_name": "greater",
+      "anec_dialect": "PEFUSEDCompare",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "unsupported",
+        "A13": "unsupported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["a14_plus", "rank_le_5"]
+    },
+    {
+      "mil_name": "greater_equal",
+      "anec_dialect": "PEFUSEDCompare",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "unsupported",
+        "A13": "unsupported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["a14_plus", "rank_le_5"]
+    },
+    {
+      "mil_name": "less",
+      "anec_dialect": "PEFUSEDCompare",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "unsupported",
+        "A13": "unsupported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["a14_plus", "rank_le_5"]
+    },
+    {
+      "mil_name": "less_equal",
+      "anec_dialect": "PEFUSEDCompare",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "unsupported",
+        "A13": "unsupported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["a14_plus", "rank_le_5"]
+    },
+    {
+      "mil_name": "abs",
+      "anec_dialect": "PEFUSEDElementwiseUnary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "neg",
+      "anec_dialect": "PEFUSEDElementwiseUnary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "sigmoid",
+      "anec_dialect": "PEFUSEDActivation",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "tanh",
+      "anec_dialect": "PEFUSEDActivation",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "relu",
+      "anec_dialect": "PEFUSEDActivation",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "gelu",
+      "anec_dialect": "PEFUSEDActivation",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "tanh_approx_preferred"]
+    },
+    {
+      "mil_name": "silu",
+      "anec_dialect": "PEFUSEDActivation",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "leaky_relu",
+      "anec_dialect": "PEFUSEDActivation",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "clip",
+      "anec_dialect": "PEFUSEDActivation",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "exp",
+      "anec_dialect": "PEFUSEDElementwiseUnary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "precision_hazard_fp16"]
+    },
+    {
+      "mil_name": "sqrt",
+      "anec_dialect": "PEFUSEDElementwiseUnary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "rsqrt",
+      "anec_dialect": "PEFUSEDElementwiseUnary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "precision_hazard_fp16"]
+    },
+    {
+      "mil_name": "cast",
+      "anec_dialect": "PEFUSEDConvert",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "limited_type_pairs"]
+    },
+    {
+      "mil_name": "softmax",
+      "anec_dialect": "PEFUSEDSoftmax",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "axis_must_be_inner_dim"]
+    },
+    {
+      "mil_name": "where",
+      "anec_dialect": "PEFUSEDSelect",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "select",
+      "anec_dialect": "PEFUSEDSelect",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "reduce_sum",
+      "anec_dialect": "PEFUSEDReduce",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "limited_axes"]
+    },
+    {
+      "mil_name": "reduce_mean",
+      "anec_dialect": "PEFUSEDReduce",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "limited_axes"]
+    },
+    {
+      "mil_name": "reduce_max",
+      "anec_dialect": "PEFUSEDReduce",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "limited_axes"]
+    },
+    {
+      "mil_name": "reduce_min",
+      "anec_dialect": "PEFUSEDReduce",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "limited_axes"]
+    },
+    {
+      "mil_name": "layer_norm",
+      "anec_dialect": "PEFUSEDLayerNorm",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "unsupported",
+        "A13": "unsupported",
+        "A14": "unsupported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["a15_plus_only", "rank_le_5"]
+    },
+    {
+      "mil_name": "batch_norm",
+      "anec_dialect": "PEFUSEDBatchNorm",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "instance_norm",
+      "anec_dialect": "PEFUSEDInstanceNorm",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "reshape",
+      "anec_dialect": "PEFUSEDReshape",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "no_dynamic_shape"]
+    },
+    {
+      "mil_name": "transpose",
+      "anec_dialect": "TRANSPOSE",
+      "engine": "TransposeEngine",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "concat",
+      "anec_dialect": "PEFUSEDConcat",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "limited_concat_count"]
+    },
+    {
+      "mil_name": "split",
+      "anec_dialect": "PEFUSEDSplit",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "slice_by_index",
+      "anec_dialect": "PEFUSEDSlice",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "partial",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "limited_stride_support"]
+    },
+    {
+      "mil_name": "pad",
+      "anec_dialect": "PEFUSEDPad",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "constant_or_reflection_mode"]
+    },
+    {
+      "mil_name": "gather",
+      "anec_dialect": "PEFUSEDGather",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "limited_index_range"]
+    },
+    {
+      "mil_name": "topk",
+      "anec_dialect": "PEFUSEDTopK",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "limited_k"]
+    },
+    {
+      "mil_name": "quantize",
+      "anec_dialect": "PEFUSEDQuantize",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "dequantize",
+      "anec_dialect": "PEFUSEDDequantize",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "tile",
+      "anec_dialect": "PEFUSEDTile",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "reverse",
+      "anec_dialect": "PEFUSEDReverse",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "expand_dims",
+      "anec_dialect": "PEFUSEDExpandDims",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "squeeze",
+      "anec_dialect": "PEFUSEDSqueeze",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "slice_update",
+      "anec_dialect": "PEFUSEDSliceUpdate",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "cos",
+      "anec_dialect": "PEFUSEDElementwiseUnary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "sin",
+      "anec_dialect": "PEFUSEDElementwiseUnary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "logical_and",
+      "anec_dialect": "PEFUSEDLogicalBinary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "logical_or",
+      "anec_dialect": "PEFUSEDLogicalBinary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "logical_not",
+      "anec_dialect": "PEFUSEDLogicalUnary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "prelu",
+      "anec_dialect": "PEFUSEDActivation",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "elu",
+      "anec_dialect": "PEFUSEDActivation",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "softsign",
+      "anec_dialect": "PEFUSEDActivation",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "thresholded_relu",
+      "anec_dialect": "PEFUSEDActivation",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "relu6",
+      "anec_dialect": "PEFUSEDActivation",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "scaled_tanh",
+      "anec_dialect": "PEFUSEDActivation",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "sigmoid_hard",
+      "anec_dialect": "PEFUSEDActivation",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "reduce_prod",
+      "anec_dialect": "PEFUSEDReduce",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "reduce_argmax",
+      "anec_dialect": "PEFUSEDReduce",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "reduce_argmin",
+      "anec_dialect": "PEFUSEDReduce",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "affine",
+      "anec_dialect": "ANEResize",
+      "engine": "NE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_4_only"]
+    },
+    {
+      "mil_name": "flatten2d",
+      "anec_dialect": "PEFUSEDReshape",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "stack",
+      "anec_dialect": "PEFUSEDStack",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "l2_norm",
+      "anec_dialect": "PEFUSEDNorm",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "gather_nd",
+      "anec_dialect": "PEFUSEDGather",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "unsupported",
+        "A13": "unsupported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["a14_plus", "rank_le_5"]
+    },
+    {
+      "mil_name": "argsort",
+      "anec_dialect": "PEFUSEDArgSort",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "identity",
+      "anec_dialect": "PEFUSEDIdentity",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "supported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "logical_xor",
+      "anec_dialect": "PEFUSEDLogicalBinary",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "sliding_windows",
+      "anec_dialect": "PEFUSEDSlidingWindows",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "slice_by_size",
+      "anec_dialect": "PEFUSEDSlice",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5"]
+    },
+    {
+      "mil_name": "reshape_like",
+      "anec_dialect": "PEFUSEDReshape",
+      "engine": "PE",
+      "families": {
+        "A11Legacy": "unsupported",
+        "A12": "supported",
+        "A13": "supported",
+        "A14": "supported",
+        "A15": "supported",
+        "A16": "supported",
+        "A17": "supported",
+        "A18": "supported"
+      },
+      "key_constraints": ["rank_le_5", "no_dynamic_shape"]
+    }
+  ],
+  "cpu_only_ops": [
+    { "mil_name": "scatter", "reason_code": "Scatter" },
+    { "mil_name": "scatter_along_axis", "reason_code": "Scatter" },
+    { "mil_name": "scatter_nd", "reason_code": "Scatter" },
+    { "mil_name": "non_maximum_suppression", "reason_code": "Scatter" },
+    { "mil_name": "rnn", "reason_code": "RNN" },
+    { "mil_name": "gru", "reason_code": "RNN" },
+    { "mil_name": "lstm", "reason_code": "RNN" },
+    { "mil_name": "cond", "reason_code": "ControlFlow" },
+    { "mil_name": "while_loop", "reason_code": "ControlFlow" },
+    { "mil_name": "make_list", "reason_code": "ControlFlow" },
+    { "mil_name": "list_length", "reason_code": "ControlFlow" },
+    { "mil_name": "list_write", "reason_code": "ControlFlow" },
+    { "mil_name": "list_read", "reason_code": "ControlFlow" },
+    { "mil_name": "list_gather", "reason_code": "ControlFlow" },
+    { "mil_name": "list_scatter", "reason_code": "ControlFlow" },
+    { "mil_name": "random_bernoulli", "reason_code": "Random" },
+    { "mil_name": "random_normal", "reason_code": "Random" },
+    { "mil_name": "random_uniform", "reason_code": "Random" },
+    { "mil_name": "random_categorical", "reason_code": "Random" },
+    { "mil_name": "cumsum", "reason_code": "Cumulative" },
+    { "mil_name": "constexpr_affine_dequantize", "reason_code": "NoConverter" },
+    { "mil_name": "constexpr_blockwise_shift_scale", "reason_code": "NoConverter" },
+    { "mil_name": "constexpr_lut_to_dense", "reason_code": "NoConverter" },
+    { "mil_name": "constexpr_sparse_to_dense", "reason_code": "NoConverter" },
+    { "mil_name": "constexpr_cast", "reason_code": "NoConverter" },
+    { "mil_name": "constexpr_lut_to_sparse", "reason_code": "NoConverter" },
+    { "mil_name": "constexpr_sparse_blockwise_shift_scale", "reason_code": "NoConverter" },
+    { "mil_name": "classify", "reason_code": "NoConverter" },
+    { "mil_name": "read_state", "reason_code": "ControlFlow" },
+    { "mil_name": "coreml_update_state", "reason_code": "ControlFlow" },
+    { "mil_name": "state_write", "reason_code": "ControlFlow" },
+    { "mil_name": "const", "reason_code": "NoConverter" },
+    { "mil_name": "reverse_sequence", "reason_code": "Cumulative" },
+    { "mil_name": "one_hot", "reason_code": "NoConverter" },
+    { "mil_name": "non_zero", "reason_code": "NoConverter" },
+    { "mil_name": "band_part", "reason_code": "MatrixAlgebra" },
+    { "mil_name": "range_1d", "reason_code": "NoConverter" },
+    { "mil_name": "shape", "reason_code": "ShapeQuery" },
+    { "mil_name": "crop", "reason_code": "NoConverter" },
+    { "mil_name": "fill", "reason_code": "NoConverter" },
+    { "mil_name": "fill_like", "reason_code": "NoConverter" },
+    { "mil_name": "gather_along_axis", "reason_code": "Scatter" },
+    { "mil_name": "local_response_norm", "reason_code": "NoConverter" },
+    { "mil_name": "reduce_sum_square", "reason_code": "NoConverter" },
+    { "mil_name": "reduce_l2_norm", "reason_code": "NoConverter" },
+    { "mil_name": "reduce_l1_norm", "reason_code": "NoConverter" },
+    { "mil_name": "reduce_log_sum_exp", "reason_code": "NoConverter" },
+    { "mil_name": "reduce_log_sum", "reason_code": "NoConverter" },
+    { "mil_name": "softplus", "reason_code": "NoConverter" },
+    { "mil_name": "softplus_parametric", "reason_code": "NoConverter" },
+    { "mil_name": "clamped_relu", "reason_code": "NoConverter" },
+    { "mil_name": "linear_activation", "reason_code": "NoConverter" }
+  ]
+}

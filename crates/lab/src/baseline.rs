@@ -226,7 +226,8 @@ impl BaselineComputer {
                 for d in 0..head_dim {
                     let mut val = 0.0f32;
                     for t in 0..kv_len {
-                        let v_val = v_cache[(b * num_heads * kv_len + h * kv_len + t) * head_dim + d];
+                        let v_val =
+                            v_cache[(b * num_heads * kv_len + h * kv_len + t) * head_dim + d];
                         val += attn_weights[t] * v_val;
                     }
                     attn_output.push(val);
@@ -394,7 +395,8 @@ impl BaselineComputer {
         let w_out = deterministic_tensor_2d(self.seed.wrapping_add(3), embed_dim, embed_dim);
 
         // Materialize deterministic input: [batch_size * seq_len, embed_dim]
-        let input = deterministic_tensor_2d(self.seed.wrapping_add(2), batch_size * seq_len, embed_dim);
+        let input =
+            deterministic_tensor_2d(self.seed.wrapping_add(2), batch_size * seq_len, embed_dim);
 
         // Step 1: QKV projection — input @ W_qkv
         // Result shape: [batch_size * seq_len, qkv_dim]
@@ -432,7 +434,8 @@ impl BaselineComputer {
                         let mut score = 0.0f32;
                         for d in 0..head_dim {
                             let q_idx = ((b * seq_len + i) * qkv_dim) + h * head_dim + d;
-                            let k_idx = ((b * seq_len + j) * qkv_dim) + embed_dim + h * head_dim + d;
+                            let k_idx =
+                                ((b * seq_len + j) * qkv_dim) + embed_dim + h * head_dim + d;
                             score += qkv_output[q_idx] * qkv_output[k_idx];
                         }
                         scores.push(score * scale);
@@ -455,9 +458,10 @@ impl BaselineComputer {
                     // Weighted sum of V_h
                     for d in 0..head_dim {
                         let mut val = 0.0f32;
-                        for j in 0..seq_len {
-                            let v_idx = ((b * seq_len + j) * qkv_dim) + 2 * embed_dim + h * head_dim + d;
-                            val += (exp_scores[j] / sum_exp) * qkv_output[v_idx];
+                        for (j, exp_score) in exp_scores.iter().enumerate().take(seq_len) {
+                            let v_idx =
+                                ((b * seq_len + j) * qkv_dim) + 2 * embed_dim + h * head_dim + d;
+                            val += (exp_score / sum_exp) * qkv_output[v_idx];
                         }
                         // Store in the output at position [batch, seq, head, head_dim]
                         // Flattened as [batch * seq_len, embed_dim] with head-major layout
@@ -474,7 +478,10 @@ impl BaselineComputer {
                 for s in 0..seq_len {
                     for d in 0..head_dim {
                         // Source: batch * (num_heads * seq_len * head_dim) + head * (seq_len * head_dim) + seq * head_dim + d
-                        let src_idx = b * (num_heads * seq_len * head_dim) + h * (seq_len * head_dim) + s * head_dim + d;
+                        let src_idx = b * (num_heads * seq_len * head_dim)
+                            + h * (seq_len * head_dim)
+                            + s * head_dim
+                            + d;
                         // Target: (batch * seq_len + seq) * embed_dim + head * head_dim + d
                         let dst_idx = (b * seq_len + s) * embed_dim + h * head_dim + d;
                         reordered[dst_idx] = attn_output[src_idx];
@@ -549,7 +556,8 @@ impl BaselineComputer {
         }
 
         // Interior shard: entry_out @ W_interior → [batch_size, hidden_dim]
-        let w_interior = deterministic_tensor_2d(self.seed.wrapping_add(20), hidden_dim, hidden_dim);
+        let w_interior =
+            deterministic_tensor_2d(self.seed.wrapping_add(20), hidden_dim, hidden_dim);
 
         let mut interior_out = Vec::with_capacity(batch_size * hidden_dim);
         for b in 0..batch_size {
@@ -672,7 +680,8 @@ impl BaselineComputer {
                     let mut score = 0.0f32;
                     for d in 0..head_dim {
                         let q_val = q[b * embed_dim + h * head_dim + d];
-                        let k_val = k_cache[(b * num_heads * kv_len + h * kv_len + t) * head_dim + d];
+                        let k_val =
+                            k_cache[(b * num_heads * kv_len + h * kv_len + t) * head_dim + d];
                         score += q_val * k_val;
                     }
                     scores.push(score * scale);
@@ -688,7 +697,8 @@ impl BaselineComputer {
                 for d in 0..head_dim {
                     let mut val = 0.0f32;
                     for t in 0..kv_len {
-                        let v_val = v_cache[(b * num_heads * kv_len + h * kv_len + t) * head_dim + d];
+                        let v_val =
+                            v_cache[(b * num_heads * kv_len + h * kv_len + t) * head_dim + d];
                         val += attn_weights[t] * v_val;
                     }
                     attn_output.push(val);
@@ -781,10 +791,8 @@ impl BaselineComputer {
                 // Map raw value to an index in [0, lut_entries_per_group)
                 let idx = ((raw_val.abs() * (lut_entries_per_group as f32 - 1.0)) as usize)
                     .min(lut_entries_per_group - 1);
-                let lut_val = lut_tables.get(group_idx)
-                    .and_then(|t| t.get(idx))
-                    .copied()
-                    .unwrap_or(0.0);
+                let lut_val =
+                    lut_tables.get(group_idx).and_then(|t| t.get(idx)).copied().unwrap_or(0.0);
                 output.push(lut_val);
             }
         }
@@ -907,8 +915,10 @@ mod tests {
         let computer = BaselineComputer::new(42);
         let result1 = computer.compute_linear_projection("test", 4, 3, 1).unwrap();
         let result2 = computer.compute_linear_projection("test", 4, 3, 1).unwrap();
-        assert_eq!(result1.output_tensor, result2.output_tensor,
-            "Same seed and dimensions must produce identical baselines");
+        assert_eq!(
+            result1.output_tensor, result2.output_tensor,
+            "Same seed and dimensions must produce identical baselines"
+        );
     }
 
     #[test]
@@ -917,8 +927,10 @@ mod tests {
         let computer2 = BaselineComputer::new(99);
         let result1 = computer1.compute_linear_projection("test", 4, 3, 1).unwrap();
         let result2 = computer2.compute_linear_projection("test", 4, 3, 1).unwrap();
-        assert_ne!(result1.output_tensor, result2.output_tensor,
-            "Different seeds must produce different baselines");
+        assert_ne!(
+            result1.output_tensor, result2.output_tensor,
+            "Different seeds must produce different baselines"
+        );
     }
 
     #[test]
@@ -944,8 +956,10 @@ mod tests {
         let computer = BaselineComputer::new(42);
         let result1 = computer.compute_lut_projection("test_lut", 16, 128, 16, 4, 1).unwrap();
         let result2 = computer.compute_lut_projection("test_lut", 16, 128, 16, 4, 1).unwrap();
-        assert_eq!(result1.output_tensor, result2.output_tensor,
-            "Same seed and dimensions must produce identical LUT baselines");
+        assert_eq!(
+            result1.output_tensor, result2.output_tensor,
+            "Same seed and dimensions must produce identical LUT baselines"
+        );
     }
 
     #[test]
@@ -962,8 +976,10 @@ mod tests {
         let result_4bit = computer.compute_lut_projection("test", 16, 64, 8, 4, 1).unwrap();
         let result_8bit = computer.compute_lut_projection("test", 256, 64, 8, 8, 1).unwrap();
         // Different bitwidths should produce different baselines
-        assert_ne!(result_4bit.output_tensor, result_8bit.output_tensor,
-            "Different bitwidths must produce different baselines");
+        assert_ne!(
+            result_4bit.output_tensor, result_8bit.output_tensor,
+            "Different bitwidths must produce different baselines"
+        );
     }
 
     #[test]
@@ -971,8 +987,10 @@ mod tests {
         let computer = BaselineComputer::new(42);
         let result1 = computer.compute_decode_step("test_ds", 128, 4, 32, 64, 1).unwrap();
         let result2 = computer.compute_decode_step("test_ds", 128, 4, 32, 64, 1).unwrap();
-        assert_eq!(result1.output_tensor, result2.output_tensor,
-            "Same seed and dimensions must produce identical decode-step baselines");
+        assert_eq!(
+            result1.output_tensor, result2.output_tensor,
+            "Same seed and dimensions must produce identical decode-step baselines"
+        );
     }
 
     #[test]
@@ -989,8 +1007,10 @@ mod tests {
         let result_small = computer.compute_decode_step("test", 64, 2, 32, 32, 1).unwrap();
         let result_large = computer.compute_decode_step("test", 128, 4, 32, 64, 1).unwrap();
         // Different parameters should produce different baselines
-        assert_ne!(result_small.output_tensor, result_large.output_tensor,
-            "Different decode-step parameters must produce different baselines");
+        assert_ne!(
+            result_small.output_tensor, result_large.output_tensor,
+            "Different decode-step parameters must produce different baselines"
+        );
     }
 
     #[test]
@@ -1000,8 +1020,10 @@ mod tests {
         let decode_step = computer.compute_decode_step("test", 128, 4, 32, 64, 1).unwrap();
         // Decode-step baseline must differ from linear projection baseline
         // even with the same dimensions, because decode-step includes attention
-        assert_ne!(linear.output_tensor, decode_step.output_tensor,
-            "Decode-step baseline must differ from linear projection baseline");
+        assert_ne!(
+            linear.output_tensor, decode_step.output_tensor,
+            "Decode-step baseline must differ from linear projection baseline"
+        );
     }
 
     #[test]
@@ -1009,8 +1031,10 @@ mod tests {
         let computer = BaselineComputer::new(42);
         let result1 = computer.compute_mlp_block("test_mlp", 128, 512, 128, "gelu", 1).unwrap();
         let result2 = computer.compute_mlp_block("test_mlp", 128, 512, 128, "gelu", 1).unwrap();
-        assert_eq!(result1.output_tensor, result2.output_tensor,
-            "Same seed and dimensions must produce identical MLP block baselines");
+        assert_eq!(
+            result1.output_tensor, result2.output_tensor,
+            "Same seed and dimensions must produce identical MLP block baselines"
+        );
     }
 
     #[test]
@@ -1027,8 +1051,10 @@ mod tests {
         let gelu_result = computer.compute_mlp_block("test_mlp", 64, 256, 64, "gelu", 1).unwrap();
         let relu_result = computer.compute_mlp_block("test_mlp", 64, 256, 64, "relu", 1).unwrap();
         // Different activations should produce different baselines
-        assert_ne!(gelu_result.output_tensor, relu_result.output_tensor,
-            "GELU and ReLU must produce different baselines");
+        assert_ne!(
+            gelu_result.output_tensor, relu_result.output_tensor,
+            "GELU and ReLU must produce different baselines"
+        );
     }
 
     #[test]
@@ -1036,8 +1062,10 @@ mod tests {
         let computer = BaselineComputer::new(42);
         let result1 = computer.compute_attention("test_attn", 128, 4, 32, 32, 1).unwrap();
         let result2 = computer.compute_attention("test_attn", 128, 4, 32, 32, 1).unwrap();
-        assert_eq!(result1.output_tensor, result2.output_tensor,
-            "Same seed and dimensions must produce identical attention baselines");
+        assert_eq!(
+            result1.output_tensor, result2.output_tensor,
+            "Same seed and dimensions must produce identical attention baselines"
+        );
     }
 
     #[test]
@@ -1045,7 +1073,11 @@ mod tests {
         let computer = BaselineComputer::new(42);
         let result = computer.compute_attention("test_attn", 128, 4, 32, 32, 1).unwrap();
         // Output shape: [batch_size, seq_len, embed_dim]
-        assert_eq!(result.output_tensor.len(), 128 * 32, "batch=1, seq=32, embed=128 → 4096 values");
+        assert_eq!(
+            result.output_tensor.len(),
+            128 * 32,
+            "batch=1, seq=32, embed=128 → 4096 values"
+        );
         assert_eq!(result.output_shape, vec![1, 32, 128]);
     }
 
@@ -1055,23 +1087,30 @@ mod tests {
         let decode_step = computer.compute_decode_step("test", 128, 4, 32, 32, 1).unwrap();
         let attention = computer.compute_attention("test", 128, 4, 32, 32, 1).unwrap();
         // Attention (no cache, full seq-to-seq) must differ from decode-step (with cache)
-        assert_ne!(decode_step.output_shape, attention.output_shape,
-            "Attention output shape must differ from decode-step (seq_len dimension)");
+        assert_ne!(
+            decode_step.output_shape, attention.output_shape,
+            "Attention output shape must differ from decode-step (seq_len dimension)"
+        );
     }
 
     #[test]
     fn test_sharded_linear_pipeline_baseline_deterministic() {
         let computer = BaselineComputer::new(42);
-        let result1 = computer.compute_sharded_linear_pipeline("test_shard_lin", 64, 48, 32, 1).unwrap();
-        let result2 = computer.compute_sharded_linear_pipeline("test_shard_lin", 64, 48, 32, 1).unwrap();
-        assert_eq!(result1.output_tensor, result2.output_tensor,
-            "Same seed and dimensions must produce identical sharded linear pipeline baselines");
+        let result1 =
+            computer.compute_sharded_linear_pipeline("test_shard_lin", 64, 48, 32, 1).unwrap();
+        let result2 =
+            computer.compute_sharded_linear_pipeline("test_shard_lin", 64, 48, 32, 1).unwrap();
+        assert_eq!(
+            result1.output_tensor, result2.output_tensor,
+            "Same seed and dimensions must produce identical sharded linear pipeline baselines"
+        );
     }
 
     #[test]
     fn test_sharded_linear_pipeline_baseline_shape() {
         let computer = BaselineComputer::new(42);
-        let result = computer.compute_sharded_linear_pipeline("test_shard_lin", 64, 48, 32, 1).unwrap();
+        let result =
+            computer.compute_sharded_linear_pipeline("test_shard_lin", 64, 48, 32, 1).unwrap();
         assert_eq!(result.output_tensor.len(), 32, "batch=1, output_dim=32 → 32 values");
         assert_eq!(result.output_shape, vec![1, 32]);
     }
@@ -1083,8 +1122,10 @@ mod tests {
         let sharded = computer.compute_sharded_linear_pipeline("test", 64, 48, 32, 1).unwrap();
         // The sharded pipeline with hidden_dim=48 must differ from a single projection 64→32
         // because the intermediate dimension changes the computation.
-        assert_ne!(single.output_tensor, sharded.output_tensor,
-            "Sharded pipeline must differ from single linear projection");
+        assert_ne!(
+            single.output_tensor, sharded.output_tensor,
+            "Sharded pipeline must differ from single linear projection"
+        );
     }
 
     // --- Sharded decode-step baseline tests (Sprint 54) ---
@@ -1092,16 +1133,21 @@ mod tests {
     #[test]
     fn test_sharded_decode_step_baseline_deterministic() {
         let computer = BaselineComputer::new(42);
-        let result1 = computer.compute_sharded_decode_step("test_shard_ds", 128, 4, 32, 64, 1).unwrap();
-        let result2 = computer.compute_sharded_decode_step("test_shard_ds", 128, 4, 32, 64, 1).unwrap();
-        assert_eq!(result1.output_tensor, result2.output_tensor,
-            "Same seed and dimensions must produce identical sharded decode-step baselines");
+        let result1 =
+            computer.compute_sharded_decode_step("test_shard_ds", 128, 4, 32, 64, 1).unwrap();
+        let result2 =
+            computer.compute_sharded_decode_step("test_shard_ds", 128, 4, 32, 64, 1).unwrap();
+        assert_eq!(
+            result1.output_tensor, result2.output_tensor,
+            "Same seed and dimensions must produce identical sharded decode-step baselines"
+        );
     }
 
     #[test]
     fn test_sharded_decode_step_baseline_shape() {
         let computer = BaselineComputer::new(42);
-        let result = computer.compute_sharded_decode_step("test_shard_ds", 128, 4, 32, 64, 1).unwrap();
+        let result =
+            computer.compute_sharded_decode_step("test_shard_ds", 128, 4, 32, 64, 1).unwrap();
         assert_eq!(result.output_tensor.len(), 128, "batch=1, embed_dim=128 → 128 values");
         assert_eq!(result.output_shape, vec![1, 128]);
     }
@@ -1113,7 +1159,9 @@ mod tests {
         let sharded = computer.compute_sharded_decode_step("test", 128, 4, 32, 64, 1).unwrap();
         // The sharded decode-step uses different seed offsets for KV cache and output
         // projection (40/45/50 vs 3/4/5), so it must produce different output.
-        assert_ne!(single.output_tensor, sharded.output_tensor,
-            "Sharded decode-step must differ from single decode-step due to different weight seeds");
+        assert_ne!(
+            single.output_tensor, sharded.output_tensor,
+            "Sharded decode-step must differ from single decode-step due to different weight seeds"
+        );
     }
 }

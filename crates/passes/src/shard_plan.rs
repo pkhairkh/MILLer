@@ -24,17 +24,17 @@
 //! This is a concrete, testable adaptation: the compiler changes its compute
 //! unit assignment because stored knowledge says the ANE path is unreliable.
 
-use ane_ir::sir::SirGraph;
+use crate::knowledge_query::PassKnowledgeQuery;
+use ane_ir::mir::ComputeUnitHint;
 use ane_ir::pir::{
-    PirGraph, Package, PackageRole, ComputeUnits, FunctionEntry, TensorSpec,
-    ShardRole, ShardTemplate,
-    ShardPipelineSpec,
+    FunctionEntry, Package, PackageRole, PirGraph, ShardPipelineSpec, ShardRole, ShardTemplate,
+    TensorSpec,
 };
 #[cfg(test)]
-use ane_ir::pir::{ShardPartitionEntry, HandoffKind};
+use ane_ir::pir::{HandoffKind, ShardPartitionEntry};
+use ane_ir::sir::SirGraph;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use crate::knowledge_query::PassKnowledgeQuery;
 
 /// Minimum fallback risk threshold for a compute unit override.
 ///
@@ -129,12 +129,15 @@ pub struct ShardPlanPass {
     pub adaptations: Vec<ComputeUnitAdaptation>,
 }
 
+impl Default for ShardPlanPass {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ShardPlanPass {
     pub fn new() -> Self {
-        Self {
-            fallback_risk_threshold: FALLBACK_RISK_THRESHOLD,
-            adaptations: Vec::new(),
-        }
+        Self { fallback_risk_threshold: FALLBACK_RISK_THRESHOLD, adaptations: Vec::new() }
     }
 
     /// Create a pass with a custom fallback risk threshold.
@@ -175,7 +178,7 @@ impl ShardPlanPass {
         shard_name: &str,
         op_pattern: &str,
         knowledge_query: &dyn PassKnowledgeQuery,
-    ) -> (ComputeUnits, Option<ComputeUnitAdaptation>) {
+    ) -> (ComputeUnitHint, Option<ComputeUnitAdaptation>) {
         match knowledge_query.query_risk(op_pattern, None) {
             Some(risk_info) if risk_info.fallback_risk >= self.fallback_risk_threshold => {
                 let adaptation = ComputeUnitAdaptation {
@@ -195,11 +198,11 @@ impl ShardPlanPass {
                         risk_info.evidence_count,
                     ),
                 };
-                (ComputeUnits::CPUAndGPU, Some(adaptation))
+                (ComputeUnitHint::CPUAndGPU, Some(adaptation))
             }
             _ => {
                 // No high-risk knowledge: use default ANE-targeted compute units
-                (ComputeUnits::CPUAndNE, None)
+                (ComputeUnitHint::CPUAndNE, None)
             }
         }
     }
@@ -223,7 +226,11 @@ impl ShardPlanPass {
     /// - Assigns compute units based on risk knowledge
     /// - Creates a PIR graph with three packages and concrete handoffs
     /// - Records the shard template for the decomposition
-    pub fn run(&mut self, input: &SirGraph, knowledge_query: &dyn PassKnowledgeQuery) -> Result<(ShardPlan, PirGraph)> {
+    pub fn run(
+        &mut self,
+        input: &SirGraph,
+        knowledge_query: &dyn PassKnowledgeQuery,
+    ) -> Result<(ShardPlan, PirGraph)> {
         // Reset adaptations for this run
         self.adaptations.clear();
 
@@ -232,9 +239,8 @@ impl ShardPlanPass {
 
         // Determine compute units based on knowledge
         let shard_name = "linear_projection_shard_0";
-        let (compute_units, adaptation) = self.determine_compute_units(
-            shard_name, op_pattern, knowledge_query,
-        );
+        let (compute_units, adaptation) =
+            self.determine_compute_units(shard_name, op_pattern, knowledge_query);
 
         if let Some(adapt) = adaptation {
             self.adaptations.push(adapt);
@@ -274,10 +280,10 @@ impl ShardPlanPass {
                     stateful: false,
                 }],
             }],
-            state_declarations: vec![],  // No state in linear projection
-            handoffs: vec![],             // No inter-shard handoffs
-            shard_template: None,         // No template for single-shard
-            context_length: 0,            // No context in linear projection
+            state_declarations: vec![], // No state in linear projection
+            handoffs: vec![],           // No inter-shard handoffs
+            shard_template: None,       // No template for single-shard
+            context_length: 0,          // No context in linear projection
             opset_version: "iOS18".into(),
             minimum_deployment_target: "iOS18".into(),
         };
@@ -305,16 +311,14 @@ impl ShardPlanPass {
         let shard_plan = ShardPlan {
             num_shards: spec.shards.len(),
             layer_assignment: (0..spec.shards.len()).collect(),
-            compute_units: spec.shards.iter()
+            compute_units: spec
+                .shards
+                .iter()
                 .map(|s| s.compute_units.to_coreml_string().to_string())
                 .collect(),
             is_multi_shard: spec.is_multi_shard(),
-            shard_roles: spec.shards.iter()
-                .map(|s| s.role.canonical_name().to_string())
-                .collect(),
-            shard_names: spec.shards.iter()
-                .map(|s| s.shard_name.clone())
-                .collect(),
+            shard_roles: spec.shards.iter().map(|s| s.role.canonical_name().to_string()).collect(),
+            shard_names: spec.shards.iter().map(|s| s.shard_name.clone()).collect(),
         };
 
         let pir_graph = spec.to_pir_graph();
@@ -346,16 +350,19 @@ impl ShardPlanPass {
                 return false;
             }
             // Check that each partition entry's role matches the corresponding shard
-            t.partition_spec.iter().zip(spec.shards.iter()).all(|(entry, shard)| {
-                entry.role == shard.role
-            })
+            t.partition_spec
+                .iter()
+                .zip(spec.shards.iter())
+                .all(|(entry, shard)| entry.role == shard.role)
         });
 
         // If a matching template is found, apply its compute unit assignments
         // to the spec's shards
         let effective_spec = if let Some(template) = matching_template {
             let mut overridden_spec = spec.clone();
-            for (shard, entry) in overridden_spec.shards.iter_mut().zip(template.partition_spec.iter()) {
+            for (shard, entry) in
+                overridden_spec.shards.iter_mut().zip(template.partition_spec.iter())
+            {
                 shard.compute_units = entry.compute_units.clone();
             }
             overridden_spec
@@ -401,14 +408,17 @@ impl ShardPlanPass {
             if t.partition_spec.len() != spec.shards.len() {
                 return false;
             }
-            t.partition_spec.iter().zip(spec.shards.iter()).all(|(entry, shard)| {
-                entry.role == shard.role
-            })
+            t.partition_spec
+                .iter()
+                .zip(spec.shards.iter())
+                .all(|(entry, shard)| entry.role == shard.role)
         });
 
         let mut effective_spec = if let Some(template) = matching_template {
             let mut overridden_spec = spec.clone();
-            for (shard, entry) in overridden_spec.shards.iter_mut().zip(template.partition_spec.iter()) {
+            for (shard, entry) in
+                overridden_spec.shards.iter_mut().zip(template.partition_spec.iter())
+            {
                 shard.compute_units = entry.compute_units.clone();
             }
             overridden_spec
@@ -422,9 +432,8 @@ impl ShardPlanPass {
         for shard in effective_spec.shards.iter_mut() {
             let op_pattern = Self::primary_op_pattern_for_shard(&shard.role);
 
-            let (new_compute, adaptation) = self.determine_compute_units(
-                &shard.shard_name, op_pattern, knowledge_query,
-            );
+            let (new_compute, adaptation) =
+                self.determine_compute_units(&shard.shard_name, op_pattern, knowledge_query);
 
             if let Some(adapt) = adaptation {
                 // Risk-based adaptation overrides template assignment
@@ -447,8 +456,8 @@ impl ShardPlanPass {
     fn primary_op_pattern_for_shard(role: &ShardRole) -> &str {
         match role {
             ShardRole::Entry | ShardRole::Interior | ShardRole::Exit => "mb.matmul",
-            ShardRole::Io => "mb.embedding",  // IO model: embedding + LM head
-            ShardRole::Sampler => "mb.topk",  // Sampler: top-k + softmax + gather
+            ShardRole::Io => "mb.embedding", // IO model: embedding + LM head
+            ShardRole::Sampler => "mb.topk", // Sampler: top-k + softmax + gather
         }
     }
 
@@ -482,8 +491,10 @@ impl ShardPlanPass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::knowledge_query::{LegalityInfo, RiskInfo, PrecisionHazardInfo, ComputePlanPlacementInfo, NoKnowledge};
-    use ane_ir::sir::{SirNode, SirNodeId, SirOp, SirMetadata, TaskOrigin};
+    use crate::knowledge_query::{
+        ComputePlanPlacementInfo, LegalityInfo, NoKnowledge, PrecisionHazardInfo, RiskInfo,
+    };
+    use ane_ir::sir::{SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
 
     /// Mock knowledge query that reports high fallback risk for mb.matmul.
     ///
@@ -493,11 +504,19 @@ mod tests {
     struct MockHighFallbackRiskKnowledge;
 
     impl PassKnowledgeQuery for MockHighFallbackRiskKnowledge {
-        fn query_legality(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<LegalityInfo> {
+        fn query_legality(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<LegalityInfo> {
             None
         }
 
-        fn query_risk(&self, op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<RiskInfo> {
+        fn query_risk(
+            &self,
+            op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<RiskInfo> {
             if op_pattern == "mb.matmul" {
                 Some(RiskInfo {
                     fallback_risk: 0.8,
@@ -511,11 +530,20 @@ mod tests {
             }
         }
 
-        fn query_precision_hazard(&self, _op_pattern: &str, _current_dtype: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<PrecisionHazardInfo> {
+        fn query_precision_hazard(
+            &self,
+            _op_pattern: &str,
+            _current_dtype: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<PrecisionHazardInfo> {
             None
         }
 
-        fn query_compute_plan_placement(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<ComputePlanPlacementInfo> {
+        fn query_compute_plan_placement(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<ComputePlanPlacementInfo> {
             None
         }
     }
@@ -524,11 +552,19 @@ mod tests {
     struct MockLowFallbackRiskKnowledge;
 
     impl PassKnowledgeQuery for MockLowFallbackRiskKnowledge {
-        fn query_legality(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<LegalityInfo> {
+        fn query_legality(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<LegalityInfo> {
             None
         }
 
-        fn query_risk(&self, op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<RiskInfo> {
+        fn query_risk(
+            &self,
+            op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<RiskInfo> {
             if op_pattern == "mb.matmul" {
                 Some(RiskInfo {
                     fallback_risk: 0.1,
@@ -542,11 +578,20 @@ mod tests {
             }
         }
 
-        fn query_precision_hazard(&self, _op_pattern: &str, _current_dtype: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<PrecisionHazardInfo> {
+        fn query_precision_hazard(
+            &self,
+            _op_pattern: &str,
+            _current_dtype: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<PrecisionHazardInfo> {
             None
         }
 
-        fn query_compute_plan_placement(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<ComputePlanPlacementInfo> {
+        fn query_compute_plan_placement(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<ComputePlanPlacementInfo> {
             None
         }
     }
@@ -555,11 +600,19 @@ mod tests {
     struct MockBorderlineRiskKnowledge;
 
     impl PassKnowledgeQuery for MockBorderlineRiskKnowledge {
-        fn query_legality(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<LegalityInfo> {
+        fn query_legality(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<LegalityInfo> {
             None
         }
 
-        fn query_risk(&self, op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<RiskInfo> {
+        fn query_risk(
+            &self,
+            op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<RiskInfo> {
             if op_pattern == "mb.matmul" {
                 Some(RiskInfo {
                     fallback_risk: 0.45, // Below default threshold of 0.5
@@ -573,11 +626,20 @@ mod tests {
             }
         }
 
-        fn query_precision_hazard(&self, _op_pattern: &str, _current_dtype: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<PrecisionHazardInfo> {
+        fn query_precision_hazard(
+            &self,
+            _op_pattern: &str,
+            _current_dtype: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<PrecisionHazardInfo> {
             None
         }
 
-        fn query_compute_plan_placement(&self, _op_pattern: &str, _scope: Option<&ane_ir::kir::KnowledgeScope>) -> Option<ComputePlanPlacementInfo> {
+        fn query_compute_plan_placement(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&ane_ir::kir::KnowledgeScope>,
+        ) -> Option<ComputePlanPlacementInfo> {
             None
         }
     }
@@ -589,7 +651,12 @@ mod tests {
                     id: SirNodeId("weight".into()),
                     op: SirOp::ElementWise { op: ane_ir::sir::ElementWiseOp::Mul, inputs: vec![] },
                     name: "weight".into(),
-                    metadata: SirMetadata { task_origin: TaskOrigin::Synthetic, model_id: None, quality_contract: None, precision_override: None },
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
                 },
                 SirNode {
                     id: SirNodeId("output".into()),
@@ -599,7 +666,12 @@ mod tests {
                         bias: Some("bias".into()),
                     },
                     name: "linear_out".into(),
-                    metadata: SirMetadata { task_origin: TaskOrigin::Synthetic, model_id: None, quality_contract: None, precision_override: None },
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
                 },
             ],
             inputs: vec![SirNodeId("input".into())],
@@ -623,15 +695,23 @@ mod tests {
         let (plan, pir) = pass.run(&sir, &high_risk).unwrap();
 
         // The shard plan should use CPU_AND_GPU instead of CPU_AND_NE
-        assert_eq!(plan.compute_units[0], "CPU_AND_GPU",
-            "High fallback risk must override CPU_AND_NE to CPU_AND_GPU");
+        assert_eq!(
+            plan.compute_units[0], "CPU_AND_GPU",
+            "High fallback risk must override CPU_AND_NE to CPU_AND_GPU"
+        );
 
         // The PIR package should also reflect the override
-        assert_eq!(pir.packages[0].compute_units, ComputeUnits::CPUAndGPU,
-            "PIR package compute units must match the adaptation");
+        assert_eq!(
+            pir.packages[0].compute_units,
+            ComputeUnitHint::CPUAndGPU,
+            "PIR package compute units must match the adaptation"
+        );
 
         // An adaptation must be recorded
-        assert!(pass.has_adaptations(), "Pass must record adaptations when high risk knowledge is present");
+        assert!(
+            pass.has_adaptations(),
+            "Pass must record adaptations when high risk knowledge is present"
+        );
         assert_eq!(pass.adaptations.len(), 1, "Exactly one adaptation for the single shard");
 
         let adaptation = &pass.adaptations[0];
@@ -659,9 +739,8 @@ mod tests {
         let (plan, pir) = pass.run(&sir, &no_knowledge).unwrap();
 
         assert!(!pass.has_adaptations(), "NoKnowledge must produce zero adaptations");
-        assert_eq!(plan.compute_units[0], "CPU_AND_NE",
-            "NoKnowledge must use default CPU_AND_NE");
-        assert_eq!(pir.packages[0].compute_units, ComputeUnits::CPUAndNE);
+        assert_eq!(plan.compute_units[0], "CPU_AND_NE", "NoKnowledge must use default CPU_AND_NE");
+        assert_eq!(pir.packages[0].compute_units, ComputeUnitHint::CPUAndNE);
     }
 
     /// Test that low fallback risk knowledge keeps CPU_AND_NE.
@@ -677,9 +756,8 @@ mod tests {
         let (plan, pir) = pass.run(&sir, &low_risk).unwrap();
 
         assert!(!pass.has_adaptations(), "Low fallback risk must not trigger adaptation");
-        assert_eq!(plan.compute_units[0], "CPU_AND_NE",
-            "Low fallback risk should keep CPU_AND_NE");
-        assert_eq!(pir.packages[0].compute_units, ComputeUnits::CPUAndNE);
+        assert_eq!(plan.compute_units[0], "CPU_AND_NE", "Low fallback risk should keep CPU_AND_NE");
+        assert_eq!(pir.packages[0].compute_units, ComputeUnitHint::CPUAndNE);
     }
 
     /// Test that borderline risk (below threshold) does not trigger adaptation.
@@ -691,7 +769,10 @@ mod tests {
         let borderline = MockBorderlineRiskKnowledge;
         let (plan, _pir) = pass.run(&sir, &borderline).unwrap();
 
-        assert!(!pass.has_adaptations(), "Borderline risk below threshold must not trigger adaptation");
+        assert!(
+            !pass.has_adaptations(),
+            "Borderline risk below threshold must not trigger adaptation"
+        );
         assert_eq!(plan.compute_units[0], "CPU_AND_NE");
     }
 
@@ -743,26 +824,23 @@ mod tests {
 
     #[test]
     fn test_build_sharded_plan_three_shards() {
-        let (plan, _pir) = ShardPlanPass::build_sharded_plan(
-            "test_pipeline", 64, 48, 32, 1, "fp16",
-        );
+        let (plan, _pir) =
+            ShardPlanPass::build_sharded_plan("test_pipeline", 64, 48, 32, 1, "fp16");
 
         assert_eq!(plan.num_shards, 3);
         assert!(plan.is_multi_shard);
         assert_eq!(plan.shard_roles, vec!["Entry", "Interior", "Exit"]);
-        assert_eq!(plan.shard_names, vec![
-            "test_pipeline_entry",
-            "test_pipeline_interior",
-            "test_pipeline_exit",
-        ]);
+        assert_eq!(
+            plan.shard_names,
+            vec!["test_pipeline_entry", "test_pipeline_interior", "test_pipeline_exit",]
+        );
         assert_eq!(plan.compute_units, vec!["CPU_AND_NE", "CPU_AND_NE", "CPU_AND_NE"]);
     }
 
     #[test]
     fn test_build_sharded_plan_pir_structure() {
-        let (_plan, pir) = ShardPlanPass::build_sharded_plan(
-            "test_pipeline", 64, 48, 32, 1, "fp16",
-        );
+        let (_plan, pir) =
+            ShardPlanPass::build_sharded_plan("test_pipeline", 64, 48, 32, 1, "fp16");
 
         assert_eq!(pir.packages.len(), 3);
         assert_eq!(pir.handoffs.len(), 2);
@@ -789,9 +867,8 @@ mod tests {
 
     #[test]
     fn test_build_sharded_plan_dimensions() {
-        let (_plan, pir) = ShardPlanPass::build_sharded_plan(
-            "test_pipeline", 64, 48, 32, 1, "fp16",
-        );
+        let (_plan, pir) =
+            ShardPlanPass::build_sharded_plan("test_pipeline", 64, 48, 32, 1, "fp16");
 
         // Entry: [1, 64] -> [1, 48]
         let entry = &pir.packages[0];
@@ -811,9 +888,8 @@ mod tests {
 
     #[test]
     fn test_build_sharded_plan_serializes() {
-        let (plan, _pir) = ShardPlanPass::build_sharded_plan(
-            "test_pipeline", 64, 48, 32, 1, "fp16",
-        );
+        let (plan, _pir) =
+            ShardPlanPass::build_sharded_plan("test_pipeline", 64, 48, 32, 1, "fp16");
 
         // Verify ShardPlan is serializable (derive Serialize works)
         let plan_str = format!("{:?}", plan);
@@ -835,9 +911,7 @@ mod tests {
     /// the backward-compatible `build_sharded_plan` method.
     #[test]
     fn test_build_from_spec_linear_pipeline() {
-        let spec = ShardPipelineSpec::three_shard_linear(
-            "test_pipeline", 64, 48, 32, 1, "fp16",
-        );
+        let spec = ShardPipelineSpec::three_shard_linear("test_pipeline", 64, 48, 32, 1, "fp16");
         let (plan, pir) = ShardPlanPass::build_sharded_plan_from_spec(&spec);
 
         // Same assertions as the legacy test
@@ -856,9 +930,8 @@ mod tests {
     /// KV cache state declarations.
     #[test]
     fn test_build_from_spec_decode_step() {
-        let spec = ShardPipelineSpec::three_shard_decode_step(
-            "test_decode", 128, 4, 32, 64, 1, "fp16",
-        );
+        let spec =
+            ShardPipelineSpec::three_shard_decode_step("test_decode", 128, 4, 32, 64, 1, "fp16");
         let (plan, pir) = ShardPlanPass::build_sharded_plan_from_spec(&spec);
 
         // 3 shards with decode-step roles
@@ -867,19 +940,20 @@ mod tests {
         assert_eq!(plan.shard_roles, vec!["Entry", "Interior", "Exit"]);
 
         // Decode-step-specific shard names
-        assert_eq!(plan.shard_names, vec![
-            "test_decode_qkv_proj",
-            "test_decode_attention",
-            "test_decode_out_proj",
-        ]);
+        assert_eq!(
+            plan.shard_names,
+            vec!["test_decode_qkv_proj", "test_decode_attention", "test_decode_out_proj",]
+        );
 
         // PIR structure
         assert_eq!(pir.packages.len(), 3);
         assert_eq!(pir.handoffs.len(), 2);
 
         // Decode-step has KV cache state declarations
-        assert!(!pir.state_declarations.is_empty(),
-            "Decode-step pipeline must declare KV cache state");
+        assert!(
+            !pir.state_declarations.is_empty(),
+            "Decode-step pipeline must declare KV cache state"
+        );
         assert_eq!(pir.state_declarations[0].state_id, "test_decode_kv_cache");
         assert_eq!(pir.state_declarations[0].owner_package, "test_decode_attention");
 
@@ -918,37 +992,38 @@ mod tests {
     /// produce genuinely different multi-unit decompositions.
     #[test]
     fn test_linear_and_decode_step_specs_diverge() {
-        let linear_spec = ShardPipelineSpec::three_shard_linear(
-            "test", 64, 48, 32, 1, "fp16",
-        );
-        let decode_spec = ShardPipelineSpec::three_shard_decode_step(
-            "test", 128, 4, 32, 64, 1, "fp16",
-        );
+        let linear_spec = ShardPipelineSpec::three_shard_linear("test", 64, 48, 32, 1, "fp16");
+        let decode_spec =
+            ShardPipelineSpec::three_shard_decode_step("test", 128, 4, 32, 64, 1, "fp16");
 
         let (linear_plan, linear_pir) = ShardPlanPass::build_sharded_plan_from_spec(&linear_spec);
         let (decode_plan, decode_pir) = ShardPlanPass::build_sharded_plan_from_spec(&decode_spec);
 
         // Shard names must differ
-        assert_ne!(linear_plan.shard_names, decode_plan.shard_names,
-            "Linear and decode-step shard names must differ");
+        assert_ne!(
+            linear_plan.shard_names, decode_plan.shard_names,
+            "Linear and decode-step shard names must differ"
+        );
 
         // Handoff tensor names must differ
-        let linear_tensors: Vec<_> = linear_pir.handoffs.iter()
-            .map(|h| h.tensor_name.clone()).collect();
-        let decode_tensors: Vec<_> = decode_pir.handoffs.iter()
-            .map(|h| h.tensor_name.clone()).collect();
-        assert_ne!(linear_tensors, decode_tensors,
-            "Linear and decode-step handoff tensor names must differ");
+        let linear_tensors: Vec<_> =
+            linear_pir.handoffs.iter().map(|h| h.tensor_name.clone()).collect();
+        let decode_tensors: Vec<_> =
+            decode_pir.handoffs.iter().map(|h| h.tensor_name.clone()).collect();
+        assert_ne!(
+            linear_tensors, decode_tensors,
+            "Linear and decode-step handoff tensor names must differ"
+        );
 
         // Decode-step has state declarations, linear does not
         assert!(linear_pir.state_declarations.is_empty());
         assert!(!decode_pir.state_declarations.is_empty());
 
         // Decode-step has state_config in template, linear does not
-        let linear_state_config = linear_pir.shard_template.as_ref()
-            .and_then(|t| t.state_config.clone());
-        let decode_state_config = decode_pir.shard_template.as_ref()
-            .and_then(|t| t.state_config.clone());
+        let linear_state_config =
+            linear_pir.shard_template.as_ref().and_then(|t| t.state_config.clone());
+        let decode_state_config =
+            decode_pir.shard_template.as_ref().and_then(|t| t.state_config.clone());
         assert!(linear_state_config.is_none());
         assert!(decode_state_config.is_some());
 
@@ -964,9 +1039,7 @@ mod tests {
     /// CPU_AND_NE.
     #[test]
     fn test_shard_template_overrides_compute_units() {
-        let spec = ShardPipelineSpec::three_shard_linear(
-            "test_pipeline", 64, 48, 32, 1, "fp16",
-        );
+        let spec = ShardPipelineSpec::three_shard_linear("test_pipeline", 64, 48, 32, 1, "fp16");
 
         // Create a template that overrides Interior to CPU_AND_GPU
         let template = ShardTemplate {
@@ -976,19 +1049,19 @@ mod tests {
                     role: ShardRole::Entry,
                     layer_start: 0,
                     layer_end: 5,
-                    compute_units: ComputeUnits::CPUAndNE,
+                    compute_units: ComputeUnitHint::CPUAndNE,
                 },
                 ShardPartitionEntry {
                     role: ShardRole::Interior,
                     layer_start: 6,
                     layer_end: 10,
-                    compute_units: ComputeUnits::CPUAndGPU, // Override!
+                    compute_units: ComputeUnitHint::CPUAndGPU, // Override!
                 },
                 ShardPartitionEntry {
                     role: ShardRole::Exit,
                     layer_start: 11,
                     layer_end: 15,
-                    compute_units: ComputeUnits::CPUAndNE,
+                    compute_units: ComputeUnitHint::CPUAndNE,
                 },
             ],
             io_compute_units: None,
@@ -997,9 +1070,8 @@ mod tests {
             context_length: 0,
         };
 
-        let (plan, pir) = ShardPlanPass::build_sharded_plan_from_spec_with_knowledge(
-            &spec, &[template],
-        );
+        let (plan, pir) =
+            ShardPlanPass::build_sharded_plan_from_spec_with_knowledge(&spec, &[template]);
 
         // Interior shard should use CPU_AND_GPU from the template
         assert_eq!(plan.compute_units[0], "CPU_AND_NE", "Entry keeps default");
@@ -1007,16 +1079,17 @@ mod tests {
         assert_eq!(plan.compute_units[2], "CPU_AND_NE", "Exit keeps default");
 
         // PIR should also reflect the override
-        assert_eq!(pir.packages[1].compute_units, ComputeUnits::CPUAndGPU,
-            "Interior PIR package must use template compute units");
+        assert_eq!(
+            pir.packages[1].compute_units,
+            ComputeUnitHint::CPUAndGPU,
+            "Interior PIR package must use template compute units"
+        );
     }
 
     /// Test that non-matching templates are ignored.
     #[test]
     fn test_shard_template_no_match_keeps_defaults() {
-        let spec = ShardPipelineSpec::three_shard_linear(
-            "test_pipeline", 64, 48, 32, 1, "fp16",
-        );
+        let spec = ShardPipelineSpec::three_shard_linear("test_pipeline", 64, 48, 32, 1, "fp16");
 
         // Create a template with wrong number of partitions
         let template = ShardTemplate {
@@ -1026,13 +1099,13 @@ mod tests {
                     role: ShardRole::Entry,
                     layer_start: 0,
                     layer_end: 10,
-                    compute_units: ComputeUnits::CPUAndGPU,
+                    compute_units: ComputeUnitHint::CPUAndGPU,
                 },
                 ShardPartitionEntry {
                     role: ShardRole::Exit,
                     layer_start: 11,
                     layer_end: 20,
-                    compute_units: ComputeUnits::CPUAndGPU,
+                    compute_units: ComputeUnitHint::CPUAndGPU,
                 },
             ],
             io_compute_units: None,
@@ -1041,9 +1114,8 @@ mod tests {
             context_length: 0,
         };
 
-        let (plan, _pir) = ShardPlanPass::build_sharded_plan_from_spec_with_knowledge(
-            &spec, &[template],
-        );
+        let (plan, _pir) =
+            ShardPlanPass::build_sharded_plan_from_spec_with_knowledge(&spec, &[template]);
 
         // All shards should keep defaults since the template doesn't match
         assert_eq!(plan.compute_units, vec!["CPU_AND_NE", "CPU_AND_NE", "CPU_AND_NE"]);
@@ -1052,14 +1124,11 @@ mod tests {
     /// Test that empty template list behaves identically to the base method.
     #[test]
     fn test_shard_template_empty_list_same_as_base() {
-        let spec = ShardPipelineSpec::three_shard_linear(
-            "test_pipeline", 64, 48, 32, 1, "fp16",
-        );
+        let spec = ShardPipelineSpec::three_shard_linear("test_pipeline", 64, 48, 32, 1, "fp16");
 
         let (plan_base, pir_base) = ShardPlanPass::build_sharded_plan_from_spec(&spec);
-        let (plan_knowledge, pir_knowledge) = ShardPlanPass::build_sharded_plan_from_spec_with_knowledge(
-            &spec, &[],
-        );
+        let (plan_knowledge, pir_knowledge) =
+            ShardPlanPass::build_sharded_plan_from_spec_with_knowledge(&spec, &[]);
 
         assert_eq!(plan_base.compute_units, plan_knowledge.compute_units);
         assert_eq!(plan_base.shard_names, plan_knowledge.shard_names);
@@ -1075,40 +1144,36 @@ mod tests {
     /// accumulated risk observations at the plan-construction level.
     #[test]
     fn test_risk_knowledge_overrides_compute_units_in_multi_shard_plan() {
-        let spec = ShardPipelineSpec::three_shard_linear(
-            "test_pipeline", 64, 48, 32, 1, "fp16",
-        );
+        let spec = ShardPipelineSpec::three_shard_linear("test_pipeline", 64, 48, 32, 1, "fp16");
 
         let mut pass = ShardPlanPass::new();
         let high_risk = MockHighFallbackRiskKnowledge;
 
-        let (plan, _pir, adaptations) = pass.build_sharded_plan_from_spec_with_risk_knowledge(
-            &spec, &[], &high_risk,
-        );
+        let (plan, _pir, adaptations) =
+            pass.build_sharded_plan_from_spec_with_risk_knowledge(&spec, &[], &high_risk);
 
         // All three shards have the same primary op pattern ("mb.matmul"),
         // so all three should be overridden to CPU_AND_GPU
-        assert_eq!(plan.compute_units, vec!["CPU_AND_GPU", "CPU_AND_GPU", "CPU_AND_GPU"],
-            "High fallback risk must override all shards to CPU_AND_GPU");
+        assert_eq!(
+            plan.compute_units,
+            vec!["CPU_AND_GPU", "CPU_AND_GPU", "CPU_AND_GPU"],
+            "High fallback risk must override all shards to CPU_AND_GPU"
+        );
 
         // Adaptations must be recorded for each shard
-        assert_eq!(adaptations.len(), 3,
-            "Three adaptations expected (one per shard)");
+        assert_eq!(adaptations.len(), 3, "Three adaptations expected (one per shard)");
     }
 
     /// Test that low risk knowledge does not override compute units.
     #[test]
     fn test_low_risk_keeps_default_in_multi_shard_plan() {
-        let spec = ShardPipelineSpec::three_shard_linear(
-            "test_pipeline", 64, 48, 32, 1, "fp16",
-        );
+        let spec = ShardPipelineSpec::three_shard_linear("test_pipeline", 64, 48, 32, 1, "fp16");
 
         let mut pass = ShardPlanPass::new();
         let low_risk = MockLowFallbackRiskKnowledge;
 
-        let (plan, _pir, adaptations) = pass.build_sharded_plan_from_spec_with_risk_knowledge(
-            &spec, &[], &low_risk,
-        );
+        let (plan, _pir, adaptations) =
+            pass.build_sharded_plan_from_spec_with_risk_knowledge(&spec, &[], &low_risk);
 
         // Low risk: all shards should keep default CPU_AND_NE
         assert_eq!(plan.compute_units, vec!["CPU_AND_NE", "CPU_AND_NE", "CPU_AND_NE"]);
@@ -1118,9 +1183,7 @@ mod tests {
     /// Test that risk knowledge takes precedence over template knowledge.
     #[test]
     fn test_risk_overrides_template_in_multi_shard_plan() {
-        let spec = ShardPipelineSpec::three_shard_linear(
-            "test_pipeline", 64, 48, 32, 1, "fp16",
-        );
+        let spec = ShardPipelineSpec::three_shard_linear("test_pipeline", 64, 48, 32, 1, "fp16");
 
         // Template says CPU_AND_NE for all shards
         let template = ShardTemplate {
@@ -1130,19 +1193,19 @@ mod tests {
                     role: ShardRole::Entry,
                     layer_start: 0,
                     layer_end: 5,
-                    compute_units: ComputeUnits::CPUAndNE,
+                    compute_units: ComputeUnitHint::CPUAndNE,
                 },
                 ShardPartitionEntry {
                     role: ShardRole::Interior,
                     layer_start: 6,
                     layer_end: 10,
-                    compute_units: ComputeUnits::CPUAndNE,
+                    compute_units: ComputeUnitHint::CPUAndNE,
                 },
                 ShardPartitionEntry {
                     role: ShardRole::Exit,
                     layer_start: 11,
                     layer_end: 15,
-                    compute_units: ComputeUnits::CPUAndNE,
+                    compute_units: ComputeUnitHint::CPUAndNE,
                 },
             ],
             io_compute_units: None,
@@ -1154,29 +1217,28 @@ mod tests {
         let mut pass = ShardPlanPass::new();
         let high_risk = MockHighFallbackRiskKnowledge;
 
-        let (plan, _pir, adaptations) = pass.build_sharded_plan_from_spec_with_risk_knowledge(
-            &spec, &[template], &high_risk,
-        );
+        let (plan, _pir, adaptations) =
+            pass.build_sharded_plan_from_spec_with_risk_knowledge(&spec, &[template], &high_risk);
 
         // Risk overrides template: all shards should be CPU_AND_GPU
-        assert_eq!(plan.compute_units, vec!["CPU_AND_GPU", "CPU_AND_GPU", "CPU_AND_GPU"],
-            "Risk knowledge must override template assignment");
+        assert_eq!(
+            plan.compute_units,
+            vec!["CPU_AND_GPU", "CPU_AND_GPU", "CPU_AND_GPU"],
+            "Risk knowledge must override template assignment"
+        );
         assert_eq!(adaptations.len(), 3);
     }
 
     /// Test that NoKnowledge produces no adaptations in multi-shard plan.
     #[test]
     fn test_no_knowledge_no_adaptations_in_multi_shard_plan() {
-        let spec = ShardPipelineSpec::three_shard_linear(
-            "test_pipeline", 64, 48, 32, 1, "fp16",
-        );
+        let spec = ShardPipelineSpec::three_shard_linear("test_pipeline", 64, 48, 32, 1, "fp16");
 
         let mut pass = ShardPlanPass::new();
         let no_knowledge = NoKnowledge;
 
-        let (plan, _pir, adaptations) = pass.build_sharded_plan_from_spec_with_risk_knowledge(
-            &spec, &[], &no_knowledge,
-        );
+        let (plan, _pir, adaptations) =
+            pass.build_sharded_plan_from_spec_with_risk_knowledge(&spec, &[], &no_knowledge);
 
         assert_eq!(plan.compute_units, vec!["CPU_AND_NE", "CPU_AND_NE", "CPU_AND_NE"]);
         assert!(adaptations.is_empty());

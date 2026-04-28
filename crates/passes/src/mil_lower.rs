@@ -34,9 +34,9 @@
 //! have lowering paths. Shape information from AIR ops is propagated into
 //! MirNode.shape during lowering.
 
-use ane_ir::air::{AirGraph, AirOp, AirNodeId};
-use ane_ir::mir::{MirGraph, MirNode, MirNodeId, MirOp, MilDtype, ComputeUnitHint};
 use super::shard_plan::ShardPlan;
+use ane_ir::air::{AirGraph, AirNodeId, AirOp};
+use ane_ir::mir::{ComputeUnitHint, MilDtype, MirGraph, MirNode, MirNodeId, MirOp};
 use anyhow::Result;
 use std::collections::HashMap;
 
@@ -51,9 +51,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
         AirOp::MatMul { .. } => vec![],
         AirOp::Conv1x1AsLinear { .. } => vec![],
         AirOp::ElementWise { inputs, .. } => {
-            inputs.get(0)
-                .and_then(|id| node_shapes.get(id).cloned())
-                .unwrap_or_default()
+            inputs.first().and_then(|id| node_shapes.get(id).cloned()).unwrap_or_default()
         }
         AirOp::Reshape { target_shape, .. } => target_shape.clone(),
         AirOp::Transpose { input, perm } => {
@@ -75,13 +73,9 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
             }
         }
         AirOp::Concat { inputs, axis: _ } => {
-            inputs.get(0)
-                .and_then(|id| node_shapes.get(id).cloned())
-                .unwrap_or_default()
+            inputs.first().and_then(|id| node_shapes.get(id).cloned()).unwrap_or_default()
         }
-        AirOp::Softmax { input, .. } => {
-            node_shapes.get(input).cloned().unwrap_or_default()
-        }
+        AirOp::Softmax { input, .. } => node_shapes.get(input).cloned().unwrap_or_default(),
         AirOp::StateReadFixed { shape, .. } => shape.clone(),
         AirOp::StateWriteFixed { .. } => vec![],
         AirOp::ReduceMean { input, axes, keep_dims } => {
@@ -99,16 +93,16 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
         | AirOp::Gelu { input, .. }
         | AirOp::Relu { input }
         | AirOp::SliceUpdate { input, .. }
-        | AirOp::LayerNorm { input, .. } => {
-            node_shapes.get(input).cloned().unwrap_or_default()
-        }
-        AirOp::RealDiv { x, .. } => {
-            node_shapes.get(x).cloned().unwrap_or_default()
-        }
+        | AirOp::LayerNorm { input, .. } => node_shapes.get(input).cloned().unwrap_or_default(),
+        AirOp::RealDiv { x, .. } => node_shapes.get(x).cloned().unwrap_or_default(),
         AirOp::Topk { input, k, axis } => {
             if let Some(shape) = node_shapes.get(input) {
                 let mut out = shape.clone();
-                let ax = if *axis >= 0 { *axis as usize } else { out.len().saturating_add(*axis as usize) };
+                let ax = if *axis >= 0 {
+                    *axis as usize
+                } else {
+                    out.len().saturating_add(*axis as usize)
+                };
                 if ax < out.len() {
                     out[ax] = *k;
                 }
@@ -117,26 +111,68 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 vec![]
             }
         }
-        AirOp::Gather { input, .. } => {
-            node_shapes.get(input).cloned().unwrap_or_default()
-        }
+        AirOp::Gather { input, .. } => node_shapes.get(input).cloned().unwrap_or_default(),
         AirOp::ScaledDotProductAttention { query, .. } => {
             node_shapes.get(query).cloned().unwrap_or_default()
         }
         AirOp::SliceByIndex { input, begin, end, .. } => {
-            if begin.iter().all(|v| *v >= 0) && end.iter().all(|v| *v >= 0) && begin.len() == end.len() {
-                end.iter().zip(begin.iter()).map(|(e, b)| (*e as usize).saturating_sub(*b as usize)).collect()
+            if begin.iter().all(|v| *v >= 0)
+                && end.iter().all(|v| *v >= 0)
+                && begin.len() == end.len()
+            {
+                end.iter()
+                    .zip(begin.iter())
+                    .map(|(e, b)| (*e as usize).saturating_sub(*b as usize))
+                    .collect()
             } else {
                 node_shapes.get(input).cloned().unwrap_or_default()
             }
         }
-        AirOp::Where { x, .. } => {
-            node_shapes.get(x).cloned().unwrap_or_default()
-        }
+        AirOp::Where { x, .. } => node_shapes.get(x).cloned().unwrap_or_default(),
         AirOp::StaticLUTProjection { .. } => vec![],
         // All remaining AIR ops: conservatively return empty shape
         _ => vec![],
     }
+}
+
+/// Validate SDPA (ScaledDotProductAttention) constraints during AIR→MIR lowering.
+///
+/// Sprint 59: ANE constraints require:
+/// - Operand count is 3 or 4 (Q, K, V, optional mask)
+/// - All operand ranks ≤ 4
+///
+/// Returns a descriptive error on violation.
+fn validate_sdpa_constraints(
+    query_shape: &[usize],
+    key_shape: &[usize],
+    value_shape: &[usize],
+    mask_shape: Option<&[usize]>,
+) -> Result<()> {
+    // Operand count: must be 3 or 4 (Q, K, V, optional mask)
+    // The mask presence is checked by the Option, so we just validate
+    // that we have the required 3 core operands.
+
+    // Check all operand ranks ≤ 4
+    let check_rank = |name: &str, shape: &[usize]| -> Result<()> {
+        if shape.len() > 4 {
+            anyhow::bail!(
+                "SDPA constraint violation: {} has rank {} which exceeds maximum of 4 \
+                 (ANE constraint: all SDPA operands must be rank ≤ 4)",
+                name,
+                shape.len()
+            );
+        }
+        Ok(())
+    };
+
+    check_rank("query", query_shape)?;
+    check_rank("key", key_shape)?;
+    check_rank("value", value_shape)?;
+    if let Some(mask_shape) = mask_shape {
+        check_rank("attention_mask", mask_shape)?;
+    }
+
+    Ok(())
 }
 
 /// Helper: compute the output shape of a reduce op (ReduceMean / ReduceSum).
@@ -149,16 +185,19 @@ fn reduce_shape(mut shape: Vec<usize>, axes: &[usize], keep_dims: bool) -> Vec<u
         }
         shape
     } else {
-        shape.iter().enumerate()
-            .filter(|(i, _)| !axes.contains(i))
-            .map(|(_, &dim)| dim)
-            .collect()
+        shape.iter().enumerate().filter(|(i, _)| !axes.contains(i)).map(|(_, &dim)| dim).collect()
     }
 }
 
 /// MIL Lower pass implementation.
 pub struct MilLowerPass {
     // No configuration needed for the linear projection case
+}
+
+impl Default for MilLowerPass {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MilLowerPass {
@@ -227,17 +266,16 @@ impl MilLowerPass {
                 AirOp::MatMul { a, b, .. } => {
                     let x_id = air_to_mir.get(a).cloned().unwrap_or_else(|| MirNodeId(a.0.clone()));
                     let y_id = air_to_mir.get(b).cloned().unwrap_or_else(|| MirNodeId(b.0.clone()));
-                    MirOp::MILMatMul {
-                        name: air_node.name.clone(),
-                        x: x_id,
-                        y: y_id,
-                    }
+                    MirOp::MILMatMul { name: air_node.name.clone(), x: x_id, y: y_id }
                 }
                 AirOp::Conv1x1AsLinear { input, weight, .. } => {
                     // Conv1x1AsLinear is semantically a fully-connected projection.
                     // Lower to MILLinear (canonical Core ML op for FC projections)
                     // instead of a dead-letter matmul+add decomposition.
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
                     MirOp::MILLinear {
                         name: air_node.name.clone(),
                         x: mir_input,
@@ -248,8 +286,18 @@ impl MilLowerPass {
                 AirOp::ElementWise { op, inputs } => {
                     match op {
                         ane_ir::sir::ElementWiseOp::Add => {
-                            let x = inputs.get(0).map(|id| air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone())));
-                            let y = inputs.get(1).map(|id| air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone())));
+                            let x = inputs.first().map(|id| {
+                                air_to_mir
+                                    .get(id)
+                                    .cloned()
+                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
+                            });
+                            let y = inputs.get(1).map(|id| {
+                                air_to_mir
+                                    .get(id)
+                                    .cloned()
+                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
+                            });
                             // For the linear projection vertical slice, we need both operands.
                             // If we don't have two inputs (weight/bias are constants, not in AIR inputs),
                             // we create a placeholder referencing by name.
@@ -260,8 +308,18 @@ impl MilLowerPass {
                             }
                         }
                         ane_ir::sir::ElementWiseOp::Mul => {
-                            let x = inputs.get(0).map(|id| air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone())));
-                            let y = inputs.get(1).map(|id| air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone())));
+                            let x = inputs.first().map(|id| {
+                                air_to_mir
+                                    .get(id)
+                                    .cloned()
+                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
+                            });
+                            let y = inputs.get(1).map(|id| {
+                                air_to_mir
+                                    .get(id)
+                                    .cloned()
+                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
+                            });
                             MirOp::MILMul {
                                 name: air_node.name.clone(),
                                 x: x.unwrap_or_else(|| MirNodeId("input".into())),
@@ -269,15 +327,30 @@ impl MilLowerPass {
                             }
                         }
                         ane_ir::sir::ElementWiseOp::Abs => {
-                            let x = inputs.get(0).map(|id| air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone())));
+                            let x = inputs.first().map(|id| {
+                                air_to_mir
+                                    .get(id)
+                                    .cloned()
+                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
+                            });
                             MirOp::MILAbs {
                                 name: air_node.name.clone(),
                                 x: x.unwrap_or_else(|| MirNodeId("input".into())),
                             }
                         }
                         ane_ir::sir::ElementWiseOp::Maximum => {
-                            let x = inputs.get(0).map(|id| air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone())));
-                            let y = inputs.get(1).map(|id| air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone())));
+                            let x = inputs.first().map(|id| {
+                                air_to_mir
+                                    .get(id)
+                                    .cloned()
+                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
+                            });
+                            let y = inputs.get(1).map(|id| {
+                                air_to_mir
+                                    .get(id)
+                                    .cloned()
+                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
+                            });
                             MirOp::MILMaximum {
                                 name: air_node.name.clone(),
                                 x: x.unwrap_or_else(|| MirNodeId("input".into())),
@@ -285,8 +358,18 @@ impl MilLowerPass {
                             }
                         }
                         ane_ir::sir::ElementWiseOp::Minimum => {
-                            let x = inputs.get(0).map(|id| air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone())));
-                            let y = inputs.get(1).map(|id| air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone())));
+                            let x = inputs.first().map(|id| {
+                                air_to_mir
+                                    .get(id)
+                                    .cloned()
+                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
+                            });
+                            let y = inputs.get(1).map(|id| {
+                                air_to_mir
+                                    .get(id)
+                                    .cloned()
+                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
+                            });
                             MirOp::MILMinimum {
                                 name: air_node.name.clone(),
                                 x: x.unwrap_or_else(|| MirNodeId("input".into())),
@@ -296,7 +379,10 @@ impl MilLowerPass {
                     }
                 }
                 AirOp::Reshape { input, target_shape } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
                     MirOp::MILReshape {
                         name: air_node.name.clone(),
                         x: mir_input,
@@ -304,7 +390,10 @@ impl MilLowerPass {
                     }
                 }
                 AirOp::Transpose { input, perm } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
                     MirOp::MILTranspose {
                         name: air_node.name.clone(),
                         x: mir_input,
@@ -312,16 +401,18 @@ impl MilLowerPass {
                     }
                 }
                 AirOp::Softmax { input, axis } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    MirOp::MILSoftmax {
-                        name: air_node.name.clone(),
-                        x: mir_input,
-                        axis: *axis,
-                    }
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSoftmax { name: air_node.name.clone(), x: mir_input, axis: *axis }
                 }
                 // Normalization ops (Sprint 33)
                 AirOp::ReduceMean { input, axes, keep_dims } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
                     MirOp::MILReduceMean {
                         name: air_node.name.clone(),
                         x: mir_input,
@@ -330,7 +421,10 @@ impl MilLowerPass {
                     }
                 }
                 AirOp::ReduceSum { input, axes, keep_dims } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
                     MirOp::MILReduceSum {
                         name: air_node.name.clone(),
                         x: mir_input,
@@ -339,23 +433,24 @@ impl MilLowerPass {
                     }
                 }
                 AirOp::Rsqrt { input } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    MirOp::MILRsqrt {
-                        name: air_node.name.clone(),
-                        x: mir_input,
-                    }
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILRsqrt { name: air_node.name.clone(), x: mir_input }
                 }
                 AirOp::RealDiv { x, y } => {
-                    let mir_x = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
-                    let mir_y = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
-                    MirOp::MILRealDiv {
-                        name: air_node.name.clone(),
-                        x: mir_x,
-                        y: mir_y,
-                    }
+                    let mir_x =
+                        air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let mir_y =
+                        air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILRealDiv { name: air_node.name.clone(), x: mir_x, y: mir_y }
                 }
                 AirOp::LayerNorm { input, weight, bias, epsilon, axes } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
                     MirOp::MILLayerNorm {
                         name: air_node.name.clone(),
                         x: mir_input,
@@ -367,17 +462,21 @@ impl MilLowerPass {
                 }
                 // Sampling ops (Sprint 33)
                 AirOp::Topk { input, k, axis } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    MirOp::MILTopk {
-                        name: air_node.name.clone(),
-                        x: mir_input,
-                        k: *k,
-                        axis: *axis,
-                    }
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILTopk { name: air_node.name.clone(), x: mir_input, k: *k, axis: *axis }
                 }
                 AirOp::Gather { input, indices, axis } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    let mir_indices = air_to_mir.get(indices).cloned().unwrap_or_else(|| MirNodeId(indices.0.clone()));
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mir_indices = air_to_mir
+                        .get(indices)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(indices.0.clone()));
                     MirOp::MILGather {
                         name: air_node.name.clone(),
                         x: mir_input,
@@ -387,25 +486,41 @@ impl MilLowerPass {
                 }
                 // RoPE/trigonometric ops (Sprint 33)
                 AirOp::Cos { input } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    MirOp::MILCos {
-                        name: air_node.name.clone(),
-                        x: mir_input,
-                    }
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILCos { name: air_node.name.clone(), x: mir_input }
                 }
                 AirOp::Sin { input } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    MirOp::MILSin {
-                        name: air_node.name.clone(),
-                        x: mir_input,
-                    }
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSin { name: air_node.name.clone(), x: mir_input }
                 }
                 // Attention ops (Sprint 36)
                 AirOp::ScaledDotProductAttention { query, key, value, attention_mask, scale } => {
-                    let mir_q = air_to_mir.get(query).cloned().unwrap_or_else(|| MirNodeId(query.0.clone()));
-                    let mir_k = air_to_mir.get(key).cloned().unwrap_or_else(|| MirNodeId(key.0.clone()));
-                    let mir_v = air_to_mir.get(value).cloned().unwrap_or_else(|| MirNodeId(value.0.clone()));
-                    let mir_mask = attention_mask.as_ref().map(|m| air_to_mir.get(m).cloned().unwrap_or_else(|| MirNodeId(m.0.clone())));
+                    // Sprint 59: validate SDPA constraints before lowering.
+                    let q_shape = node_shapes.get(query).cloned().unwrap_or_default();
+                    let k_shape = node_shapes.get(key).cloned().unwrap_or_default();
+                    let v_shape = node_shapes.get(value).cloned().unwrap_or_default();
+                    let m_shape = attention_mask.as_ref().and_then(|m| node_shapes.get(m)).cloned();
+                    validate_sdpa_constraints(&q_shape, &k_shape, &v_shape, m_shape.as_deref())?;
+
+                    let mir_q = air_to_mir
+                        .get(query)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(query.0.clone()));
+                    let mir_k =
+                        air_to_mir.get(key).cloned().unwrap_or_else(|| MirNodeId(key.0.clone()));
+                    let mir_v = air_to_mir
+                        .get(value)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(value.0.clone()));
+                    let mir_mask = attention_mask.as_ref().map(|m| {
+                        air_to_mir.get(m).cloned().unwrap_or_else(|| MirNodeId(m.0.clone()))
+                    });
                     MirOp::MILScaledDotProductAttention {
                         name: air_node.name.clone(),
                         query: mir_q,
@@ -415,8 +530,19 @@ impl MilLowerPass {
                         scale: *scale,
                     }
                 }
-                AirOp::SliceByIndex { input, begin, end, stride, begin_mask, end_mask, squeeze_mask } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
+                AirOp::SliceByIndex {
+                    input,
+                    begin,
+                    end,
+                    stride,
+                    begin_mask,
+                    end_mask,
+                    squeeze_mask,
+                } => {
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
                     MirOp::MILSliceByIndex {
                         name: air_node.name.clone(),
                         x: mir_input,
@@ -430,33 +556,33 @@ impl MilLowerPass {
                 }
                 // Activation ops (Sprint 36)
                 AirOp::Gelu { input, mode } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    MirOp::MILGelu {
-                        name: air_node.name.clone(),
-                        x: mir_input,
-                        mode: mode.clone(),
-                    }
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILGelu { name: air_node.name.clone(), x: mir_input, mode: mode.clone() }
                 }
                 AirOp::Relu { input } => {
                     // Sprint 50: ReLU now has a proper MIR op (MILRelu) instead
                     // of the previous MILCast approximation that was semantically
                     // incorrect but preserved graph structure.
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    MirOp::MILRelu {
-                        name: air_node.name.clone(),
-                        x: mir_input,
-                    }
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILRelu { name: air_node.name.clone(), x: mir_input }
                 }
-                AirOp::StateReadFixed { state_id, shape, dtype } => {
-                    MirOp::MILReadState {
-                        name: air_node.name.clone(),
-                        state_id: state_id.clone(),
-                        shape: shape.clone(),
-                        dtype: dtype.clone(),
-                    }
-                }
+                AirOp::StateReadFixed { state_id, shape, dtype } => MirOp::MILReadState {
+                    name: air_node.name.clone(),
+                    state_id: state_id.clone(),
+                    shape: shape.clone(),
+                    dtype: dtype.clone(),
+                },
                 AirOp::StateWriteFixed { state_id, value } => {
-                    let mir_value = air_to_mir.get(value).cloned().unwrap_or_else(|| MirNodeId(value.0.clone()));
+                    let mir_value = air_to_mir
+                        .get(value)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(value.0.clone()));
                     MirOp::MILCoremlUpdateState {
                         name: air_node.name.clone(),
                         state_id: state_id.clone(),
@@ -465,7 +591,10 @@ impl MilLowerPass {
                 }
                 // Shape ops that previously had no lowering
                 AirOp::Split { input, axis, num_splits } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
                     MirOp::MILSplit {
                         name: air_node.name.clone(),
                         x: mir_input,
@@ -474,8 +603,11 @@ impl MilLowerPass {
                     }
                 }
                 AirOp::Concat { inputs, axis } => {
-                    let mir_inputs: Vec<MirNodeId> = inputs.iter()
-                        .map(|id| air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone())))
+                    let mir_inputs: Vec<MirNodeId> = inputs
+                        .iter()
+                        .map(|id| {
+                            air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone()))
+                        })
                         .collect();
                     MirOp::MILConcat {
                         name: air_node.name.clone(),
@@ -485,8 +617,14 @@ impl MilLowerPass {
                 }
                 // Sprint 50: P2 ops — buffer update, activation, math, conditional
                 AirOp::SliceUpdate { input, update, begin, end } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    let mir_update = air_to_mir.get(update).cloned().unwrap_or_else(|| MirNodeId(update.0.clone()));
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mir_update = air_to_mir
+                        .get(update)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(update.0.clone()));
                     MirOp::MILSliceUpdate {
                         name: air_node.name.clone(),
                         x: mir_input,
@@ -496,30 +634,35 @@ impl MilLowerPass {
                     }
                 }
                 AirOp::Exp { input } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    MirOp::MILExp {
-                        name: air_node.name.clone(),
-                        x: mir_input,
-                    }
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILExp { name: air_node.name.clone(), x: mir_input }
                 }
                 AirOp::Sigmoid { input } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    MirOp::MILSigmoid {
-                        name: air_node.name.clone(),
-                        x: mir_input,
-                    }
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSigmoid { name: air_node.name.clone(), x: mir_input }
                 }
                 AirOp::Tanh { input } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    MirOp::MILTanh {
-                        name: air_node.name.clone(),
-                        x: mir_input,
-                    }
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILTanh { name: air_node.name.clone(), x: mir_input }
                 }
                 AirOp::Where { condition, x, y } => {
-                    let mir_condition = air_to_mir.get(condition).cloned().unwrap_or_else(|| MirNodeId(condition.0.clone()));
-                    let mir_x = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
-                    let mir_y = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    let mir_condition = air_to_mir
+                        .get(condition)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(condition.0.clone()));
+                    let mir_x =
+                        air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let mir_y =
+                        air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
                     MirOp::MILWhere {
                         name: air_node.name.clone(),
                         condition: mir_condition,
@@ -531,9 +674,13 @@ impl MilLowerPass {
                 // approximation. The op is not used by any active SIR/task path;
                 // LUT projection has a dedicated Python emission path.
                 AirOp::StaticLUTProjection { input: _, indices, lut, group_size: _ } => {
-                    let mir_lut = air_to_mir.get(&AirNodeId(lut.clone())).cloned()
+                    let mir_lut = air_to_mir
+                        .get(&AirNodeId(lut.clone()))
+                        .cloned()
                         .unwrap_or_else(|| MirNodeId(lut.clone()));
-                    let mir_indices = air_to_mir.get(&AirNodeId(indices.clone())).cloned()
+                    let mir_indices = air_to_mir
+                        .get(&AirNodeId(indices.clone()))
+                        .cloned()
                         .unwrap_or_else(|| MirNodeId(indices.clone()));
                     MirOp::MILGather {
                         name: air_node.name.clone(),
@@ -549,7 +696,13 @@ impl MilLowerPass {
                 // from AIR into MIR for MIL emission.
 
                 // Direct elementwise unary variants (also handled via ElementWise legacy path)
-                AirOp::Abs { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILAbs { name: air_node.name.clone(), x: mi } }
+                AirOp::Abs { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILAbs { name: air_node.name.clone(), x: mi }
+                }
 
                 AirOp::Const { value_path, dtype } => MirOp::MILConst {
                     name: air_node.name.clone(),
@@ -557,188 +710,1563 @@ impl MilLowerPass {
                     dtype: dtype.clone(),
                 },
                 AirOp::Linear { input, weight, bias } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    MirOp::MILLinear { name: air_node.name.clone(), x: mir_input, weight: weight.clone(), bias: bias.clone() }
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILLinear {
+                        name: air_node.name.clone(),
+                        x: mir_input,
+                        weight: weight.clone(),
+                        bias: bias.clone(),
+                    }
                 }
                 AirOp::Einsum { inputs, equation } => {
-                    let mir_inputs: Vec<MirNodeId> = inputs.iter().map(|id| air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone()))).collect();
-                    MirOp::MILEinsum { name: air_node.name.clone(), inputs: mir_inputs, equation: equation.clone() }
+                    let mir_inputs: Vec<MirNodeId> = inputs
+                        .iter()
+                        .map(|id| {
+                            air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone()))
+                        })
+                        .collect();
+                    MirOp::MILEinsum {
+                        name: air_node.name.clone(),
+                        inputs: mir_inputs,
+                        equation: equation.clone(),
+                    }
                 }
-                AirOp::Conv { input, weight, pad_type, groups, strides, pad_amounts, dilations } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    let mir_weight = air_to_mir.get(weight).cloned().unwrap_or_else(|| MirNodeId(weight.0.clone()));
-                    MirOp::MILConv { name: air_node.name.clone(), x: mir_input, weight: mir_weight, pad_type: pad_type.clone(), groups: *groups, strides: strides.clone(), pad_amounts: pad_amounts.clone(), dilations: dilations.clone() }
+                AirOp::Conv {
+                    input,
+                    weight,
+                    pad_type,
+                    groups,
+                    strides,
+                    pad_amounts,
+                    dilations,
+                } => {
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mir_weight = air_to_mir
+                        .get(weight)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(weight.0.clone()));
+                    MirOp::MILConv {
+                        name: air_node.name.clone(),
+                        x: mir_input,
+                        weight: mir_weight,
+                        pad_type: pad_type.clone(),
+                        groups: *groups,
+                        strides: strides.clone(),
+                        pad_amounts: pad_amounts.clone(),
+                        dilations: dilations.clone(),
+                    }
                 }
-                AirOp::ConvTranspose { input, weight, pad_type, groups, strides, pad_amounts, dilations, output_shape } => {
-                    let mir_input = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    let mir_weight = air_to_mir.get(weight).cloned().unwrap_or_else(|| MirNodeId(weight.0.clone()));
-                    MirOp::MILConvTranspose { name: air_node.name.clone(), x: mir_input, weight: mir_weight, pad_type: pad_type.clone(), groups: *groups, strides: strides.clone(), pad_amounts: pad_amounts.clone(), dilations: dilations.clone(), output_shape: output_shape.clone() }
+                AirOp::ConvTranspose {
+                    input,
+                    weight,
+                    pad_type,
+                    groups,
+                    strides,
+                    pad_amounts,
+                    dilations,
+                    output_shape,
+                } => {
+                    let mir_input = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mir_weight = air_to_mir
+                        .get(weight)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(weight.0.clone()));
+                    MirOp::MILConvTranspose {
+                        name: air_node.name.clone(),
+                        x: mir_input,
+                        weight: mir_weight,
+                        pad_type: pad_type.clone(),
+                        groups: *groups,
+                        strides: strides.clone(),
+                        pad_amounts: pad_amounts.clone(),
+                        dilations: dilations.clone(),
+                        output_shape: output_shape.clone(),
+                    }
                 }
 
                 // Elementwise binary ops
-                AirOp::Add { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILAdd { name: air_node.name.clone(), x: mx, y: my } }
-                AirOp::Mul { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILMul { name: air_node.name.clone(), x: mx, y: my } }
-                AirOp::Sub { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILSub { name: air_node.name.clone(), x: mx, y: my } }
-                AirOp::Maximum { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILMaximum { name: air_node.name.clone(), x: mx, y: my } }
-                AirOp::Minimum { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILMinimum { name: air_node.name.clone(), x: mx, y: my } }
-                AirOp::FloorDiv { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILFloorDiv { name: air_node.name.clone(), x: mx, y: my } }
-                AirOp::Mod { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILMod { name: air_node.name.clone(), x: mx, y: my } }
-                AirOp::Pow { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILPow { name: air_node.name.clone(), x: mx, y: my } }
-                AirOp::Equal { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILEqual { name: air_node.name.clone(), x: mx, y: my } }
-                AirOp::NotEqual { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILNotEqual { name: air_node.name.clone(), x: mx, y: my } }
-                AirOp::Greater { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILGreater { name: air_node.name.clone(), x: mx, y: my } }
-                AirOp::GreaterEqual { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILGreaterEqual { name: air_node.name.clone(), x: mx, y: my } }
-                AirOp::Less { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILLess { name: air_node.name.clone(), x: mx, y: my } }
-                AirOp::LessEqual { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILLessEqual { name: air_node.name.clone(), x: mx, y: my } }
-                AirOp::LogicalAnd { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILLogicalAnd { name: air_node.name.clone(), x: mx, y: my } }
-                AirOp::LogicalOr { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILLogicalOr { name: air_node.name.clone(), x: mx, y: my } }
-                AirOp::LogicalXor { x, y } => { let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILLogicalXor { name: air_node.name.clone(), x: mx, y: my } }
+                AirOp::Add { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILAdd { name: air_node.name.clone(), x: mx, y: my }
+                }
+                AirOp::Mul { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILMul { name: air_node.name.clone(), x: mx, y: my }
+                }
+                AirOp::Sub { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILSub { name: air_node.name.clone(), x: mx, y: my }
+                }
+                AirOp::Maximum { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILMaximum { name: air_node.name.clone(), x: mx, y: my }
+                }
+                AirOp::Minimum { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILMinimum { name: air_node.name.clone(), x: mx, y: my }
+                }
+                AirOp::FloorDiv { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILFloorDiv { name: air_node.name.clone(), x: mx, y: my }
+                }
+                AirOp::Mod { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILMod { name: air_node.name.clone(), x: mx, y: my }
+                }
+                AirOp::Pow { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILPow { name: air_node.name.clone(), x: mx, y: my }
+                }
+                AirOp::Equal { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILEqual { name: air_node.name.clone(), x: mx, y: my }
+                }
+                AirOp::NotEqual { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILNotEqual { name: air_node.name.clone(), x: mx, y: my }
+                }
+                AirOp::Greater { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILGreater { name: air_node.name.clone(), x: mx, y: my }
+                }
+                AirOp::GreaterEqual { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILGreaterEqual { name: air_node.name.clone(), x: mx, y: my }
+                }
+                AirOp::Less { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILLess { name: air_node.name.clone(), x: mx, y: my }
+                }
+                AirOp::LessEqual { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILLessEqual { name: air_node.name.clone(), x: mx, y: my }
+                }
+                AirOp::LogicalAnd { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILLogicalAnd { name: air_node.name.clone(), x: mx, y: my }
+                }
+                AirOp::LogicalOr { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILLogicalOr { name: air_node.name.clone(), x: mx, y: my }
+                }
+                AirOp::LogicalXor { x, y } => {
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILLogicalXor { name: air_node.name.clone(), x: mx, y: my }
+                }
 
                 // Elementwise unary ops
-                AirOp::Neg { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILNeg { name: air_node.name.clone(), x: mi } }
-                AirOp::Relu6 { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILRelu6 { name: air_node.name.clone(), x: mi } }
-                AirOp::LeakyRelu { input, alpha } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILLeakyRelu { name: air_node.name.clone(), x: mi, alpha: *alpha } }
-                AirOp::SigmoidHard { input, alpha, beta } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILSigmoidHard { name: air_node.name.clone(), x: mi, alpha: *alpha, beta: *beta } }
-                AirOp::ThresholdedRelu { input, alpha } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILThresholdedRelu { name: air_node.name.clone(), x: mi, alpha: *alpha } }
-                AirOp::ClampedRelu { input, alpha, beta } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILClampedRelu { name: air_node.name.clone(), x: mi, alpha: *alpha, beta: *beta } }
-                AirOp::LinearActivation { input, alpha, beta } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILLinearActivation { name: air_node.name.clone(), x: mi, alpha: *alpha, beta: *beta } }
-                AirOp::Prelu { input, alpha } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILPrelu { name: air_node.name.clone(), x: mi, alpha: alpha.clone() } }
-                AirOp::Softsign { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILSoftsign { name: air_node.name.clone(), x: mi } }
-                AirOp::Silu { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILSilu { name: air_node.name.clone(), x: mi } }
-                AirOp::ScaledTanh { input, alpha, beta } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILScaledTanh { name: air_node.name.clone(), x: mi, alpha: *alpha, beta: *beta } }
-                AirOp::Elu { input, alpha } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILElu { name: air_node.name.clone(), x: mi, alpha: *alpha } }
-                AirOp::Softplus { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILSoftplus { name: air_node.name.clone(), x: mi } }
-                AirOp::SoftplusParametric { input, alpha, beta } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILSoftplusParametric { name: air_node.name.clone(), x: mi, alpha: alpha.clone(), beta: beta.clone() } }
-                AirOp::Clip { input, min_val, max_val } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILClip { name: air_node.name.clone(), x: mi, min_val: *min_val, max_val: *max_val } }
-                AirOp::Square { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILSquare { name: air_node.name.clone(), x: mi } }
-                AirOp::Threshold { input, alpha } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILThreshold { name: air_node.name.clone(), x: mi, alpha: *alpha } }
-                AirOp::Sqrt { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILSqrt { name: air_node.name.clone(), x: mi } }
-                AirOp::Inverse { input, epsilon } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILInverse { name: air_node.name.clone(), x: mi, epsilon: *epsilon } }
-                AirOp::Ceil { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILCeil { name: air_node.name.clone(), x: mi } }
-                AirOp::Floor { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILFloor { name: air_node.name.clone(), x: mi } }
-                AirOp::Round { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILRound { name: air_node.name.clone(), x: mi } }
-                AirOp::Exp2 { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILExp2 { name: air_node.name.clone(), x: mi } }
-                AirOp::Log { input, epsilon } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILLog { name: air_node.name.clone(), x: mi, epsilon: *epsilon } }
-                AirOp::Sign { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILSign { name: air_node.name.clone(), x: mi } }
-                AirOp::Tan { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILTan { name: air_node.name.clone(), x: mi } }
-                AirOp::Acos { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILAcos { name: air_node.name.clone(), x: mi } }
-                AirOp::Asin { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILAsin { name: air_node.name.clone(), x: mi } }
-                AirOp::Atan { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILAtan { name: air_node.name.clone(), x: mi } }
-                AirOp::Cosh { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILCosh { name: air_node.name.clone(), x: mi } }
-                AirOp::Sinh { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MLSinh { name: air_node.name.clone(), x: mi } }
-                AirOp::Atanh { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILTanhInverse { name: air_node.name.clone(), x: mi } }
-                AirOp::Erf { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILErf { name: air_node.name.clone(), x: mi } }
-                AirOp::LogicalNot { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILLogicalNot { name: air_node.name.clone(), x: mi } }
-                AirOp::Cast { input, dtype } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILCast { name: air_node.name.clone(), x: mi, dtype: dtype.clone() } }
-                AirOp::Select { condition, x, y } => { let mc = air_to_mir.get(condition).cloned().unwrap_or_else(|| MirNodeId(condition.0.clone())); let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone())); let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone())); MirOp::MILSelect { name: air_node.name.clone(), condition: mc, x: mx, y: my } }
+                AirOp::Neg { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILNeg { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Relu6 { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILRelu6 { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::LeakyRelu { input, alpha } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILLeakyRelu { name: air_node.name.clone(), x: mi, alpha: *alpha }
+                }
+                AirOp::SigmoidHard { input, alpha, beta } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSigmoidHard {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        alpha: *alpha,
+                        beta: *beta,
+                    }
+                }
+                AirOp::ThresholdedRelu { input, alpha } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILThresholdedRelu { name: air_node.name.clone(), x: mi, alpha: *alpha }
+                }
+                AirOp::ClampedRelu { input, alpha, beta } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILClampedRelu {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        alpha: *alpha,
+                        beta: *beta,
+                    }
+                }
+                AirOp::LinearActivation { input, alpha, beta } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILLinearActivation {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        alpha: *alpha,
+                        beta: *beta,
+                    }
+                }
+                AirOp::Prelu { input, alpha } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILPrelu { name: air_node.name.clone(), x: mi, alpha: alpha.clone() }
+                }
+                AirOp::Softsign { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSoftsign { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Silu { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSilu { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::ScaledTanh { input, alpha, beta } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILScaledTanh {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        alpha: *alpha,
+                        beta: *beta,
+                    }
+                }
+                AirOp::Elu { input, alpha } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILElu { name: air_node.name.clone(), x: mi, alpha: *alpha }
+                }
+                AirOp::Softplus { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSoftplus { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::SoftplusParametric { input, alpha, beta } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSoftplusParametric {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        alpha: alpha.clone(),
+                        beta: beta.clone(),
+                    }
+                }
+                AirOp::Clip { input, min_val, max_val } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILClip {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        min_val: *min_val,
+                        max_val: *max_val,
+                    }
+                }
+                AirOp::Square { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSquare { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Threshold { input, alpha } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILThreshold { name: air_node.name.clone(), x: mi, alpha: *alpha }
+                }
+                AirOp::Sqrt { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSqrt { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Inverse { input, epsilon } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILInverse { name: air_node.name.clone(), x: mi, epsilon: *epsilon }
+                }
+                AirOp::Ceil { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILCeil { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Floor { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILFloor { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Round { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILRound { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Exp2 { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILExp2 { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Log { input, epsilon } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILLog { name: air_node.name.clone(), x: mi, epsilon: *epsilon }
+                }
+                AirOp::Sign { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSign { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Tan { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILTan { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Acos { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILAcos { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Asin { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILAsin { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Atan { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILAtan { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Cosh { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILCosh { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Sinh { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSinh { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Atanh { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILAtanh { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Erf { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILErf { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::LogicalNot { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILLogicalNot { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Cast { input, dtype } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILCast { name: air_node.name.clone(), x: mi, dtype: dtype.clone() }
+                }
+                AirOp::Select { condition, x, y } => {
+                    let mc = air_to_mir
+                        .get(condition)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(condition.0.clone()));
+                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILSelect { name: air_node.name.clone(), condition: mc, x: mx, y: my }
+                }
 
                 // Reduction ops
-                AirOp::ReduceMax { input, axes, keep_dims } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILReduceMax { name: air_node.name.clone(), x: mi, axes: axes.clone(), keep_dims: *keep_dims } }
-                AirOp::ReduceMin { input, axes, keep_dims } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILReduceMin { name: air_node.name.clone(), x: mi, axes: axes.clone(), keep_dims: *keep_dims } }
-                AirOp::ReduceProd { input, axes, keep_dims } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILReduceProd { name: air_node.name.clone(), x: mi, axes: axes.clone(), keep_dims: *keep_dims } }
-                AirOp::ReduceSumSquare { input, axes, keep_dims } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILReduceSumSquare { name: air_node.name.clone(), x: mi, axes: axes.clone(), keep_dims: *keep_dims } }
-                AirOp::ReduceL2Norm { input, axes, keep_dims } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILReduceL2Norm { name: air_node.name.clone(), x: mi, axes: axes.clone(), keep_dims: *keep_dims } }
-                AirOp::ReduceL1Norm { input, axes, keep_dims } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILReduceL1Norm { name: air_node.name.clone(), x: mi, axes: axes.clone(), keep_dims: *keep_dims } }
-                AirOp::ReduceLogSumExp { input, axes, keep_dims } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILReduceLogSumExp { name: air_node.name.clone(), x: mi, axes: axes.clone(), keep_dims: *keep_dims } }
-                AirOp::ReduceLogSum { input, axes, keep_dims } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILReduceLogSum { name: air_node.name.clone(), x: mi, axes: axes.clone(), keep_dims: *keep_dims } }
-                AirOp::ReduceArgmax { input, axis, keep_dims } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILReduceArgmax { name: air_node.name.clone(), x: mi, axis: *axis, keep_dims: *keep_dims } }
-                AirOp::ReduceArgmin { input, axis, keep_dims } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILReduceArgmin { name: air_node.name.clone(), x: mi, axis: *axis, keep_dims: *keep_dims } }
+                AirOp::ReduceMax { input, axes, keep_dims } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILReduceMax {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        axes: axes.clone(),
+                        keep_dims: *keep_dims,
+                    }
+                }
+                AirOp::ReduceMin { input, axes, keep_dims } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILReduceMin {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        axes: axes.clone(),
+                        keep_dims: *keep_dims,
+                    }
+                }
+                AirOp::ReduceProd { input, axes, keep_dims } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILReduceProd {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        axes: axes.clone(),
+                        keep_dims: *keep_dims,
+                    }
+                }
+                AirOp::ReduceSumSquare { input, axes, keep_dims } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILReduceSumSquare {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        axes: axes.clone(),
+                        keep_dims: *keep_dims,
+                    }
+                }
+                AirOp::ReduceL2Norm { input, axes, keep_dims } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILReduceL2Norm {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        axes: axes.clone(),
+                        keep_dims: *keep_dims,
+                    }
+                }
+                AirOp::ReduceL1Norm { input, axes, keep_dims } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILReduceL1Norm {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        axes: axes.clone(),
+                        keep_dims: *keep_dims,
+                    }
+                }
+                AirOp::ReduceLogSumExp { input, axes, keep_dims } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILReduceLogSumExp {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        axes: axes.clone(),
+                        keep_dims: *keep_dims,
+                    }
+                }
+                AirOp::ReduceLogSum { input, axes, keep_dims } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILReduceLogSum {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        axes: axes.clone(),
+                        keep_dims: *keep_dims,
+                    }
+                }
+                AirOp::ReduceArgmax { input, axis, keep_dims } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILReduceArgmax {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        axis: *axis,
+                        keep_dims: *keep_dims,
+                    }
+                }
+                AirOp::ReduceArgmin { input, axis, keep_dims } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILReduceArgmin {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        axis: *axis,
+                        keep_dims: *keep_dims,
+                    }
+                }
 
                 // Normalization ops
-                AirOp::BatchNorm { input, mean, variance, gamma, beta, epsilon } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILBatchNorm { name: air_node.name.clone(), x: mi, mean: mean.clone(), variance: variance.clone(), gamma: gamma.clone(), beta: beta.clone(), epsilon: *epsilon } }
-                AirOp::InstanceNorm { input, gamma, beta, epsilon } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILInstanceNorm { name: air_node.name.clone(), x: mi, gamma: gamma.clone(), beta: beta.clone(), epsilon: *epsilon } }
-                AirOp::L2Norm { input, epsilon, axes } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILL2Norm { name: air_node.name.clone(), x: mi, epsilon: *epsilon, axes: axes.clone() } }
-                AirOp::LocalResponseNorm { input, size, alpha, beta, k } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILLocalResponseNorm { name: air_node.name.clone(), x: mi, size: *size, alpha: *alpha, beta: *beta, k: *k } }
+                AirOp::BatchNorm { input, mean, variance, gamma, beta, epsilon } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILBatchNorm {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        mean: mean.clone(),
+                        variance: variance.clone(),
+                        gamma: gamma.clone(),
+                        beta: beta.clone(),
+                        epsilon: *epsilon,
+                    }
+                }
+                AirOp::InstanceNorm { input, gamma, beta, epsilon } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILInstanceNorm {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        gamma: gamma.clone(),
+                        beta: beta.clone(),
+                        epsilon: *epsilon,
+                    }
+                }
+                AirOp::L2Norm { input, epsilon, axes } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILL2Norm {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        epsilon: *epsilon,
+                        axes: axes.clone(),
+                    }
+                }
+                AirOp::LocalResponseNorm { input, size, alpha, beta, k } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILLocalResponseNorm {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        size: *size,
+                        alpha: *alpha,
+                        beta: *beta,
+                        k: *k,
+                    }
+                }
 
                 // Pooling ops
-                AirOp::MaxPool { input, kernel_sizes, strides, pad_types, pad_amounts } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILMaxPool { name: air_node.name.clone(), x: mi, kernel_sizes: kernel_sizes.clone(), strides: strides.clone(), pad_types: pad_types.clone(), pad_amounts: pad_amounts.clone() } }
-                AirOp::AvgPool { input, kernel_sizes, strides, pad_types, pad_amounts, count_include_padding } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILAvgPool { name: air_node.name.clone(), x: mi, kernel_sizes: kernel_sizes.clone(), strides: strides.clone(), pad_types: pad_types.clone(), pad_amounts: pad_amounts.clone(), count_include_padding: *count_include_padding } }
-                AirOp::L2Pool { input, kernel_sizes, strides, pad_types, pad_amounts } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILL2Pool { name: air_node.name.clone(), x: mi, kernel_sizes: kernel_sizes.clone(), strides: strides.clone(), pad_types: pad_types.clone(), pad_amounts: pad_amounts.clone() } }
+                AirOp::MaxPool { input, kernel_sizes, strides, pad_types, pad_amounts } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILMaxPool {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        kernel_sizes: kernel_sizes.clone(),
+                        strides: strides.clone(),
+                        pad_types: pad_types.clone(),
+                        pad_amounts: pad_amounts.clone(),
+                    }
+                }
+                AirOp::AvgPool {
+                    input,
+                    kernel_sizes,
+                    strides,
+                    pad_types,
+                    pad_amounts,
+                    count_include_padding,
+                } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILAvgPool {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        kernel_sizes: kernel_sizes.clone(),
+                        strides: strides.clone(),
+                        pad_types: pad_types.clone(),
+                        pad_amounts: pad_amounts.clone(),
+                        count_include_padding: *count_include_padding,
+                    }
+                }
+                AirOp::L2Pool { input, kernel_sizes, strides, pad_types, pad_amounts } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILL2Pool {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        kernel_sizes: kernel_sizes.clone(),
+                        strides: strides.clone(),
+                        pad_types: pad_types.clone(),
+                        pad_amounts: pad_amounts.clone(),
+                    }
+                }
 
                 // Image resizing ops
-                AirOp::Resize { input, target_size, mode, sampling_mode, nearest_rounding_mode } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILResize { name: air_node.name.clone(), x: mi, target_size: target_size.clone(), mode: mode.clone(), sampling_mode: sampling_mode.clone(), nearest_rounding_mode: nearest_rounding_mode.clone() } }
-                AirOp::ResizeNearestNeighbor { input, target_height, target_width } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILResizeNearestNeighbor { name: air_node.name.clone(), x: mi, target_height: *target_height, target_width: *target_width } }
-                AirOp::ResizeBilinear { input, target_height, target_width, align_corners } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILResizeBilinear { name: air_node.name.clone(), x: mi, target_height: *target_height, target_width: *target_width, align_corners: *align_corners } }
-                AirOp::UpsampleNearestNeighbor { input, scale } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILUpsampleNearestNeighbor { name: air_node.name.clone(), x: mi, scale: scale.clone() } }
-                AirOp::UpsampleBilinear { input, scale, align_corners, half_pixel_centers } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILUpsampleBilinear { name: air_node.name.clone(), x: mi, scale: scale.clone(), align_corners: *align_corners, half_pixel_centers: *half_pixel_centers } }
-                AirOp::CropResize { input, boxes, box_indices, crop_height, crop_width } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); let mb = air_to_mir.get(boxes).cloned().unwrap_or_else(|| MirNodeId(boxes.0.clone())); let mbi = air_to_mir.get(box_indices).cloned().unwrap_or_else(|| MirNodeId(box_indices.0.clone())); MirOp::MILCropResize { name: air_node.name.clone(), x: mi, boxes: mb, box_indices: mbi, crop_height: *crop_height, crop_width: *crop_width } }
-                AirOp::Affine { input, transform, output_height, output_width, sampling_mode, pad_value } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); let mt = air_to_mir.get(transform).cloned().unwrap_or_else(|| MirNodeId(transform.0.clone())); MirOp::MILAffine { name: air_node.name.clone(), x: mi, transform: mt, output_height: *output_height, output_width: *output_width, sampling_mode: sampling_mode.clone(), pad_value: *pad_value } }
-                AirOp::Resample { input, coordinates, sampling_mode, pad_value } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); let mc = air_to_mir.get(coordinates).cloned().unwrap_or_else(|| MirNodeId(coordinates.0.clone())); MirOp::MILResample { name: air_node.name.clone(), x: mi, coordinates: mc, sampling_mode: sampling_mode.clone(), pad_value: *pad_value } }
+                AirOp::Resize {
+                    input,
+                    target_size,
+                    mode,
+                    sampling_mode,
+                    nearest_rounding_mode,
+                } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILResize {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        target_size: target_size.clone(),
+                        mode: mode.clone(),
+                        sampling_mode: sampling_mode.clone(),
+                        nearest_rounding_mode: nearest_rounding_mode.clone(),
+                    }
+                }
+                AirOp::ResizeNearestNeighbor { input, target_height, target_width } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILResizeNearestNeighbor {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        target_height: *target_height,
+                        target_width: *target_width,
+                    }
+                }
+                AirOp::ResizeBilinear { input, target_height, target_width, align_corners } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILResizeBilinear {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        target_height: *target_height,
+                        target_width: *target_width,
+                        align_corners: *align_corners,
+                    }
+                }
+                AirOp::UpsampleNearestNeighbor { input, scale } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILUpsampleNearestNeighbor {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        scale: scale.clone(),
+                    }
+                }
+                AirOp::UpsampleBilinear { input, scale, align_corners, half_pixel_centers } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILUpsampleBilinear {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        scale: scale.clone(),
+                        align_corners: *align_corners,
+                        half_pixel_centers: *half_pixel_centers,
+                    }
+                }
+                AirOp::CropResize { input, boxes, box_indices, crop_height, crop_width } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mb = air_to_mir
+                        .get(boxes)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(boxes.0.clone()));
+                    let mbi = air_to_mir
+                        .get(box_indices)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(box_indices.0.clone()));
+                    MirOp::MILCropResize {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        boxes: mb,
+                        box_indices: mbi,
+                        crop_height: *crop_height,
+                        crop_width: *crop_width,
+                    }
+                }
+                AirOp::Affine {
+                    input,
+                    transform,
+                    output_height,
+                    output_width,
+                    sampling_mode,
+                    pad_value,
+                } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mt = air_to_mir
+                        .get(transform)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(transform.0.clone()));
+                    MirOp::MILAffine {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        transform: mt,
+                        output_height: *output_height,
+                        output_width: *output_width,
+                        sampling_mode: sampling_mode.clone(),
+                        pad_value: *pad_value,
+                    }
+                }
+                AirOp::Resample { input, coordinates, sampling_mode, pad_value } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mc = air_to_mir
+                        .get(coordinates)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(coordinates.0.clone()));
+                    MirOp::MILResample {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        coordinates: mc,
+                        sampling_mode: sampling_mode.clone(),
+                        pad_value: *pad_value,
+                    }
+                }
 
                 // Tensor transform ops
-                AirOp::ReshapeLike { input, ref_tensor } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); let mr = air_to_mir.get(ref_tensor).cloned().unwrap_or_else(|| MirNodeId(ref_tensor.0.clone())); MirOp::MILReshapeLike { name: air_node.name.clone(), x: mi, ref_tensor: mr } }
-                AirOp::ExpandDims { input, axis } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILExpandDims { name: air_node.name.clone(), x: mi, axis: axis.clone() } }
-                AirOp::Squeeze { input, axis } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILSqueeze { name: air_node.name.clone(), x: mi, axis: axis.clone() } }
-                AirOp::Flatten2d { input, axis } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILFlatten2d { name: air_node.name.clone(), x: mi, axis: *axis } }
-                AirOp::Reverse { input, axes } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILReverse { name: air_node.name.clone(), x: mi, axes: axes.clone() } }
-                AirOp::ReverseSequence { input, lengths, batch_axis, seq_axis } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); let ml = air_to_mir.get(lengths).cloned().unwrap_or_else(|| MirNodeId(lengths.0.clone())); MirOp::MILReverseSequence { name: air_node.name.clone(), x: mi, lengths: ml, batch_axis: *batch_axis, seq_axis: *seq_axis } }
-                AirOp::SliceBySize { input, begin, size } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILSliceBySize { name: air_node.name.clone(), x: mi, begin: begin.clone(), size: size.clone() } }
-                AirOp::SlidingWindows { input, axis, window_size, stride } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILSlidingWindows { name: air_node.name.clone(), x: mi, axis: *axis, window_size: *window_size, stride: *stride } }
-                AirOp::DepthToSpace { input, block_size } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILDepthToSpace { name: air_node.name.clone(), x: mi, block_size: *block_size } }
-                AirOp::SpaceToDepth { input, block_size } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILSpaceToDepth { name: air_node.name.clone(), x: mi, block_size: *block_size } }
-                AirOp::PixelShuffle { input, upscale_factor } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILPixelShuffle { name: air_node.name.clone(), x: mi, upscale_factor: *upscale_factor } }
-                AirOp::PixelUnshuffle { input, downscale_factor } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILPixelUnshuffle { name: air_node.name.clone(), x: mi, downscale_factor: *downscale_factor } }
-                AirOp::BatchToSpace { input, block_shape, crops } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILBatchToSpace { name: air_node.name.clone(), x: mi, block_shape: block_shape.clone(), crops: crops.clone() } }
-                AirOp::SpaceToBatch { input, block_shape, paddings } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILSpaceToBatch { name: air_node.name.clone(), x: mi, block_shape: block_shape.clone(), paddings: paddings.clone() } }
-                AirOp::Pad { input, pad_amounts, mode, constant_value } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILPad { name: air_node.name.clone(), x: mi, pad_amounts: pad_amounts.clone(), mode: mode.clone(), constant_value: *constant_value } }
-                AirOp::Stack { values, axis } => { let mv: Vec<MirNodeId> = values.iter().map(|id| air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone()))).collect(); MirOp::MILStack { name: air_node.name.clone(), values: mv, axis: *axis } }
-                AirOp::Tile { input, reps } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILTile { name: air_node.name.clone(), x: mi, reps: reps.clone() } }
-                AirOp::Cumsum { input, axis, exclusive, reverse } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILCumsum { name: air_node.name.clone(), x: mi, axis: *axis, exclusive: *exclusive, reverse: *reverse } }
-                AirOp::Fill { shape, value, dtype } => MirOp::MILFill { name: air_node.name.clone(), shape: shape.clone(), value: *value, dtype: dtype.clone() },
-                AirOp::FillLike { ref_tensor, value, dtype } => { let mr = air_to_mir.get(ref_tensor).cloned().unwrap_or_else(|| MirNodeId(ref_tensor.0.clone())); MirOp::MILFillLike { name: air_node.name.clone(), ref_tensor: mr, value: *value, dtype: dtype.clone() } }
-                AirOp::Identity { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILIdentity { name: air_node.name.clone(), x: mi } }
-                AirOp::OneHot { indices, one_hot_vector_size, on_value, off_value, axis, dtype } => { let mi = air_to_mir.get(indices).cloned().unwrap_or_else(|| MirNodeId(indices.0.clone())); MirOp::MILOneHot { name: air_node.name.clone(), indices: mi, one_hot_vector_size: *one_hot_vector_size, on_value: *on_value, off_value: *off_value, axis: *axis, dtype: dtype.clone() } }
-                AirOp::NonZero { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILNonZero { name: air_node.name.clone(), x: mi } }
-                AirOp::Argsort { input, axis, ascending } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILArgsort { name: air_node.name.clone(), x: mi, axis: *axis, ascending: *ascending } }
-                AirOp::BandPart { input, num_lower, num_upper } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILBandPart { name: air_node.name.clone(), x: mi, num_lower: *num_lower, num_upper: *num_upper } }
-                AirOp::Range1d { start, end, step } => MirOp::MILRange1d { name: air_node.name.clone(), start: *start, end: *end, step: *step },
-                AirOp::Shape { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILShape { name: air_node.name.clone(), x: mi } }
-                AirOp::Crop { input, crop_height, crop_width, offset_height, offset_width } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILCrop { name: air_node.name.clone(), x: mi, crop_height: *crop_height, crop_width: *crop_width, offset_height: *offset_height, offset_width: *offset_width } }
+                AirOp::ReshapeLike { input, ref_tensor } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mr = air_to_mir
+                        .get(ref_tensor)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(ref_tensor.0.clone()));
+                    MirOp::MILReshapeLike { name: air_node.name.clone(), x: mi, ref_tensor: mr }
+                }
+                AirOp::ExpandDims { input, axis } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILExpandDims { name: air_node.name.clone(), x: mi, axis: axis.clone() }
+                }
+                AirOp::Squeeze { input, axis } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSqueeze { name: air_node.name.clone(), x: mi, axis: axis.clone() }
+                }
+                AirOp::Flatten2d { input, axis } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILFlatten2d { name: air_node.name.clone(), x: mi, axis: *axis }
+                }
+                AirOp::Reverse { input, axes } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILReverse { name: air_node.name.clone(), x: mi, axes: axes.clone() }
+                }
+                AirOp::ReverseSequence { input, lengths, batch_axis, seq_axis } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let ml = air_to_mir
+                        .get(lengths)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(lengths.0.clone()));
+                    MirOp::MILReverseSequence {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        lengths: ml,
+                        batch_axis: *batch_axis,
+                        seq_axis: *seq_axis,
+                    }
+                }
+                AirOp::SliceBySize { input, begin, size } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSliceBySize {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        begin: begin.clone(),
+                        size: size.clone(),
+                    }
+                }
+                AirOp::SlidingWindows { input, axis, window_size, stride } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSlidingWindows {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        axis: *axis,
+                        window_size: *window_size,
+                        stride: *stride,
+                    }
+                }
+                AirOp::DepthToSpace { input, block_size } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILDepthToSpace {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        block_size: *block_size,
+                    }
+                }
+                AirOp::SpaceToDepth { input, block_size } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSpaceToDepth {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        block_size: *block_size,
+                    }
+                }
+                AirOp::PixelShuffle { input, upscale_factor } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILPixelShuffle {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        upscale_factor: *upscale_factor,
+                    }
+                }
+                AirOp::PixelUnshuffle { input, downscale_factor } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILPixelUnshuffle {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        downscale_factor: *downscale_factor,
+                    }
+                }
+                AirOp::BatchToSpace { input, block_shape, crops } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILBatchToSpace {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        block_shape: block_shape.clone(),
+                        crops: crops.clone(),
+                    }
+                }
+                AirOp::SpaceToBatch { input, block_shape, paddings } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILSpaceToBatch {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        block_shape: block_shape.clone(),
+                        paddings: paddings.clone(),
+                    }
+                }
+                AirOp::Pad { input, pad_amounts, mode, constant_value } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILPad {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        pad_amounts: pad_amounts.clone(),
+                        mode: mode.clone(),
+                        constant_value: *constant_value,
+                    }
+                }
+                AirOp::Stack { values, axis } => {
+                    let mv: Vec<MirNodeId> = values
+                        .iter()
+                        .map(|id| {
+                            air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone()))
+                        })
+                        .collect();
+                    MirOp::MILStack { name: air_node.name.clone(), values: mv, axis: *axis }
+                }
+                AirOp::Tile { input, reps } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILTile { name: air_node.name.clone(), x: mi, reps: reps.clone() }
+                }
+                AirOp::Cumsum { input, axis, exclusive, reverse } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILCumsum {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        axis: *axis,
+                        exclusive: *exclusive,
+                        reverse: *reverse,
+                    }
+                }
+                AirOp::Fill { shape, value, dtype } => MirOp::MILFill {
+                    name: air_node.name.clone(),
+                    shape: shape.clone(),
+                    value: *value,
+                    dtype: dtype.clone(),
+                },
+                AirOp::FillLike { ref_tensor, value, dtype } => {
+                    let mr = air_to_mir
+                        .get(ref_tensor)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(ref_tensor.0.clone()));
+                    MirOp::MILFillLike {
+                        name: air_node.name.clone(),
+                        ref_tensor: mr,
+                        value: *value,
+                        dtype: dtype.clone(),
+                    }
+                }
+                AirOp::Identity { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILIdentity { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::OneHot {
+                    indices,
+                    one_hot_vector_size,
+                    on_value,
+                    off_value,
+                    axis,
+                    dtype,
+                } => {
+                    let mi = air_to_mir
+                        .get(indices)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(indices.0.clone()));
+                    MirOp::MILOneHot {
+                        name: air_node.name.clone(),
+                        indices: mi,
+                        one_hot_vector_size: *one_hot_vector_size,
+                        on_value: *on_value,
+                        off_value: *off_value,
+                        axis: *axis,
+                        dtype: dtype.clone(),
+                    }
+                }
+                AirOp::NonZero { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILNonZero { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Argsort { input, axis, ascending } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILArgsort {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        axis: *axis,
+                        ascending: *ascending,
+                    }
+                }
+                AirOp::BandPart { input, num_lower, num_upper } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILBandPart {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        num_lower: *num_lower,
+                        num_upper: *num_upper,
+                    }
+                }
+                AirOp::Range1d { start, end, step } => MirOp::MILRange1d {
+                    name: air_node.name.clone(),
+                    start: *start,
+                    end: *end,
+                    step: *step,
+                },
+                AirOp::Shape { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILShape { name: air_node.name.clone(), x: mi }
+                }
+                AirOp::Crop { input, crop_height, crop_width, offset_height, offset_width } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILCrop {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        crop_height: *crop_height,
+                        crop_width: *crop_width,
+                        offset_height: *offset_height,
+                        offset_width: *offset_width,
+                    }
+                }
 
                 // Scatter / Gather ops
-                AirOp::GatherAlongAxis { input, indices, axis } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); let midx = air_to_mir.get(indices).cloned().unwrap_or_else(|| MirNodeId(indices.0.clone())); MirOp::MILGatherAlongAxis { name: air_node.name.clone(), x: mi, indices: midx, axis: *axis } }
-                AirOp::GatherNd { input, indices } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); let midx = air_to_mir.get(indices).cloned().unwrap_or_else(|| MirNodeId(indices.0.clone())); MirOp::MILGatherNd { name: air_node.name.clone(), x: mi, indices: midx } }
-                AirOp::Scatter { input, indices, updates, axis, mode } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); let midx = air_to_mir.get(indices).cloned().unwrap_or_else(|| MirNodeId(indices.0.clone())); let mu = air_to_mir.get(updates).cloned().unwrap_or_else(|| MirNodeId(updates.0.clone())); MirOp::MILScatter { name: air_node.name.clone(), x: mi, indices: midx, updates: mu, axis: *axis, mode: mode.clone() } }
-                AirOp::ScatterAlongAxis { input, indices, updates, axis } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); let midx = air_to_mir.get(indices).cloned().unwrap_or_else(|| MirNodeId(indices.0.clone())); let mu = air_to_mir.get(updates).cloned().unwrap_or_else(|| MirNodeId(updates.0.clone())); MirOp::MILScatterAlongAxis { name: air_node.name.clone(), x: mi, indices: midx, updates: mu, axis: *axis } }
-                AirOp::ScatterNd { input, indices, updates } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); let midx = air_to_mir.get(indices).cloned().unwrap_or_else(|| MirNodeId(indices.0.clone())); let mu = air_to_mir.get(updates).cloned().unwrap_or_else(|| MirNodeId(updates.0.clone())); MirOp::MILScatterNd { name: air_node.name.clone(), x: mi, indices: midx, updates: mu } }
-                AirOp::NonMaximumSuppression { boxes, scores, iou_threshold, score_threshold, max_detections } => { let mb = air_to_mir.get(boxes).cloned().unwrap_or_else(|| MirNodeId(boxes.0.clone())); let ms = air_to_mir.get(scores).cloned().unwrap_or_else(|| MirNodeId(scores.0.clone())); MirOp::MILNonMaximumSuppression { name: air_node.name.clone(), boxes: mb, scores: ms, iou_threshold: *iou_threshold, score_threshold: *score_threshold, max_detections: *max_detections } }
+                AirOp::GatherAlongAxis { input, indices, axis } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let midx = air_to_mir
+                        .get(indices)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(indices.0.clone()));
+                    MirOp::MILGatherAlongAxis {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        indices: midx,
+                        axis: *axis,
+                    }
+                }
+                AirOp::GatherNd { input, indices } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let midx = air_to_mir
+                        .get(indices)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(indices.0.clone()));
+                    MirOp::MILGatherNd { name: air_node.name.clone(), x: mi, indices: midx }
+                }
+                AirOp::Scatter { input, indices, updates, axis, mode } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let midx = air_to_mir
+                        .get(indices)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(indices.0.clone()));
+                    let mu = air_to_mir
+                        .get(updates)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(updates.0.clone()));
+                    MirOp::MILScatter {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        indices: midx,
+                        updates: mu,
+                        axis: *axis,
+                        mode: mode.clone(),
+                    }
+                }
+                AirOp::ScatterAlongAxis { input, indices, updates, axis } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let midx = air_to_mir
+                        .get(indices)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(indices.0.clone()));
+                    let mu = air_to_mir
+                        .get(updates)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(updates.0.clone()));
+                    MirOp::MILScatterAlongAxis {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        indices: midx,
+                        updates: mu,
+                        axis: *axis,
+                    }
+                }
+                AirOp::ScatterNd { input, indices, updates } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let midx = air_to_mir
+                        .get(indices)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(indices.0.clone()));
+                    let mu = air_to_mir
+                        .get(updates)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(updates.0.clone()));
+                    MirOp::MILScatterNd {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        indices: midx,
+                        updates: mu,
+                    }
+                }
+                AirOp::NonMaximumSuppression {
+                    boxes,
+                    scores,
+                    iou_threshold,
+                    score_threshold,
+                    max_detections,
+                } => {
+                    let mb = air_to_mir
+                        .get(boxes)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(boxes.0.clone()));
+                    let ms = air_to_mir
+                        .get(scores)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(scores.0.clone()));
+                    MirOp::MILNonMaximumSuppression {
+                        name: air_node.name.clone(),
+                        boxes: mb,
+                        scores: ms,
+                        iou_threshold: *iou_threshold,
+                        score_threshold: *score_threshold,
+                        max_detections: *max_detections,
+                    }
+                }
 
                 // Quantization ops
-                AirOp::Quantize { input, scale, zero_point, axis, output_dtype } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILQuantize { name: air_node.name.clone(), x: mi, scale: *scale, zero_point: *zero_point, axis: *axis, output_dtype: output_dtype.clone() } }
-                AirOp::Dequantize { input, scale, zero_point, axis, output_dtype } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILDequantize { name: air_node.name.clone(), x: mi, scale: *scale, zero_point: *zero_point, axis: *axis, output_dtype: output_dtype.clone() } }
+                AirOp::Quantize { input, scale, zero_point, axis, output_dtype } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILQuantize {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        scale: *scale,
+                        zero_point: *zero_point,
+                        axis: *axis,
+                        output_dtype: output_dtype.clone(),
+                    }
+                }
+                AirOp::Dequantize { input, scale, zero_point, axis, output_dtype } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILDequantize {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        scale: *scale,
+                        zero_point: *zero_point,
+                        axis: *axis,
+                        output_dtype: output_dtype.clone(),
+                    }
+                }
 
                 // Constexpr / Compression ops
-                AirOp::ConstexprAffineDequantize { quantized_data, scale, zero_point, axis } => MirOp::MILConstexprAffineDequantize { name: air_node.name.clone(), quantized_data: quantized_data.clone(), scale: *scale, zero_point: *zero_point, axis: *axis },
-                AirOp::ConstexprBlockwiseShiftScale { data, scale, offset, block_size } => MirOp::MILConstexprBlockwiseShiftScale { name: air_node.name.clone(), data: data.clone(), scale: scale.clone(), offset: offset.clone(), block_size: block_size.clone() },
-                AirOp::ConstexprLutToDense { indices, lut, num_bits } => MirOp::MILConstexprLutToDense { name: air_node.name.clone(), indices: indices.clone(), lut: lut.clone(), num_bits: *num_bits },
-                AirOp::ConstexprSparseToDense { nonzero_data, shape, default_value } => MirOp::MILConstexprSparseToDense { name: air_node.name.clone(), nonzero_data: nonzero_data.clone(), shape: shape.clone(), default_value: *default_value },
-                AirOp::ConstexprCast { data, dtype } => MirOp::MILConstexprCast { name: air_node.name.clone(), data: data.clone(), dtype: dtype.clone() },
-                AirOp::ConstexprLutToSparse { data, num_bits } => MirOp::MILConstexprLutToSparse { name: air_node.name.clone(), data: data.clone(), num_bits: *num_bits },
-                AirOp::ConstexprSparseBlockwiseShiftScale { data, scale, offset, block_size, block_axis } => MirOp::MILConstexprSparseBlockwiseShiftScale { name: air_node.name.clone(), data: data.clone(), scale: scale.clone(), offset: offset.clone(), block_size: block_size.clone(), block_axis: *block_axis },
+                AirOp::ConstexprAffineDequantize { quantized_data, scale, zero_point, axis } => {
+                    MirOp::MILConstexprAffineDequantize {
+                        name: air_node.name.clone(),
+                        quantized_data: quantized_data.clone(),
+                        scale: *scale,
+                        zero_point: *zero_point,
+                        axis: *axis,
+                    }
+                }
+                AirOp::ConstexprBlockwiseShiftScale { data, scale, offset, block_size } => {
+                    MirOp::MILConstexprBlockwiseShiftScale {
+                        name: air_node.name.clone(),
+                        data: data.clone(),
+                        scale: scale.clone(),
+                        offset: offset.clone(),
+                        block_size: block_size.clone(),
+                    }
+                }
+                AirOp::ConstexprLutToDense { indices, lut, num_bits } => {
+                    MirOp::MILConstexprLutToDense {
+                        name: air_node.name.clone(),
+                        indices: indices.clone(),
+                        lut: lut.clone(),
+                        num_bits: *num_bits,
+                    }
+                }
+                AirOp::ConstexprSparseToDense { nonzero_data, shape, default_value } => {
+                    MirOp::MILConstexprSparseToDense {
+                        name: air_node.name.clone(),
+                        nonzero_data: nonzero_data.clone(),
+                        shape: shape.clone(),
+                        default_value: *default_value,
+                    }
+                }
+                AirOp::ConstexprCast { data, dtype } => MirOp::MILConstexprCast {
+                    name: air_node.name.clone(),
+                    data: data.clone(),
+                    dtype: dtype.clone(),
+                },
+                AirOp::ConstexprLutToSparse { data, num_bits } => MirOp::MILConstexprLutToSparse {
+                    name: air_node.name.clone(),
+                    data: data.clone(),
+                    num_bits: *num_bits,
+                },
+                AirOp::ConstexprSparseBlockwiseShiftScale {
+                    data,
+                    scale,
+                    offset,
+                    block_size,
+                    block_axis,
+                } => MirOp::MILConstexprSparseBlockwiseShiftScale {
+                    name: air_node.name.clone(),
+                    data: data.clone(),
+                    scale: scale.clone(),
+                    offset: offset.clone(),
+                    block_size: block_size.clone(),
+                    block_axis: *block_axis,
+                },
 
                 // Recurrent ops
-                AirOp::Rnn { input, initial_h, weight_ih, weight_hh, bias, mode, output_sequence } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); let mh = air_to_mir.get(initial_h).cloned().unwrap_or_else(|| MirNodeId(initial_h.0.clone())); MirOp::MILRnn { name: air_node.name.clone(), x: mi, initial_h: mh, weight_ih: weight_ih.clone(), weight_hh: weight_hh.clone(), bias: bias.clone(), mode: mode.clone(), output_sequence: *output_sequence } }
-                AirOp::Gru { input, initial_h, weight_ih, weight_hh, bias, reset_after, output_sequence } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); let mh = air_to_mir.get(initial_h).cloned().unwrap_or_else(|| MirNodeId(initial_h.0.clone())); MirOp::MILGru { name: air_node.name.clone(), x: mi, initial_h: mh, weight_ih: weight_ih.clone(), weight_hh: weight_hh.clone(), bias: bias.clone(), reset_after: *reset_after, output_sequence: *output_sequence } }
-                AirOp::Lstm { input, initial_h, initial_c, weight_ih, weight_hh, bias, output_sequence } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); let mh = air_to_mir.get(initial_h).cloned().unwrap_or_else(|| MirNodeId(initial_h.0.clone())); let mc = air_to_mir.get(initial_c).cloned().unwrap_or_else(|| MirNodeId(initial_c.0.clone())); MirOp::MILLstm { name: air_node.name.clone(), x: mi, initial_h: mh, initial_c: mc, weight_ih: weight_ih.clone(), weight_hh: weight_hh.clone(), bias: bias.clone(), output_sequence: *output_sequence } }
+                AirOp::Rnn {
+                    input,
+                    initial_h,
+                    weight_ih,
+                    weight_hh,
+                    bias,
+                    mode,
+                    output_sequence,
+                } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mh = air_to_mir
+                        .get(initial_h)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(initial_h.0.clone()));
+                    MirOp::MILRnn {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        initial_h: mh,
+                        weight_ih: weight_ih.clone(),
+                        weight_hh: weight_hh.clone(),
+                        bias: bias.clone(),
+                        mode: mode.clone(),
+                        output_sequence: *output_sequence,
+                    }
+                }
+                AirOp::Gru {
+                    input,
+                    initial_h,
+                    weight_ih,
+                    weight_hh,
+                    bias,
+                    reset_after,
+                    output_sequence,
+                } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mh = air_to_mir
+                        .get(initial_h)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(initial_h.0.clone()));
+                    MirOp::MILGru {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        initial_h: mh,
+                        weight_ih: weight_ih.clone(),
+                        weight_hh: weight_hh.clone(),
+                        bias: bias.clone(),
+                        reset_after: *reset_after,
+                        output_sequence: *output_sequence,
+                    }
+                }
+                AirOp::Lstm {
+                    input,
+                    initial_h,
+                    initial_c,
+                    weight_ih,
+                    weight_hh,
+                    bias,
+                    output_sequence,
+                } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    let mh = air_to_mir
+                        .get(initial_h)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(initial_h.0.clone()));
+                    let mc = air_to_mir
+                        .get(initial_c)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(initial_c.0.clone()));
+                    MirOp::MILLstm {
+                        name: air_node.name.clone(),
+                        x: mi,
+                        initial_h: mh,
+                        initial_c: mc,
+                        weight_ih: weight_ih.clone(),
+                        weight_hh: weight_hh.clone(),
+                        bias: bias.clone(),
+                        output_sequence: *output_sequence,
+                    }
+                }
 
                 // Control flow ops
-                AirOp::Cond { pred, true_graph, false_graph } => { let mp = air_to_mir.get(pred).cloned().unwrap_or_else(|| MirNodeId(pred.0.clone())); MirOp::MILCond { name: air_node.name.clone(), pred: mp, true_graph: true_graph.clone(), false_graph: false_graph.clone() } }
-                AirOp::WhileLoop { condition, body, loop_vars } => { let mv: Vec<MirNodeId> = loop_vars.iter().map(|id| air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone()))).collect(); MirOp::MILWhileLoop { name: air_node.name.clone(), condition: condition.clone(), body: body.clone(), loop_vars: mv } }
-                AirOp::MakeList { elems, dtype } => { let mv: Vec<MirNodeId> = elems.iter().map(|id| air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone()))).collect(); MirOp::MILMakeList { name: air_node.name.clone(), elems: mv, dtype: dtype.clone() } }
-                AirOp::ListLength { ls } => { let ml = air_to_mir.get(ls).cloned().unwrap_or_else(|| MirNodeId(ls.0.clone())); MirOp::MILListLength { name: air_node.name.clone(), ls: ml } }
-                AirOp::ListWrite { ls, index, value } => { let ml = air_to_mir.get(ls).cloned().unwrap_or_else(|| MirNodeId(ls.0.clone())); let mi = air_to_mir.get(index).cloned().unwrap_or_else(|| MirNodeId(index.0.clone())); let mv = air_to_mir.get(value).cloned().unwrap_or_else(|| MirNodeId(value.0.clone())); MirOp::MILListWrite { name: air_node.name.clone(), ls: ml, index: mi, value: mv } }
-                AirOp::ListRead { ls, index } => { let ml = air_to_mir.get(ls).cloned().unwrap_or_else(|| MirNodeId(ls.0.clone())); let mi = air_to_mir.get(index).cloned().unwrap_or_else(|| MirNodeId(index.0.clone())); MirOp::MILListRead { name: air_node.name.clone(), ls: ml, index: mi } }
-                AirOp::ListGather { ls, indices } => { let ml = air_to_mir.get(ls).cloned().unwrap_or_else(|| MirNodeId(ls.0.clone())); let midx = air_to_mir.get(indices).cloned().unwrap_or_else(|| MirNodeId(indices.0.clone())); MirOp::MILListGather { name: air_node.name.clone(), ls: ml, indices: midx } }
-                AirOp::ListScatter { ls, indices, values } => { let ml = air_to_mir.get(ls).cloned().unwrap_or_else(|| MirNodeId(ls.0.clone())); let midx = air_to_mir.get(indices).cloned().unwrap_or_else(|| MirNodeId(indices.0.clone())); let mv = air_to_mir.get(values).cloned().unwrap_or_else(|| MirNodeId(values.0.clone())); MirOp::MILListScatter { name: air_node.name.clone(), ls: ml, indices: midx, values: mv } }
+                AirOp::Cond { pred, true_graph, false_graph } => {
+                    let mp =
+                        air_to_mir.get(pred).cloned().unwrap_or_else(|| MirNodeId(pred.0.clone()));
+                    MirOp::MILCond {
+                        name: air_node.name.clone(),
+                        pred: mp,
+                        true_graph: true_graph.clone(),
+                        false_graph: false_graph.clone(),
+                    }
+                }
+                AirOp::WhileLoop { condition, body, loop_vars } => {
+                    let mv: Vec<MirNodeId> = loop_vars
+                        .iter()
+                        .map(|id| {
+                            air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone()))
+                        })
+                        .collect();
+                    MirOp::MILWhileLoop {
+                        name: air_node.name.clone(),
+                        condition: condition.clone(),
+                        body: body.clone(),
+                        loop_vars: mv,
+                    }
+                }
+                AirOp::MakeList { elems, dtype } => {
+                    let mv: Vec<MirNodeId> = elems
+                        .iter()
+                        .map(|id| {
+                            air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone()))
+                        })
+                        .collect();
+                    MirOp::MILMakeList {
+                        name: air_node.name.clone(),
+                        elems: mv,
+                        dtype: dtype.clone(),
+                    }
+                }
+                AirOp::ListLength { ls } => {
+                    let ml = air_to_mir.get(ls).cloned().unwrap_or_else(|| MirNodeId(ls.0.clone()));
+                    MirOp::MILListLength { name: air_node.name.clone(), ls: ml }
+                }
+                AirOp::ListWrite { ls, index, value } => {
+                    let ml = air_to_mir.get(ls).cloned().unwrap_or_else(|| MirNodeId(ls.0.clone()));
+                    let mi = air_to_mir
+                        .get(index)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(index.0.clone()));
+                    let mv = air_to_mir
+                        .get(value)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(value.0.clone()));
+                    MirOp::MILListWrite {
+                        name: air_node.name.clone(),
+                        ls: ml,
+                        index: mi,
+                        value: mv,
+                    }
+                }
+                AirOp::ListRead { ls, index } => {
+                    let ml = air_to_mir.get(ls).cloned().unwrap_or_else(|| MirNodeId(ls.0.clone()));
+                    let mi = air_to_mir
+                        .get(index)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(index.0.clone()));
+                    MirOp::MILListRead { name: air_node.name.clone(), ls: ml, index: mi }
+                }
+                AirOp::ListGather { ls, indices } => {
+                    let ml = air_to_mir.get(ls).cloned().unwrap_or_else(|| MirNodeId(ls.0.clone()));
+                    let midx = air_to_mir
+                        .get(indices)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(indices.0.clone()));
+                    MirOp::MILListGather { name: air_node.name.clone(), ls: ml, indices: midx }
+                }
+                AirOp::ListScatter { ls, indices, values } => {
+                    let ml = air_to_mir.get(ls).cloned().unwrap_or_else(|| MirNodeId(ls.0.clone()));
+                    let midx = air_to_mir
+                        .get(indices)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(indices.0.clone()));
+                    let mv = air_to_mir
+                        .get(values)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(values.0.clone()));
+                    MirOp::MILListScatter {
+                        name: air_node.name.clone(),
+                        ls: ml,
+                        indices: midx,
+                        values: mv,
+                    }
+                }
 
                 // Random ops
-                AirOp::RandomBernoulli { shape, prob, seed, dtype } => MirOp::MILRandomBernoulli { name: air_node.name.clone(), shape: shape.clone(), prob: *prob, seed: *seed, dtype: dtype.clone() },
-                AirOp::RandomNormal { shape, mean, stddev, seed, dtype } => MirOp::MILRandomNormal { name: air_node.name.clone(), shape: shape.clone(), mean: *mean, stddev: *stddev, seed: *seed, dtype: dtype.clone() },
-                AirOp::RandomUniform { shape, low, high, seed, dtype } => MirOp::MILRandomUniform { name: air_node.name.clone(), shape: shape.clone(), low: *low, high: *high, seed: *seed, dtype: dtype.clone() },
-                AirOp::RandomCategorical { logits, num_samples, seed, dtype } => { let ml = air_to_mir.get(logits).cloned().unwrap_or_else(|| MirNodeId(logits.0.clone())); MirOp::MILRandomCategorical { name: air_node.name.clone(), logits: ml, num_samples: *num_samples, seed: *seed, dtype: dtype.clone() } }
+                AirOp::RandomBernoulli { shape, prob, seed, dtype } => MirOp::MILRandomBernoulli {
+                    name: air_node.name.clone(),
+                    shape: shape.clone(),
+                    prob: *prob,
+                    seed: *seed,
+                    dtype: dtype.clone(),
+                },
+                AirOp::RandomNormal { shape, mean, stddev, seed, dtype } => {
+                    MirOp::MILRandomNormal {
+                        name: air_node.name.clone(),
+                        shape: shape.clone(),
+                        mean: *mean,
+                        stddev: *stddev,
+                        seed: *seed,
+                        dtype: dtype.clone(),
+                    }
+                }
+                AirOp::RandomUniform { shape, low, high, seed, dtype } => MirOp::MILRandomUniform {
+                    name: air_node.name.clone(),
+                    shape: shape.clone(),
+                    low: *low,
+                    high: *high,
+                    seed: *seed,
+                    dtype: dtype.clone(),
+                },
+                AirOp::RandomCategorical { logits, num_samples, seed, dtype } => {
+                    let ml = air_to_mir
+                        .get(logits)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(logits.0.clone()));
+                    MirOp::MILRandomCategorical {
+                        name: air_node.name.clone(),
+                        logits: ml,
+                        num_samples: *num_samples,
+                        seed: *seed,
+                        dtype: dtype.clone(),
+                    }
+                }
 
                 // Misc ops
-                AirOp::Classify { input } => { let mi = air_to_mir.get(input).cloned().unwrap_or_else(|| MirNodeId(input.0.clone())); MirOp::MILClassify { name: air_node.name.clone(), x: mi } }
+                AirOp::Classify { input } => {
+                    let mi = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILClassify { name: air_node.name.clone(), x: mi }
+                }
             };
 
             // Sprint 57: infer the output shape from the AIR op and propagate
@@ -756,18 +2284,21 @@ impl MilLowerPass {
             node_shapes.insert(air_node.id.clone(), inferred_shape);
         }
 
-        let mir_inputs: Vec<MirNodeId> = input.inputs.iter()
+        let mir_inputs: Vec<MirNodeId> = input
+            .inputs
+            .iter()
             .map(|id| air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone())))
             .collect();
-        let mir_outputs: Vec<MirNodeId> = input.outputs.iter()
+        let mir_outputs: Vec<MirNodeId> = input
+            .outputs
+            .iter()
             .map(|id| air_to_mir.get(id).cloned().unwrap_or_else(|| MirNodeId(id.0.clone())))
             .collect();
 
         // Single-shard: one MIR graph
         // Use shard name from the shard plan if available
-        let shard_name = shard_plan.shard_names.first()
-            .cloned()
-            .unwrap_or_else(|| "shard_0".to_string());
+        let shard_name =
+            shard_plan.shard_names.first().cloned().unwrap_or_else(|| "shard_0".to_string());
 
         Ok(vec![MirGraph {
             nodes: mir_nodes,
@@ -790,10 +2321,7 @@ mod tests {
             nodes: vec![
                 AirNode {
                     id: AirNodeId("weight".into()),
-                    op: AirOp::ElementWise {
-                        op: ElementWiseOp::Mul,
-                        inputs: vec![],
-                    },
+                    op: AirOp::ElementWise { op: ElementWiseOp::Mul, inputs: vec![] },
                     name: "weight".into(),
                     legality_confidence: 0.5,
                     sir_source: None,
@@ -806,7 +2334,6 @@ mod tests {
                     op: AirOp::MatMul {
                         a: AirNodeId("input".into()),
                         b: AirNodeId("weight".into()),
-                        
                     },
                     name: "linear_out".into(),
                     legality_confidence: 0.95,
@@ -830,24 +2357,36 @@ mod tests {
         // Without precision override: default fp16
         let air_no_override = make_air_graph_with_precision(None);
         let mirs_no = pass.run(&air_no_override, &shard_plan).unwrap();
-        let matmul_node_no = mirs_no[0].nodes.iter()
+        let matmul_node_no = mirs_no[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILMatMul { .. }))
             .expect("Expected MatMul node");
-        assert_eq!(matmul_node_no.dtype, MilDtype::Fp16,
-            "Without precision override, MIR dtype should be fp16");
+        assert_eq!(
+            matmul_node_no.dtype,
+            MilDtype::Fp16,
+            "Without precision override, MIR dtype should be fp16"
+        );
 
         // With fp32 precision override: should produce fp32 MIR node
         let air_fp32 = make_air_graph_with_precision(Some("fp32"));
         let mirs_fp32 = pass.run(&air_fp32, &shard_plan).unwrap();
-        let matmul_node_fp32 = mirs_fp32[0].nodes.iter()
+        let matmul_node_fp32 = mirs_fp32[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILMatMul { .. }))
             .expect("Expected MatMul node");
-        assert_eq!(matmul_node_fp32.dtype, MilDtype::Fp32,
-            "With fp32 precision override, MIR dtype should be fp32");
+        assert_eq!(
+            matmul_node_fp32.dtype,
+            MilDtype::Fp32,
+            "With fp32 precision override, MIR dtype should be fp32"
+        );
 
         // Ensure the dtype actually changed
-        assert_ne!(matmul_node_no.dtype, matmul_node_fp32.dtype,
-            "Precision override must produce different MIR dtype");
+        assert_ne!(
+            matmul_node_no.dtype, matmul_node_fp32.dtype,
+            "Precision override must produce different MIR dtype"
+        );
     }
 
     #[test]
@@ -858,9 +2397,13 @@ mod tests {
         let mirs = pass.run(&air, &shard_plan).unwrap();
 
         for node in &mirs[0].nodes {
-            assert_eq!(node.dtype, MilDtype::Fp16,
+            assert_eq!(
+                node.dtype,
+                MilDtype::Fp16,
                 "All nodes without precision override should use fp16, but {} uses {:?}",
-                node.id.0, node.dtype);
+                node.id.0,
+                node.dtype
+            );
         }
     }
 
@@ -871,11 +2414,16 @@ mod tests {
         let air = make_air_graph_with_precision(Some("fp16"));
         let mirs = pass.run(&air, &shard_plan).unwrap();
 
-        let matmul_node = mirs[0].nodes.iter()
+        let matmul_node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILMatMul { .. }))
             .expect("Expected MatMul node");
-        assert_eq!(matmul_node.dtype, MilDtype::Fp16,
-            "Explicit fp16 precision override should produce fp16 MIR dtype");
+        assert_eq!(
+            matmul_node.dtype,
+            MilDtype::Fp16,
+            "Explicit fp16 precision override should produce fp16 MIR dtype"
+        );
     }
 
     // --- Sprint 33: P1 AIR→MIR lowering tests ---
@@ -898,22 +2446,23 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("rm", AirOp::ReduceMean {
-                input: AirNodeId("x".into()),
-                axes: vec![1],
-                keep_dims: true,
-            })],
+            nodes: vec![make_simple_air_node(
+                "rm",
+                AirOp::ReduceMean { input: AirNodeId("x".into()), axes: vec![1], keep_dims: true },
+            )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("rm".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILReduceMean { .. }))
             .expect("Expected MILReduceMean node");
         if let MirOp::MILReduceMean { axes, keep_dims, .. } = &node.op {
             assert_eq!(axes, &vec![1]);
-            assert_eq!(*keep_dims, true);
+            assert!(*keep_dims);
         }
     }
 
@@ -922,22 +2471,23 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("rs", AirOp::ReduceSum {
-                input: AirNodeId("x".into()),
-                axes: vec![1],
-                keep_dims: false,
-            })],
+            nodes: vec![make_simple_air_node(
+                "rs",
+                AirOp::ReduceSum { input: AirNodeId("x".into()), axes: vec![1], keep_dims: false },
+            )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("rs".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILReduceSum { .. }))
             .expect("Expected MILReduceSum node");
         if let MirOp::MILReduceSum { axes, keep_dims, .. } = &node.op {
             assert_eq!(axes, &vec![1]);
-            assert_eq!(*keep_dims, false);
+            assert!(!*keep_dims);
         }
     }
 
@@ -946,15 +2496,18 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("rsqrt", AirOp::Rsqrt {
-                input: AirNodeId("x".into()),
-            })],
+            nodes: vec![make_simple_air_node(
+                "rsqrt",
+                AirOp::Rsqrt { input: AirNodeId("x".into()) },
+            )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("rsqrt".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILRsqrt { .. }))
             .expect("Expected MILRsqrt node");
         assert_eq!(node.id.0, "rsqrt");
@@ -965,16 +2518,18 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("div", AirOp::RealDiv {
-                x: AirNodeId("a".into()),
-                y: AirNodeId("b".into()),
-            })],
+            nodes: vec![make_simple_air_node(
+                "div",
+                AirOp::RealDiv { x: AirNodeId("a".into()), y: AirNodeId("b".into()) },
+            )],
             inputs: vec![AirNodeId("a".into())],
             outputs: vec![AirNodeId("div".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILRealDiv { .. }))
             .expect("Expected MILRealDiv node");
         if let MirOp::MILRealDiv { x, y, .. } = &node.op {
@@ -988,19 +2543,24 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("ln", AirOp::LayerNorm {
-                input: AirNodeId("x".into()),
-                weight: "ln_weight".into(),
-                bias: Some("ln_bias".into()),
-                epsilon: 1e-5,
-                axes: vec![1],
-            })],
+            nodes: vec![make_simple_air_node(
+                "ln",
+                AirOp::LayerNorm {
+                    input: AirNodeId("x".into()),
+                    weight: "ln_weight".into(),
+                    bias: Some("ln_bias".into()),
+                    epsilon: 1e-5,
+                    axes: vec![1],
+                },
+            )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("ln".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILLayerNorm { .. }))
             .expect("Expected MILLayerNorm node");
         if let MirOp::MILLayerNorm { weight, bias, epsilon, axes, .. } = &node.op {
@@ -1016,19 +2576,24 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("ln", AirOp::LayerNorm {
-                input: AirNodeId("x".into()),
-                weight: "ln_weight".into(),
-                bias: None,
-                epsilon: 1e-5,
-                axes: vec![1],
-            })],
+            nodes: vec![make_simple_air_node(
+                "ln",
+                AirOp::LayerNorm {
+                    input: AirNodeId("x".into()),
+                    weight: "ln_weight".into(),
+                    bias: None,
+                    epsilon: 1e-5,
+                    axes: vec![1],
+                },
+            )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("ln".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILLayerNorm { .. }))
             .expect("Expected MILLayerNorm node");
         if let MirOp::MILLayerNorm { bias, .. } = &node.op {
@@ -1041,17 +2606,22 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("topk", AirOp::Topk {
-                input: AirNodeId("x".into()),
-                k: 5,
-                axis: -1, // negative axis for last dimension
-            })],
+            nodes: vec![make_simple_air_node(
+                "topk",
+                AirOp::Topk {
+                    input: AirNodeId("x".into()),
+                    k: 5,
+                    axis: -1, // negative axis for last dimension
+                },
+            )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("topk".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILTopk { .. }))
             .expect("Expected MILTopk node");
         if let MirOp::MILTopk { k, axis, .. } = &node.op {
@@ -1065,17 +2635,22 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("gather", AirOp::Gather {
-                input: AirNodeId("data".into()),
-                indices: AirNodeId("idx".into()),
-                axis: 0,
-            })],
+            nodes: vec![make_simple_air_node(
+                "gather",
+                AirOp::Gather {
+                    input: AirNodeId("data".into()),
+                    indices: AirNodeId("idx".into()),
+                    axis: 0,
+                },
+            )],
             inputs: vec![AirNodeId("data".into())],
             outputs: vec![AirNodeId("gather".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILGather { .. }))
             .expect("Expected MILGather node");
         if let MirOp::MILGather { indices, axis, .. } = &node.op {
@@ -1098,10 +2673,14 @@ mod tests {
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let cos_node = mirs[0].nodes.iter()
+        let cos_node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILCos { .. }))
             .expect("Expected MILCos node");
-        let sin_node = mirs[0].nodes.iter()
+        let sin_node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILSin { .. }))
             .expect("Expected MILSin node");
         assert_eq!(cos_node.id.0, "cos_out");
@@ -1118,9 +2697,13 @@ mod tests {
         let mirs = pass.run(&air, &shard_plan).unwrap();
 
         for node in &mirs[0].nodes {
-            assert_eq!(node.compute_unit_hint, Some(ComputeUnitHint::CPUAndNE),
+            assert_eq!(
+                node.compute_unit_hint,
+                Some(ComputeUnitHint::CPUAndNE),
                 "Default shard plan should produce CPUAndNE compute unit hint, but {} has {:?}",
-                node.id.0, node.compute_unit_hint);
+                node.id.0,
+                node.compute_unit_hint
+            );
         }
     }
 
@@ -1139,9 +2722,13 @@ mod tests {
         let mirs = pass.run(&air, &shard_plan).unwrap();
 
         for node in &mirs[0].nodes {
-            assert_eq!(node.compute_unit_hint, Some(ComputeUnitHint::CPUAndGPU),
+            assert_eq!(
+                node.compute_unit_hint,
+                Some(ComputeUnitHint::CPUAndGPU),
                 "GPU shard plan should produce CPUAndGPU compute unit hint, but {} has {:?}",
-                node.id.0, node.compute_unit_hint);
+                node.id.0,
+                node.compute_unit_hint
+            );
         }
     }
 
@@ -1159,8 +2746,10 @@ mod tests {
         let air = make_air_graph_with_precision(None);
         let mirs = pass.run(&air, &shard_plan).unwrap();
 
-        assert_eq!(mirs[0].shard_name, "entry_shard",
-            "Shard name from shard plan should propagate to MIR graph");
+        assert_eq!(
+            mirs[0].shard_name, "entry_shard",
+            "Shard name from shard plan should propagate to MIR graph"
+        );
     }
 
     #[test]
@@ -1172,14 +2761,15 @@ mod tests {
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
             nodes: vec![
-                make_simple_air_node("mean", AirOp::ReduceMean {
-                    input: AirNodeId("x".into()),
-                    axes: vec![1],
-                    keep_dims: true,
-                }),
-                make_simple_air_node("rsqrt", AirOp::Rsqrt {
-                    input: AirNodeId("mean".into()),
-                }),
+                make_simple_air_node(
+                    "mean",
+                    AirOp::ReduceMean {
+                        input: AirNodeId("x".into()),
+                        axes: vec![1],
+                        keep_dims: true,
+                    },
+                ),
+                make_simple_air_node("rsqrt", AirOp::Rsqrt { input: AirNodeId("mean".into()) }),
             ],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("rsqrt".into())],
@@ -1198,19 +2788,24 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("sdpa", AirOp::ScaledDotProductAttention {
-                query: AirNodeId("q".into()),
-                key: AirNodeId("k".into()),
-                value: AirNodeId("v".into()),
-                attention_mask: None,
-                scale: None,
-            })],
+            nodes: vec![make_simple_air_node(
+                "sdpa",
+                AirOp::ScaledDotProductAttention {
+                    query: AirNodeId("q".into()),
+                    key: AirNodeId("k".into()),
+                    value: AirNodeId("v".into()),
+                    attention_mask: None,
+                    scale: None,
+                },
+            )],
             inputs: vec![AirNodeId("q".into())],
             outputs: vec![AirNodeId("sdpa".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILScaledDotProductAttention { .. }))
             .expect("Expected MIRScaledDotProductAttention node");
         if let MirOp::MILScaledDotProductAttention { query, key, value, .. } = &node.op {
@@ -1225,21 +2820,26 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("slice", AirOp::SliceByIndex {
-                input: AirNodeId("qkv".into()),
-                begin: vec![0, 0, 0],
-                end: vec![1, 32, 128],
-                stride: vec![],
-                begin_mask: vec![],
-                end_mask: vec![],
-                squeeze_mask: vec![],
-            })],
+            nodes: vec![make_simple_air_node(
+                "slice",
+                AirOp::SliceByIndex {
+                    input: AirNodeId("qkv".into()),
+                    begin: vec![0, 0, 0],
+                    end: vec![1, 32, 128],
+                    stride: vec![],
+                    begin_mask: vec![],
+                    end_mask: vec![],
+                    squeeze_mask: vec![],
+                },
+            )],
             inputs: vec![AirNodeId("qkv".into())],
             outputs: vec![AirNodeId("slice".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILSliceByIndex { .. }))
             .expect("Expected MILSliceByIndex node");
         if let MirOp::MILSliceByIndex { begin, end, .. } = &node.op {
@@ -1253,16 +2853,18 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("gelu", AirOp::Gelu {
-                input: AirNodeId("x".into()),
-                mode: "TANH_APPROXIMATION".into(),
-            })],
+            nodes: vec![make_simple_air_node(
+                "gelu",
+                AirOp::Gelu { input: AirNodeId("x".into()), mode: "TANH_APPROXIMATION".into() },
+            )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("gelu".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILGelu { .. }))
             .expect("Expected MILGelu node");
         if let MirOp::MILGelu { mode, .. } = &node.op {
@@ -1275,17 +2877,22 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("k_cache", AirOp::StateReadFixed {
-                state_id: "kv_cache_k".into(),
-                shape: vec![64, 128],
-                dtype: ane_ir::mir::MilDtype::Fp16,
-            })],
+            nodes: vec![make_simple_air_node(
+                "k_cache",
+                AirOp::StateReadFixed {
+                    state_id: "kv_cache_k".into(),
+                    shape: vec![64, 128],
+                    dtype: ane_ir::mir::MilDtype::Fp16,
+                },
+            )],
             inputs: vec![],
             outputs: vec![AirNodeId("k_cache".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILReadState { .. }))
             .expect("Expected MILReadState node");
         if let MirOp::MILReadState { state_id, shape, .. } = &node.op {
@@ -1300,26 +2907,34 @@ mod tests {
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
             nodes: vec![
-                make_simple_air_node("k_new", AirOp::SliceByIndex {
-                    input: AirNodeId("qkv".into()),
-                    begin: vec![0, 0],
-                    end: vec![0, 0],
-                    stride: vec![],
-                    begin_mask: vec![],
-                    end_mask: vec![],
-                    squeeze_mask: vec![],
-                }),
-                make_simple_air_node("k_write", AirOp::StateWriteFixed {
-                    state_id: "kv_cache_k".into(),
-                    value: AirNodeId("k_new".into()),
-                }),
+                make_simple_air_node(
+                    "k_new",
+                    AirOp::SliceByIndex {
+                        input: AirNodeId("qkv".into()),
+                        begin: vec![0, 0],
+                        end: vec![0, 0],
+                        stride: vec![],
+                        begin_mask: vec![],
+                        end_mask: vec![],
+                        squeeze_mask: vec![],
+                    },
+                ),
+                make_simple_air_node(
+                    "k_write",
+                    AirOp::StateWriteFixed {
+                        state_id: "kv_cache_k".into(),
+                        value: AirNodeId("k_new".into()),
+                    },
+                ),
             ],
             inputs: vec![AirNodeId("qkv".into())],
             outputs: vec![AirNodeId("k_write".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILCoremlUpdateState { .. }))
             .expect("Expected MILCoremlUpdateState node");
         if let MirOp::MILCoremlUpdateState { state_id, value, .. } = &node.op {
@@ -1333,17 +2948,18 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("split", AirOp::Split {
-                input: AirNodeId("x".into()),
-                axis: 2,
-                num_splits: 3,
-            })],
+            nodes: vec![make_simple_air_node(
+                "split",
+                AirOp::Split { input: AirNodeId("x".into()), axis: 2, num_splits: 3 },
+            )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("split".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILSplit { .. }))
             .expect("Expected MILSplit node");
         if let MirOp::MILSplit { axis, num_splits, .. } = &node.op {
@@ -1357,16 +2973,21 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("concat", AirOp::Concat {
-                inputs: vec![AirNodeId("a".into()), AirNodeId("b".into())],
-                axis: 1,
-            })],
+            nodes: vec![make_simple_air_node(
+                "concat",
+                AirOp::Concat {
+                    inputs: vec![AirNodeId("a".into()), AirNodeId("b".into())],
+                    axis: 1,
+                },
+            )],
             inputs: vec![AirNodeId("a".into())],
             outputs: vec![AirNodeId("concat".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILConcat { .. }))
             .expect("Expected MILConcat node");
         if let MirOp::MILConcat { values, axis, .. } = &node.op {
@@ -1382,18 +3003,23 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("su", AirOp::SliceUpdate {
-                input: AirNodeId("cache".into()),
-                update: AirNodeId("new_val".into()),
-                begin: vec![0, 0, 0],
-                end: vec![1, 1, 128],
-            })],
+            nodes: vec![make_simple_air_node(
+                "su",
+                AirOp::SliceUpdate {
+                    input: AirNodeId("cache".into()),
+                    update: AirNodeId("new_val".into()),
+                    begin: vec![0, 0, 0],
+                    end: vec![1, 1, 128],
+                },
+            )],
             inputs: vec![AirNodeId("cache".into())],
             outputs: vec![AirNodeId("su".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILSliceUpdate { .. }))
             .expect("Expected MILSliceUpdate node");
         if let MirOp::MILSliceUpdate { x, update, begin, end, .. } = &node.op {
@@ -1409,15 +3035,18 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("exp_out", AirOp::Exp {
-                input: AirNodeId("x".into()),
-            })],
+            nodes: vec![make_simple_air_node(
+                "exp_out",
+                AirOp::Exp { input: AirNodeId("x".into()) },
+            )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("exp_out".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILExp { .. }))
             .expect("Expected MILExp node");
         assert_eq!(node.id.0, "exp_out");
@@ -1428,15 +3057,18 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("sig_out", AirOp::Sigmoid {
-                input: AirNodeId("x".into()),
-            })],
+            nodes: vec![make_simple_air_node(
+                "sig_out",
+                AirOp::Sigmoid { input: AirNodeId("x".into()) },
+            )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("sig_out".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILSigmoid { .. }))
             .expect("Expected MILSigmoid node");
         assert_eq!(node.id.0, "sig_out");
@@ -1447,15 +3079,18 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("tanh_out", AirOp::Tanh {
-                input: AirNodeId("x".into()),
-            })],
+            nodes: vec![make_simple_air_node(
+                "tanh_out",
+                AirOp::Tanh { input: AirNodeId("x".into()) },
+            )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("tanh_out".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILTanh { .. }))
             .expect("Expected MILTanh node");
         assert_eq!(node.id.0, "tanh_out");
@@ -1467,22 +3102,24 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("relu_out", AirOp::Relu {
-                input: AirNodeId("x".into()),
-            })],
+            nodes: vec![make_simple_air_node(
+                "relu_out",
+                AirOp::Relu { input: AirNodeId("x".into()) },
+            )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("relu_out".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILRelu { .. }))
             .expect("Expected MILRelu node (not MILCast approximation)");
         assert_eq!(node.id.0, "relu_out");
 
         // Verify there is NO MILCast node (the old approximation)
-        let has_cast = mirs[0].nodes.iter()
-            .any(|n| matches!(n.op, MirOp::MILCast { .. }));
+        let has_cast = mirs[0].nodes.iter().any(|n| matches!(n.op, MirOp::MILCast { .. }));
         assert!(!has_cast, "ReLU should not produce MILCast approximation");
     }
 
@@ -1491,17 +3128,22 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("where_out", AirOp::Where {
-                condition: AirNodeId("mask".into()),
-                x: AirNodeId("update".into()),
-                y: AirNodeId("original".into()),
-            })],
+            nodes: vec![make_simple_air_node(
+                "where_out",
+                AirOp::Where {
+                    condition: AirNodeId("mask".into()),
+                    x: AirNodeId("update".into()),
+                    y: AirNodeId("original".into()),
+                },
+            )],
             inputs: vec![AirNodeId("mask".into())],
             outputs: vec![AirNodeId("where_out".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILWhere { .. }))
             .expect("Expected MILWhere node");
         if let MirOp::MILWhere { condition, x, y, .. } = &node.op {
@@ -1518,16 +3160,21 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("max_out", AirOp::ElementWise {
-                op: ElementWiseOp::Maximum,
-                inputs: vec![AirNodeId("x".into()), AirNodeId("zero".into())],
-            })],
+            nodes: vec![make_simple_air_node(
+                "max_out",
+                AirOp::ElementWise {
+                    op: ElementWiseOp::Maximum,
+                    inputs: vec![AirNodeId("x".into()), AirNodeId("zero".into())],
+                },
+            )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("max_out".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILMaximum { .. }))
             .expect("Expected MILMaximum node");
         if let MirOp::MILMaximum { x, y, .. } = &node.op {
@@ -1541,16 +3188,21 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("min_out", AirOp::ElementWise {
-                op: ElementWiseOp::Minimum,
-                inputs: vec![AirNodeId("x".into()), AirNodeId("cap".into())],
-            })],
+            nodes: vec![make_simple_air_node(
+                "min_out",
+                AirOp::ElementWise {
+                    op: ElementWiseOp::Minimum,
+                    inputs: vec![AirNodeId("x".into()), AirNodeId("cap".into())],
+                },
+            )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("min_out".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILMinimum { .. }))
             .expect("Expected MILMinimum node");
         if let MirOp::MILMinimum { x, y, .. } = &node.op {
@@ -1577,16 +3229,24 @@ mod tests {
         for (name, op) in cases {
             let label = format!("{:?}", op);
             let air = AirGraph {
-                nodes: vec![make_simple_air_node(name, AirOp::ElementWise {
-                    op,
-                    inputs: vec![AirNodeId("a".into()), AirNodeId("b".into())],
-                })],
+                nodes: vec![make_simple_air_node(
+                    name,
+                    AirOp::ElementWise {
+                        op,
+                        inputs: vec![AirNodeId("a".into()), AirNodeId("b".into())],
+                    },
+                )],
                 inputs: vec![AirNodeId("a".into())],
                 outputs: vec![AirNodeId(name.into())],
                 staticization_decisions: vec![],
             };
             let result = pass.run(&air, &shard_plan);
-            assert!(result.is_ok(), "ElementWiseOp::{} should lower successfully, but got error: {:?}", label, result.err());
+            assert!(
+                result.is_ok(),
+                "ElementWiseOp::{} should lower successfully, but got error: {:?}",
+                label,
+                result.err()
+            );
         }
     }
 
@@ -1598,20 +3258,29 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("lut", AirOp::StaticLUTProjection {
-                input: AirNodeId("x".into()),
-                indices: "lut_indices".into(),
-                lut: "lut_table".into(),
-                group_size: 16,
-            })],
+            nodes: vec![make_simple_air_node(
+                "lut",
+                AirOp::StaticLUTProjection {
+                    input: AirNodeId("x".into()),
+                    indices: "lut_indices".into(),
+                    lut: "lut_table".into(),
+                    group_size: 16,
+                },
+            )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("lut".into())],
             staticization_decisions: vec![],
         };
         let result = pass.run(&air, &shard_plan);
-        assert!(result.is_ok(), "StaticLUTProjection should no longer error at lowering, but got: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "StaticLUTProjection should no longer error at lowering, but got: {:?}",
+            result.err()
+        );
         let mirs = result.unwrap();
-        let node = mirs[0].nodes.iter()
+        let node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILGather { .. }))
             .expect("StaticLUTProjection should lower to MILGather");
         if let MirOp::MILGather { x, indices, axis, .. } = &node.op {
@@ -1633,10 +3302,7 @@ mod tests {
             nodes: vec![
                 AirNode {
                     id: AirNodeId("weight".into()),
-                    op: AirOp::ElementWise {
-                        op: ElementWiseOp::Mul,
-                        inputs: vec![],
-                    },
+                    op: AirOp::ElementWise { op: ElementWiseOp::Mul, inputs: vec![] },
                     name: "weight".into(),
                     legality_confidence: 0.5,
                     sir_source: None,
@@ -1649,7 +3315,6 @@ mod tests {
                     op: AirOp::MatMul {
                         a: AirNodeId("input".into()),
                         b: AirNodeId("weight".into()),
-                        
                     },
                     name: "linear_out".into(),
                     legality_confidence: 0.95,
@@ -1664,11 +3329,16 @@ mod tests {
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let matmul_node = mirs[0].nodes.iter()
+        let matmul_node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILMatMul { .. }))
             .expect("Expected MatMul node");
-        assert_eq!(matmul_node.shape, Vec::<usize>::new(),
-            "MirNode.shape for MatMul is empty since output_shape was removed from AirOp::MatMul");
+        assert_eq!(
+            matmul_node.shape,
+            Vec::<usize>::new(),
+            "MirNode.shape for MatMul is empty since output_shape was removed from AirOp::MatMul"
+        );
     }
 
     /// Sprint 57: verify that Reshape target_shape propagates into MirNode.shape.
@@ -1677,19 +3347,121 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
-            nodes: vec![make_simple_air_node("reshape", AirOp::Reshape {
-                input: AirNodeId("x".into()),
-                target_shape: vec![2, 16],
-            })],
+            nodes: vec![make_simple_air_node(
+                "reshape",
+                AirOp::Reshape { input: AirNodeId("x".into()), target_shape: vec![2, 16] },
+            )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("reshape".into())],
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan).unwrap();
-        let reshape_node = mirs[0].nodes.iter()
+        let reshape_node = mirs[0]
+            .nodes
+            .iter()
             .find(|n| matches!(n.op, MirOp::MILReshape { .. }))
             .expect("Expected MILReshape node");
-        assert_eq!(reshape_node.shape, vec![2, 16],
-            "MirNode.shape should propagate from Reshape target_shape");
+        assert_eq!(
+            reshape_node.shape,
+            vec![2, 16],
+            "MirNode.shape should propagate from Reshape target_shape"
+        );
+    }
+
+    // --- Sprint 59: SDPA constraint validation tests ---
+
+    #[test]
+    fn test_sdpa_validation_rank4_succeeds() {
+        // Rank-4 Q, K, V should pass validation
+        let result =
+            validate_sdpa_constraints(&[1, 8, 4, 64], &[1, 8, 4, 64], &[1, 8, 4, 64], None);
+        assert!(result.is_ok(), "Rank-4 SDPA should pass validation");
+    }
+
+    #[test]
+    fn test_sdpa_validation_rank5_query_fails() {
+        // Rank-5 query should fail
+        let result = validate_sdpa_constraints(
+            &[1, 2, 8, 4, 64], // rank 5
+            &[1, 8, 4, 64],
+            &[1, 8, 4, 64],
+            None,
+        );
+        assert!(result.is_err(), "Rank-5 query should fail SDPA validation");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("query") && err.contains("rank 5"),
+            "Error should mention query and rank 5, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_sdpa_validation_rank5_key_fails() {
+        // Rank-5 key should fail
+        let result = validate_sdpa_constraints(
+            &[1, 8, 4, 64],
+            &[1, 2, 8, 4, 64], // rank 5
+            &[1, 8, 4, 64],
+            None,
+        );
+        assert!(result.is_err(), "Rank-5 key should fail SDPA validation");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("key") && err.contains("rank 5"),
+            "Error should mention key and rank 5, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_sdpa_validation_rank5_value_fails() {
+        // Rank-5 value should fail
+        let result = validate_sdpa_constraints(
+            &[1, 8, 4, 64],
+            &[1, 8, 4, 64],
+            &[1, 2, 8, 4, 64], // rank 5
+            None,
+        );
+        assert!(result.is_err(), "Rank-5 value should fail SDPA validation");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("value") && err.contains("rank 5"),
+            "Error should mention value and rank 5, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_sdpa_validation_rank5_mask_fails() {
+        // Rank-5 mask should fail
+        let result = validate_sdpa_constraints(
+            &[1, 8, 4, 64],
+            &[1, 8, 4, 64],
+            &[1, 8, 4, 64],
+            Some(&[1, 2, 8, 4, 64]), // rank 5
+        );
+        assert!(result.is_err(), "Rank-5 mask should fail SDPA validation");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("attention_mask") && err.contains("rank 5"),
+            "Error should mention attention_mask and rank 5, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_sdpa_validation_rank3_succeeds() {
+        // Rank-3 operands should pass
+        let result = validate_sdpa_constraints(&[8, 4, 64], &[8, 4, 64], &[8, 4, 64], None);
+        assert!(result.is_ok(), "Rank-3 SDPA should pass validation");
+    }
+
+    #[test]
+    fn test_sdpa_validation_with_mask_succeeds() {
+        // Valid SDPA with mask
+        let result = validate_sdpa_constraints(
+            &[1, 8, 4, 64],
+            &[1, 8, 4, 64],
+            &[1, 8, 4, 64],
+            Some(&[1, 8, 4, 64]),
+        );
+        assert!(result.is_ok(), "SDPA with valid mask should pass validation");
     }
 }

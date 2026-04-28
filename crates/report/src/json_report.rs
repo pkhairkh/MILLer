@@ -29,6 +29,12 @@ pub struct JsonReporter {
     // Future: configuration for output format, filtering, etc.
 }
 
+impl Default for JsonReporter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl JsonReporter {
     /// Create a new JSON reporter.
     pub fn new() -> Self {
@@ -79,10 +85,16 @@ impl JsonReporter {
                             .sum()
                     })
                     .unwrap_or(0);
-                bridge_data.insert("total_size_bytes".into(), serde_json::Value::Number(total_size.into()));
-                bridge_data.insert("file_count".into(), serde_json::Value::Number(
-                    files.as_array().map(|a| a.len()).unwrap_or(0).into()
-                ));
+                bridge_data.insert(
+                    "total_size_bytes".into(),
+                    serde_json::Value::Number(total_size.into()),
+                );
+                bridge_data.insert(
+                    "file_count".into(),
+                    serde_json::Value::Number(
+                        files.as_array().map(|a| a.len()).unwrap_or(0).into(),
+                    ),
+                );
             }
             if let Some(ct_ver) = br.get("coremltools_version") {
                 bridge_data.insert("coremltools_version".into(), ct_ver.clone());
@@ -141,10 +153,7 @@ impl JsonReporter {
             .and_then(|v| v.as_array())
             .map(|arr| arr.len())
             .unwrap_or(0);
-        data.insert(
-            "observation_count".into(),
-            serde_json::Value::Number(observations.into()),
-        );
+        data.insert("observation_count".into(), serde_json::Value::Number(observations.into()));
 
         Ok(JsonReport {
             report_type: "knowledge".into(),

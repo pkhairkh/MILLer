@@ -18,9 +18,9 @@
 //! can be fed into the compile/lab pipeline like any other synthetic
 //! task spec.
 
-use ane_ir::task_spec::{SyntheticTaskSpec, TaskOp, MeasurementConfig};
-use anyhow::Result;
 use super::TaskFamilyTrait;
+use ane_ir::task_spec::{MeasurementConfig, SyntheticTaskSpec, TaskOp};
+use anyhow::Result;
 
 /// Configuration for the decode step family generator.
 #[derive(Debug, Clone)]
@@ -55,10 +55,7 @@ impl Default for DecodeStepFamilyConfig {
 impl DecodeStepFamilyConfig {
     /// Create a new config with the given seed.
     pub fn new(seed: u64) -> Self {
-        Self {
-            seed,
-            ..Default::default()
-        }
+        Self { seed, ..Default::default() }
     }
 
     /// Create a config with custom embedding dimensions.
@@ -113,16 +110,12 @@ pub struct DecodeStepFamily {
 impl DecodeStepFamily {
     /// Create a new decode step family generator with default config.
     pub fn new() -> Self {
-        Self {
-            config: DecodeStepFamilyConfig::default(),
-        }
+        Self { config: DecodeStepFamilyConfig::default() }
     }
 
     /// Create a decode step family generator with the given seed.
     pub fn with_seed(seed: u64) -> Self {
-        Self {
-            config: DecodeStepFamilyConfig::new(seed),
-        }
+        Self { config: DecodeStepFamilyConfig::new(seed) }
     }
 
     /// Create a decode step family generator with custom config.
@@ -153,7 +146,8 @@ impl DecodeStepFamily {
                 if embed_dim % num_heads != 0 {
                     anyhow::bail!(
                         "Invalid decode_step config: embed_dim {} is not divisible by num_heads {}",
-                        embed_dim, num_heads
+                        embed_dim,
+                        num_heads
                     );
                 }
 
@@ -250,8 +244,24 @@ mod tests {
             assert_eq!(t1.name, t2.name, "Task names must be identical for same config");
             assert_eq!(t1.family, t2.family);
             match (&t1.op, &t2.op) {
-                (TaskOp::DecodeStep { embed_dim: e1, num_heads: h1, head_dim: hd1, kv_len: kv1, batch_size: b1, dtype: d1 },
-                 TaskOp::DecodeStep { embed_dim: e2, num_heads: h2, head_dim: hd2, kv_len: kv2, batch_size: b2, dtype: d2 }) => {
+                (
+                    TaskOp::DecodeStep {
+                        embed_dim: e1,
+                        num_heads: h1,
+                        head_dim: hd1,
+                        kv_len: kv1,
+                        batch_size: b1,
+                        dtype: d1,
+                    },
+                    TaskOp::DecodeStep {
+                        embed_dim: e2,
+                        num_heads: h2,
+                        head_dim: hd2,
+                        kv_len: kv2,
+                        batch_size: b2,
+                        dtype: d2,
+                    },
+                ) => {
                     assert_eq!((e1, h1, hd1, kv1, b1, d1), (e2, h2, hd2, kv2, b2, d2));
                 }
                 _ => panic!("Expected both to be DecodeStep"),
@@ -271,8 +281,10 @@ mod tests {
             assert_eq!(parsed.name, task.name);
             assert_eq!(parsed.family, task.family);
             match (&parsed.op, &task.op) {
-                (TaskOp::DecodeStep { embed_dim: e1, num_heads: h1, .. },
-                 TaskOp::DecodeStep { embed_dim: e2, num_heads: h2, .. }) => {
+                (
+                    TaskOp::DecodeStep { embed_dim: e1, num_heads: h1, .. },
+                    TaskOp::DecodeStep { embed_dim: e2, num_heads: h2, .. },
+                ) => {
                     assert_eq!((e1, h1), (e2, h2));
                 }
                 _ => panic!("Expected DecodeStep"),
@@ -342,8 +354,24 @@ mod tests {
             assert_eq!(t1.name, t2.name);
             assert_eq!(t1.family, t2.family);
             match (&t1.op, &t2.op) {
-                (TaskOp::DecodeStep { embed_dim: e1, num_heads: h1, head_dim: hd1, kv_len: kv1, batch_size: b1, dtype: d1 },
-                 TaskOp::DecodeStep { embed_dim: e2, num_heads: h2, head_dim: hd2, kv_len: kv2, batch_size: b2, dtype: d2 }) => {
+                (
+                    TaskOp::DecodeStep {
+                        embed_dim: e1,
+                        num_heads: h1,
+                        head_dim: hd1,
+                        kv_len: kv1,
+                        batch_size: b1,
+                        dtype: d1,
+                    },
+                    TaskOp::DecodeStep {
+                        embed_dim: e2,
+                        num_heads: h2,
+                        head_dim: hd2,
+                        kv_len: kv2,
+                        batch_size: b2,
+                        dtype: d2,
+                    },
+                ) => {
                     assert_eq!((e1, h1, hd1, kv1, b1, d1), (e2, h2, hd2, kv2, b2, d2));
                 }
                 _ => panic!("Expected DecodeStep"),

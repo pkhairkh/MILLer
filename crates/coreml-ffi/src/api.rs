@@ -51,10 +51,7 @@ impl CoreMlApi {
     /// a raw `.mlpackage`.
     ///
     /// On other platforms, returns PlatformUnavailable.
-    pub fn compile_model(
-        source_path: &str,
-        _output_dir: &str,
-    ) -> Result<String, FfiError> {
+    pub fn compile_model(source_path: &str, _output_dir: &str) -> Result<String, FfiError> {
         if !Self::is_available() {
             return Err(FfiError::PlatformUnavailable {
                 platform: std::env::consts::OS.to_string(),

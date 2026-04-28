@@ -9,8 +9,8 @@
 //! Each observation is stored as a separate JSON file for atomicity
 //! and to avoid write contention. This can be swapped for SQLite later.
 
-use ane_ir::kir::{KnowledgeUnit, KnowledgeType, KnowledgeScope};
-use anyhow::{Result, Context, bail};
+use ane_ir::kir::{KnowledgeScope, KnowledgeType, KnowledgeUnit};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -142,12 +142,15 @@ impl KnowledgeStore {
 
     /// Create a new empty knowledge store.
     fn create_new(store_path: &Path) -> Result<Self> {
-        fs::create_dir_all(store_path)
-            .with_context(|| format!("Failed to create store directory: {}", store_path.display()))?;
-        fs::create_dir_all(store_path.join("seeds"))
-            .with_context(|| format!("Failed to create seeds directory: {}", store_path.display()))?;
-        fs::create_dir_all(store_path.join("observations"))
-            .with_context(|| format!("Failed to create observations directory: {}", store_path.display()))?;
+        fs::create_dir_all(store_path).with_context(|| {
+            format!("Failed to create store directory: {}", store_path.display())
+        })?;
+        fs::create_dir_all(store_path.join("seeds")).with_context(|| {
+            format!("Failed to create seeds directory: {}", store_path.display())
+        })?;
+        fs::create_dir_all(store_path.join("observations")).with_context(|| {
+            format!("Failed to create observations directory: {}", store_path.display())
+        })?;
 
         let now = chrono::Utc::now().to_rfc3339();
         let store_index = StoreIndex {
@@ -158,11 +161,7 @@ impl KnowledgeStore {
             entry_ids: vec![],
         };
 
-        let store = Self {
-            path: store_path.to_path_buf(),
-            index: HashMap::new(),
-            store_index,
-        };
+        let store = Self { path: store_path.to_path_buf(), index: HashMap::new(), store_index };
 
         store.write_store_index()?;
         Ok(store)
@@ -194,15 +193,14 @@ impl KnowledgeStore {
             Self::load_entries_from_dir(&observations_dir, &mut index)?;
         }
 
-        Ok(Self {
-            path: store_path.to_path_buf(),
-            index,
-            store_index,
-        })
+        Ok(Self { path: store_path.to_path_buf(), index, store_index })
     }
 
     /// Load all entries from a directory.
-    fn load_entries_from_dir(dir: &Path, index: &mut HashMap<String, KnowledgeEntry>) -> Result<()> {
+    fn load_entries_from_dir(
+        dir: &Path,
+        index: &mut HashMap<String, KnowledgeEntry>,
+    ) -> Result<()> {
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
@@ -278,8 +276,9 @@ impl KnowledgeStore {
                 let seed_path = self.path.join("seeds").join(format!("{}.json", sanitize_id(id)));
                 let json = serde_json::to_string_pretty(entry)
                     .with_context(|| format!("Failed to serialize seed entry: {}", id))?;
-                fs::write(&seed_path, json)
-                    .with_context(|| format!("Failed to write seed entry: {}", seed_path.display()))?;
+                fs::write(&seed_path, json).with_context(|| {
+                    format!("Failed to write seed entry: {}", seed_path.display())
+                })?;
             }
         }
 
@@ -371,7 +370,8 @@ impl KnowledgeStore {
 
     /// List all seed entry IDs.
     pub fn list_seed_ids(&self) -> Vec<String> {
-        self.index.iter()
+        self.index
+            .iter()
             .filter(|(_, e)| e.source == EntrySource::Seed)
             .map(|(id, _)| id.clone())
             .collect()
@@ -379,7 +379,8 @@ impl KnowledgeStore {
 
     /// List all observation entry IDs.
     pub fn list_observation_ids(&self) -> Vec<String> {
-        self.index.iter()
+        self.index
+            .iter()
             .filter(|(_, e)| e.source == EntrySource::Observation)
             .map(|(id, _)| id.clone())
             .collect()
@@ -388,7 +389,8 @@ impl KnowledgeStore {
     /// Count entries by source type.
     pub fn counts(&self) -> (usize, usize) {
         let seeds = self.index.values().filter(|e| e.source == EntrySource::Seed).count();
-        let observations = self.index.values().filter(|e| e.source == EntrySource::Observation).count();
+        let observations =
+            self.index.values().filter(|e| e.source == EntrySource::Observation).count();
         (seeds, observations)
     }
 
@@ -486,11 +488,10 @@ fn claims_contradict(a: &KnowledgeUnit, b: &KnowledgeUnit) -> bool {
             // Check if quality impact claims are opposite
             let a_impact = a.payload.get("quality_impact").and_then(|v| v.as_str());
             let b_impact = b.payload.get("quality_impact").and_then(|v| v.as_str());
-            match (a_impact, b_impact) {
-                (Some("negligible"), Some("severe")) |
-                (Some("severe"), Some("negligible")) => true,
-                _ => false,
-            }
+            matches!(
+                (a_impact, b_impact),
+                (Some("negligible"), Some("severe")) | (Some("severe"), Some("negligible"))
+            )
         }
         _ => {
             // For other types, consider extreme confidence divergence as potential conflict
@@ -507,7 +508,7 @@ fn sanitize_id(id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ane_ir::kir::{KnowledgeType, EvidenceSource, KnowledgeScope};
+    use ane_ir::kir::{EvidenceSource, KnowledgeScope, KnowledgeType};
     use std::collections::HashMap;
 
     fn make_unit(id: &str, kt: KnowledgeType, ane_legal: bool, confidence: f32) -> KnowledgeUnit {

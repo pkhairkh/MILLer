@@ -7,9 +7,9 @@
 //! directly into the compile/lab pipeline. The generator produces
 //! deterministic variants controlled by a seed.
 
-use ane_ir::task_spec::{SyntheticTaskSpec, TaskOp, MeasurementConfig};
-use anyhow::Result;
 use super::TaskFamilyTrait;
+use ane_ir::task_spec::{MeasurementConfig, SyntheticTaskSpec, TaskOp};
+use anyhow::Result;
 
 /// Configuration for the linear family generator.
 #[derive(Debug, Clone)]
@@ -30,11 +30,7 @@ impl Default for LinearFamilyConfig {
     fn default() -> Self {
         Self {
             seed: 42,
-            dimension_variants: vec![
-                (64, 32),
-                (128, 64),
-                (256, 128),
-            ],
+            dimension_variants: vec![(64, 32), (128, 64), (256, 128)],
             batch_sizes: vec![1],
             dtypes: vec!["fp16".to_string()],
             has_bias: true,
@@ -45,10 +41,7 @@ impl Default for LinearFamilyConfig {
 impl LinearFamilyConfig {
     /// Create a new config with the given seed.
     pub fn new(seed: u64) -> Self {
-        Self {
-            seed,
-            ..Default::default()
-        }
+        Self { seed, ..Default::default() }
     }
 
     /// Create a config with custom dimension variants.
@@ -83,16 +76,12 @@ pub struct LinearFamily {
 impl LinearFamily {
     /// Create a new linear family generator with default config.
     pub fn new() -> Self {
-        Self {
-            config: LinearFamilyConfig::default(),
-        }
+        Self { config: LinearFamilyConfig::default() }
     }
 
     /// Create a linear family generator with the given seed.
     pub fn with_seed(seed: u64) -> Self {
-        Self {
-            config: LinearFamilyConfig::new(seed),
-        }
+        Self { config: LinearFamilyConfig::new(seed) }
     }
 
     /// Create a linear family generator with custom config.
@@ -120,10 +109,8 @@ impl LinearFamily {
         for (input_dim, output_dim) in &self.config.dimension_variants {
             for batch_size in &self.config.batch_sizes {
                 for dtype in &self.config.dtypes {
-                    let task_name = format!(
-                        "linear_{}x{}_b{}_{}",
-                        input_dim, output_dim, batch_size, dtype
-                    );
+                    let task_name =
+                        format!("linear_{}x{}_b{}_{}", input_dim, output_dim, batch_size, dtype);
 
                     let spec = SyntheticTaskSpec {
                         name: task_name.clone(),
@@ -206,8 +193,22 @@ mod tests {
             assert_eq!(t1.family, t2.family);
             // Compare op fields individually since TaskOp doesn't derive PartialEq
             match (&t1.op, &t2.op) {
-                (TaskOp::LinearProjection { input_dim: i1, output_dim: o1, batch_size: b1, has_bias: h1, dtype: d1 },
-                 TaskOp::LinearProjection { input_dim: i2, output_dim: o2, batch_size: b2, has_bias: h2, dtype: d2 }) => {
+                (
+                    TaskOp::LinearProjection {
+                        input_dim: i1,
+                        output_dim: o1,
+                        batch_size: b1,
+                        has_bias: h1,
+                        dtype: d1,
+                    },
+                    TaskOp::LinearProjection {
+                        input_dim: i2,
+                        output_dim: o2,
+                        batch_size: b2,
+                        has_bias: h2,
+                        dtype: d2,
+                    },
+                ) => {
                     assert_eq!((i1, o1, b1, h1, d1), (i2, o2, b2, h2, d2));
                 }
                 _ => panic!("Expected both to be LinearProjection"),
@@ -228,8 +229,10 @@ mod tests {
             assert_eq!(parsed.family, task.family);
             // Compare op fields individually
             match (&parsed.op, &task.op) {
-                (TaskOp::LinearProjection { input_dim: i1, output_dim: o1, .. },
-                 TaskOp::LinearProjection { input_dim: i2, output_dim: o2, .. }) => {
+                (
+                    TaskOp::LinearProjection { input_dim: i1, output_dim: o1, .. },
+                    TaskOp::LinearProjection { input_dim: i2, output_dim: o2, .. },
+                ) => {
                     assert_eq!((i1, o1), (i2, o2));
                 }
                 _ => panic!("Expected LinearProjection"),
@@ -244,12 +247,13 @@ mod tests {
         assert!(tasks.len() >= 3, "Must generate at least 3 deterministic variants");
 
         // Verify each variant has unique dimensions
-        let dims: Vec<_> = tasks.iter().map(|t| {
-            match &t.op {
+        let dims: Vec<_> = tasks
+            .iter()
+            .map(|t| match &t.op {
                 TaskOp::LinearProjection { input_dim, output_dim, .. } => (*input_dim, *output_dim),
                 _ => panic!("Expected LinearProjection"),
-            }
-        }).collect();
+            })
+            .collect();
 
         // All three should have distinct (input, output) pairs
         assert_eq!(dims.len(), 3);
@@ -297,8 +301,22 @@ mod tests {
             assert_eq!(t1.family, t2.family);
             // Compare op fields individually since TaskOp doesn't derive PartialEq
             match (&t1.op, &t2.op) {
-                (TaskOp::LinearProjection { input_dim: i1, output_dim: o1, batch_size: b1, has_bias: h1, dtype: d1 },
-                 TaskOp::LinearProjection { input_dim: i2, output_dim: o2, batch_size: b2, has_bias: h2, dtype: d2 }) => {
+                (
+                    TaskOp::LinearProjection {
+                        input_dim: i1,
+                        output_dim: o1,
+                        batch_size: b1,
+                        has_bias: h1,
+                        dtype: d1,
+                    },
+                    TaskOp::LinearProjection {
+                        input_dim: i2,
+                        output_dim: o2,
+                        batch_size: b2,
+                        has_bias: h2,
+                        dtype: d2,
+                    },
+                ) => {
                     assert_eq!((i1, o1, b1, h1, d1), (i2, o2, b2, h2, d2));
                 }
                 _ => panic!("Expected LinearProjection"),

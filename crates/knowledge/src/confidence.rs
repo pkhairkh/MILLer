@@ -3,7 +3,7 @@
 //! Functions for computing and updating confidence scores
 //! for knowledge units based on evidence accumulation.
 
-use ane_ir::kir::{KnowledgeUnit, EvidenceSource};
+use ane_ir::kir::{EvidenceSource, KnowledgeUnit};
 
 /// Compute a raw confidence score from evidence parameters.
 pub fn compute_confidence(

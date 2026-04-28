@@ -3,7 +3,7 @@
 //! Trait and implementations for querying the knowledge store
 //! with type-safe, scoped, and confidence-filtered lookups.
 
-use ane_ir::kir::{KnowledgeUnit, KnowledgeType, KnowledgeScope, EvidenceSource};
+use ane_ir::kir::{EvidenceSource, KnowledgeScope, KnowledgeType, KnowledgeUnit};
 use anyhow::Result;
 
 use crate::store::KnowledgeStore;
@@ -31,8 +31,16 @@ pub trait KnowledgeQueryable {
     /// Find the single best-matching knowledge unit for a query.
     fn query_best(&self, query: &KnowledgeQuery) -> Result<Option<KnowledgeUnit>> {
         let mut results = self.query(query)?;
-        results.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal)
+        });
         Ok(results.into_iter().next())
+    }
+}
+
+impl Default for KnowledgeQuery {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -86,7 +94,8 @@ impl KnowledgeQuery {
 /// with "unknown" scope matches any query scope.
 impl KnowledgeQueryable for KnowledgeStore {
     fn query(&self, query: &KnowledgeQuery) -> Result<Vec<KnowledgeUnit>> {
-        let mut results: Vec<KnowledgeUnit> = self.index_values()
+        let mut results: Vec<KnowledgeUnit> = self
+            .index_values()
             .filter(|entry| {
                 // Filter by knowledge type
                 if let Some(ref kt) = query.knowledge_type {
@@ -122,7 +131,9 @@ impl KnowledgeQueryable for KnowledgeStore {
             .collect();
 
         // Sort by confidence descending
-        results.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Apply limit
         if let Some(limit) = query.limit {
@@ -144,19 +155,18 @@ fn scopes_match(entry_scope: &KnowledgeScope, query_scope: &KnowledgeScope) -> b
     }
 
     // Check device class overlap
-    let device_match = entry_scope.device_classes.iter()
-        .any(|d| query_scope.device_classes.contains(d));
+    let device_match =
+        entry_scope.device_classes.iter().any(|d| query_scope.device_classes.contains(d));
 
     // Check OS version overlap
-    let os_match = entry_scope.os_versions.iter()
-        .any(|v| query_scope.os_versions.contains(v))
+    let os_match = entry_scope.os_versions.iter().any(|v| query_scope.os_versions.contains(v))
         || entry_scope.os_versions.contains(&"unknown".to_string())
         || query_scope.os_versions.is_empty();
 
     // Check opset version overlap
-    let opset_match = entry_scope.opset_versions.iter()
-        .any(|v| query_scope.opset_versions.contains(v))
-        || query_scope.opset_versions.is_empty();
+    let opset_match =
+        entry_scope.opset_versions.iter().any(|v| query_scope.opset_versions.contains(v))
+            || query_scope.opset_versions.is_empty();
 
     device_match && os_match && opset_match
 }
@@ -168,7 +178,12 @@ mod tests {
     use ane_ir::kir::KnowledgeType;
     use std::collections::HashMap;
 
-    fn make_unit(id: &str, kt: KnowledgeType, confidence: f32, source: EvidenceSource) -> KnowledgeUnit {
+    fn make_unit(
+        id: &str,
+        kt: KnowledgeType,
+        confidence: f32,
+        source: EvidenceSource,
+    ) -> KnowledgeUnit {
         let mut payload = HashMap::new();
         payload.insert("ane_legal".to_string(), serde_json::json!(true));
         payload.insert("op_pattern".to_string(), serde_json::json!("mb.matmul"));
@@ -197,11 +212,13 @@ mod tests {
         let mut store = KnowledgeStore::open(&tmp.path().join("store").to_string_lossy()).unwrap();
 
         let unit_a = make_unit("a", KnowledgeType::LegalityRule, 0.5, EvidenceSource::SyntheticRun);
-        let unit_b = make_unit("b", KnowledgeType::PrecisionHazard, 0.7, EvidenceSource::RealModelRun);
+        let unit_b =
+            make_unit("b", KnowledgeType::PrecisionHazard, 0.7, EvidenceSource::RealModelRun);
         store.insert_observation(unit_a).unwrap();
         store.insert_observation(unit_b).unwrap();
 
-        let results = store.query(&KnowledgeQuery::new().with_type(KnowledgeType::LegalityRule)).unwrap();
+        let results =
+            store.query(&KnowledgeQuery::new().with_type(KnowledgeType::LegalityRule)).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "a");
     }
@@ -211,8 +228,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut store = KnowledgeStore::open(&tmp.path().join("store").to_string_lossy()).unwrap();
 
-        let unit_low = make_unit("low", KnowledgeType::LegalityRule, 0.2, EvidenceSource::SyntheticRun);
-        let unit_high = make_unit("high", KnowledgeType::LegalityRule, 0.8, EvidenceSource::RealModelRun);
+        let unit_low =
+            make_unit("low", KnowledgeType::LegalityRule, 0.2, EvidenceSource::SyntheticRun);
+        let unit_high =
+            make_unit("high", KnowledgeType::LegalityRule, 0.8, EvidenceSource::RealModelRun);
         store.insert_observation(unit_low).unwrap();
         store.insert_observation(unit_high).unwrap();
 
@@ -231,7 +250,9 @@ mod tests {
         store.insert_observation(unit_a).unwrap();
         store.insert_observation(unit_b).unwrap();
 
-        let best = store.query_best(&KnowledgeQuery::new().with_type(KnowledgeType::LegalityRule)).unwrap();
+        let best = store
+            .query_best(&KnowledgeQuery::new().with_type(KnowledgeType::LegalityRule))
+            .unwrap();
         assert!(best.is_some());
         assert_eq!(best.unwrap().id, "b");
     }
@@ -246,7 +267,9 @@ mod tests {
         store.insert_observation(unit_a).unwrap();
         store.insert_observation(unit_b).unwrap();
 
-        let results = store.query(&KnowledgeQuery::new().with_evidence_source(EvidenceSource::RealModelRun)).unwrap();
+        let results = store
+            .query(&KnowledgeQuery::new().with_evidence_source(EvidenceSource::RealModelRun))
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "b");
     }

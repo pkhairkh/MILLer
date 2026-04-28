@@ -22,12 +22,12 @@
 //! For shared weights across functions, the same weight name produces
 //! the same offset — the `WeightBinBuilder` deduplicates automatically.
 
-use anyhow::Result;
 use ane_coreml_proto::{
-    CoreMlModel, CoreMlFunction, CoreMlDataType, CoreMlComputeUnit, SpecVersion,
-    TensorDesc, WeightEntry, SharedWeightRef, ModelDescriptionCompat,
-    mir_compat::{MirGraphCompat, MirOpCompat, MilDtypeCompat},
+    mir_compat::{MilDtypeCompat, MirGraphCompat, MirOpCompat},
+    CoreMlComputeUnit, CoreMlDataType, CoreMlFunction, CoreMlModel, ModelDescriptionCompat,
+    SharedWeightRef, SpecVersion, TensorDesc, WeightEntry,
 };
+use anyhow::Result;
 use prost::Message;
 
 /// Convert a single-function MIR graph to a CoreMlModel.
@@ -36,12 +36,7 @@ pub fn convert_mir_to_proto(
     spec_version: SpecVersion,
     compute_unit: CoreMlComputeUnit,
 ) -> Result<CoreMlModel> {
-    convert_mir_to_proto_multifunction(
-        std::slice::from_ref(graph),
-        &[],
-        spec_version,
-        compute_unit,
-    )
+    convert_mir_to_proto_multifunction(std::slice::from_ref(graph), &[], spec_version, compute_unit)
 }
 
 /// Convert one or more MIR graphs to a multi-function CoreMlModel.
@@ -139,18 +134,14 @@ pub fn convert_mir_to_proto_multifunction(
     // Build shared weight references
     for (weight_name, referencing_functions) in shared_weight_refs {
         if let Some(weight_entry) = all_weights.iter().find(|w| w.name == weight_name) {
-            shared_weights.push(SharedWeightRef {
-                weight: weight_entry.clone(),
-                referencing_functions,
-            });
+            shared_weights
+                .push(SharedWeightRef { weight: weight_entry.clone(), referencing_functions });
         }
     }
 
     // Default function name
-    let default_function_name = graphs
-        .first()
-        .map(|g| g.function_name.clone())
-        .unwrap_or_else(|| "main".to_string());
+    let default_function_name =
+        graphs.first().map(|g| g.function_name.clone()).unwrap_or_else(|| "main".to_string());
 
     // Model description uses the default function's I/O
     let default_fn = functions.first();
@@ -214,13 +205,13 @@ pub fn build_linear_projection_mir(
             MirOpCompat::Const {
                 name: "weight".to_string(),
                 data: weight_data,
-                dtype: dtype,
+                dtype,
                 shape: vec![output_dim, input_dim], // mb.linear convention: [out, in]
             },
             MirOpCompat::Const {
                 name: "bias".to_string(),
                 data: bias_data,
-                dtype: dtype,
+                dtype,
                 shape: vec![output_dim],
             },
             MirOpCompat::Linear {
@@ -259,7 +250,7 @@ pub fn build_multifunction_shared_weights_mir(
             MirOpCompat::Const {
                 name: "shared_projection_weight".to_string(),
                 data: shared_weight_data.clone(),
-                dtype: dtype,
+                dtype,
                 shape: vec![embed_dim, embed_dim],
             },
             MirOpCompat::Linear {
@@ -281,7 +272,7 @@ pub fn build_multifunction_shared_weights_mir(
             MirOpCompat::Const {
                 name: "shared_projection_weight".to_string(),
                 data: shared_weight_data,
-                dtype: dtype,
+                dtype,
                 shape: vec![embed_dim, embed_dim],
             },
             MirOpCompat::Linear {
@@ -326,12 +317,10 @@ mod tests {
 
     #[test]
     fn test_convert_single_function() {
-        let graph = build_linear_projection_mir(
-            "test_linear", 64, 32, 1, MilDtypeCompat::Fp16, 42,
-        );
+        let graph = build_linear_projection_mir("test_linear", 64, 32, 1, MilDtypeCompat::Fp16, 42);
 
-        let model = convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe)
-            .unwrap();
+        let model =
+            convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe).unwrap();
 
         assert_eq!(model.functions.len(), 1);
         assert_eq!(model.functions[0].name, "main");
@@ -342,13 +331,16 @@ mod tests {
 
     #[test]
     fn test_convert_multifunction_with_shared_weights() {
-        let (graphs, shared_names) = build_multifunction_shared_weights_mir(
-            "test_shared", 128, 1, MilDtypeCompat::Fp16, 42,
-        );
+        let (graphs, shared_names) =
+            build_multifunction_shared_weights_mir("test_shared", 128, 1, MilDtypeCompat::Fp16, 42);
 
         let model = convert_mir_to_proto_multifunction(
-            &graphs, &shared_names, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe,
-        ).unwrap();
+            &graphs,
+            &shared_names,
+            SpecVersion::V8,
+            CoreMlComputeUnit::CpuAndNe,
+        )
+        .unwrap();
 
         assert_eq!(model.functions.len(), 2);
         assert_eq!(model.functions[0].name, "embedding");
@@ -362,9 +354,7 @@ mod tests {
 
     #[test]
     fn test_build_linear_projection_mir() {
-        let graph = build_linear_projection_mir(
-            "test", 64, 32, 1, MilDtypeCompat::Fp16, 42,
-        );
+        let graph = build_linear_projection_mir("test", 64, 32, 1, MilDtypeCompat::Fp16, 42);
 
         assert_eq!(graph.ops.len(), 3); // const + const + linear
         assert_eq!(graph.inputs, vec!["x".to_string()]);
@@ -385,11 +375,9 @@ mod tests {
 
     #[test]
     fn test_model_to_protobuf_bytes_linear() {
-        let graph = build_linear_projection_mir(
-            "test_linear", 64, 32, 1, MilDtypeCompat::Fp16, 42,
-        );
-        let model = convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe)
-            .unwrap();
+        let graph = build_linear_projection_mir("test_linear", 64, 32, 1, MilDtypeCompat::Fp16, 42);
+        let model =
+            convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe).unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         assert!(!bytes.is_empty());
@@ -405,12 +393,15 @@ mod tests {
 
     #[test]
     fn test_model_to_protobuf_bytes_multifunction() {
-        let (graphs, shared_names) = build_multifunction_shared_weights_mir(
-            "test_shared", 64, 1, MilDtypeCompat::Fp16, 42,
-        );
+        let (graphs, shared_names) =
+            build_multifunction_shared_weights_mir("test_shared", 64, 1, MilDtypeCompat::Fp16, 42);
         let model = convert_mir_to_proto_multifunction(
-            &graphs, &shared_names, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe,
-        ).unwrap();
+            &graphs,
+            &shared_names,
+            SpecVersion::V8,
+            CoreMlComputeUnit::CpuAndNe,
+        )
+        .unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         assert!(!bytes.is_empty());
@@ -424,11 +415,8 @@ mod tests {
 
     #[test]
     fn test_protobuf_roundtrip_preserves_fields() {
-        let graph = build_linear_projection_mir(
-            "test_rt", 32, 16, 1, MilDtypeCompat::Fp16, 99,
-        );
-        let model = convert_mir_to_proto(&graph, SpecVersion::V7, CoreMlComputeUnit::All)
-            .unwrap();
+        let graph = build_linear_projection_mir("test_rt", 32, 16, 1, MilDtypeCompat::Fp16, 99);
+        let model = convert_mir_to_proto(&graph, SpecVersion::V7, CoreMlComputeUnit::All).unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         let parsed = ane_coreml_proto::proto::Model::decode(bytes.as_slice()).unwrap();
@@ -447,19 +435,14 @@ mod tests {
         // Check optimization hints
         assert!(parsed.optimization_hints.is_some());
         let hints = parsed.optimization_hints.as_ref().unwrap();
-        assert_eq!(
-            hints.preferred_compute_unit,
-            ane_coreml_proto::proto::ComputeUnit::All as i32,
-        );
+        assert_eq!(hints.preferred_compute_unit, ane_coreml_proto::proto::ComputeUnit::All as i32,);
     }
 
     #[test]
     fn test_protobuf_roundtrip_ops_preserved() {
-        let graph = build_linear_projection_mir(
-            "test_ops", 16, 8, 1, MilDtypeCompat::Fp16, 7,
-        );
-        let model = convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe)
-            .unwrap();
+        let graph = build_linear_projection_mir("test_ops", 16, 8, 1, MilDtypeCompat::Fp16, 7);
+        let model =
+            convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe).unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         let parsed = ane_coreml_proto::proto::Model::decode(bytes.as_slice()).unwrap();
@@ -512,8 +495,8 @@ mod tests {
             function_name: "decode_step".to_string(),
         };
 
-        let model = convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe)
-            .unwrap();
+        let model =
+            convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe).unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         let parsed = ane_coreml_proto::proto::Model::decode(bytes.as_slice()).unwrap();
@@ -539,11 +522,9 @@ mod tests {
 
     #[test]
     fn test_weight_file_references_in_proto() {
-        let graph = build_linear_projection_mir(
-            "test_wref", 16, 8, 1, MilDtypeCompat::Fp16, 7,
-        );
-        let model = convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe)
-            .unwrap();
+        let graph = build_linear_projection_mir("test_wref", 16, 8, 1, MilDtypeCompat::Fp16, 7);
+        let model =
+            convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe).unwrap();
 
         // Simulate weight entries with real offsets (as WeightBinBuilder would produce)
         let weight_entries = vec![

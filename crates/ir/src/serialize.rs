@@ -1,6 +1,6 @@
 //! Serialization utilities for all IR types.
 
-use crate::{sir::SirGraph, air::AirGraph, mir::MirGraph, pir::PirGraph};
+use crate::{air::AirGraph, mir::MirGraph, pir::PirGraph, sir::SirGraph};
 
 /// Serialize a SIR graph to MessagePack bytes.
 pub fn serialize_sir(graph: &SirGraph) -> Result<Vec<u8>, String> {

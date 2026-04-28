@@ -9,8 +9,11 @@
 //! Each shard has explicit role semantics (Entry/Interior/Exit).
 
 use crate::mir::{ComputeUnitHint, MilDtype, MirGraph, MirNode, MirNodeId, MirOp};
-use crate::pir::{ShardRole, ComputeUnits, Package, PackageRole, FunctionEntry, TensorSpec as PirTensorSpec, PirGraph, ShardTemplate, ShardPartitionEntry, Handoff};
-use crate::sir::{SirGraph, SirNode, SirNodeId, SirOp, SirMetadata, TaskOrigin};
+use crate::pir::{
+    FunctionEntry, Handoff, Package, PackageRole, PirGraph, ShardPartitionEntry, ShardRole,
+    ShardTemplate, TensorSpec as PirTensorSpec,
+};
+use crate::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
 use crate::task_spec::{SyntheticTaskSpec, TaskOp};
 
 /// Build a SIR graph from a synthetic linear projection task spec.
@@ -47,10 +50,7 @@ pub fn sir_from_linear_projection(spec: &SyntheticTaskSpec) -> Result<SirGraph, 
     let nodes = vec![
         SirNode {
             id: weight_id.clone(),
-            op: SirOp::ElementWise {
-                op: crate::sir::ElementWiseOp::Mul,
-                inputs: vec![],
-            },
+            op: SirOp::ElementWise { op: crate::sir::ElementWiseOp::Mul, inputs: vec![] },
             name: "weight".into(),
             metadata: SirMetadata {
                 task_origin: TaskOrigin::Synthetic,
@@ -61,10 +61,7 @@ pub fn sir_from_linear_projection(spec: &SyntheticTaskSpec) -> Result<SirGraph, 
         },
         SirNode {
             id: bias_id.clone(),
-            op: SirOp::ElementWise {
-                op: crate::sir::ElementWiseOp::Add,
-                inputs: vec![],
-            },
+            op: SirOp::ElementWise { op: crate::sir::ElementWiseOp::Add, inputs: vec![] },
             name: "bias".into(),
             metadata: SirMetadata {
                 task_origin: TaskOrigin::Synthetic,
@@ -90,11 +87,7 @@ pub fn sir_from_linear_projection(spec: &SyntheticTaskSpec) -> Result<SirGraph, 
         },
     ];
 
-    Ok(SirGraph {
-        nodes,
-        inputs: vec![input_id],
-        outputs: vec![output_id],
-    })
+    Ok(SirGraph { nodes, inputs: vec![input_id], outputs: vec![output_id] })
 }
 
 /// Lower a linear projection SIR graph directly to MIR.
@@ -173,11 +166,7 @@ pub fn lower_linear_projection_to_mir(
         },
         MirNode {
             id: add_id.clone(),
-            op: MirOp::MILAdd {
-                name: "add".into(),
-                x: matmul_id.clone(),
-                y: bias_id.clone(),
-            },
+            op: MirOp::MILAdd { name: "add".into(), x: matmul_id.clone(), y: bias_id.clone() },
             dtype: mil_dtype.clone(),
             shape: vec![batch_size, output_dim],
             compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
@@ -369,9 +358,7 @@ impl DecodeStepPayload {
             _ => return Err("Expected DecodeStep task for DecodeStepPayload".into()),
         };
 
-        let effective_dtype = dtype_override
-            .map(|s| s.to_string())
-            .unwrap_or(spec_dtype);
+        let effective_dtype = dtype_override.map(|s| s.to_string()).unwrap_or(spec_dtype);
 
         Ok(Self {
             bridge_version: BRIDGE_VERSION,
@@ -473,16 +460,27 @@ impl MlpBlockPayload {
         output_path: &str,
         dtype_override: Option<&str>,
     ) -> Result<Self, String> {
-        let (input_dim, hidden_dim, output_dim, activation, batch_size, spec_dtype) = match &spec.op {
-            TaskOp::MlpBlock { input_dim, hidden_dim, output_dim, activation, batch_size, dtype } => {
-                (*input_dim, *hidden_dim, *output_dim, activation.clone(), *batch_size, dtype.clone())
-            }
+        let (input_dim, hidden_dim, output_dim, activation, batch_size, spec_dtype) = match &spec.op
+        {
+            TaskOp::MlpBlock {
+                input_dim,
+                hidden_dim,
+                output_dim,
+                activation,
+                batch_size,
+                dtype,
+            } => (
+                *input_dim,
+                *hidden_dim,
+                *output_dim,
+                activation.clone(),
+                *batch_size,
+                dtype.clone(),
+            ),
             _ => return Err("Expected MlpBlock task for MlpBlockPayload".into()),
         };
 
-        let effective_dtype = dtype_override
-            .map(|s| s.to_string())
-            .unwrap_or(spec_dtype);
+        let effective_dtype = dtype_override.map(|s| s.to_string()).unwrap_or(spec_dtype);
 
         Ok(Self {
             bridge_version: BRIDGE_VERSION,
@@ -589,9 +587,7 @@ impl AttentionPayload {
             _ => return Err("Expected Attention task for AttentionPayload".into()),
         };
 
-        let effective_dtype = dtype_override
-            .map(|s| s.to_string())
-            .unwrap_or(spec_dtype);
+        let effective_dtype = dtype_override.map(|s| s.to_string()).unwrap_or(spec_dtype);
 
         Ok(Self {
             bridge_version: BRIDGE_VERSION,
@@ -725,8 +721,7 @@ impl FamilyPayload {
 
     /// Serialize this payload to a JSON string.
     pub fn to_json(&self) -> Result<String, String> {
-        serde_json::to_string(self)
-            .map_err(|e| format!("Failed to serialize FamilyPayload: {}", e))
+        serde_json::to_string(self).map_err(|e| format!("Failed to serialize FamilyPayload: {}", e))
     }
 
     /// Serialize this payload to a pretty-printed JSON string.
@@ -776,9 +771,7 @@ impl LinearProjectionPayload {
             _ => return Err("Expected LinearProjection task for LinearProjectionPayload".into()),
         };
 
-        let effective_dtype = dtype_override
-            .map(|s| s.to_string())
-            .unwrap_or(spec_dtype);
+        let effective_dtype = dtype_override.map(|s| s.to_string()).unwrap_or(spec_dtype);
 
         Ok(Self {
             bridge_version: BRIDGE_VERSION,
@@ -838,16 +831,21 @@ impl LutProjectionPayload {
         output_path: &str,
         dtype_override: Option<&str>,
     ) -> Result<Self, String> {
-        let (vocab_size, embed_dim, num_groups, lut_bitwidth, batch_size, spec_dtype) = match &spec.op {
-            TaskOp::LutProjection { vocab_size, embed_dim, num_groups, lut_bitwidth, batch_size, dtype } => {
-                (*vocab_size, *embed_dim, *num_groups, *lut_bitwidth, *batch_size, dtype.clone())
-            }
+        let (vocab_size, embed_dim, num_groups, lut_bitwidth, batch_size, spec_dtype) = match &spec
+            .op
+        {
+            TaskOp::LutProjection {
+                vocab_size,
+                embed_dim,
+                num_groups,
+                lut_bitwidth,
+                batch_size,
+                dtype,
+            } => (*vocab_size, *embed_dim, *num_groups, *lut_bitwidth, *batch_size, dtype.clone()),
             _ => return Err("Expected LutProjection task for LutProjectionPayload".into()),
         };
 
-        let effective_dtype = dtype_override
-            .map(|s| s.to_string())
-            .unwrap_or(spec_dtype);
+        let effective_dtype = dtype_override.map(|s| s.to_string()).unwrap_or(spec_dtype);
 
         Ok(Self {
             bridge_version: BRIDGE_VERSION,
@@ -900,7 +898,7 @@ pub struct ShardDesc {
     /// Output dimension for this shard's linear projection.
     pub output_dim: usize,
     /// Compute units for this shard (ANE-targeted for decoder shards).
-    pub compute_units: ComputeUnits,
+    pub compute_units: ComputeUnitHint,
 }
 
 /// Produce the shard descriptors for a ShardedLinearPipeline task.
@@ -960,12 +958,9 @@ pub fn lower_shard_to_mir(
         _ => MilDtype::Fp16,
     };
 
-    let compute_hint = match shard.compute_units {
-        ComputeUnits::CPUAndNE => ComputeUnitHint::CPUAndNE,
-        ComputeUnits::CPUAndGPU => ComputeUnitHint::CPUAndGPU,
-        ComputeUnits::CPUOnly => ComputeUnitHint::CPUOnly,
-        ComputeUnits::All => ComputeUnitHint::All,
-    };
+    // Sprint 58 (S58.3): inline conversion removed — compute_units is now
+    // ComputeUnitHint directly, so no conversion needed.
+    let compute_hint = shard.compute_units.clone();
 
     let weight_id = MirNodeId("weight".into());
     let bias_id = MirNodeId("bias".into());
@@ -1012,11 +1007,7 @@ pub fn lower_shard_to_mir(
         },
         MirNode {
             id: add_id.clone(),
-            op: MirOp::MILAdd {
-                name: "add".into(),
-                x: matmul_id.clone(),
-                y: bias_id.clone(),
-            },
+            op: MirOp::MILAdd { name: "add".into(), x: matmul_id.clone(), y: bias_id.clone() },
             dtype: mil_dtype.clone(),
             shape: vec![batch_size, shard.output_dim],
             compute_unit_hint: Some(compute_hint),
@@ -1069,7 +1060,16 @@ impl ShardedShardPayload {
         output_path: &str,
         seed: u64,
     ) -> Self {
-        Self::from_shard_with_override(shard, task_name, family, batch_size, dtype, output_path, seed, None)
+        Self::from_shard_with_override(
+            shard,
+            task_name,
+            family,
+            batch_size,
+            dtype,
+            output_path,
+            seed,
+            None,
+        )
     }
 
     /// Build a bridge payload for one shard with an optional dtype override.
@@ -1077,6 +1077,7 @@ impl ShardedShardPayload {
     /// When `dtype_override` is `Some`, the payload uses the overridden dtype
     /// instead of the spec's default. This ensures precision adaptations
     /// propagate to the emitted mlpackage per shard.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_shard_with_override(
         shard: &ShardDesc,
         task_name: &str,
@@ -1133,6 +1134,7 @@ impl ShardedShardPayload {
     /// The payload includes decode-step-specific dimensions (embed_dim,
     /// num_heads, head_dim, kv_len) and passes shard_role so the Python
     /// emitter can vary the program structure by role.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_shard_decode_step(
         shard: &ShardDesc,
         task_name: &str,
@@ -1209,8 +1211,9 @@ pub fn build_sharded_pipeline_pir(spec: &SyntheticTaskSpec) -> Result<PirGraph, 
 
     let shards = sharded_pipeline_shards(spec)?;
 
-    let packages: Vec<Package> = shards.iter().map(|shard| {
-        Package {
+    let packages: Vec<Package> = shards
+        .iter()
+        .map(|shard| Package {
             name: shard.shard_name.clone(),
             role: PackageRole::DecoderShard(shard.role.clone()),
             compute_units: shard.compute_units.clone(),
@@ -1229,8 +1232,8 @@ pub fn build_sharded_pipeline_pir(spec: &SyntheticTaskSpec) -> Result<PirGraph, 
                 }],
                 stateful: false,
             }],
-        }
-    }).collect();
+        })
+        .collect();
 
     // Build handoffs: entry -> interior -> exit
     // Each handoff carries concrete runtime semantics:
@@ -1270,24 +1273,24 @@ pub fn build_sharded_pipeline_pir(spec: &SyntheticTaskSpec) -> Result<PirGraph, 
                 role: ShardRole::Entry,
                 layer_start: 0,
                 layer_end: 0, // synthetic task has no real layers
-                compute_units: ComputeUnits::CPUAndNE,
+                compute_units: ComputeUnitHint::CPUAndNE,
             },
             ShardPartitionEntry {
                 role: ShardRole::Interior,
                 layer_start: 1,
                 layer_end: 1,
-                compute_units: ComputeUnits::CPUAndNE,
+                compute_units: ComputeUnitHint::CPUAndNE,
             },
             ShardPartitionEntry {
                 role: ShardRole::Exit,
                 layer_start: 2,
                 layer_end: 2,
-                compute_units: ComputeUnits::CPUAndNE,
+                compute_units: ComputeUnitHint::CPUAndNE,
             },
         ],
-        io_compute_units: None, // No IO model in this synthetic task
+        io_compute_units: None,      // No IO model in this synthetic task
         sampler_compute_units: None, // No sampler in this synthetic task
-        state_config: None, // No state in linear projection
+        state_config: None,          // No state in linear projection
         context_length: 0,
     };
 
@@ -1305,7 +1308,7 @@ pub fn build_sharded_pipeline_pir(spec: &SyntheticTaskSpec) -> Result<PirGraph, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task_spec::{SyntheticTaskSpec, TaskOp, MeasurementConfig};
+    use crate::task_spec::{MeasurementConfig, SyntheticTaskSpec, TaskOp};
 
     fn test_sharded_spec() -> SyntheticTaskSpec {
         SyntheticTaskSpec {
@@ -1336,17 +1339,17 @@ mod tests {
         assert_eq!(shards[0].role, ShardRole::Entry);
         assert_eq!(shards[0].input_dim, 64);
         assert_eq!(shards[0].output_dim, 48);
-        assert_eq!(shards[0].compute_units, ComputeUnits::CPUAndNE);
+        assert_eq!(shards[0].compute_units, ComputeUnitHint::CPUAndNE);
 
         assert_eq!(shards[1].role, ShardRole::Interior);
         assert_eq!(shards[1].input_dim, 48);
         assert_eq!(shards[1].output_dim, 48);
-        assert_eq!(shards[1].compute_units, ComputeUnits::CPUAndNE);
+        assert_eq!(shards[1].compute_units, ComputeUnitHint::CPUAndNE);
 
         assert_eq!(shards[2].role, ShardRole::Exit);
         assert_eq!(shards[2].input_dim, 48);
         assert_eq!(shards[2].output_dim, 32);
-        assert_eq!(shards[2].compute_units, ComputeUnits::CPUAndNE);
+        assert_eq!(shards[2].compute_units, ComputeUnitHint::CPUAndNE);
     }
 
     #[test]
@@ -1356,7 +1359,11 @@ mod tests {
 
         for shard in &shards {
             let mir = lower_shard_to_mir(shard, 1, "fp16").unwrap();
-            assert_eq!(mir.nodes.len(), 4, "Each shard MIR must have 4 nodes (weight, bias, matmul, add)");
+            assert_eq!(
+                mir.nodes.len(),
+                4,
+                "Each shard MIR must have 4 nodes (weight, bias, matmul, add)"
+            );
             assert_eq!(mir.inputs.len(), 1);
             assert_eq!(mir.outputs.len(), 1);
             assert_eq!(mir.shard_name, shard.shard_name);
@@ -1404,10 +1411,12 @@ mod tests {
         let spec = test_sharded_spec();
         let pir = build_sharded_pipeline_pir(&spec).unwrap();
 
-        let orders: Vec<usize> = pir.handoffs.iter()
-            .map(|h| h.execution_order)
-            .collect();
-        assert_eq!(orders, vec![0, 1], "Handoff execution orders must be sequential starting from 0");
+        let orders: Vec<usize> = pir.handoffs.iter().map(|h| h.execution_order).collect();
+        assert_eq!(
+            orders,
+            vec![0, 1],
+            "Handoff execution orders must be sequential starting from 0"
+        );
     }
 
     #[test]
@@ -1419,28 +1428,42 @@ mod tests {
 
         for handoff in &pir.handoffs {
             // Find the source package
-            let source_pkg = pir.packages.iter()
+            let source_pkg = pir
+                .packages
+                .iter()
                 .find(|p| p.name == handoff.from_package)
                 .expect("Source package must exist");
-            let target_pkg = pir.packages.iter()
+            let target_pkg = pir
+                .packages
+                .iter()
                 .find(|p| p.name == handoff.to_package)
                 .expect("Target package must exist");
 
             // Verify source output name matches a function output
-            let source_outputs: Vec<&String> = source_pkg.functions.iter()
+            let source_outputs: Vec<&String> = source_pkg
+                .functions
+                .iter()
                 .flat_map(|f| f.outputs.iter().map(|o| &o.name))
                 .collect();
-            assert!(source_outputs.contains(&&handoff.source_output_name),
+            assert!(
+                source_outputs.contains(&&handoff.source_output_name),
                 "Source output '{}' must exist in package '{}' outputs",
-                handoff.source_output_name, handoff.from_package);
+                handoff.source_output_name,
+                handoff.from_package
+            );
 
             // Verify target input name matches a function input
-            let target_inputs: Vec<&String> = target_pkg.functions.iter()
+            let target_inputs: Vec<&String> = target_pkg
+                .functions
+                .iter()
                 .flat_map(|f| f.inputs.iter().map(|i| &i.name))
                 .collect();
-            assert!(target_inputs.contains(&&handoff.target_input_name),
+            assert!(
+                target_inputs.contains(&&handoff.target_input_name),
                 "Target input '{}' must exist in package '{}' inputs",
-                handoff.target_input_name, handoff.to_package);
+                handoff.target_input_name,
+                handoff.to_package
+            );
         }
     }
 
@@ -1451,7 +1474,13 @@ mod tests {
         let shard = &shards[0];
 
         let payload = ShardedShardPayload::from_shard(
-            shard, &spec.name, &spec.family, 1, "fp16", "/tmp/test", 42,
+            shard,
+            &spec.name,
+            &spec.family,
+            1,
+            "fp16",
+            "/tmp/test",
+            42,
         );
 
         assert_eq!(payload.shard_role, "Entry");
@@ -1468,10 +1497,16 @@ mod tests {
             family: "LinearProjection".into(),
             description: None,
             op: TaskOp::LinearProjection {
-                input_dim: 64, output_dim: 32, batch_size: 1, has_bias: true, dtype: "fp16".into(),
+                input_dim: 64,
+                output_dim: 32,
+                batch_size: 1,
+                has_bias: true,
+                dtype: "fp16".into(),
             },
             measurement: MeasurementConfig {
-                warmup_iterations: 3, measured_iterations: 10, metrics: vec![],
+                warmup_iterations: 3,
+                measured_iterations: 10,
+                metrics: vec![],
             },
         };
         let result = sharded_pipeline_shards(&spec);
@@ -1486,10 +1521,16 @@ mod tests {
             family: "LinearProjection".into(),
             description: None,
             op: TaskOp::LinearProjection {
-                input_dim: 64, output_dim: 32, batch_size: 1, has_bias: true, dtype: "fp16".into(),
+                input_dim: 64,
+                output_dim: 32,
+                batch_size: 1,
+                has_bias: true,
+                dtype: "fp16".into(),
             },
             measurement: MeasurementConfig {
-                warmup_iterations: 3, measured_iterations: 10, metrics: vec!["Latency".into()],
+                warmup_iterations: 3,
+                measured_iterations: 10,
+                metrics: vec!["Latency".into()],
             },
         }
     }
@@ -1503,27 +1544,31 @@ mod tests {
         assert_eq!(payload_no.dtype, "fp16", "Without override, dtype should be fp16");
 
         // With fp32 override: uses overridden dtype
-        let payload_fp32 = LinearProjectionPayload::from_spec_with_override(
-            &spec, "/tmp/test", Some("fp32"),
-        ).unwrap();
-        assert_eq!(payload_fp32.dtype, "fp32",
-            "With fp32 override, bridge payload dtype must be fp32");
+        let payload_fp32 =
+            LinearProjectionPayload::from_spec_with_override(&spec, "/tmp/test", Some("fp32"))
+                .unwrap();
+        assert_eq!(
+            payload_fp32.dtype, "fp32",
+            "With fp32 override, bridge payload dtype must be fp32"
+        );
 
         // Function descriptors must also reflect the overridden dtype
-        assert_eq!(payload_fp32.functions[0].inputs[0].dtype, "fp32",
-            "Function input dtype must reflect override");
-        assert_eq!(payload_fp32.functions[0].outputs[0].dtype, "fp32",
-            "Function output dtype must reflect override");
+        assert_eq!(
+            payload_fp32.functions[0].inputs[0].dtype, "fp32",
+            "Function input dtype must reflect override"
+        );
+        assert_eq!(
+            payload_fp32.functions[0].outputs[0].dtype, "fp32",
+            "Function output dtype must reflect override"
+        );
     }
 
     #[test]
     fn test_payload_dtype_no_override_preserves_spec() {
         let spec = test_linear_spec_fp16();
-        let payload = LinearProjectionPayload::from_spec_with_override(
-            &spec, "/tmp/test", None,
-        ).unwrap();
-        assert_eq!(payload.dtype, "fp16",
-            "Without override, dtype must match spec default");
+        let payload =
+            LinearProjectionPayload::from_spec_with_override(&spec, "/tmp/test", None).unwrap();
+        assert_eq!(payload.dtype, "fp16", "Without override, dtype must match spec default");
     }
 
     #[test]
@@ -1534,16 +1579,31 @@ mod tests {
 
         // Without override
         let payload_no = ShardedShardPayload::from_shard(
-            shard, &spec.name, &spec.family, 1, "fp16", "/tmp/test", 42,
+            shard,
+            &spec.name,
+            &spec.family,
+            1,
+            "fp16",
+            "/tmp/test",
+            42,
         );
         assert_eq!(payload_no.dtype, "fp16");
 
         // With fp32 override
         let payload_fp32 = ShardedShardPayload::from_shard_with_override(
-            shard, &spec.name, &spec.family, 1, "fp16", "/tmp/test", 42, Some("fp32"),
+            shard,
+            &spec.name,
+            &spec.family,
+            1,
+            "fp16",
+            "/tmp/test",
+            42,
+            Some("fp32"),
         );
-        assert_eq!(payload_fp32.dtype, "fp32",
-            "Shard payload with fp32 override must use fp32 dtype");
+        assert_eq!(
+            payload_fp32.dtype, "fp32",
+            "Shard payload with fp32 override must use fp32 dtype"
+        );
         assert_eq!(payload_fp32.functions[0].inputs[0].dtype, "fp32");
         assert_eq!(payload_fp32.functions[0].outputs[0].dtype, "fp32");
     }
@@ -1567,18 +1627,25 @@ mod tests {
         }
 
         // Step 3: Verify SIR override is set
-        let linear_sir_node = sir_adapted.nodes.iter()
+        let linear_sir_node = sir_adapted
+            .nodes
+            .iter()
             .find(|n| n.name == "linear_out")
             .expect("Expected linear_out SIR node");
-        assert_eq!(linear_sir_node.metadata.precision_override, Some("fp32".to_string()),
-            "Precision override must be set on SIR node");
+        assert_eq!(
+            linear_sir_node.metadata.precision_override,
+            Some("fp32".to_string()),
+            "Precision override must be set on SIR node"
+        );
 
         // Step 4: Bridge payload with fp32 override must use fp32 dtype
-        let payload = LinearProjectionPayload::from_spec_with_override(
-            &spec, "/tmp/test", Some("fp32"),
-        ).unwrap();
-        assert_eq!(payload.dtype, "fp32",
-            "Bridge payload dtype must reflect the precision adaptation");
+        let payload =
+            LinearProjectionPayload::from_spec_with_override(&spec, "/tmp/test", Some("fp32"))
+                .unwrap();
+        assert_eq!(
+            payload.dtype, "fp32",
+            "Bridge payload dtype must reflect the precision adaptation"
+        );
     }
 
     // ─── Sprint 20 — Dedicated LUT Path Tests ──────────────────────────────
@@ -1608,8 +1675,10 @@ mod tests {
     fn test_lut_payload_from_spec_succeeds() {
         let spec = test_lut_spec();
         let payload = LutProjectionPayload::from_spec(&spec, "/tmp/lut_test").unwrap();
-        assert_eq!(payload.command, "emit_lut_projection",
-            "LUT payload must use dedicated emit_lut_projection command");
+        assert_eq!(
+            payload.command, "emit_lut_projection",
+            "LUT payload must use dedicated emit_lut_projection command"
+        );
         assert_eq!(payload.bridge_version, BRIDGE_VERSION);
         assert_eq!(payload.vocab_size, 32000);
         assert_eq!(payload.embed_dim, 512);
@@ -1624,8 +1693,7 @@ mod tests {
     fn test_lut_payload_rejects_linear_spec() {
         let spec = test_linear_spec_fp16();
         let result = LutProjectionPayload::from_spec(&spec, "/tmp/test");
-        assert!(result.is_err(),
-            "LutProjectionPayload must reject LinearProjection specs");
+        assert!(result.is_err(), "LutProjectionPayload must reject LinearProjection specs");
     }
 
     #[test]
@@ -1649,8 +1717,10 @@ mod tests {
         // Commands must differ
         assert_eq!(linear_payload.command, "emit_linear_projection");
         assert_eq!(lut_payload.command, "emit_lut_projection");
-        assert_ne!(linear_payload.command, lut_payload.command,
-            "Linear and LUT payloads must use different bridge commands");
+        assert_ne!(
+            linear_payload.command, lut_payload.command,
+            "Linear and LUT payloads must use different bridge commands"
+        );
 
         // Payloads must have different fields
         // Linear has input_dim/output_dim; LUT has vocab_size/embed_dim/num_groups/lut_bitwidth
@@ -1658,24 +1728,23 @@ mod tests {
         let lut_json = serde_json::to_value(&lut_payload).unwrap();
 
         // Verify LUT-specific fields are present
-        assert!(lut_json.get("vocab_size").is_some(),
-            "LUT payload must have vocab_size field");
-        assert!(lut_json.get("lut_bitwidth").is_some(),
-            "LUT payload must have lut_bitwidth field");
-        assert!(lut_json.get("num_groups").is_some(),
-            "LUT payload must have num_groups field");
+        assert!(lut_json.get("vocab_size").is_some(), "LUT payload must have vocab_size field");
+        assert!(lut_json.get("lut_bitwidth").is_some(), "LUT payload must have lut_bitwidth field");
+        assert!(lut_json.get("num_groups").is_some(), "LUT payload must have num_groups field");
 
         // Verify linear-specific fields are absent from LUT payload
-        assert!(lut_json.get("input_dim").is_none(),
-            "LUT payload must NOT have input_dim field");
-        assert!(lut_json.get("output_dim").is_none(),
-            "LUT payload must NOT have output_dim field");
+        assert!(lut_json.get("input_dim").is_none(), "LUT payload must NOT have input_dim field");
+        assert!(lut_json.get("output_dim").is_none(), "LUT payload must NOT have output_dim field");
 
         // Verify LUT-specific fields are absent from linear payload
-        assert!(linear_json.get("vocab_size").is_none(),
-            "Linear payload must NOT have vocab_size field");
-        assert!(linear_json.get("lut_bitwidth").is_none(),
-            "Linear payload must NOT have lut_bitwidth field");
+        assert!(
+            linear_json.get("vocab_size").is_none(),
+            "Linear payload must NOT have vocab_size field"
+        );
+        assert!(
+            linear_json.get("lut_bitwidth").is_none(),
+            "Linear payload must NOT have lut_bitwidth field"
+        );
     }
 
     #[test]
@@ -1686,8 +1755,7 @@ mod tests {
 
         let json1 = serde_json::to_string(&payload1).unwrap();
         let json2 = serde_json::to_string(&payload2).unwrap();
-        assert_eq!(json1, json2,
-            "LUT payload serialization must be deterministic");
+        assert_eq!(json1, json2, "LUT payload serialization must be deterministic");
     }
 
     #[test]
@@ -1700,8 +1768,10 @@ mod tests {
         assert_eq!(payload.functions[0].name, "main");
         assert_eq!(payload.functions[0].inputs.len(), 1);
         assert_eq!(payload.functions[0].inputs[0].name, "indices");
-        assert_eq!(payload.functions[0].inputs[0].dtype, "int32",
-            "LUT function input must be int32 indices");
+        assert_eq!(
+            payload.functions[0].inputs[0].dtype, "int32",
+            "LUT function input must be int32 indices"
+        );
         assert_eq!(payload.functions[0].outputs.len(), 1);
         assert_eq!(payload.functions[0].outputs[0].name, "output");
         assert_eq!(payload.functions[0].outputs[0].dtype, "fp16");
@@ -1760,8 +1830,10 @@ mod tests {
         let decode_spec = test_decode_step_spec();
         let linear_payload = LinearProjectionPayload::from_spec(&linear_spec, "/tmp/test").unwrap();
         let decode_payload = DecodeStepPayload::from_spec(&decode_spec, "/tmp/test").unwrap();
-        assert_ne!(linear_payload.command, decode_payload.command,
-            "Decode-step and linear projection must use different bridge commands");
+        assert_ne!(
+            linear_payload.command, decode_payload.command,
+            "Decode-step and linear projection must use different bridge commands"
+        );
     }
 
     #[test]
@@ -1771,18 +1843,26 @@ mod tests {
             family: "LutProjection".into(),
             description: None,
             op: TaskOp::LutProjection {
-                vocab_size: 16, embed_dim: 128, num_groups: 16, lut_bitwidth: 4,
-                batch_size: 1, dtype: "fp16".into(),
+                vocab_size: 16,
+                embed_dim: 128,
+                num_groups: 16,
+                lut_bitwidth: 4,
+                batch_size: 1,
+                dtype: "fp16".into(),
             },
             measurement: MeasurementConfig {
-                warmup_iterations: 3, measured_iterations: 10, metrics: vec![],
+                warmup_iterations: 3,
+                measured_iterations: 10,
+                metrics: vec![],
             },
         };
         let decode_spec = test_decode_step_spec();
         let lut_payload = LutProjectionPayload::from_spec(&lut_spec, "/tmp/test").unwrap();
         let decode_payload = DecodeStepPayload::from_spec(&decode_spec, "/tmp/test").unwrap();
-        assert_ne!(lut_payload.command, decode_payload.command,
-            "Decode-step and LUT projection must use different bridge commands");
+        assert_ne!(
+            lut_payload.command, decode_payload.command,
+            "Decode-step and LUT projection must use different bridge commands"
+        );
     }
 
     #[test]
@@ -1862,8 +1942,10 @@ mod tests {
         let mlp_spec = test_mlp_block_spec();
         let mlp_payload = MlpBlockPayload::from_spec(&mlp_spec, "/tmp/test").unwrap();
 
-        assert_ne!(linear_payload.command, mlp_payload.command,
-            "MLP block and linear projection must use different bridge commands");
+        assert_ne!(
+            linear_payload.command, mlp_payload.command,
+            "MLP block and linear projection must use different bridge commands"
+        );
         assert_eq!(linear_payload.command, "emit_linear_projection");
         assert_eq!(mlp_payload.command, "emit_mlp_block");
     }
@@ -1946,7 +2028,8 @@ mod tests {
         assert_eq!(payload_no.dtype, "fp16");
 
         // With fp32 override: uses overridden dtype
-        let payload_yes = AttentionPayload::from_spec_with_override(&spec, "/tmp/test", Some("fp32")).unwrap();
+        let payload_yes =
+            AttentionPayload::from_spec_with_override(&spec, "/tmp/test", Some("fp32")).unwrap();
         assert_eq!(payload_yes.dtype, "fp32");
         assert_eq!(payload_yes.functions[0].inputs[0].dtype, "fp32");
         assert_eq!(payload_yes.functions[0].outputs[0].dtype, "fp32");
@@ -1978,7 +2061,8 @@ mod tests {
         assert_eq!(payload_no.dtype, "fp16");
 
         // With fp32 override: uses overridden dtype
-        let payload_yes = MlpBlockPayload::from_spec_with_override(&spec, "/tmp/test", Some("fp32")).unwrap();
+        let payload_yes =
+            MlpBlockPayload::from_spec_with_override(&spec, "/tmp/test", Some("fp32")).unwrap();
         assert_eq!(payload_yes.dtype, "fp32");
         assert_eq!(payload_yes.functions[0].inputs[0].dtype, "fp32");
         assert_eq!(payload_yes.functions[0].outputs[0].dtype, "fp32");
@@ -1990,7 +2074,9 @@ mod tests {
         let payload_no = LutProjectionPayload::from_spec(&spec, "/tmp/test").unwrap();
         assert_eq!(payload_no.dtype, "fp16");
 
-        let payload_yes = LutProjectionPayload::from_spec_with_override(&spec, "/tmp/test", Some("fp32")).unwrap();
+        let payload_yes =
+            LutProjectionPayload::from_spec_with_override(&spec, "/tmp/test", Some("fp32"))
+                .unwrap();
         assert_eq!(payload_yes.dtype, "fp32");
     }
 

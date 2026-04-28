@@ -7,13 +7,13 @@
 //! uniform interface for the `TaskGenerator` to dispatch through,
 //! eliminating ad hoc branching in orchestration code.
 
+pub mod attention;
+pub mod decode_step;
 pub mod linear;
 pub mod lut_projection;
-pub mod decode_step;
 pub mod mlp_block;
-pub mod attention;
-pub mod shape_hostile;
 pub mod op_remap;
+pub mod shape_hostile;
 pub mod shard_survival;
 
 use ane_ir::task_spec::SyntheticTaskSpec;

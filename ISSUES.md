@@ -1,17 +1,22 @@
 # ISSUES
 
-Current high-signal issues after the Sprint 56 code audit.
+Current high-signal issues after the Sprint 60 code quality, ANE constraints grounding, and per-op constraint implementation.
 
 ## Verified Snapshot
 
-- `cargo test --workspace --quiet` passes on this host with **437 passing** and **1 ignored**.
-- `python3 -m py_compile python/*.py scripts/*.py` passes on this host.
+- `cargo test --workspace --quiet` passes on this host with **501 passing** and **1 ignored**.
+- `python3 -m pytest python/tests/ -q` passes with **68 Python tests**.
+- `cargo clippy --all-targets --all-features -- -D warnings` passes cleanly.
+- `cargo fmt --check --all` passes cleanly.
 - All eight task families are real `TaskFamilyTrait` implementations and are reachable from `ane-cli generate-tasks --family`.
 - `HandoffKind::StateWriteRead` is active on the decode-step Interior → Exit shard boundary.
 - `compile-sharded --proto-direct` and `compile-full-sharded --proto-direct` do reach `RoleMirBuilder` for sharded decode-step emission.
 - All five declared `ElementWiseOp` variants (Add, Mul, Abs, Maximum, Minimum) now have AIR→MIR lowering paths (Sprint 55).
 - AIR decompositions for AttentionBlock and DecodeStep now carry real task dimensions via `DecompositionContext` when available (Sprint 56).
 - The current MIR surface exposes **37** `MirOp` variants. A simple exact-name diff against `MIL_OPS.md` still leaves **133** documented MIL op names uncovered; that raw count includes a few alias-like overlaps such as `Const` vs `MILConst` and `select` vs `MILWhere`.
+- **Sprint 58 resolved**: `MilDtypeRepr` unified into `MilDtype`; `ComputeUnits` unified into `ComputeUnitHint`; `ane-ir` uses `anyhow::Result`; naming inconsistencies fixed (`MILAtanh`, `MILSinh`); stub passes implemented/removed; CI pipeline configured; Python tests added.
+- **Sprint 59 resolved**: `AneFamily`/`AneRevision`/`AneTarget` types with chip-to-family mapping; `AneEngine` with per-MirOp engine assignment; `AnePlacementValidator` for hard constraint checks; per-family op legality matrix seeded; SDPA constraint validation in AIR→MIR lowering; palettization constraints seeded.
+- **Sprint 60 resolved**: Per-op constraint validation for conv/linear/gather/pooling/ArgMinMax; dtype legality rules per ANE family; `CPU_ONLY_OPS` hard gate in `LegalityRewritePass`; `AneInterleave`/`AneLayout` types; `AneHwLimits` per-revision hardware limits.
 
 ## Current Priorities
 

@@ -4,12 +4,9 @@
 //! on disk. This is the main entry point for proto-direct emission,
 //! replacing the Python bridge for Core ML model construction.
 
+use crate::package::{MlPackageResult, MlPackageWriter};
+use ane_coreml_proto::{mir_compat::MirGraphCompat, CoreMlComputeUnit, CoreMlModel, SpecVersion};
 use anyhow::Result;
-use ane_coreml_proto::{
-    CoreMlModel, SpecVersion, CoreMlComputeUnit,
-    mir_compat::MirGraphCompat,
-};
-use crate::package::{MlPackageWriter, MlPackageResult};
 
 /// Proto-direct emitter for Core ML mlpackage artifacts.
 ///
@@ -52,29 +49,26 @@ pub struct ProtoEmitResult {
     pub function_names: Vec<String>,
 }
 
+impl Default for ProtoEmitter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProtoEmitter {
     /// Create a new proto-direct emitter targeting the latest spec version.
     pub fn new() -> Self {
-        Self {
-            spec_version: SpecVersion::V8,
-            compute_unit: CoreMlComputeUnit::CpuAndNe,
-        }
+        Self { spec_version: SpecVersion::V8, compute_unit: CoreMlComputeUnit::CpuAndNe }
     }
 
     /// Create an emitter targeting a specific spec version.
     pub fn with_spec_version(spec_version: SpecVersion) -> Self {
-        Self {
-            spec_version,
-            compute_unit: CoreMlComputeUnit::CpuAndNe,
-        }
+        Self { spec_version, compute_unit: CoreMlComputeUnit::CpuAndNe }
     }
 
     /// Create an emitter with a specific compute unit preference.
     pub fn with_compute_unit(compute_unit: CoreMlComputeUnit) -> Self {
-        Self {
-            spec_version: SpecVersion::V8,
-            compute_unit,
-        }
+        Self { spec_version: SpecVersion::V8, compute_unit }
     }
 
     /// Emit a single-function MIR graph as an mlpackage.
@@ -85,7 +79,8 @@ impl ProtoEmitter {
         graph: &MirGraphCompat,
         output_path: &str,
     ) -> Result<ProtoEmitResult> {
-        let model = crate::mir_to_proto::convert_mir_to_proto(graph, self.spec_version, self.compute_unit)?;
+        let model =
+            crate::mir_to_proto::convert_mir_to_proto(graph, self.spec_version, self.compute_unit)?;
         self.emit_model(&model, output_path)
     }
 

@@ -6,10 +6,10 @@
 //! Snapshots include all seed and observation entries,
 //! preserving the distinction between them.
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::store::{KnowledgeStore, KnowledgeEntry, EntrySource, STORE_SCHEMA_VERSION};
+use crate::store::{EntrySource, KnowledgeEntry, KnowledgeStore, STORE_SCHEMA_VERSION};
 
 /// Snapshot of the knowledge store at a point in time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,7 +89,10 @@ impl SnapshotImport {
     /// Seed entries are only added if no entry with the same ID exists
     /// (seeds are never overwritten). Observation entries are inserted
     /// via the normal insert_observation path (with conflict detection).
-    pub fn import_into_store(store: &mut KnowledgeStore, snapshot: &KnowledgeSnapshot) -> Result<ImportStats> {
+    pub fn import_into_store(
+        store: &mut KnowledgeStore,
+        snapshot: &KnowledgeSnapshot,
+    ) -> Result<ImportStats> {
         let mut stats = ImportStats::default();
 
         // Validate first
@@ -166,10 +169,7 @@ impl SnapshotImport {
 
             // Check evidence count
             if entry.unit.evidence_count == 0 {
-                warnings.push(format!(
-                    "Entry '{}' has zero evidence count",
-                    entry.unit.id
-                ));
+                warnings.push(format!("Entry '{}' has zero evidence count", entry.unit.id));
             }
         }
 
@@ -204,7 +204,7 @@ fn sanitize_id(id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ane_ir::kir::{KnowledgeUnit, KnowledgeType, EvidenceSource, KnowledgeScope};
+    use ane_ir::kir::{EvidenceSource, KnowledgeScope, KnowledgeType, KnowledgeUnit};
     use std::collections::HashMap;
 
     fn make_unit(id: &str) -> KnowledgeUnit {

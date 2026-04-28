@@ -51,6 +51,8 @@ pub mod error;
 pub mod model;
 
 pub use api::CoreMlApi;
-pub use capi::{CoreMlCompileResult, CoreMlModelHandle, CoreMlModelInfo, CoreMlPredictResult, CoreMlStatus};
+pub use capi::{
+    CoreMlCompileResult, CoreMlModelHandle, CoreMlModelInfo, CoreMlPredictResult, CoreMlStatus,
+};
 pub use error::FfiError;
 pub use model::FfiModel;

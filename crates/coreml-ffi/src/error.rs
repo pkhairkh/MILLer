@@ -6,45 +6,25 @@ use std::fmt;
 #[derive(Debug, Clone)]
 pub enum FfiError {
     /// The Core ML framework is not available on this platform.
-    PlatformUnavailable {
-        platform: String,
-        reason: String,
-    },
+    PlatformUnavailable { platform: String, reason: String },
 
     /// The Core ML C API returned an error.
-    ApiError {
-        function: String,
-        code: i32,
-        message: String,
-    },
+    ApiError { function: String, code: i32, message: String },
 
     /// The model could not be loaded.
-    ModelLoadError {
-        path: String,
-        reason: String,
-    },
+    ModelLoadError { path: String, reason: String },
 
     /// The model could not be compiled.
-    ModelCompileError {
-        path: String,
-        reason: String,
-    },
+    ModelCompileError { path: String, reason: String },
 
     /// Prediction failed.
-    PredictionError {
-        reason: String,
-    },
+    PredictionError { reason: String },
 
     /// The requested feature requires a newer OS version.
-    InsufficientOsVersion {
-        required: String,
-        actual: String,
-    },
+    InsufficientOsVersion { required: String, actual: String },
 
     /// Serialization or deserialization error.
-    SerializationError {
-        reason: String,
-    },
+    SerializationError { reason: String },
 }
 
 impl fmt::Display for FfiError {

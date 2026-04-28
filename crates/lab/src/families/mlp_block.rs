@@ -20,9 +20,9 @@
 //! can be fed into the compile/lab pipeline like any other synthetic
 //! task spec.
 
-use ane_ir::task_spec::{SyntheticTaskSpec, TaskOp, MeasurementConfig};
-use anyhow::Result;
 use super::TaskFamilyTrait;
+use ane_ir::task_spec::{MeasurementConfig, SyntheticTaskSpec, TaskOp};
+use anyhow::Result;
 
 /// Configuration for the MLP block family generator.
 #[derive(Debug, Clone)]
@@ -60,10 +60,7 @@ impl Default for MlpBlockFamilyConfig {
 impl MlpBlockFamilyConfig {
     /// Create a new config with the given seed.
     pub fn new(seed: u64) -> Self {
-        Self {
-            seed,
-            ..Default::default()
-        }
+        Self { seed, ..Default::default() }
     }
 
     /// Create a config with custom input dimensions.
@@ -123,16 +120,12 @@ pub struct MlpBlockFamily {
 impl MlpBlockFamily {
     /// Create a new MLP block family generator with default config.
     pub fn new() -> Self {
-        Self {
-            config: MlpBlockFamilyConfig::default(),
-        }
+        Self { config: MlpBlockFamilyConfig::default() }
     }
 
     /// Create an MLP block family generator with the given seed.
     pub fn with_seed(seed: u64) -> Self {
-        Self {
-            config: MlpBlockFamilyConfig::new(seed),
-        }
+        Self { config: MlpBlockFamilyConfig::new(seed) }
     }
 
     /// Create an MLP block family generator with custom config.
@@ -173,8 +166,12 @@ impl MlpBlockFamily {
                             for dtype in &self.config.dtypes {
                                 let task_name = format!(
                                     "mlp_i{}_h{}_o{}_{}_b{}_{}",
-                                    input_dim, hidden_dim, output_dim,
-                                    activation, batch_size, dtype
+                                    input_dim,
+                                    hidden_dim,
+                                    output_dim,
+                                    activation,
+                                    batch_size,
+                                    dtype
                                 );
 
                                 let spec = SyntheticTaskSpec {
@@ -261,8 +258,24 @@ mod tests {
             assert_eq!(t1.name, t2.name, "Task names must be identical for same config");
             assert_eq!(t1.family, t2.family);
             match (&t1.op, &t2.op) {
-                (TaskOp::MlpBlock { input_dim: i1, hidden_dim: h1, output_dim: o1, activation: a1, batch_size: b1, dtype: d1 },
-                 TaskOp::MlpBlock { input_dim: i2, hidden_dim: h2, output_dim: o2, activation: a2, batch_size: b2, dtype: d2 }) => {
+                (
+                    TaskOp::MlpBlock {
+                        input_dim: i1,
+                        hidden_dim: h1,
+                        output_dim: o1,
+                        activation: a1,
+                        batch_size: b1,
+                        dtype: d1,
+                    },
+                    TaskOp::MlpBlock {
+                        input_dim: i2,
+                        hidden_dim: h2,
+                        output_dim: o2,
+                        activation: a2,
+                        batch_size: b2,
+                        dtype: d2,
+                    },
+                ) => {
                     assert_eq!((i1, h1, o1, a1, b1, d1), (i2, h2, o2, a2, b2, d2));
                 }
                 _ => panic!("Expected both to be MlpBlock"),
@@ -282,8 +295,10 @@ mod tests {
             assert_eq!(parsed.name, task.name);
             assert_eq!(parsed.family, task.family);
             match (&parsed.op, &task.op) {
-                (TaskOp::MlpBlock { input_dim: i1, hidden_dim: h1, .. },
-                 TaskOp::MlpBlock { input_dim: i2, hidden_dim: h2, .. }) => {
+                (
+                    TaskOp::MlpBlock { input_dim: i1, hidden_dim: h1, .. },
+                    TaskOp::MlpBlock { input_dim: i2, hidden_dim: h2, .. },
+                ) => {
                     assert_eq!((i1, h1), (i2, h2));
                 }
                 _ => panic!("Expected MlpBlock"),

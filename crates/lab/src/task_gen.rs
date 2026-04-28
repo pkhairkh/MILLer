@@ -12,17 +12,17 @@
 //! The generator dispatch does not need family-specific special casing
 //! beyond typed registration and dispatch.
 
+use crate::families::attention::{AttentionFamily, AttentionFamilyConfig};
+use crate::families::decode_step::{DecodeStepFamily, DecodeStepFamilyConfig};
 use crate::families::linear::{LinearFamily, LinearFamilyConfig};
 use crate::families::lut_projection::{LutProjectionFamily, LutProjectionFamilyConfig};
-use crate::families::decode_step::{DecodeStepFamily, DecodeStepFamilyConfig};
 use crate::families::mlp_block::{MlpBlockFamily, MlpBlockFamilyConfig};
-use crate::families::attention::{AttentionFamily, AttentionFamilyConfig};
-use crate::families::shape_hostile::{ShapeHostileFamily, ShapeHostileFamilyConfig};
 use crate::families::op_remap::OpRemapFamily;
+use crate::families::shape_hostile::{ShapeHostileFamily, ShapeHostileFamilyConfig};
 use crate::families::shard_survival::ShardSurvivalFamily;
 use crate::families::TaskFamilyTrait;
 use ane_ir::task_spec::SyntheticTaskSpec;
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -48,7 +48,9 @@ impl TaskFamilyId {
     /// Parse a family identifier from a string.
     pub fn from_str_flexible(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
-            "linear" | "linearprojection" | "linear_projection" => Some(TaskFamilyId::LinearProjection),
+            "linear" | "linearprojection" | "linear_projection" => {
+                Some(TaskFamilyId::LinearProjection)
+            }
             "lut" | "lutprojection" | "lut_projection" => Some(TaskFamilyId::LutProjection),
             "decode" | "decodestep" | "decode_step" => Some(TaskFamilyId::DecodeStep),
             "mlp" | "mlpblock" | "mlp_block" => Some(TaskFamilyId::MlpBlock),
@@ -99,12 +101,8 @@ impl TaskFamilyId {
             TaskFamilyId::ShapeHostile => {
                 Box::new(ShapeHostileFamily::with_config(ShapeHostileFamilyConfig::new(seed)))
             }
-            TaskFamilyId::OpRemap => {
-                Box::new(OpRemapFamily::with_seed(seed))
-            }
-            TaskFamilyId::ShardSurvival => {
-                Box::new(ShardSurvivalFamily::with_seed(seed))
-            }
+            TaskFamilyId::OpRemap => Box::new(OpRemapFamily::with_seed(seed)),
+            TaskFamilyId::ShardSurvival => Box::new(ShardSurvivalFamily::with_seed(seed)),
         }
     }
 }
@@ -117,9 +115,7 @@ pub struct TaskGeneratorConfig {
 
 impl Default for TaskGeneratorConfig {
     fn default() -> Self {
-        Self {
-            seed: 42,
-        }
+        Self { seed: 42 }
     }
 }
 
@@ -147,16 +143,12 @@ pub struct TaskGenerator {
 impl TaskGenerator {
     /// Create a new task generator with default config.
     pub fn new() -> Self {
-        Self {
-            config: TaskGeneratorConfig::default(),
-        }
+        Self { config: TaskGeneratorConfig::default() }
     }
 
     /// Create a new task generator with the given seed.
     pub fn with_seed(seed: u64) -> Self {
-        Self {
-            config: TaskGeneratorConfig::new(seed),
-        }
+        Self { config: TaskGeneratorConfig::new(seed) }
     }
 
     /// Create a new task generator with custom config.
@@ -258,8 +250,9 @@ impl TaskGenerator {
 
         // Create family subdirectory
         let family_dir = output_dir.join(family.canonical_name());
-        fs::create_dir_all(&family_dir)
-            .with_context(|| format!("Failed to create task output dir: {}", family_dir.display()))?;
+        fs::create_dir_all(&family_dir).with_context(|| {
+            format!("Failed to create task output dir: {}", family_dir.display())
+        })?;
 
         let mut results = Vec::new();
 
@@ -281,11 +274,14 @@ impl TaskGenerator {
             seed: self.config.seed,
             family: family.canonical_name().to_string(),
             task_count: tasks.len(),
-            tasks: tasks.iter().map(|t| GeneratedTaskEntry {
-                name: t.name.clone(),
-                family: t.family.clone(),
-                description: t.description.clone(),
-            }).collect(),
+            tasks: tasks
+                .iter()
+                .map(|t| GeneratedTaskEntry {
+                    name: t.name.clone(),
+                    family: t.family.clone(),
+                    description: t.description.clone(),
+                })
+                .collect(),
         };
 
         let manifest_path = output_dir.join("generated_tasks.json");
@@ -389,10 +385,8 @@ mod tests {
         let output_dir = tmp.path();
 
         let gen = TaskGenerator::new();
-        let results = gen.generate_and_persist(
-            &TaskFamilyId::LinearProjection,
-            output_dir,
-        ).unwrap();
+        let results =
+            gen.generate_and_persist(&TaskFamilyId::LinearProjection, output_dir).unwrap();
 
         assert!(!results.is_empty());
 
@@ -414,11 +408,23 @@ mod tests {
     #[test]
     fn test_family_id_parsing() {
         assert_eq!(TaskFamilyId::from_str_flexible("linear"), Some(TaskFamilyId::LinearProjection));
-        assert_eq!(TaskFamilyId::from_str_flexible("LinearProjection"), Some(TaskFamilyId::LinearProjection));
-        assert_eq!(TaskFamilyId::from_str_flexible("linear_projection"), Some(TaskFamilyId::LinearProjection));
+        assert_eq!(
+            TaskFamilyId::from_str_flexible("LinearProjection"),
+            Some(TaskFamilyId::LinearProjection)
+        );
+        assert_eq!(
+            TaskFamilyId::from_str_flexible("linear_projection"),
+            Some(TaskFamilyId::LinearProjection)
+        );
         assert_eq!(TaskFamilyId::from_str_flexible("lut"), Some(TaskFamilyId::LutProjection));
-        assert_eq!(TaskFamilyId::from_str_flexible("LutProjection"), Some(TaskFamilyId::LutProjection));
-        assert_eq!(TaskFamilyId::from_str_flexible("lut_projection"), Some(TaskFamilyId::LutProjection));
+        assert_eq!(
+            TaskFamilyId::from_str_flexible("LutProjection"),
+            Some(TaskFamilyId::LutProjection)
+        );
+        assert_eq!(
+            TaskFamilyId::from_str_flexible("lut_projection"),
+            Some(TaskFamilyId::LutProjection)
+        );
         assert_eq!(TaskFamilyId::from_str_flexible("decode"), Some(TaskFamilyId::DecodeStep));
         assert_eq!(TaskFamilyId::from_str_flexible("DecodeStep"), Some(TaskFamilyId::DecodeStep));
         assert_eq!(TaskFamilyId::from_str_flexible("decode_step"), Some(TaskFamilyId::DecodeStep));
@@ -429,14 +435,26 @@ mod tests {
         assert_eq!(TaskFamilyId::from_str_flexible("attn"), Some(TaskFamilyId::Attention));
         assert_eq!(TaskFamilyId::from_str_flexible("Attention"), Some(TaskFamilyId::Attention)); // case-insensitive
         assert_eq!(TaskFamilyId::from_str_flexible("shape"), Some(TaskFamilyId::ShapeHostile));
-        assert_eq!(TaskFamilyId::from_str_flexible("shapehostile"), Some(TaskFamilyId::ShapeHostile));
-        assert_eq!(TaskFamilyId::from_str_flexible("shape_hostile"), Some(TaskFamilyId::ShapeHostile));
+        assert_eq!(
+            TaskFamilyId::from_str_flexible("shapehostile"),
+            Some(TaskFamilyId::ShapeHostile)
+        );
+        assert_eq!(
+            TaskFamilyId::from_str_flexible("shape_hostile"),
+            Some(TaskFamilyId::ShapeHostile)
+        );
         assert_eq!(TaskFamilyId::from_str_flexible("remap"), Some(TaskFamilyId::OpRemap));
         assert_eq!(TaskFamilyId::from_str_flexible("opremap"), Some(TaskFamilyId::OpRemap));
         assert_eq!(TaskFamilyId::from_str_flexible("op_remap"), Some(TaskFamilyId::OpRemap));
         assert_eq!(TaskFamilyId::from_str_flexible("survival"), Some(TaskFamilyId::ShardSurvival));
-        assert_eq!(TaskFamilyId::from_str_flexible("shardsurvival"), Some(TaskFamilyId::ShardSurvival));
-        assert_eq!(TaskFamilyId::from_str_flexible("shard_survival"), Some(TaskFamilyId::ShardSurvival));
+        assert_eq!(
+            TaskFamilyId::from_str_flexible("shardsurvival"),
+            Some(TaskFamilyId::ShardSurvival)
+        );
+        assert_eq!(
+            TaskFamilyId::from_str_flexible("shard_survival"),
+            Some(TaskFamilyId::ShardSurvival)
+        );
     }
 
     #[test]
@@ -476,10 +494,7 @@ mod tests {
         let output_dir = tmp.path();
 
         let gen = TaskGenerator::new();
-        let results = gen.generate_and_persist(
-            &TaskFamilyId::LutProjection,
-            output_dir,
-        ).unwrap();
+        let results = gen.generate_and_persist(&TaskFamilyId::LutProjection, output_dir).unwrap();
 
         assert!(!results.is_empty());
 
@@ -535,10 +550,7 @@ mod tests {
         let output_dir = tmp.path();
 
         let gen = TaskGenerator::new();
-        let results = gen.generate_and_persist(
-            &TaskFamilyId::DecodeStep,
-            output_dir,
-        ).unwrap();
+        let results = gen.generate_and_persist(&TaskFamilyId::DecodeStep, output_dir).unwrap();
 
         assert!(!results.is_empty());
 
@@ -667,10 +679,7 @@ mod tests {
         let output_dir = tmp.path();
 
         let gen = TaskGenerator::new();
-        let results = gen.generate_and_persist(
-            &TaskFamilyId::Attention,
-            output_dir,
-        ).unwrap();
+        let results = gen.generate_and_persist(&TaskFamilyId::Attention, output_dir).unwrap();
 
         assert!(!results.is_empty());
 

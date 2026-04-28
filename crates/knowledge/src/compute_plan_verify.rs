@@ -144,6 +144,12 @@ pub struct ComputePlanVerifier {
     known_placements: Vec<KnownOpPlacement>,
 }
 
+impl Default for ComputePlanVerifier {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ComputePlanVerifier {
     /// Create a new verifier with default known op placements.
     ///
@@ -151,16 +157,12 @@ impl ComputePlanVerifier {
     /// and widely-reported empirical observations about which Core ML
     /// ops the compute planner assigns to which device.
     pub fn new() -> Self {
-        Self {
-            known_placements: Self::default_known_placements(),
-        }
+        Self { known_placements: Self::default_known_placements() }
     }
 
     /// Create a verifier with custom known placements.
     pub fn with_known_placements(known: Vec<KnownOpPlacement>) -> Self {
-        Self {
-            known_placements: known,
-        }
+        Self { known_placements: known }
     }
 
     /// Default known op→device mappings.
@@ -265,14 +267,13 @@ impl ComputePlanVerifier {
         if proof.placements.len() != proof.op_count {
             errors.push(format!(
                 "Op count mismatch: stored={}, actual placements={}",
-                proof.op_count, proof.placements.len()
+                proof.op_count,
+                proof.placements.len()
             ));
         }
 
         // 3. Check ANE count consistency
-        let actual_ane_count = proof.placements.iter()
-            .filter(|p| p.device_class.is_ane())
-            .count();
+        let actual_ane_count = proof.placements.iter().filter(|p| p.device_class.is_ane()).count();
         if actual_ane_count != proof.ane_placed_count {
             errors.push(format!(
                 "ANE count mismatch: stored={}, actual={}",
@@ -281,11 +282,8 @@ impl ComputePlanVerifier {
         }
 
         // 4. Check ANE fraction consistency
-        let actual_ane_fraction = if proof.op_count > 0 {
-            actual_ane_count as f32 / proof.op_count as f32
-        } else {
-            0.0
-        };
+        let actual_ane_fraction =
+            if proof.op_count > 0 { actual_ane_count as f32 / proof.op_count as f32 } else { 0.0 };
         if (actual_ane_fraction - proof.ane_placed_fraction).abs() > 0.01 {
             warnings.push(format!(
                 "ANE fraction drift: stored={:.3}, computed={:.3}",
@@ -317,8 +315,8 @@ impl ComputePlanVerifier {
 
         // 7. Cross-reference with known op→device mappings
         for placement in &proof.placements {
-            if let Some(known) = self.known_placements.iter()
-                .find(|k| k.op_pattern == placement.op_type)
+            if let Some(known) =
+                self.known_placements.iter().find(|k| k.op_pattern == placement.op_type)
             {
                 if placement.device_class == known.expected_device {
                     knowledge_matches += 1;
@@ -362,27 +360,29 @@ impl ComputePlanVerifier {
         ops: &[(String, String)], // (op_name, op_type)
         function_name: &str,
     ) -> ComputePlanProof {
-        let placements: Vec<PlacementEntry> = ops.iter().map(|(name, op_type)| {
-            let device = self.known_placements.iter()
-                .find(|k| k.op_pattern == *op_type)
-                .map(|k| k.expected_device.clone())
-                .unwrap_or(DeviceClass::CPU); // Default: unknown ops go to CPU
+        let placements: Vec<PlacementEntry> = ops
+            .iter()
+            .map(|(name, op_type)| {
+                let device = self
+                    .known_placements
+                    .iter()
+                    .find(|k| k.op_pattern == *op_type)
+                    .map(|k| k.expected_device.clone())
+                    .unwrap_or(DeviceClass::CPU); // Default: unknown ops go to CPU
 
-            PlacementEntry {
-                op_name: name.clone(),
-                op_type: op_type.clone(),
-                device_class: device,
-                function_name: function_name.into(),
-            }
-        }).collect();
+                PlacementEntry {
+                    op_name: name.clone(),
+                    op_type: op_type.clone(),
+                    device_class: device,
+                    function_name: function_name.into(),
+                }
+            })
+            .collect();
 
         let op_count = placements.len();
         let ane_placed_count = placements.iter().filter(|p| p.device_class.is_ane()).count();
-        let ane_placed_fraction = if op_count > 0 {
-            ane_placed_count as f32 / op_count as f32
-        } else {
-            0.0
-        };
+        let ane_placed_fraction =
+            if op_count > 0 { ane_placed_count as f32 / op_count as f32 } else { 0.0 };
 
         let proof_hash = compute_proof_hash(&placements);
 
@@ -406,15 +406,13 @@ impl ComputePlanVerifier {
 /// This allows two independent observers to verify they got the
 /// same compute plan by comparing hashes.
 fn compute_proof_hash(placements: &[PlacementEntry]) -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
 
     // Sort placements by function_name then op_name for determinism
     let mut sorted: Vec<&PlacementEntry> = placements.iter().collect();
-    sorted.sort_by(|a, b| {
-        match a.function_name.cmp(&b.function_name) {
-            std::cmp::Ordering::Equal => a.op_name.cmp(&b.op_name),
-            other => other,
-        }
+    sorted.sort_by(|a, b| match a.function_name.cmp(&b.function_name) {
+        std::cmp::Ordering::Equal => a.op_name.cmp(&b.op_name),
+        other => other,
     });
 
     let mut hasher = Sha256::new();
@@ -486,10 +484,17 @@ mod tests {
         let result = verifier.verify(&proof);
 
         assert!(result.is_valid, "Valid proof should verify: errors={:?}", result.errors);
-        assert!(result.knowledge_consistent, "Proof should be knowledge-consistent: conflicts={}", result.knowledge_conflicts);
+        assert!(
+            result.knowledge_consistent,
+            "Proof should be knowledge-consistent: conflicts={}",
+            result.knowledge_conflicts
+        );
         assert_eq!(result.knowledge_matches, 4, "All 4 ops should match known placements");
         assert_eq!(result.knowledge_conflicts, 0, "No conflicts expected");
-        assert!((result.ane_utilization - 1.0).abs() < 0.01, "All ops on ANE, utilization should be 1.0");
+        assert!(
+            (result.ane_utilization - 1.0).abs() < 0.01,
+            "All ops on ANE, utilization should be 1.0"
+        );
     }
 
     #[test]
@@ -529,14 +534,12 @@ mod tests {
         let verifier = ComputePlanVerifier::new();
 
         // Create a proof where an embedding op is incorrectly placed on ANE
-        let placements = vec![
-            PlacementEntry {
-                op_name: "embed_1".into(),
-                op_type: "mb.embedding".into(),
-                device_class: DeviceClass::NeuralEngine, // Wrong! Embeddings go to CPU
-                function_name: "main".into(),
-            },
-        ];
+        let placements = vec![PlacementEntry {
+            op_name: "embed_1".into(),
+            op_type: "mb.embedding".into(),
+            device_class: DeviceClass::NeuralEngine, // Wrong! Embeddings go to CPU
+            function_name: "main".into(),
+        }];
 
         let proof = ComputePlanProof {
             proof_id: "bad_embed".into(),
@@ -552,10 +555,14 @@ mod tests {
         };
 
         let result = verifier.verify(&proof);
-        assert!(result.knowledge_conflicts > 0,
-            "Embedding on ANE should conflict with known placement");
-        assert!(!result.knowledge_consistent,
-            "Proof with placement conflicts should not be knowledge-consistent");
+        assert!(
+            result.knowledge_conflicts > 0,
+            "Embedding on ANE should conflict with known placement"
+        );
+        assert!(
+            !result.knowledge_consistent,
+            "Proof with placement conflicts should not be knowledge-consistent"
+        );
     }
 
     #[test]
@@ -635,8 +642,11 @@ mod tests {
         ];
 
         // Hash should be the same regardless of input order (sorted internally)
-        assert_eq!(compute_proof_hash(&placements_ab), compute_proof_hash(&placements_ba),
-            "Hash must be order-independent");
+        assert_eq!(
+            compute_proof_hash(&placements_ab),
+            compute_proof_hash(&placements_ba),
+            "Hash must be order-independent"
+        );
     }
 
     /// Test that a decoder shard proof (linear + gelu + layernorm) verifies correctly.

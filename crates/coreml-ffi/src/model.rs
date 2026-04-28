@@ -107,10 +107,7 @@ impl FfiModel {
         // For now, return a stub since we can't link against CoreML.framework
         // in this environment.
 
-        Ok(Self {
-            path: path.to_string(),
-            handle: None,
-        })
+        Ok(Self { path: path.to_string(), handle: None })
     }
 
     /// Get model metadata (inputs, outputs, functions, states).
@@ -205,20 +202,14 @@ mod tests {
 
     #[test]
     fn test_ffi_model_metadata_unavailable() {
-        let model = FfiModel {
-            path: "/test".to_string(),
-            handle: None,
-        };
+        let model = FfiModel { path: "/test".to_string(), handle: None };
         let result = model.metadata();
         assert!(result.is_err());
     }
 
     #[test]
     fn test_ffi_model_predict_unavailable() {
-        let model = FfiModel {
-            path: "/test".to_string(),
-            handle: None,
-        };
+        let model = FfiModel { path: "/test".to_string(), handle: None };
         let result = model.predict(&[]);
         assert!(result.is_err());
     }

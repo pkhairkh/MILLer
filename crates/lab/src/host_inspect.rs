@@ -34,10 +34,7 @@ pub struct HostInspector {
 impl HostInspector {
     /// Create a new host-side inspector.
     pub fn new(python_path: &str, bridge_script: &str) -> Self {
-        Self {
-            bridge_script: bridge_script.to_string(),
-            python_path: python_path.to_string(),
-        }
+        Self { bridge_script: bridge_script.to_string(), python_path: python_path.to_string() }
     }
 
     /// Perform host-side inspection of an mlpackage.
@@ -62,7 +59,9 @@ impl HostInspector {
                 output_specs: vec![],
                 warnings: vec!["mlpackage directory not found".to_string()],
                 structure_inspection_available: None,
-                structure_inspection_failure_reason: Some("mlpackage directory does not exist".to_string()),
+                structure_inspection_failure_reason: Some(
+                    "mlpackage directory does not exist".to_string(),
+                ),
                 structure_op_names: vec![],
                 structure_op_count: None,
                 structure_function_count: None,
@@ -179,43 +178,56 @@ impl HostInspector {
                 // Parse the inspection result from metadata
                 let meta = &result.metadata;
 
-                let model_loadable = meta.get("model_loadable")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                let model_loadable =
+                    meta.get("model_loadable").and_then(|v| v.as_bool()).unwrap_or(false);
 
-                let model_load_failure_reason = meta.get("model_load_failure_reason")
+                let model_load_failure_reason = meta
+                    .get("model_load_failure_reason")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
-                let function_count = meta.get("function_count")
-                    .and_then(|v| v.as_u64())
-                    .map(|n| n as usize);
+                let function_count =
+                    meta.get("function_count").and_then(|v| v.as_u64()).map(|n| n as usize);
 
-                let input_specs = meta.get("input_specs")
+                let input_specs = meta
+                    .get("input_specs")
                     .and_then(|v| v.as_array())
                     .map(|arr| {
-                        arr.iter().filter_map(|v| {
-                            Some(TensorSpecRecord {
-                                name: v.get("name")?.as_str()?.to_string(),
-                                shape: v.get("shape")?.as_array()?
-                                    .iter().filter_map(|s| s.as_u64().map(|n| n as usize)).collect(),
-                                dtype: v.get("dtype")?.as_str()?.to_string(),
+                        arr.iter()
+                            .filter_map(|v| {
+                                Some(TensorSpecRecord {
+                                    name: v.get("name")?.as_str()?.to_string(),
+                                    shape: v
+                                        .get("shape")?
+                                        .as_array()?
+                                        .iter()
+                                        .filter_map(|s| s.as_u64().map(|n| n as usize))
+                                        .collect(),
+                                    dtype: v.get("dtype")?.as_str()?.to_string(),
+                                })
                             })
-                        }).collect()
+                            .collect()
                     })
                     .unwrap_or_default();
 
-                let output_specs = meta.get("output_specs")
+                let output_specs = meta
+                    .get("output_specs")
                     .and_then(|v| v.as_array())
                     .map(|arr| {
-                        arr.iter().filter_map(|v| {
-                            Some(TensorSpecRecord {
-                                name: v.get("name")?.as_str()?.to_string(),
-                                shape: v.get("shape")?.as_array()?
-                                    .iter().filter_map(|s| s.as_u64().map(|n| n as usize)).collect(),
-                                dtype: v.get("dtype")?.as_str()?.to_string(),
+                        arr.iter()
+                            .filter_map(|v| {
+                                Some(TensorSpecRecord {
+                                    name: v.get("name")?.as_str()?.to_string(),
+                                    shape: v
+                                        .get("shape")?
+                                        .as_array()?
+                                        .iter()
+                                        .filter_map(|s| s.as_u64().map(|n| n as usize))
+                                        .collect(),
+                                    dtype: v.get("dtype")?.as_str()?.to_string(),
+                                })
                             })
-                        }).collect()
+                            .collect()
                     })
                     .unwrap_or_default();
 
@@ -228,7 +240,13 @@ impl HostInspector {
                     }
                 }
 
-                (model_loadable, model_load_failure_reason, function_count, input_specs, output_specs)
+                (
+                    model_loadable,
+                    model_load_failure_reason,
+                    function_count,
+                    input_specs,
+                    output_specs,
+                )
             }
             Err(e) => {
                 warnings.push(format!("Python bridge invocation failed: {}", e));
@@ -283,54 +301,66 @@ impl HostInspector {
 
                 let meta = &result.metadata;
 
-                let available = meta.get("available")
-                    .and_then(|v| v.as_bool());
+                let available = meta.get("available").and_then(|v| v.as_bool());
 
                 let failure_reason = if available == Some(false) {
-                    meta.get("reason")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
+                    meta.get("reason").and_then(|v| v.as_str()).map(|s| s.to_string())
                 } else {
                     None
                 };
 
-                let method = meta.get("inspection_method")
+                let method = meta
+                    .get("inspection_method")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown")
                     .to_string();
 
                 // Extract op names from operations list
-                let op_names: Vec<String> = meta.get("operations")
+                let op_names: Vec<String> = meta
+                    .get("operations")
                     .and_then(|v| v.as_array())
                     .map(|arr| {
                         arr.iter()
-                            .filter_map(|op| op.get("op_type").and_then(|t| t.as_str()).map(|s| s.to_string()))
+                            .filter_map(|op| {
+                                op.get("op_type").and_then(|t| t.as_str()).map(|s| s.to_string())
+                            })
                             .collect()
                     })
                     .unwrap_or_default();
 
-                let op_count = meta.get("total_operation_count")
-                    .and_then(|v| v.as_u64())
-                    .map(|n| n as usize);
+                let op_count =
+                    meta.get("total_operation_count").and_then(|v| v.as_u64()).map(|n| n as usize);
 
                 // Extract function count from functions list
-                let function_count = meta.get("functions")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| arr.len());
+                let function_count =
+                    meta.get("functions").and_then(|v| v.as_array()).map(|arr| arr.len());
 
                 // Extract state declarations
-                let state_declarations: Vec<TensorSpecRecord> = meta.get("state_declarations")
+                let state_declarations: Vec<TensorSpecRecord> = meta
+                    .get("state_declarations")
                     .and_then(|v| v.as_array())
                     .map(|arr| {
-                        arr.iter().filter_map(|v| {
-                            Some(TensorSpecRecord {
-                                name: v.get("name")?.as_str()?.to_string(),
-                                shape: v.get("shape").and_then(|s| s.as_array())
-                                    .map(|a| a.iter().filter_map(|v| v.as_u64().map(|n| n as usize)).collect())
-                                    .unwrap_or_default(),
-                                dtype: v.get("dtype").and_then(|d| d.as_str()).unwrap_or("unknown").to_string(),
+                        arr.iter()
+                            .filter_map(|v| {
+                                Some(TensorSpecRecord {
+                                    name: v.get("name")?.as_str()?.to_string(),
+                                    shape: v
+                                        .get("shape")
+                                        .and_then(|s| s.as_array())
+                                        .map(|a| {
+                                            a.iter()
+                                                .filter_map(|v| v.as_u64().map(|n| n as usize))
+                                                .collect()
+                                        })
+                                        .unwrap_or_default(),
+                                    dtype: v
+                                        .get("dtype")
+                                        .and_then(|d| d.as_str())
+                                        .unwrap_or("unknown")
+                                        .to_string(),
+                                })
                             })
-                        }).collect()
+                            .collect()
                     })
                     .unwrap_or_default();
 
@@ -345,17 +375,22 @@ impl HostInspector {
                     .and_then(|v| v.as_array())
                     .map(|arr| {
                         arr.iter()
-                            .filter_map(|op| op.get("op_type").and_then(|t| t.as_str()).map(|s| s.to_string()))
+                            .filter_map(|op| {
+                                op.get("op_type").and_then(|t| t.as_str()).map(|s| s.to_string())
+                            })
                             .collect()
                     })
                     .unwrap_or_default();
 
-                let extra_ops: Vec<String> = meta.get("mir_comparison")
+                let extra_ops: Vec<String> = meta
+                    .get("mir_comparison")
                     .and_then(|mc| mc.get("extra_in_structure"))
                     .and_then(|v| v.as_array())
                     .map(|arr| {
                         arr.iter()
-                            .filter_map(|op| op.get("op_type").and_then(|t| t.as_str()).map(|s| s.to_string()))
+                            .filter_map(|op| {
+                                op.get("op_type").and_then(|t| t.as_str()).map(|s| s.to_string())
+                            })
                             .collect()
                     })
                     .unwrap_or_default();
@@ -368,13 +403,14 @@ impl HostInspector {
                     Some(false) => {
                         warnings.push(
                             "MLModelStructure inspection unavailable — structural verification "
-                            .to_string() + "uses weaker fallback methods. See inspection_method field."
+                                .to_string()
+                                + "uses weaker fallback methods. See inspection_method field.",
                         );
                     }
                     None => {
                         warnings.push(
                             "MLModelStructure inspection result missing from bridge response"
-                                .to_string()
+                                .to_string(),
                         );
                     }
                 }

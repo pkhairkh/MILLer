@@ -15,6 +15,12 @@ pub struct StateTopologyPass {
     // No configuration needed for pass-through
 }
 
+impl Default for StateTopologyPass {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StateTopologyPass {
     pub fn new() -> Self {
         Self {}

@@ -7,8 +7,8 @@
 //! with reduced confidence. This module provides transfer safety
 //! checks and confidence adjustment.
 
-use ane_ir::kir::{KnowledgeUnit, EvidenceSource, KnowledgeType};
-use anyhow::{Result, bail};
+use ane_ir::kir::{EvidenceSource, KnowledgeType, KnowledgeUnit};
+use anyhow::{bail, Result};
 
 use crate::store::KnowledgeEntry;
 
@@ -20,6 +20,12 @@ pub struct SyntheticTransfer {
     operator_transfer_scale: f32,
     pattern_transfer_scale_min: f32,
     pattern_transfer_scale_max: f32,
+}
+
+impl Default for SyntheticTransfer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SyntheticTransfer {
@@ -78,7 +84,8 @@ impl SyntheticTransfer {
             }
             KnowledgeType::MotifCatalog | KnowledgeType::FallbackSignature => {
                 // Pattern-level transfer: use mid-range scale
-                let scale = (self.pattern_transfer_scale_min + self.pattern_transfer_scale_max) / 2.0;
+                let scale =
+                    (self.pattern_transfer_scale_min + self.pattern_transfer_scale_max) / 2.0;
                 entry.unit.confidence * scale
             }
             KnowledgeType::PrecisionHazard => {
@@ -98,7 +105,11 @@ impl SyntheticTransfer {
     /// Compares a synthetic-derived knowledge unit against a real-model
     /// observation of the same pattern. Returns a validation result
     /// indicating whether the synthetic knowledge was consistent.
-    pub fn validate_against_real(&self, synthetic: &KnowledgeEntry, real: &KnowledgeEntry) -> Result<TransferValidation> {
+    pub fn validate_against_real(
+        &self,
+        synthetic: &KnowledgeEntry,
+        real: &KnowledgeEntry,
+    ) -> Result<TransferValidation> {
         // Must be the same knowledge type
         if synthetic.unit.knowledge_type != real.unit.knowledge_type {
             bail!(
@@ -125,11 +136,7 @@ impl SyntheticTransfer {
             TransferRecommendation::Deprecate
         };
 
-        Ok(TransferValidation {
-            is_consistent,
-            confidence_delta,
-            recommendation,
-        })
+        Ok(TransferValidation { is_consistent, confidence_delta, recommendation })
     }
 
     /// Check if two knowledge units make agreeing claims.
@@ -175,7 +182,7 @@ pub enum TransferRecommendation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{EntryProvenance, EntryOrigin, EntrySource, ConflictStatus};
+    use crate::store::{ConflictStatus, EntryOrigin, EntryProvenance, EntrySource};
     use ane_ir::kir::KnowledgeScope;
     use std::collections::HashMap;
 
@@ -257,7 +264,10 @@ mod tests {
         let real = make_real_entry("real_1", true, 0.8);
         let result = transfer.validate_against_real(&synthetic, &real).unwrap();
         assert!(result.is_consistent);
-        assert!(matches!(result.recommendation, TransferRecommendation::Keep | TransferRecommendation::UpdateConfidence(_)));
+        assert!(matches!(
+            result.recommendation,
+            TransferRecommendation::Keep | TransferRecommendation::UpdateConfidence(_)
+        ));
     }
 
     #[test]

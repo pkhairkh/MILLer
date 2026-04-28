@@ -12,10 +12,10 @@
 //! fallback_risk score is increased. Compute plan evidence is
 //! deterministic for a given hardware+OS, so it carries high weight.
 
+use crate::knowledge_query::PassKnowledgeQuery;
 use ane_ir::air::{AirGraph, AirOp};
 use ane_ir::sir::ElementWiseOp;
 use anyhow::Result;
-use crate::knowledge_query::PassKnowledgeQuery;
 
 /// Default fallback risk score for operations without specific knowledge.
 const DEFAULT_FALLBACK_RISK: f32 = 0.1;
@@ -39,6 +39,12 @@ pub struct RiskAnnotatePass {
     pub default_drift_risk: f32,
 }
 
+impl Default for RiskAnnotatePass {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RiskAnnotatePass {
     pub fn new() -> Self {
         Self {
@@ -58,78 +64,89 @@ impl RiskAnnotatePass {
     /// queries compute plan placement. If compute plan evidence
     /// shows ane_placed=False for an op, fallback_risk is increased
     /// by COMPUTE_PLAN_FALLBACK_PENALTY (clamped to 1.0).
-    pub fn run(&self, input: AirGraph, knowledge_query: &dyn PassKnowledgeQuery) -> Result<AirGraph> {
-        let annotated_nodes: Vec<ane_ir::air::AirNode> = input.nodes.into_iter().map(|mut node| {
-            // Derive op pattern from the AIR node's operation type
-            let op_pattern = match &node.op {
-                AirOp::MatMul { .. } => "mb.matmul",
-                AirOp::ElementWise { op, .. } => match op {
-                    ElementWiseOp::Add => "mb.add",
-                    ElementWiseOp::Mul => "mb.mul",
-                    ElementWiseOp::Abs => "mb.abs",
-                    ElementWiseOp::Maximum => "mb.maximum",
-                    ElementWiseOp::Minimum => "mb.minimum",
-                },
-                AirOp::Reshape { .. } => "mb.reshape",
-                AirOp::Transpose { .. } => "mb.transpose",
-                AirOp::Split { .. } => "mb.split",
-                AirOp::Concat { .. } => "mb.concat",
-                AirOp::Softmax { .. } => "mb.softmax",
-                // Normalization ops (Sprint 33)
-                AirOp::ReduceMean { .. } => "mb.reduce_mean",
-                AirOp::Rsqrt { .. } => "mb.rsqrt",
-                AirOp::RealDiv { .. } => "mb.real_div",
-                AirOp::LayerNorm { .. } => "mb.layer_norm",
-                // Sampling ops (Sprint 33)
-                AirOp::Topk { .. } => "mb.topk",
-                AirOp::Gather { .. } => "mb.gather",
-                // RoPE ops (Sprint 33)
-                AirOp::Cos { .. } => "mb.cos",
-                AirOp::Sin { .. } => "mb.sin",
-                // Attention ops (Sprint 36)
-                AirOp::Conv1x1AsLinear { .. } => "mb.linear",
-                AirOp::ScaledDotProductAttention { .. } => "mb.scaled_dot_product_attention",
-                AirOp::SliceByIndex { .. } => "mb.slice_by_index",
-                // Activation ops (Sprint 36)
-                AirOp::Gelu { .. } => "mb.gelu",
-                AirOp::Relu { .. } => "mb.relu",
-                // State ops (Sprint 36)
-                AirOp::StateReadFixed { .. } => "mb.read_state",
-                AirOp::StateWriteFixed { .. } => "mb.coreml_update_state",
-                // Sprint 50: P2 ops
-                AirOp::SliceUpdate { .. } => "mb.slice_update",
-                AirOp::Exp { .. } => "mb.exp",
-                AirOp::Sigmoid { .. } => "mb.sigmoid",
-                AirOp::Tanh { .. } => "mb.tanh",
-                AirOp::Where { .. } => "mb.where",
-                _ => "unknown",
-            };
+    pub fn run(
+        &self,
+        input: AirGraph,
+        knowledge_query: &dyn PassKnowledgeQuery,
+    ) -> Result<AirGraph> {
+        let annotated_nodes: Vec<ane_ir::air::AirNode> = input
+            .nodes
+            .into_iter()
+            .map(|mut node| {
+                // Derive op pattern from the AIR node's operation type
+                let op_pattern = match &node.op {
+                    AirOp::MatMul { .. } => "mb.matmul",
+                    AirOp::ElementWise { op, .. } => match op {
+                        ElementWiseOp::Add => "mb.add",
+                        ElementWiseOp::Mul => "mb.mul",
+                        ElementWiseOp::Abs => "mb.abs",
+                        ElementWiseOp::Maximum => "mb.maximum",
+                        ElementWiseOp::Minimum => "mb.minimum",
+                    },
+                    AirOp::Reshape { .. } => "mb.reshape",
+                    AirOp::Transpose { .. } => "mb.transpose",
+                    AirOp::Split { .. } => "mb.split",
+                    AirOp::Concat { .. } => "mb.concat",
+                    AirOp::Softmax { .. } => "mb.softmax",
+                    // Normalization ops (Sprint 33)
+                    AirOp::ReduceMean { .. } => "mb.reduce_mean",
+                    AirOp::Rsqrt { .. } => "mb.rsqrt",
+                    AirOp::RealDiv { .. } => "mb.real_div",
+                    AirOp::LayerNorm { .. } => "mb.layer_norm",
+                    // Sampling ops (Sprint 33)
+                    AirOp::Topk { .. } => "mb.topk",
+                    AirOp::Gather { .. } => "mb.gather",
+                    // RoPE ops (Sprint 33)
+                    AirOp::Cos { .. } => "mb.cos",
+                    AirOp::Sin { .. } => "mb.sin",
+                    // Attention ops (Sprint 36)
+                    AirOp::Conv1x1AsLinear { .. } => "mb.linear",
+                    AirOp::ScaledDotProductAttention { .. } => "mb.scaled_dot_product_attention",
+                    AirOp::SliceByIndex { .. } => "mb.slice_by_index",
+                    // Activation ops (Sprint 36)
+                    AirOp::Gelu { .. } => "mb.gelu",
+                    AirOp::Relu { .. } => "mb.relu",
+                    // State ops (Sprint 36)
+                    AirOp::StateReadFixed { .. } => "mb.read_state",
+                    AirOp::StateWriteFixed { .. } => "mb.coreml_update_state",
+                    // Sprint 50: P2 ops
+                    AirOp::SliceUpdate { .. } => "mb.slice_update",
+                    AirOp::Exp { .. } => "mb.exp",
+                    AirOp::Sigmoid { .. } => "mb.sigmoid",
+                    AirOp::Tanh { .. } => "mb.tanh",
+                    AirOp::Where { .. } => "mb.where",
+                    _ => "unknown",
+                };
 
-            // Step 1: Apply knowledge-based risk scores
-            match knowledge_query.query_risk(op_pattern, None) {
-                Some(risk_info) => {
-                    node.fallback_risk = risk_info.fallback_risk;
-                    node.drift_risk = risk_info.drift_risk;
+                // Step 1: Apply knowledge-based risk scores
+                match knowledge_query.query_risk(op_pattern, None) {
+                    Some(risk_info) => {
+                        node.fallback_risk = risk_info.fallback_risk;
+                        node.drift_risk = risk_info.drift_risk;
+                    }
+                    None => {
+                        node.fallback_risk = self.default_fallback_risk;
+                        node.drift_risk = self.default_drift_risk;
+                    }
                 }
-                None => {
-                    node.fallback_risk = self.default_fallback_risk;
-                    node.drift_risk = self.default_drift_risk;
-                }
-            }
 
-            // Step 2: Apply compute plan placement evidence (Sprint 35)
-            // If compute plan shows ane_placed=False, increase fallback_risk
-            if let Some(placement) = knowledge_query.query_compute_plan_placement(op_pattern, None) {
-                if !placement.ane_placed {
-                    // Compute plan evidence: op was NOT placed on NeuralEngine.
-                    // This is deterministic and high-confidence, so apply a
-                    // significant fallback risk penalty.
-                    node.fallback_risk = (node.fallback_risk + COMPUTE_PLAN_FALLBACK_PENALTY).min(1.0);
+                // Step 2: Apply compute plan placement evidence (Sprint 35)
+                // If compute plan shows ane_placed=False, increase fallback_risk
+                if let Some(placement) =
+                    knowledge_query.query_compute_plan_placement(op_pattern, None)
+                {
+                    if !placement.ane_placed {
+                        // Compute plan evidence: op was NOT placed on NeuralEngine.
+                        // This is deterministic and high-confidence, so apply a
+                        // significant fallback risk penalty.
+                        node.fallback_risk =
+                            (node.fallback_risk + COMPUTE_PLAN_FALLBACK_PENALTY).min(1.0);
+                    }
                 }
-            }
 
-            node
-        }).collect();
+                node
+            })
+            .collect();
 
         Ok(AirGraph {
             nodes: annotated_nodes,
@@ -143,11 +160,12 @@ impl RiskAnnotatePass {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::knowledge_query::{
+        ComputePlanPlacementInfo, LegalityInfo, NoKnowledge, PassKnowledgeQuery,
+        PrecisionHazardInfo, RiskInfo,
+    };
     use ane_ir::air::{AirNode, AirNodeId};
     use ane_ir::kir::KnowledgeScope;
-    use crate::knowledge_query::{
-        NoKnowledge, PassKnowledgeQuery, RiskInfo, ComputePlanPlacementInfo, LegalityInfo, PrecisionHazardInfo,
-    };
 
     /// A mock knowledge query that can return configurable compute plan placement.
     struct MockKnowledge {
@@ -157,10 +175,7 @@ mod tests {
 
     impl MockKnowledge {
         fn new() -> Self {
-            Self {
-                risk_info: None,
-                compute_plan_placement: None,
-            }
+            Self { risk_info: None, compute_plan_placement: None }
         }
 
         fn with_compute_plan_not_ane(mut self, op_pattern: &str) -> Self {
@@ -200,19 +215,36 @@ mod tests {
     }
 
     impl PassKnowledgeQuery for MockKnowledge {
-        fn query_legality(&self, _op_pattern: &str, _scope: Option<&KnowledgeScope>) -> Option<LegalityInfo> {
+        fn query_legality(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&KnowledgeScope>,
+        ) -> Option<LegalityInfo> {
             None
         }
 
-        fn query_risk(&self, _op_pattern: &str, _scope: Option<&KnowledgeScope>) -> Option<RiskInfo> {
+        fn query_risk(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&KnowledgeScope>,
+        ) -> Option<RiskInfo> {
             self.risk_info.clone()
         }
 
-        fn query_precision_hazard(&self, _op_pattern: &str, _current_dtype: &str, _scope: Option<&KnowledgeScope>) -> Option<PrecisionHazardInfo> {
+        fn query_precision_hazard(
+            &self,
+            _op_pattern: &str,
+            _current_dtype: &str,
+            _scope: Option<&KnowledgeScope>,
+        ) -> Option<PrecisionHazardInfo> {
             None
         }
 
-        fn query_compute_plan_placement(&self, _op_pattern: &str, _scope: Option<&KnowledgeScope>) -> Option<ComputePlanPlacementInfo> {
+        fn query_compute_plan_placement(
+            &self,
+            _op_pattern: &str,
+            _scope: Option<&KnowledgeScope>,
+        ) -> Option<ComputePlanPlacementInfo> {
             self.compute_plan_placement.clone()
         }
     }
@@ -291,9 +323,8 @@ mod tests {
             a: AirNodeId("a".to_string()),
             b: AirNodeId("b".to_string()),
         });
-        let knowledge = MockKnowledge::new()
-            .with_risk(0.3, 0.1)
-            .with_compute_plan_not_ane("mb.matmul");
+        let knowledge =
+            MockKnowledge::new().with_risk(0.3, 0.1).with_compute_plan_not_ane("mb.matmul");
         let result = pass.run(graph, &knowledge).unwrap();
         // Fallback risk should be 0.3 (from risk knowledge) + 0.7 (penalty) = 1.0
         let expected = (0.3 + COMPUTE_PLAN_FALLBACK_PENALTY).min(1.0);
@@ -313,9 +344,8 @@ mod tests {
             a: AirNodeId("a".to_string()),
             b: AirNodeId("b".to_string()),
         });
-        let knowledge = MockKnowledge::new()
-            .with_risk(0.5, 0.2)
-            .with_compute_plan_not_ane("mb.matmul");
+        let knowledge =
+            MockKnowledge::new().with_risk(0.5, 0.2).with_compute_plan_not_ane("mb.matmul");
         let result = pass.run(graph, &knowledge).unwrap();
         assert!(
             result.nodes[0].fallback_risk <= 1.0,

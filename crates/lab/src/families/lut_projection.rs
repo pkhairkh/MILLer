@@ -16,9 +16,9 @@
 //! it exercises the LUT/gather path that is central to ANE palettized
 //! inference in production models like Qwen3.
 
-use ane_ir::task_spec::{SyntheticTaskSpec, TaskOp, MeasurementConfig};
-use anyhow::Result;
 use super::TaskFamilyTrait;
+use ane_ir::task_spec::{MeasurementConfig, SyntheticTaskSpec, TaskOp};
+use anyhow::Result;
 
 /// Configuration for the LUT projection family generator.
 #[derive(Debug, Clone)]
@@ -58,10 +58,7 @@ impl Default for LutProjectionFamilyConfig {
 impl LutProjectionFamilyConfig {
     /// Create a new config with the given seed.
     pub fn new(seed: u64) -> Self {
-        Self {
-            seed,
-            ..Default::default()
-        }
+        Self { seed, ..Default::default() }
     }
 
     /// Create a config with custom bitwidth variants.
@@ -119,16 +116,12 @@ pub struct LutProjectionFamily {
 impl LutProjectionFamily {
     /// Create a new LUT projection family generator with default config.
     pub fn new() -> Self {
-        Self {
-            config: LutProjectionFamilyConfig::default(),
-        }
+        Self { config: LutProjectionFamilyConfig::default() }
     }
 
     /// Create a LUT projection family generator with the given seed.
     pub fn with_seed(seed: u64) -> Self {
-        Self {
-            config: LutProjectionFamilyConfig::new(seed),
-        }
+        Self { config: LutProjectionFamilyConfig::new(seed) }
     }
 
     /// Create a LUT projection family generator with custom config.
@@ -156,10 +149,7 @@ impl LutProjectionFamily {
         for bitwidth in &self.config.bitwidth_variants {
             // Validate bitwidth
             if !matches!(bitwidth, 1 | 2 | 3 | 4 | 6 | 8) {
-                anyhow::bail!(
-                    "Invalid lut_bitwidth {}: must be one of 1, 2, 3, 4, 6, 8",
-                    bitwidth
-                );
+                anyhow::bail!("Invalid lut_bitwidth {}: must be one of 1, 2, 3, 4, 6, 8", bitwidth);
             }
 
             let vocab_size = self.config.resolve_vocab_size(*bitwidth);
@@ -254,8 +244,24 @@ mod tests {
             assert_eq!(t1.name, t2.name, "Task names must be identical for same config");
             assert_eq!(t1.family, t2.family);
             match (&t1.op, &t2.op) {
-                (TaskOp::LutProjection { vocab_size: v1, embed_dim: e1, num_groups: g1, lut_bitwidth: b1, batch_size: bs1, dtype: d1 },
-                 TaskOp::LutProjection { vocab_size: v2, embed_dim: e2, num_groups: g2, lut_bitwidth: b2, batch_size: bs2, dtype: d2 }) => {
+                (
+                    TaskOp::LutProjection {
+                        vocab_size: v1,
+                        embed_dim: e1,
+                        num_groups: g1,
+                        lut_bitwidth: b1,
+                        batch_size: bs1,
+                        dtype: d1,
+                    },
+                    TaskOp::LutProjection {
+                        vocab_size: v2,
+                        embed_dim: e2,
+                        num_groups: g2,
+                        lut_bitwidth: b2,
+                        batch_size: bs2,
+                        dtype: d2,
+                    },
+                ) => {
                     assert_eq!((v1, e1, g1, b1, bs1, d1), (v2, e2, g2, b2, bs2, d2));
                 }
                 _ => panic!("Expected both to be LutProjection"),
@@ -275,8 +281,10 @@ mod tests {
             assert_eq!(parsed.name, task.name);
             assert_eq!(parsed.family, task.family);
             match (&parsed.op, &task.op) {
-                (TaskOp::LutProjection { lut_bitwidth: b1, .. },
-                 TaskOp::LutProjection { lut_bitwidth: b2, .. }) => {
+                (
+                    TaskOp::LutProjection { lut_bitwidth: b1, .. },
+                    TaskOp::LutProjection { lut_bitwidth: b2, .. },
+                ) => {
                     assert_eq!(b1, b2);
                 }
                 _ => panic!("Expected LutProjection"),
@@ -291,12 +299,13 @@ mod tests {
         assert!(tasks.len() >= 3, "Must generate at least 3 deterministic variants");
 
         // Verify each variant has a distinct bitwidth
-        let bitwidths: Vec<usize> = tasks.iter().map(|t| {
-            match &t.op {
+        let bitwidths: Vec<usize> = tasks
+            .iter()
+            .map(|t| match &t.op {
                 TaskOp::LutProjection { lut_bitwidth, .. } => *lut_bitwidth,
                 _ => panic!("Expected LutProjection"),
-            }
-        }).collect();
+            })
+            .collect();
 
         // Default config should have at least 3 distinct bitwidths
         let unique_bitwidths: std::collections::HashSet<usize> = bitwidths.into_iter().collect();
@@ -381,8 +390,24 @@ mod tests {
             assert_eq!(t1.name, t2.name);
             assert_eq!(t1.family, t2.family);
             match (&t1.op, &t2.op) {
-                (TaskOp::LutProjection { vocab_size: v1, embed_dim: e1, num_groups: g1, lut_bitwidth: b1, batch_size: bs1, dtype: d1 },
-                 TaskOp::LutProjection { vocab_size: v2, embed_dim: e2, num_groups: g2, lut_bitwidth: b2, batch_size: bs2, dtype: d2 }) => {
+                (
+                    TaskOp::LutProjection {
+                        vocab_size: v1,
+                        embed_dim: e1,
+                        num_groups: g1,
+                        lut_bitwidth: b1,
+                        batch_size: bs1,
+                        dtype: d1,
+                    },
+                    TaskOp::LutProjection {
+                        vocab_size: v2,
+                        embed_dim: e2,
+                        num_groups: g2,
+                        lut_bitwidth: b2,
+                        batch_size: bs2,
+                        dtype: d2,
+                    },
+                ) => {
                     assert_eq!((v1, e1, g1, b1, bs1, d1), (v2, e2, g2, b2, bs2, d2));
                 }
                 _ => panic!("Expected LutProjection"),

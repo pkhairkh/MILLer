@@ -18,10 +18,10 @@
 //! - All functions handle null pointers safely (returning error codes rather than
 //!   undefined behavior)
 
+use prost::Message;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
 use std::ptr;
-use prost::Message;
 
 // ─── Opaque Handle ──────────────────────────────────────────────────────────
 
@@ -137,8 +137,13 @@ pub extern "C" fn coreml_version() -> *mut c_char {
 /// `coreml_model_destroy()`.
 ///
 /// On failure, writes null to `out_handle` and returns an error status.
+///
+/// # Safety
+///
+/// `path` must be a valid pointer to a null-terminated C string.
+/// `out_handle` must be a valid pointer to a `*mut CoreMlModelHandle`.
 #[no_mangle]
-pub extern "C" fn coreml_model_load(
+pub unsafe extern "C" fn coreml_model_load(
     path: *const c_char,
     out_handle: *mut *mut CoreMlModelHandle,
 ) -> CoreMlStatus {
@@ -167,8 +172,13 @@ pub extern "C" fn coreml_model_load(
 ///
 /// Safely handles null pointers (no-op).
 /// On macOS, this would call `MLModelDestroy()`.
+///
+/// # Safety
+///
+/// `handle` must be either null or a valid pointer previously returned by
+/// `coreml_model_load`.
 #[no_mangle]
-pub extern "C" fn coreml_model_destroy(handle: *mut CoreMlModelHandle) {
+pub unsafe extern "C" fn coreml_model_destroy(handle: *mut CoreMlModelHandle) {
     if handle.is_null() {
         return;
     }
@@ -186,8 +196,13 @@ pub extern "C" fn coreml_model_destroy(handle: *mut CoreMlModelHandle) {
 /// Writes metadata to `out_info`. Returns `CoreMlStatus::Ok` on success.
 /// Returns an error status if the handle is invalid or the platform
 /// doesn't support Core ML.
+///
+/// # Safety
+///
+/// `handle` must be either null or a valid model handle.
+/// `out_info` must be a valid pointer to a `CoreMlModelInfo`.
 #[no_mangle]
-pub extern "C" fn coreml_model_info(
+pub unsafe extern "C" fn coreml_model_info(
     handle: *mut CoreMlModelHandle,
     out_info: *mut CoreMlModelInfo,
 ) -> CoreMlStatus {
@@ -202,11 +217,7 @@ pub extern "C" fn coreml_model_info(
     // On macOS, we would inspect the model's spec.
     // For now, return zeroed info.
     unsafe {
-        *out_info = CoreMlModelInfo {
-            function_count: 0,
-            has_state: false,
-            spec_version: 0,
-        };
+        *out_info = CoreMlModelInfo { function_count: 0, has_state: false, spec_version: 0 };
     }
 
     CoreMlStatus::Ok
@@ -219,8 +230,13 @@ pub extern "C" fn coreml_model_info(
 /// `coreml_free_string()`.
 ///
 /// On non-macOS platforms, returns `ErrorPlatformUnavailable`.
+///
+/// # Safety
+///
+/// `source_path` and `output_dir` must be valid pointers to null-terminated C strings.
+/// `out_result` must be a valid pointer to a `CoreMlCompileResult`.
 #[no_mangle]
-pub extern "C" fn coreml_model_compile(
+pub unsafe extern "C" fn coreml_model_compile(
     source_path: *const c_char,
     output_dir: *const c_char,
     out_result: *mut CoreMlCompileResult,
@@ -252,16 +268,18 @@ pub extern "C" fn coreml_model_compile(
 /// the measured latency. On failure, returns an appropriate error status.
 ///
 /// If `latency_ns` is non-null, the prediction latency is written there.
+///
+/// # Safety
+///
+/// `handle` must be either null or a valid model handle.
+/// `latency_ns` must be either null or a valid pointer to a `u64`.
 #[no_mangle]
-pub extern "C" fn coreml_model_predict(
+pub unsafe extern "C" fn coreml_model_predict(
     handle: *mut CoreMlModelHandle,
     latency_ns: *mut u64,
 ) -> CoreMlPredictResult {
     if handle.is_null() {
-        return CoreMlPredictResult {
-            status: CoreMlStatus::ErrorInvalidArgument,
-            latency_ns: 0,
-        };
+        return CoreMlPredictResult { status: CoreMlStatus::ErrorInvalidArgument, latency_ns: 0 };
     }
 
     if !latency_ns.is_null() {
@@ -278,17 +296,20 @@ pub extern "C" fn coreml_model_predict(
     }
 
     // On macOS, we would call MLModelPrediction().
-    CoreMlPredictResult {
-        status: CoreMlStatus::ErrorPrediction,
-        latency_ns: 0,
-    }
+    CoreMlPredictResult { status: CoreMlStatus::ErrorPrediction, latency_ns: 0 }
 }
 
 /// Free a C string allocated by the Core ML C API.
 ///
 /// Safely handles null pointers (no-op).
+///
+/// # Safety
+///
+/// `s` must be either null or a pointer previously returned by a Core ML
+/// C API function that allocates a C string (e.g., `coreml_version`,
+/// `coreml_model_compile`). The pointer must not have been freed already.
 #[no_mangle]
-pub extern "C" fn coreml_free_string(s: *mut c_char) {
+pub unsafe extern "C" fn coreml_free_string(s: *mut c_char) {
     if s.is_null() {
         return;
     }
@@ -310,8 +331,12 @@ pub extern "C" fn coreml_free_string(s: *mut c_char) {
 /// This function works on **all platforms** — it does NOT require macOS
 /// or the Core ML runtime. It validates the filesystem output of the
 /// proto-direct emission pipeline.
+///
+/// # Safety
+///
+/// `path` must be a valid pointer to a null-terminated C string.
 #[no_mangle]
-pub extern "C" fn coreml_validate_proto_package(path: *const c_char) -> CoreMlStatus {
+pub unsafe extern "C" fn coreml_validate_proto_package(path: *const c_char) -> CoreMlStatus {
     if path.is_null() {
         return CoreMlStatus::ErrorInvalidArgument;
     }
@@ -424,14 +449,14 @@ mod tests {
     #[test]
     fn test_model_load_null_path() {
         let mut handle: *mut CoreMlModelHandle = ptr::null_mut();
-        let status = coreml_model_load(ptr::null(), &mut handle);
+        let status = unsafe { coreml_model_load(ptr::null(), &mut handle) };
         assert_eq!(status, CoreMlStatus::ErrorInvalidArgument);
     }
 
     #[test]
     fn test_model_load_null_out_handle() {
         let path = CString::new("/test/model.mlpackage").unwrap();
-        let status = coreml_model_load(path.as_ptr(), ptr::null_mut());
+        let status = unsafe { coreml_model_load(path.as_ptr(), ptr::null_mut()) };
         assert_eq!(status, CoreMlStatus::ErrorInvalidArgument);
     }
 
@@ -440,7 +465,7 @@ mod tests {
         if !cfg!(target_os = "macos") {
             let path = CString::new("/test/model.mlpackage").unwrap();
             let mut handle: *mut CoreMlModelHandle = ptr::null_mut();
-            let status = coreml_model_load(path.as_ptr(), &mut handle);
+            let status = unsafe { coreml_model_load(path.as_ptr(), &mut handle) };
             assert_eq!(status, CoreMlStatus::ErrorPlatformUnavailable);
             assert!(handle.is_null());
         }
@@ -451,27 +476,23 @@ mod tests {
     #[test]
     fn test_model_destroy_null() {
         // Should be a no-op, not a crash
-        coreml_model_destroy(ptr::null_mut());
+        unsafe { coreml_model_destroy(ptr::null_mut()) };
     }
 
     // ─── coreml_model_info tests ────────────────────────────────────────
 
     #[test]
     fn test_model_info_null_handle() {
-        let mut info = CoreMlModelInfo {
-            function_count: 0,
-            has_state: false,
-            spec_version: 0,
-        };
-        let status = coreml_model_info(ptr::null_mut(), &mut info);
+        let mut info = CoreMlModelInfo { function_count: 0, has_state: false, spec_version: 0 };
+        let status = unsafe { coreml_model_info(ptr::null_mut(), &mut info) };
         assert_eq!(status, CoreMlStatus::ErrorInvalidArgument);
     }
 
     #[test]
     fn test_model_info_null_out_info() {
         // Create a fake non-null handle (we won't actually use it)
-        let handle = 1usize as *mut CoreMlModelHandle;
-        let status = coreml_model_info(handle, ptr::null_mut());
+        let handle = std::ptr::dangling_mut::<CoreMlModelHandle>();
+        let status = unsafe { coreml_model_info(handle, ptr::null_mut()) };
         assert_eq!(status, CoreMlStatus::ErrorInvalidArgument);
     }
 
@@ -480,22 +501,18 @@ mod tests {
     #[test]
     fn test_model_compile_null_source() {
         let output_dir = CString::new("/tmp").unwrap();
-        let mut result = CoreMlCompileResult {
-            status: CoreMlStatus::Ok,
-            compiled_path: ptr::null_mut(),
-        };
-        let status = coreml_model_compile(ptr::null(), output_dir.as_ptr(), &mut result);
+        let mut result =
+            CoreMlCompileResult { status: CoreMlStatus::Ok, compiled_path: ptr::null_mut() };
+        let status = unsafe { coreml_model_compile(ptr::null(), output_dir.as_ptr(), &mut result) };
         assert_eq!(status, CoreMlStatus::ErrorInvalidArgument);
     }
 
     #[test]
     fn test_model_compile_null_output_dir() {
         let source = CString::new("/test/model.mlpackage").unwrap();
-        let mut result = CoreMlCompileResult {
-            status: CoreMlStatus::Ok,
-            compiled_path: ptr::null_mut(),
-        };
-        let status = coreml_model_compile(source.as_ptr(), ptr::null(), &mut result);
+        let mut result =
+            CoreMlCompileResult { status: CoreMlStatus::Ok, compiled_path: ptr::null_mut() };
+        let status = unsafe { coreml_model_compile(source.as_ptr(), ptr::null(), &mut result) };
         assert_eq!(status, CoreMlStatus::ErrorInvalidArgument);
     }
 
@@ -503,7 +520,8 @@ mod tests {
     fn test_model_compile_null_out_result() {
         let source = CString::new("/test/model.mlpackage").unwrap();
         let output_dir = CString::new("/tmp").unwrap();
-        let status = coreml_model_compile(source.as_ptr(), output_dir.as_ptr(), ptr::null_mut());
+        let status =
+            unsafe { coreml_model_compile(source.as_ptr(), output_dir.as_ptr(), ptr::null_mut()) };
         assert_eq!(status, CoreMlStatus::ErrorInvalidArgument);
     }
 
@@ -512,11 +530,10 @@ mod tests {
         if !cfg!(target_os = "macos") {
             let source = CString::new("/test/model.mlpackage").unwrap();
             let output_dir = CString::new("/tmp").unwrap();
-            let mut result = CoreMlCompileResult {
-                status: CoreMlStatus::Ok,
-                compiled_path: ptr::null_mut(),
-            };
-            let status = coreml_model_compile(source.as_ptr(), output_dir.as_ptr(), &mut result);
+            let mut result =
+                CoreMlCompileResult { status: CoreMlStatus::Ok, compiled_path: ptr::null_mut() };
+            let status =
+                unsafe { coreml_model_compile(source.as_ptr(), output_dir.as_ptr(), &mut result) };
             assert_eq!(status, CoreMlStatus::ErrorPlatformUnavailable);
             assert_eq!(result.status, CoreMlStatus::ErrorPlatformUnavailable);
             assert!(result.compiled_path.is_null());
@@ -528,7 +545,7 @@ mod tests {
     #[test]
     fn test_model_predict_null_handle() {
         let mut latency: u64 = 0;
-        let result = coreml_model_predict(ptr::null_mut(), &mut latency);
+        let result = unsafe { coreml_model_predict(ptr::null_mut(), &mut latency) };
         assert_eq!(result.status, CoreMlStatus::ErrorInvalidArgument);
     }
 
@@ -536,9 +553,9 @@ mod tests {
     fn test_model_predict_non_macos() {
         if !cfg!(target_os = "macos") {
             // Create a fake non-null handle
-            let handle = 1usize as *mut CoreMlModelHandle;
+            let handle = std::ptr::dangling_mut::<CoreMlModelHandle>();
             let mut latency: u64 = 99;
-            let result = coreml_model_predict(handle, &mut latency);
+            let result = unsafe { coreml_model_predict(handle, &mut latency) };
             assert_eq!(result.status, CoreMlStatus::ErrorPlatformUnavailable);
             assert_eq!(latency, 0);
         }
@@ -549,7 +566,7 @@ mod tests {
     #[test]
     fn test_free_string_null() {
         // Should be a no-op, not a crash
-        coreml_free_string(ptr::null_mut());
+        unsafe { coreml_free_string(ptr::null_mut()) };
     }
 
     #[test]
@@ -557,7 +574,7 @@ mod tests {
         let s = CString::new("test string").unwrap();
         let raw = s.into_raw();
         // Should free without crash
-        coreml_free_string(raw);
+        unsafe { coreml_free_string(raw) };
     }
 
     // ─── CoreMlModelInfo layout tests ───────────────────────────────────
@@ -609,14 +626,14 @@ mod tests {
 
     #[test]
     fn test_validate_null_path() {
-        let status = coreml_validate_proto_package(ptr::null());
+        let status = unsafe { coreml_validate_proto_package(ptr::null()) };
         assert_eq!(status, CoreMlStatus::ErrorInvalidArgument);
     }
 
     #[test]
     fn test_validate_nonexistent_path() {
         let path = CString::new("/nonexistent/path/model.mlpackage").unwrap();
-        let status = coreml_validate_proto_package(path.as_ptr());
+        let status = unsafe { coreml_validate_proto_package(path.as_ptr()) };
         assert_eq!(status, CoreMlStatus::ErrorModelLoad);
     }
 
@@ -628,7 +645,7 @@ mod tests {
         std::fs::write(&tmp_dir, b"not a directory").unwrap();
 
         let path = CString::new(tmp_dir.to_str().unwrap()).unwrap();
-        let status = coreml_validate_proto_package(path.as_ptr());
+        let status = unsafe { coreml_validate_proto_package(path.as_ptr()) };
         assert_eq!(status, CoreMlStatus::ErrorModelLoad);
 
         let _ = std::fs::remove_file(&tmp_dir);
@@ -642,7 +659,7 @@ mod tests {
         std::fs::create_dir_all(&tmp_dir).unwrap();
 
         let path = CString::new(tmp_dir.to_str().unwrap()).unwrap();
-        let status = coreml_validate_proto_package(path.as_ptr());
+        let status = unsafe { coreml_validate_proto_package(path.as_ptr()) };
         // Should fail because Manifest.json is missing
         assert_eq!(status, CoreMlStatus::ErrorSerialization);
 
@@ -659,7 +676,7 @@ mod tests {
         std::fs::write(model_dir.join("model.mlmodel"), b"").unwrap();
 
         let path = CString::new(tmp_dir.to_str().unwrap()).unwrap();
-        let status = coreml_validate_proto_package(path.as_ptr());
+        let status = unsafe { coreml_validate_proto_package(path.as_ptr()) };
         assert_eq!(status, CoreMlStatus::ErrorSerialization);
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -676,7 +693,7 @@ mod tests {
         std::fs::write(model_dir.join("model.mlmodel"), b"").unwrap();
 
         let path = CString::new(tmp_dir.to_str().unwrap()).unwrap();
-        let status = coreml_validate_proto_package(path.as_ptr());
+        let status = unsafe { coreml_validate_proto_package(path.as_ptr()) };
         assert_eq!(status, CoreMlStatus::ErrorSerialization);
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -688,13 +705,10 @@ mod tests {
         let tmp_dir = std::env::temp_dir().join("coreml_ffi_test_no_mlmodel");
         let _ = std::fs::remove_dir_all(&tmp_dir);
         std::fs::create_dir_all(&tmp_dir).unwrap();
-        std::fs::write(
-            tmp_dir.join("Manifest.json"),
-            r#"{"schemaVersion":"1.0"}"#,
-        ).unwrap();
+        std::fs::write(tmp_dir.join("Manifest.json"), r#"{"schemaVersion":"1.0"}"#).unwrap();
 
         let path = CString::new(tmp_dir.to_str().unwrap()).unwrap();
-        let status = coreml_validate_proto_package(path.as_ptr());
+        let status = unsafe { coreml_validate_proto_package(path.as_ptr()) };
         assert_eq!(status, CoreMlStatus::ErrorModelLoad);
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -707,14 +721,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp_dir);
         let model_dir = tmp_dir.join("Model/com.apple.CoreML");
         std::fs::create_dir_all(&model_dir).unwrap();
-        std::fs::write(
-            tmp_dir.join("Manifest.json"),
-            r#"{"schemaVersion":"1.0"}"#,
-        ).unwrap();
+        std::fs::write(tmp_dir.join("Manifest.json"), r#"{"schemaVersion":"1.0"}"#).unwrap();
         std::fs::write(model_dir.join("model.mlmodel"), b"").unwrap();
 
         let path = CString::new(tmp_dir.to_str().unwrap()).unwrap();
-        let status = coreml_validate_proto_package(path.as_ptr());
+        let status = unsafe { coreml_validate_proto_package(path.as_ptr()) };
         // Missing weight.bin should return serialization error
         assert_eq!(status, CoreMlStatus::ErrorSerialization);
 
@@ -735,7 +746,8 @@ mod tests {
         std::fs::write(
             tmp_dir.join("Manifest.json"),
             r#"{"schemaVersion":"1.0","modelId":"test","files":[],"metadata":{}}"#,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Write model.mlmodel (empty protobuf is technically invalid, but we
         // accept it as best-effort validation)
@@ -745,7 +757,7 @@ mod tests {
         std::fs::write(weights_dir.join("weight.bin"), b"\x00\x00\x00\x00").unwrap();
 
         let path = CString::new(tmp_dir.to_str().unwrap()).unwrap();
-        let status = coreml_validate_proto_package(path.as_ptr());
+        let status = unsafe { coreml_validate_proto_package(path.as_ptr()) };
         assert_eq!(status, CoreMlStatus::Ok);
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -761,7 +773,7 @@ mod tests {
         // This tests that the CStr conversion handles the case
         // (though in practice, CStr::from_ptr requires a null terminator)
         // We can't easily test this without unsafe, so we test a null path instead
-        let status = coreml_validate_proto_package(ptr::null());
+        let status = unsafe { coreml_validate_proto_package(ptr::null()) };
         assert_eq!(status, CoreMlStatus::ErrorInvalidArgument);
     }
 }

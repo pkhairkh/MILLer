@@ -41,11 +41,15 @@
 
 use serde::{Deserialize, Serialize};
 
+// Sprint 58 (S58.3): ComputeUnits was removed. PIR now uses
+// `ComputeUnitHint` from the mir module directly, eliminating the duplicate type.
+pub use super::mir::ComputeUnitHint;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Package {
     pub name: String,
     pub role: PackageRole,
-    pub compute_units: ComputeUnits,
+    pub compute_units: ComputeUnitHint,
     /// Reference to the MIL program for the primary function.
     pub mil_program_ref: String,
     /// Named functions within this package (multifunction seam).
@@ -138,9 +142,10 @@ impl PackageRole {
 
     /// Whether this package targets ANE (CPU+NE) deployment.
     pub fn is_ane_targeted(&self) -> bool {
-        matches!(self, PackageRole::DecoderShard(
-            ShardRole::Entry | ShardRole::Interior | ShardRole::Exit
-        ))
+        matches!(
+            self,
+            PackageRole::DecoderShard(ShardRole::Entry | ShardRole::Interior | ShardRole::Exit)
+        )
     }
 
     /// Whether this package typically runs on CPU+GPU.
@@ -234,45 +239,17 @@ impl ShardRole {
     }
 
     /// Returns the default compute units for this role.
-    pub fn default_compute_units(&self) -> ComputeUnits {
+    pub fn default_compute_units(&self) -> ComputeUnitHint {
         match self {
-            ShardRole::Entry | ShardRole::Interior | ShardRole::Exit => ComputeUnits::CPUAndNE,
-            ShardRole::Io | ShardRole::Sampler => ComputeUnits::CPUAndGPU,
+            ShardRole::Entry | ShardRole::Interior | ShardRole::Exit => ComputeUnitHint::CPUAndNE,
+            ShardRole::Io | ShardRole::Sampler => ComputeUnitHint::CPUAndGPU,
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ComputeUnits {
-    CPUAndNE,
-    CPUAndGPU,
-    CPUOnly,
-    All,
-}
-
-impl ComputeUnits {
-    /// Parse compute units from the string representation used in
-    /// task specs, bridge payloads, and shard template seeds.
-    pub fn from_str_flexible(s: &str) -> Option<Self> {
-        match s {
-            "CPU_AND_NE" | "CPUAndNE" => Some(ComputeUnits::CPUAndNE),
-            "CPU_AND_GPU" | "CPUAndGPU" => Some(ComputeUnits::CPUAndGPU),
-            "CPU_ONLY" | "CPUOnly" => Some(ComputeUnits::CPUOnly),
-            "ALL" | "All" => Some(ComputeUnits::All),
-            _ => None,
-        }
-    }
-
-    /// Returns the Core ML compatible string for this compute unit setting.
-    pub fn to_coreml_string(&self) -> &'static str {
-        match self {
-            ComputeUnits::CPUAndNE => "CPU_AND_NE",
-            ComputeUnits::CPUAndGPU => "CPU_AND_GPU",
-            ComputeUnits::CPUOnly => "CPU_ONLY",
-            ComputeUnits::All => "ALL",
-        }
-    }
-}
+// Sprint 58 (S58.3): The `ComputeUnits` enum and its impl block have been removed.
+// `ComputeUnitHint` is now the unified type, defined in mir.rs and re-exported above.
+// The `from_str_flexible()` and `to_coreml_string()` methods are on `ComputeUnitHint` in mir.rs.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateDeclaration {
@@ -358,9 +335,9 @@ pub struct ShardTemplate {
     /// have different structure (no layer range, different defaults).
     pub partition_spec: Vec<ShardPartitionEntry>,
     /// Compute units for the I/O model, if present.
-    pub io_compute_units: Option<ComputeUnits>,
+    pub io_compute_units: Option<ComputeUnitHint>,
     /// Compute units for the sampler model, if present.
-    pub sampler_compute_units: Option<ComputeUnits>,
+    pub sampler_compute_units: Option<ComputeUnitHint>,
     /// State configuration (e.g., "per_shard_kv_reverse_ring_buffer").
     pub state_config: Option<String>,
     /// Context length this template supports.
@@ -376,7 +353,7 @@ pub struct ShardPartitionEntry {
     pub role: ShardRole,
     pub layer_start: usize,
     pub layer_end: usize,
-    pub compute_units: ComputeUnits,
+    pub compute_units: ComputeUnitHint,
 }
 
 /// A generalized shard descriptor within a multi-shard pipeline.
@@ -404,7 +381,7 @@ pub struct ShardSpec {
     /// Output tensor specifications for this shard.
     pub output_specs: Vec<TensorSpec>,
     /// Compute units for this shard.
-    pub compute_units: ComputeUnits,
+    pub compute_units: ComputeUnitHint,
     /// Op profile describing the operation sequence for this shard.
     ///
     /// This makes the shard's op structure explicit rather than implicit.
@@ -546,7 +523,7 @@ impl ShardPipelineSpec {
         batch_size: usize,
         dtype: &str,
     ) -> Self {
-        let shard_names = vec![
+        let shard_names = [
             format!("{}_entry", task_name),
             format!("{}_interior", task_name),
             format!("{}_exit", task_name),
@@ -590,9 +567,7 @@ impl ShardPipelineSpec {
                     dtype: dtype.into(),
                 }],
                 compute_units: ShardRole::Interior.default_compute_units(),
-                op_profile: ShardOpProfile::InteriorLinear {
-                    activation: ActivationType::GeluTanh,
-                },
+                op_profile: ShardOpProfile::InteriorLinear { activation: ActivationType::GeluTanh },
             },
             ShardSpec {
                 shard_name: shard_names[2].clone(),
@@ -608,9 +583,7 @@ impl ShardPipelineSpec {
                     dtype: dtype.into(),
                 }],
                 compute_units: ShardRole::Exit.default_compute_units(),
-                op_profile: ShardOpProfile::ExitLinear {
-                    ln_epsilon: 1e-5,
-                },
+                op_profile: ShardOpProfile::ExitLinear { ln_epsilon: 1e-5 },
             },
         ];
 
@@ -646,19 +619,19 @@ impl ShardPipelineSpec {
                     role: ShardRole::Entry,
                     layer_start: 0,
                     layer_end: 0,
-                    compute_units: ComputeUnits::CPUAndNE,
+                    compute_units: ComputeUnitHint::CPUAndNE,
                 },
                 ShardPartitionEntry {
                     role: ShardRole::Interior,
                     layer_start: 1,
                     layer_end: 1,
-                    compute_units: ComputeUnits::CPUAndNE,
+                    compute_units: ComputeUnitHint::CPUAndNE,
                 },
                 ShardPartitionEntry {
                     role: ShardRole::Exit,
                     layer_start: 2,
                     layer_end: 2,
-                    compute_units: ComputeUnits::CPUAndNE,
+                    compute_units: ComputeUnitHint::CPUAndNE,
                 },
             ],
             io_compute_units: None,
@@ -703,7 +676,7 @@ impl ShardPipelineSpec {
         dtype: &str,
     ) -> Self {
         let qkv_dim = 3 * embed_dim; // Q, K, V projections concatenated
-        let shard_names = vec![
+        let shard_names = [
             format!("{}_qkv_proj", task_name),
             format!("{}_attention", task_name),
             format!("{}_out_proj", task_name),
@@ -724,10 +697,7 @@ impl ShardPipelineSpec {
                     dtype: dtype.into(),
                 }],
                 compute_units: ShardRole::Entry.default_compute_units(),
-                op_profile: ShardOpProfile::QkvProjection {
-                    num_heads,
-                    head_dim,
-                },
+                op_profile: ShardOpProfile::QkvProjection { num_heads, head_dim },
             },
             ShardSpec {
                 shard_name: shard_names[1].clone(),
@@ -743,10 +713,7 @@ impl ShardPipelineSpec {
                     dtype: dtype.into(),
                 }],
                 compute_units: ShardRole::Interior.default_compute_units(),
-                op_profile: ShardOpProfile::AttentionComputation {
-                    causal: true,
-                    stateful: true,
-                },
+                op_profile: ShardOpProfile::AttentionComputation { causal: true, stateful: true },
             },
             ShardSpec {
                 shard_name: shard_names[2].clone(),
@@ -808,14 +775,12 @@ impl ShardPipelineSpec {
         // In a real deployment, the attention shard would read from and
         // write to a shared KV cache. For v0, we declare the state
         // but the synthetic emission path uses linear projection.
-        let state_declarations = vec![
-            StateDeclaration {
-                state_id: format!("{}_kv_cache", task_name),
-                shape: vec![2, batch_size, num_heads, kv_len, head_dim],
-                dtype: dtype.into(),
-                owner_package: shard_names[1].clone(),
-            },
-        ];
+        let state_declarations = vec![StateDeclaration {
+            state_id: format!("{}_kv_cache", task_name),
+            shape: vec![2, batch_size, num_heads, kv_len, head_dim],
+            dtype: dtype.into(),
+            owner_package: shard_names[1].clone(),
+        }];
 
         let shard_template = ShardTemplate {
             template_id: format!("{}_3shard_decode_template", task_name),
@@ -824,19 +789,19 @@ impl ShardPipelineSpec {
                     role: ShardRole::Entry,
                     layer_start: 0,
                     layer_end: 0,
-                    compute_units: ComputeUnits::CPUAndNE,
+                    compute_units: ComputeUnitHint::CPUAndNE,
                 },
                 ShardPartitionEntry {
                     role: ShardRole::Interior,
                     layer_start: 1,
                     layer_end: 1,
-                    compute_units: ComputeUnits::CPUAndNE,
+                    compute_units: ComputeUnitHint::CPUAndNE,
                 },
                 ShardPartitionEntry {
                     role: ShardRole::Exit,
                     layer_start: 2,
                     layer_end: 2,
-                    compute_units: ComputeUnits::CPUAndNE,
+                    compute_units: ComputeUnitHint::CPUAndNE,
                 },
             ],
             io_compute_units: None,
@@ -872,8 +837,10 @@ impl ShardPipelineSpec {
     /// This is the generalized PIR construction that works for any
     /// pipeline spec, not just the 3-shard linear decomposition.
     pub fn to_pir_graph(&self) -> PirGraph {
-        let packages: Vec<Package> = self.shards.iter().map(|shard| {
-            Package {
+        let packages: Vec<Package> = self
+            .shards
+            .iter()
+            .map(|shard| Package {
                 name: shard.shard_name.clone(),
                 role: PackageRole::DecoderShard(shard.role.clone()),
                 compute_units: shard.compute_units.clone(),
@@ -883,10 +850,13 @@ impl ShardPipelineSpec {
                     inputs: shard.input_specs.clone(),
                     outputs: shard.output_specs.clone(),
                     stateful: !self.state_declarations.is_empty()
-                        && self.state_declarations.iter().any(|s| s.owner_package == shard.shard_name),
+                        && self
+                            .state_declarations
+                            .iter()
+                            .any(|s| s.owner_package == shard.shard_name),
                 }],
-            }
-        }).collect();
+            })
+            .collect();
 
         PirGraph {
             packages,
@@ -898,7 +868,6 @@ impl ShardPipelineSpec {
             minimum_deployment_target: self.opset_version.clone(),
         }
     }
-
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -924,9 +893,8 @@ mod tests {
     /// meant StateWriteRead was declared but never exercised.
     #[test]
     fn test_decode_step_uses_state_write_read_for_attention_handoff() {
-        let spec = ShardPipelineSpec::three_shard_decode_step(
-            "test_task", 128, 4, 32, 64, 1, "fp16",
-        );
+        let spec =
+            ShardPipelineSpec::three_shard_decode_step("test_task", 128, 4, 32, 64, 1, "fp16");
 
         // There should be exactly 2 handoffs: Entry→Interior and Interior→Exit
         assert_eq!(spec.handoffs.len(), 2, "Three-shard decode step must have 2 handoffs");
@@ -950,9 +918,7 @@ mod tests {
     /// (no state-mediated handoff needed for linear-only shards).
     #[test]
     fn test_linear_pipeline_uses_tensor_pass_through() {
-        let spec = ShardPipelineSpec::three_shard_linear(
-            "test_linear", 64, 48, 32, 1, "fp16",
-        );
+        let spec = ShardPipelineSpec::three_shard_linear("test_linear", 64, 48, 32, 1, "fp16");
 
         assert_eq!(spec.handoffs.len(), 2);
         assert_eq!(
@@ -970,13 +936,16 @@ mod tests {
     /// Verify that decode-step plan has state declarations for KV cache.
     #[test]
     fn test_decode_step_has_kv_cache_state_declaration() {
-        let spec = ShardPipelineSpec::three_shard_decode_step(
-            "test_task", 128, 4, 32, 64, 1, "fp16",
-        );
+        let spec =
+            ShardPipelineSpec::three_shard_decode_step("test_task", 128, 4, 32, 64, 1, "fp16");
 
-        assert!(!spec.state_declarations.is_empty(),
-            "Decode-step plan must have state declarations for KV cache");
-        assert!(spec.state_declarations.iter().any(|s| s.state_id.contains("kv_cache")),
-            "At least one state declaration must reference KV cache");
+        assert!(
+            !spec.state_declarations.is_empty(),
+            "Decode-step plan must have state declarations for KV cache"
+        );
+        assert!(
+            spec.state_declarations.iter().any(|s| s.state_id.contains("kv_cache")),
+            "At least one state declaration must reference KV cache"
+        );
     }
 }

@@ -10,13 +10,13 @@
 //! - `FallbackDetector` — honest, weak fallback suspicion assessment
 //! - `mir_compare` — MIR-vs-emitted-structure comparison (Sprint 34)
 
-pub mod task_gen;
 pub mod baseline;
 pub mod device_meta;
-pub mod harness;
 pub mod drift;
 pub mod fallback;
 pub mod families;
+pub mod harness;
 pub mod host_inspect;
 pub mod mir_compare;
 pub mod run_dir;
+pub mod task_gen;

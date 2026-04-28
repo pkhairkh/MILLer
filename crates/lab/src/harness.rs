@@ -128,7 +128,6 @@ pub struct InspectionStepResult {
     pub warnings: Vec<String>,
 
     // --- Sprint 34: Structural Verification Fields ---
-
     /// Whether MLModelStructure inspection was available and succeeded.
     /// None means structural inspection was not attempted.
     /// Some(true) means structural inspection succeeded.

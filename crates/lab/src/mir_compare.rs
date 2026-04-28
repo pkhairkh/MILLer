@@ -146,8 +146,8 @@ pub fn mir_to_mil_name(mir_op_type: &str) -> Option<&'static str> {
         "MILAsin" => Some("asin"),
         "MILAtan" => Some("atan"),
         "MILCosh" => Some("cosh"),
-        "MLSinh" => Some("sinh"),
-        "MILTanhInverse" => Some("tanh_inverse"),
+        "MILSinh" => Some("sinh"),
+        "MILAtanh" => Some("atanh"),
         "MILErf" => Some("erf"),
         "MILLogicalNot" => Some("logical_not"),
         "MILSelect" => Some("select"),
@@ -325,8 +325,8 @@ pub fn mir_op_type_name(op: &MirOp) -> &'static str {
         MirOp::MILAsin { .. } => "MILAsin",
         MirOp::MILAtan { .. } => "MILAtan",
         MirOp::MILCosh { .. } => "MILCosh",
-        MirOp::MLSinh { .. } => "MLSinh",
-        MirOp::MILTanhInverse { .. } => "MILTanhInverse",
+        MirOp::MILSinh { .. } => "MILSinh",
+        MirOp::MILAtanh { .. } => "MILAtanh",
         MirOp::MILErf { .. } => "MILErf",
         MirOp::MILLogicalNot { .. } => "MILLogicalNot",
         MirOp::MILSelect { .. } => "MILSelect",
@@ -397,7 +397,9 @@ pub fn mir_op_type_name(op: &MirOp) -> &'static str {
         MirOp::MILConstexprSparseToDense { .. } => "MILConstexprSparseToDense",
         MirOp::MILConstexprCast { .. } => "MILConstexprCast",
         MirOp::MILConstexprLutToSparse { .. } => "MILConstexprLutToSparse",
-        MirOp::MILConstexprSparseBlockwiseShiftScale { .. } => "MILConstexprSparseBlockwiseShiftScale",
+        MirOp::MILConstexprSparseBlockwiseShiftScale { .. } => {
+            "MILConstexprSparseBlockwiseShiftScale"
+        }
         MirOp::MILRnn { .. } => "MILRnn",
         MirOp::MILGru { .. } => "MILGru",
         MirOp::MILLstm { .. } => "MILLstm",
@@ -535,10 +537,7 @@ pub fn compare_mir_vs_structure(
     for (name, &expected_n) in &expected_counts {
         let actual_n = actual_counts.get(name).copied().unwrap_or(0);
         if actual_n < expected_n {
-            missing_ops.push(format!(
-                "{} (expected {}, found {})",
-                name, expected_n, actual_n
-            ));
+            missing_ops.push(format!("{} (expected {}, found {})", name, expected_n, actual_n));
         }
     }
 
@@ -687,8 +686,8 @@ fn mir_op_name(op: &MirOp) -> Option<String> {
         MirOp::MILAsin { name, .. } => Some(name.clone()),
         MirOp::MILAtan { name, .. } => Some(name.clone()),
         MirOp::MILCosh { name, .. } => Some(name.clone()),
-        MirOp::MLSinh { name, .. } => Some(name.clone()),
-        MirOp::MILTanhInverse { name, .. } => Some(name.clone()),
+        MirOp::MILSinh { name, .. } => Some(name.clone()),
+        MirOp::MILAtanh { name, .. } => Some(name.clone()),
         MirOp::MILErf { name, .. } => Some(name.clone()),
         MirOp::MILLogicalNot { name, .. } => Some(name.clone()),
         MirOp::MILSelect { name, .. } => Some(name.clone()),
@@ -824,8 +823,10 @@ mod tests {
     fn test_mir_to_mil_name_mapping() {
         assert_eq!(mir_to_mil_name("MILLinear"), Some("linear"));
         assert_eq!(mir_to_mil_name("MILGelu"), Some("gelu"));
-        assert_eq!(mir_to_mil_name("MILScaledDotProductAttention"),
-                   Some("scaled_dot_product_attention"));
+        assert_eq!(
+            mir_to_mil_name("MILScaledDotProductAttention"),
+            Some("scaled_dot_product_attention")
+        );
         assert_eq!(mir_to_mil_name("UNKNOWN"), None);
     }
 
@@ -843,10 +844,7 @@ mod tests {
     #[test]
     fn test_compare_mir_vs_structure_perfect_match() {
         let mir = make_simple_mir_graph();
-        let structure_ops = vec![
-            "const".to_string(),
-            "linear".to_string(),
-        ];
+        let structure_ops = vec!["const".to_string(), "linear".to_string()];
         let result = compare_mir_vs_structure(&mir, &structure_ops);
         assert_eq!(result.mir_op_count, 2);
         assert!(result.op_fidelity_score > 0.99);
