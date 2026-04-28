@@ -228,31 +228,45 @@ pub struct SharedWeightRef {
 /// Manifest.json content for an mlpackage.
 ///
 /// Every .mlpackage directory contains a Manifest.json file that describes
-/// the package structure. This is the Rust-side representation.
+/// the package structure using Apple's required schema:
+/// - `fileFormatVersion`: Must be `"1.0.0"`
+/// - `itemInfoEntries`: Map of UUID → item info (path, name, author, description)
+/// - `rootModelIdentifier`: UUID of the model.mlmodel entry
+///
+/// Reference: coremltools ModelPackage.cpp
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageManifest {
-    /// Schema version (currently "1.0").
-    #[serde(rename = "schemaVersion")]
-    pub schema_version: String,
-    /// Model identifier string.
-    #[serde(rename = "modelId")]
-    pub model_id: String,
-    /// List of file entries in the package.
-    pub files: Vec<PackageManifestEntry>,
-    /// Metadata about the model.
-    pub metadata: PackageManifestMetadata,
+    /// File format version. Must be `"1.0.0"` (Apple's only supported value).
+    #[serde(rename = "fileFormatVersion")]
+    pub file_format_version: String,
+    /// Map of UUID string → item info entries.
+    #[serde(rename = "itemInfoEntries")]
+    pub item_info_entries: std::collections::HashMap<String, ManifestItemInfo>,
+    /// UUID of the root model specification entry.
+    #[serde(rename = "rootModelIdentifier")]
+    pub root_model_identifier: String,
 }
 
-/// A single file entry in the package manifest.
+/// A single item entry in the Manifest.json `itemInfoEntries` map.
+///
+/// Each entry MUST have exactly 4 keys: `path`, `name`, `author`, `description`.
+/// The `path` is relative to the `Data/` directory inside the mlpackage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PackageManifestEntry {
-    /// Path relative to the mlpackage root.
+pub struct ManifestItemInfo {
+    /// Relative path under `Data/` directory (e.g., `"com.apple.CoreML/model.mlmodel"`).
     pub path: String,
-    /// File role (e.g., "model", "weights").
-    pub role: String,
+    /// Item name (e.g., `"model.mlmodel"` or `"weights"`).
+    pub name: String,
+    /// Author identifier (e.g., `"com.apple.CoreML"`).
+    pub author: String,
+    /// Human-readable description.
+    pub description: String,
 }
 
-/// Metadata in the package manifest.
+/// Legacy manifest metadata — kept for backward compatibility with existing
+/// conversion functions that populate user-defined metadata. This data is
+/// now placed inside the Apple protobuf `Metadata.userDefined` map instead
+/// of the Manifest.json.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageManifestMetadata {
     /// Author string.
@@ -1277,13 +1291,17 @@ fn make_immediate_bytes_value(
 }
 
 /// Build an `apple_proto::mil_spec::Value` referencing weight.bin via BlobFileValue.
+///
+/// The `fileName` field uses Apple's virtual path convention:
+/// `"@model_path/weights/weight.bin"`. The `@model_path` is resolved at runtime
+/// by Core ML to the actual weights directory within the mlpackage.
 fn make_blob_file_value(offset: u64, dtype: i32, shape: &[u64]) -> apple_proto::mil_spec::Value {
     apple_proto::mil_spec::Value {
         doc_string: String::new(),
         r#type: Some(make_apple_value_type(dtype, shape)),
         value: Some(apple_proto::mil_spec::value::Value::BlobFileValue(
             apple_proto::mil_spec::value::BlobFileValue {
-                file_name: "weight.bin".to_string(),
+                file_name: "@model_path/weights/weight.bin".to_string(),
                 offset,
             },
         )),

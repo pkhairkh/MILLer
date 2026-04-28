@@ -1,23 +1,20 @@
 //! ML Package Writer
 //!
-//! Writes a `.mlpackage` directory to disk with the correct structure:
+//! Writes a `.mlpackage` directory to disk with the correct structure
+//! matching Apple's Core ML package format:
 //!
 //! ```text
 //! model.mlpackage/
-//! ├── Manifest.json           — Package metadata
-//! ├── Data/
-//! │   └── com.apple.CoreML/
-//! │       └── weights/
-//! │           └── weight.bin  — Concatenated weight data
-//! └── Model/
+//! ├── Manifest.json           — Package metadata (Apple schema)
+//! └── Data/
 //!     └── com.apple.CoreML/
-//!         └── model.mlmodel   — Protobuf model definition
+//!         ├── model.mlmodel   — Protobuf model definition
+//!         └── weights/
+//!             └── weight.bin  — Concatenated weight data
 //! ```
 
 use crate::weights::WeightBinBuilder;
-use ane_coreml_proto::{
-    CoreMlModel, PackageManifest, PackageManifestEntry, PackageManifestMetadata,
-};
+use ane_coreml_proto::{CoreMlModel, ManifestItemInfo, PackageManifest};
 use anyhow::Result;
 use std::fs;
 use std::path::Path;
@@ -78,12 +75,12 @@ impl MlPackageWriter {
             fs::remove_dir_all(pkg_path)?;
         }
 
-        // Create directory structure
-        let weights_dir = pkg_path.join("Data/com.apple.CoreML/weights");
-        let model_dir = pkg_path.join("Model/com.apple.CoreML");
+        // Create directory structure — Apple's mlpackage puts EVERYTHING under Data/
+        let data_dir = pkg_path.join("Data/com.apple.CoreML");
+        let weights_dir = data_dir.join("weights");
 
+        fs::create_dir_all(&data_dir)?;
         fs::create_dir_all(&weights_dir)?;
-        fs::create_dir_all(&model_dir)?;
 
         // Step 1: Build and write weight.bin
         let mut weight_builder = WeightBinBuilder::new();
@@ -113,7 +110,7 @@ impl MlPackageWriter {
         // Step 2: Serialize and write the model protobuf
         let model_proto =
             crate::mir_to_proto::model_to_protobuf_bytes(model, &weight_result.entries)?;
-        let mlmodel_path = model_dir.join("model.mlmodel");
+        let mlmodel_path = data_dir.join("model.mlmodel");
         fs::write(&mlmodel_path, &model_proto)?;
 
         // Step 3: Generate and write Manifest.json
@@ -141,46 +138,49 @@ impl MlPackageWriter {
         })
     }
 
-    /// Build the Manifest.json content from a CoreMlModel.
+    /// Build the Manifest.json content from a CoreMlModel using Apple's schema.
+    ///
+    /// Apple's Manifest.json requires:
+    /// - `fileFormatVersion`: Must be `"1.0.0"`
+    /// - `itemInfoEntries`: Map of UUID → {path, name, author, description}
+    /// - `rootModelIdentifier`: UUID of the model spec entry
+    ///
+    /// The `path` in each entry is relative to the `Data/` directory.
     fn build_manifest(model: &CoreMlModel) -> PackageManifest {
-        let files = vec![
-            // Model file
-            PackageManifestEntry {
-                path: "Model/com.apple.CoreML/model.mlmodel".to_string(),
-                role: "model".to_string(),
-            },
-            // Weight file
-            PackageManifestEntry {
-                path: "Data/com.apple.CoreML/weights/weight.bin".to_string(),
-                role: "weights".to_string(),
-            },
-        ];
+        // Generate UUIDs for the entries (uppercase with hyphens, matching Apple's format)
+        let model_uuid = uuid::Uuid::new_v4();
+        let weights_uuid = uuid::Uuid::new_v4();
 
-        let mut user_defined = HashMap::new();
-        for (k, v) in &model.user_defined_metadata {
-            user_defined.insert(k.clone(), v.clone());
+        let mut item_info_entries = HashMap::new();
+
+        // Model spec entry
+        item_info_entries.insert(
+            model_uuid.to_string().to_uppercase(),
+            ManifestItemInfo {
+                path: "com.apple.CoreML/model.mlmodel".to_string(),
+                name: "model.mlmodel".to_string(),
+                author: "com.apple.CoreML".to_string(),
+                description: "CoreML Model Specification".to_string(),
+            },
+        );
+
+        // Weights entry (only if there are weights)
+        if !model.weights.is_empty() {
+            item_info_entries.insert(
+                weights_uuid.to_string().to_uppercase(),
+                ManifestItemInfo {
+                    path: "com.apple.CoreML/weights".to_string(),
+                    name: "weights".to_string(),
+                    author: "com.apple.CoreML".to_string(),
+                    description: "CoreML Model Weights".to_string(),
+                },
+            );
         }
 
-        // Add emission metadata
-        user_defined
-            .insert("com.apple.coreml.mlemission".to_string(), "MILLer/proto-direct".to_string());
-        user_defined.insert("com.apple.coreml.emission.version".to_string(), "1.0".to_string());
-
         PackageManifest {
-            schema_version: "1.0.0".to_string(),
-            model_id: format!("MILLer-{}", model.default_function_name),
-            files,
-            metadata: PackageManifestMetadata {
-                author: Some("MILLer".to_string()),
-                short_description: Some(format!(
-                    "Proto-direct emission: {} function(s), {} weight(s)",
-                    model.functions.len(),
-                    model.weights.len(),
-                )),
-                license: None,
-                version: Some("1.0".to_string()),
-                user_defined,
-            },
+            file_format_version: "1.0.0".to_string(),
+            item_info_entries,
+            root_model_identifier: model_uuid.to_string().to_uppercase(),
         }
     }
 
@@ -282,9 +282,11 @@ mod tests {
         };
 
         let manifest = MlPackageWriter::build_manifest(&model);
-        assert_eq!(manifest.schema_version, "1.0.0");
-        assert_eq!(manifest.files.len(), 2);
-        assert!(manifest.metadata.user_defined.contains_key("com.apple.coreml.mlemission"));
+        assert_eq!(manifest.file_format_version, "1.0.0");
+        assert_eq!(manifest.item_info_entries.len(), 1); // Only model entry (no weights)
+        assert!(!manifest.root_model_identifier.is_empty());
+        // The root model identifier must be one of the entry UUIDs
+        assert!(manifest.item_info_entries.contains_key(&manifest.root_model_identifier));
     }
 
     #[test]
@@ -311,7 +313,7 @@ mod tests {
         assert!(result.total_size > 0);
 
         // Verify the protobuf file was written and is parseable
-        let mlmodel_path = format!("{output_path}/Model/com.apple.CoreML/model.mlmodel");
+        let mlmodel_path = format!("{output_path}/Data/com.apple.CoreML/model.mlmodel");
         let data = std::fs::read(&mlmodel_path).unwrap();
         assert!(!data.is_empty());
 
@@ -336,12 +338,12 @@ mod tests {
         let weight_data = std::fs::read(&weight_bin_path).unwrap();
         assert!(weight_data.len() > 0, "weight.bin should have data");
 
-        // Verify Manifest.json
+        // Verify Manifest.json uses Apple's schema
         let manifest_path = format!("{output_path}/Manifest.json");
         let manifest_data = std::fs::read_to_string(&manifest_path).unwrap();
         let manifest: serde_json::Value = serde_json::from_str(&manifest_data).unwrap();
-        assert_eq!(manifest["schemaVersion"], "1.0.0");
-        assert!(manifest["files"].is_array());
-        assert!(manifest["metadata"]["userDefined"].is_object());
+        assert_eq!(manifest["fileFormatVersion"], "1.0.0");
+        assert!(manifest["itemInfoEntries"].is_object());
+        assert!(manifest["rootModelIdentifier"].is_string());
     }
 }

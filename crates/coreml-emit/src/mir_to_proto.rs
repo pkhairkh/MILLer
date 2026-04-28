@@ -525,7 +525,7 @@ mod tests {
             ane_coreml_proto::apple_proto::mil_spec::argument::binding::Binding::Value(v) => {
                 match v.value.as_ref().unwrap() {
                     ane_coreml_proto::apple_proto::mil_spec::value::Value::BlobFileValue(bfv) => {
-                        assert_eq!(bfv.file_name, "weight.bin");
+                        assert_eq!(bfv.file_name, "@model_path/weights/weight.bin");
                         assert_eq!(bfv.offset, 0);
                     }
                     other => panic!("Expected BlobFileValue for weight, got {:?}", other),
@@ -543,7 +543,7 @@ mod tests {
             ane_coreml_proto::apple_proto::mil_spec::argument::binding::Binding::Value(v) => {
                 match v.value.as_ref().unwrap() {
                     ane_coreml_proto::apple_proto::mil_spec::value::Value::BlobFileValue(bfv) => {
-                        assert_eq!(bfv.file_name, "weight.bin");
+                        assert_eq!(bfv.file_name, "@model_path/weights/weight.bin");
                         assert_eq!(bfv.offset, 256);
                     }
                     other => panic!("Expected BlobFileValue for bias, got {:?}", other),

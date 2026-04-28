@@ -251,7 +251,7 @@ pub fn validate_proto_direct_package(mlpackage_path: &str) -> Result<ProtoDirect
     }
 
     // 4. Model file
-    let model_path = pkg_path.join("Model/com.apple.CoreML/model.mlmodel");
+    let model_path = pkg_path.join("Data/com.apple.CoreML/model.mlmodel");
     let model_file_size = if model_path.exists() {
         match fs::metadata(&model_path) {
             Ok(meta) => {
@@ -267,7 +267,7 @@ pub fn validate_proto_direct_package(mlpackage_path: &str) -> Result<ProtoDirect
             }
         }
     } else {
-        errors.push("Model/com.apple.CoreML/model.mlmodel is missing".to_string());
+        errors.push("Data/com.apple.CoreML/model.mlmodel is missing".to_string());
         None
     };
 
@@ -329,7 +329,7 @@ mod tests {
         // Verify the directory actually exists
         assert!(output_path.exists());
         assert!(output_path.join("Manifest.json").exists());
-        assert!(output_path.join("Model/com.apple.CoreML/model.mlmodel").exists());
+        assert!(output_path.join("Data/com.apple.CoreML/model.mlmodel").exists());
         assert!(output_path.join("Data/com.apple.CoreML/weights/weight.bin").exists());
     }
 
@@ -372,9 +372,9 @@ mod tests {
         let malformed_path = tmp.path().join("bad.mlpackage");
 
         // Create a directory that looks like an mlpackage but is missing files
-        fs::create_dir_all(malformed_path.join("Model/com.apple.CoreML")).unwrap();
+        fs::create_dir_all(malformed_path.join("Data/com.apple.CoreML")).unwrap();
         // Write an empty model file
-        fs::write(malformed_path.join("Model/com.apple.CoreML/model.mlmodel"), b"").unwrap();
+        fs::write(malformed_path.join("Data/com.apple.CoreML/model.mlmodel"), b"").unwrap();
         // No Manifest.json, empty model file
 
         let validation = validate_proto_direct_package(malformed_path.to_str().unwrap()).unwrap();

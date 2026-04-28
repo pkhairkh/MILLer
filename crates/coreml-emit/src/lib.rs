@@ -38,18 +38,16 @@
 //!
 //! ## mlpackage Directory Structure
 //!
-//! An `.mlpackage` directory has this structure:
+//! An `.mlpackage` directory follows Apple's Core ML package format:
 //!
 //! ```text
 //! model.mlpackage/
-//! ├── Manifest.json           — Package metadata
-//! ├── Data/
-//! │   └── com.apple.CoreML/
-//! │       └── weights/
-//! │           └── weight.bin  — Concatenated weight data
-//! └── Model/
+//! ├── Manifest.json           — Package metadata (Apple schema)
+//! └── Data/
 //!     └── com.apple.CoreML/
-//!         └── model.mlmodel   — Protobuf model definition
+//!         ├── model.mlmodel   — Protobuf model definition
+//!         └── weights/
+//!             └── weight.bin  — Concatenated weight data
 //! ```
 //!
 //! The `model.mlmodel` file contains a serialized `Model` protobuf message
