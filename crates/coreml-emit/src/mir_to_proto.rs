@@ -163,20 +163,24 @@ pub fn convert_mir_to_proto_multifunction(
     })
 }
 
-/// Serialize a CoreMlModel to protobuf bytes.
+/// Serialize a CoreMlModel to protobuf bytes using Apple's actual wire format.
 ///
 /// This produces the raw bytes that will be written as `model.mlmodel`
-/// inside the mlpackage directory. The serialization follows the
-/// Core ML protobuf format as defined in Model.proto.
+/// inside the mlpackage directory. The serialization uses Apple's actual
+/// protobuf format (packages `CoreML.Specification` / `CoreML.Specification.MILSpec`),
+/// which Core ML's runtime can decode correctly.
 ///
-/// Uses prost's `Message::encode_to_vec()` for real protobuf serialization,
-/// converting the hand-written `CoreMlModel` into a `proto::Model` first.
+/// Key differences from the legacy format:
+/// - Uses `MILSpec.Program` (field 502) instead of `MLProgram` (field 20)
+/// - Operations use generic `type` + `inputs` + `outputs` format
+/// - Data types use Apple enum values (FLOAT16=10, FLOAT32=11, etc.)
+/// - Weight references use `BlobFileValue` with `fileName="weight.bin"`
 pub fn model_to_protobuf_bytes(
     model: &CoreMlModel,
     weight_entries: &[WeightEntry],
 ) -> Result<Vec<u8>> {
-    let proto_model = ane_coreml_proto::convert_to_proto_model(model, weight_entries);
-    Ok(proto_model.encode_to_vec())
+    let apple_model = ane_coreml_proto::convert_to_apple_proto_model(model, weight_entries);
+    Ok(apple_model.encode_to_vec())
 }
 
 /// Build a linear projection MIR graph (for testing and as a
@@ -371,7 +375,7 @@ mod tests {
         assert_ne!(data1, data3); // Different seed = different data
     }
 
-    // ─── Real protobuf serialization tests ─────────────────────────────────
+    // ─── Apple-format protobuf serialization tests ────────────────────────
 
     #[test]
     fn test_model_to_protobuf_bytes_linear() {
@@ -382,13 +386,18 @@ mod tests {
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         assert!(!bytes.is_empty());
 
-        // Verify the bytes are valid protobuf by parsing back
-        let parsed = ane_coreml_proto::proto::Model::decode(bytes.as_slice()).unwrap();
-        assert_eq!(
-            parsed.specification_version,
-            ane_coreml_proto::proto::SpecificationVersion::SpecificationVersion8 as i32,
-        );
-        assert!(parsed.ml_program.is_some());
+        // Verify the bytes are valid Apple protobuf by parsing back
+        let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
+        assert_eq!(parsed.specification_version, 8);
+        assert!(parsed.description.is_some());
+
+        // Check that mlProgram is present (field 502 in Apple's format)
+        let model_type = parsed.r#type.as_ref().unwrap();
+        match model_type {
+            ane_coreml_proto::apple_proto::model::Type::MlProgram(program) => {
+                assert!(program.functions.contains_key("main"));
+            }
+        }
     }
 
     #[test]
@@ -406,72 +415,192 @@ mod tests {
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         assert!(!bytes.is_empty());
 
-        let parsed = ane_coreml_proto::proto::Model::decode(bytes.as_slice()).unwrap();
-        assert!(parsed.ml_program.is_some());
-        let ml_prog = parsed.ml_program.as_ref().unwrap();
-        assert!(ml_prog.functions.contains_key("embedding"));
-        assert!(ml_prog.functions.contains_key("decode_step"));
+        let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
+        let model_type = parsed.r#type.as_ref().unwrap();
+        match model_type {
+            ane_coreml_proto::apple_proto::model::Type::MlProgram(program) => {
+                assert!(program.functions.contains_key("embedding"));
+                assert!(program.functions.contains_key("decode_step"));
+            }
+        }
     }
 
     #[test]
-    fn test_protobuf_roundtrip_preserves_fields() {
+    fn test_apple_proto_spec_version() {
         let graph = build_linear_projection_mir("test_rt", 32, 16, 1, MilDtypeCompat::Fp16, 99);
         let model = convert_mir_to_proto(&graph, SpecVersion::V7, CoreMlComputeUnit::All).unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
-        let parsed = ane_coreml_proto::proto::Model::decode(bytes.as_slice()).unwrap();
+        let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
 
-        // Check spec version
-        assert_eq!(
-            parsed.specification_version,
-            ane_coreml_proto::proto::SpecificationVersion::SpecificationVersion7 as i32,
-        );
-
-        // Check model description
-        assert!(parsed.description.is_some());
-        let desc = parsed.description.as_ref().unwrap();
-        assert_eq!(desc.default_function_name, "main");
-
-        // Check optimization hints
-        assert!(parsed.optimization_hints.is_some());
-        let hints = parsed.optimization_hints.as_ref().unwrap();
-        assert_eq!(hints.preferred_compute_unit, ane_coreml_proto::proto::ComputeUnit::All as i32,);
+        assert_eq!(parsed.specification_version, 7);
     }
 
     #[test]
-    fn test_protobuf_roundtrip_ops_preserved() {
+    fn test_apple_proto_ops_preserved() {
         let graph = build_linear_projection_mir("test_ops", 16, 8, 1, MilDtypeCompat::Fp16, 7);
         let model =
             convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe).unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
-        let parsed = ane_coreml_proto::proto::Model::decode(bytes.as_slice()).unwrap();
+        let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
 
-        let ml_prog = parsed.ml_program.as_ref().unwrap();
-        let main_func = ml_prog.functions.get("main").unwrap();
-        let block = main_func.block.as_ref().unwrap();
+        let model_type = parsed.r#type.as_ref().unwrap();
+        let program = match model_type {
+            ane_coreml_proto::apple_proto::model::Type::MlProgram(p) => p,
+        };
+        let main_func = program.functions.get("main").unwrap();
+        assert_eq!(main_func.opset, "iOS16");
+
+        let block = main_func
+            .block_specializations
+            .get("iOS16")
+            .unwrap();
 
         // Should have 3 operations: const (weight) + const (bias) + linear
         assert_eq!(block.operations.len(), 3);
 
-        // Check SSA names
-        assert_eq!(block.operations[0].name, "weight");
-        assert_eq!(block.operations[1].name, "bias");
-        assert_eq!(block.operations[2].name, "output");
+        // Check operation types (Apple format uses string type field)
+        assert_eq!(block.operations[0].r#type, "const");
+        assert_eq!(block.operations[1].r#type, "const");
+        assert_eq!(block.operations[2].r#type, "linear");
 
-        // Check operation types
-        assert!(matches!(
-            &block.operations[0].operation,
-            Some(ane_coreml_proto::proto::mil_operation::Operation::ConstOp(_))
-        ));
-        assert!(matches!(
-            &block.operations[2].operation,
-            Some(ane_coreml_proto::proto::mil_operation::Operation::LinearOp(_))
-        ));
+        // Check output names
+        assert_eq!(block.operations[0].outputs[0].name, "weight");
+        assert_eq!(block.operations[1].outputs[0].name, "bias");
+        assert_eq!(block.operations[2].outputs[0].name, "output");
+
+        // Check linear op inputs
+        let linear_op = &block.operations[2];
+        assert!(linear_op.inputs.contains_key("x"));
+        assert!(linear_op.inputs.contains_key("weight"));
+        assert!(linear_op.inputs.contains_key("bias"));
     }
 
     #[test]
-    fn test_protobuf_roundtrip_with_state_ops() {
+    fn test_apple_proto_weight_blob_file_references() {
+        let graph = build_linear_projection_mir("test_wref", 16, 8, 1, MilDtypeCompat::Fp16, 7);
+        let model =
+            convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe).unwrap();
+
+        // Simulate weight entries with real offsets (as WeightBinBuilder would produce)
+        let weight_entries = vec![
+            WeightEntry {
+                name: "weight".to_string(),
+                offset: 0,
+                size: 256,
+                shape: vec![8, 16],
+                dtype: CoreMlDataType::Float16,
+                data: vec![0u8; 256],
+            },
+            WeightEntry {
+                name: "bias".to_string(),
+                offset: 256,
+                size: 16,
+                shape: vec![8],
+                dtype: CoreMlDataType::Float16,
+                data: vec![0u8; 16],
+            },
+        ];
+
+        let bytes = model_to_protobuf_bytes(&model, &weight_entries).unwrap();
+        let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
+
+        let model_type = parsed.r#type.as_ref().unwrap();
+        let program = match model_type {
+            ane_coreml_proto::apple_proto::model::Type::MlProgram(p) => p,
+        };
+        let main_func = program.functions.get("main").unwrap();
+        let block = main_func
+            .block_specializations
+            .get("iOS16")
+            .unwrap();
+
+        // First const op: should have BlobFileValue with offset 0
+        let const_op0 = &block.operations[0];
+        assert_eq!(const_op0.r#type, "const");
+        let value_arg = const_op0.inputs.get("value").unwrap();
+        let binding = &value_arg.arguments[0];
+        match binding.binding.as_ref().unwrap() {
+            ane_coreml_proto::apple_proto::mil_spec::argument::binding::Binding::Value(v) => {
+                match v.value.as_ref().unwrap() {
+                    ane_coreml_proto::apple_proto::mil_spec::value::Value::BlobFileValue(bfv) => {
+                        assert_eq!(bfv.file_name, "weight.bin");
+                        assert_eq!(bfv.offset, 0);
+                    }
+                    other => panic!("Expected BlobFileValue for weight, got {:?}", other),
+                }
+            }
+            other => panic!("Expected Value binding for const, got {:?}", other),
+        }
+
+        // Second const op: should have BlobFileValue with offset 256
+        let const_op1 = &block.operations[1];
+        assert_eq!(const_op1.r#type, "const");
+        let value_arg1 = const_op1.inputs.get("value").unwrap();
+        let binding1 = &value_arg1.arguments[0];
+        match binding1.binding.as_ref().unwrap() {
+            ane_coreml_proto::apple_proto::mil_spec::argument::binding::Binding::Value(v) => {
+                match v.value.as_ref().unwrap() {
+                    ane_coreml_proto::apple_proto::mil_spec::value::Value::BlobFileValue(bfv) => {
+                        assert_eq!(bfv.file_name, "weight.bin");
+                        assert_eq!(bfv.offset, 256);
+                    }
+                    other => panic!("Expected BlobFileValue for bias, got {:?}", other),
+                }
+            }
+            other => panic!("Expected Value binding for const, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_apple_proto_model_description_functions() {
+        let graph = build_linear_projection_mir("test_desc", 32, 16, 1, MilDtypeCompat::Fp16, 99);
+        let model =
+            convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe).unwrap();
+
+        let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
+        let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
+
+        let desc = parsed.description.as_ref().unwrap();
+        assert_eq!(desc.default_function_name, "main");
+        // Apple format uses repeated FunctionDescription at field 20
+        assert!(!desc.functions.is_empty());
+        assert_eq!(desc.functions[0].name, "main");
+
+        // Check metadata
+        let metadata = desc.metadata.as_ref().unwrap();
+        assert_eq!(metadata.author, "MILLer");
+        assert!(metadata.user_defined.contains_key("com.apple.coreml.mlemission"));
+    }
+
+    #[test]
+    fn test_apple_proto_array_feature_type_values() {
+        // Verify that ArrayFeatureType uses Apple's enum values
+        assert_eq!(
+            ane_coreml_proto::apple_proto::array_feature_type::ArrayDataType::Float16 as i32,
+            65552
+        );
+        assert_eq!(
+            ane_coreml_proto::apple_proto::array_feature_type::ArrayDataType::Float32 as i32,
+            65568
+        );
+        assert_eq!(
+            ane_coreml_proto::apple_proto::array_feature_type::ArrayDataType::Int32 as i32,
+            131104
+        );
+    }
+
+    #[test]
+    fn test_apple_proto_mil_data_type_values() {
+        // Verify that MILSpec.DataType uses Apple's enum values
+        assert_eq!(ane_coreml_proto::apple_proto::mil_spec::DataType::Float16 as i32, 10);
+        assert_eq!(ane_coreml_proto::apple_proto::mil_spec::DataType::Float32 as i32, 11);
+        assert_eq!(ane_coreml_proto::apple_proto::mil_spec::DataType::Int32 as i32, 23);
+    }
+
+    #[test]
+    fn test_apple_proto_state_ops() {
         // Build a model with ReadState and CoremlUpdateState ops
         let ops = vec![
             MirOpCompat::ReadState {
@@ -499,86 +628,22 @@ mod tests {
             convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe).unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
-        let parsed = ane_coreml_proto::proto::Model::decode(bytes.as_slice()).unwrap();
+        let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
 
-        let ml_prog = parsed.ml_program.as_ref().unwrap();
-        let func = ml_prog.functions.get("decode_step").unwrap();
-        let block = func.block.as_ref().unwrap();
+        let model_type = parsed.r#type.as_ref().unwrap();
+        let program = match model_type {
+            ane_coreml_proto::apple_proto::model::Type::MlProgram(p) => p,
+        };
+        let func = program.functions.get("decode_step").unwrap();
+        let block = func
+            .block_specializations
+            .get("iOS16")
+            .unwrap();
 
         assert_eq!(block.operations.len(), 2);
 
-        // ReadState op
-        assert!(matches!(
-            &block.operations[0].operation,
-            Some(ane_coreml_proto::proto::mil_operation::Operation::ReadStateOp(_))
-        ));
-
-        // CoremlUpdateState op
-        assert!(matches!(
-            &block.operations[1].operation,
-            Some(ane_coreml_proto::proto::mil_operation::Operation::CoremlUpdateStateOp(_))
-        ));
-    }
-
-    #[test]
-    fn test_weight_file_references_in_proto() {
-        let graph = build_linear_projection_mir("test_wref", 16, 8, 1, MilDtypeCompat::Fp16, 7);
-        let model =
-            convert_mir_to_proto(&graph, SpecVersion::V8, CoreMlComputeUnit::CpuAndNe).unwrap();
-
-        // Simulate weight entries with real offsets (as WeightBinBuilder would produce)
-        let weight_entries = vec![
-            WeightEntry {
-                name: "weight".to_string(),
-                offset: 0,
-                size: 256,
-                shape: vec![8, 16],
-                dtype: CoreMlDataType::Float16,
-                data: vec![0u8; 256],
-            },
-            WeightEntry {
-                name: "bias".to_string(),
-                offset: 256,
-                size: 16,
-                shape: vec![8],
-                dtype: CoreMlDataType::Float16,
-                data: vec![0u8; 16],
-            },
-        ];
-
-        let bytes = model_to_protobuf_bytes(&model, &weight_entries).unwrap();
-        let parsed = ane_coreml_proto::proto::Model::decode(bytes.as_slice()).unwrap();
-
-        let ml_prog = parsed.ml_program.as_ref().unwrap();
-        let func = ml_prog.functions.get("main").unwrap();
-        let block = func.block.as_ref().unwrap();
-
-        // First const op should have FileReference with offset 0
-        let const_op0 = match &block.operations[0].operation {
-            Some(ane_coreml_proto::proto::mil_operation::Operation::ConstOp(op)) => op,
-            _ => panic!("Expected ConstOp"),
-        };
-        let wd0 = const_op0.value.as_ref().unwrap();
-        match &wd0.weight_data {
-            Some(ane_coreml_proto::proto::weight_data::WeightData::FileRef(fr)) => {
-                assert_eq!(fr.offset, 0);
-                assert_eq!(fr.size, 256);
-            }
-            _ => panic!("Expected FileReference for weight"),
-        }
-
-        // Second const op should have FileReference with offset 256
-        let const_op1 = match &block.operations[1].operation {
-            Some(ane_coreml_proto::proto::mil_operation::Operation::ConstOp(op)) => op,
-            _ => panic!("Expected ConstOp"),
-        };
-        let wd1 = const_op1.value.as_ref().unwrap();
-        match &wd1.weight_data {
-            Some(ane_coreml_proto::proto::weight_data::WeightData::FileRef(fr)) => {
-                assert_eq!(fr.offset, 256);
-                assert_eq!(fr.size, 16);
-            }
-            _ => panic!("Expected FileReference for bias"),
-        }
+        // Check op types
+        assert_eq!(block.operations[0].r#type, "read_state");
+        assert_eq!(block.operations[1].r#type, "coreml_update_state");
     }
 }

@@ -167,7 +167,7 @@ impl MlPackageWriter {
         user_defined.insert("com.apple.coreml.emission.version".to_string(), "1.0".to_string());
 
         PackageManifest {
-            schema_version: "1.0".to_string(),
+            schema_version: "1.0.0".to_string(),
             model_id: format!("MILLer-{}", model.default_function_name),
             files,
             metadata: PackageManifestMetadata {
@@ -282,8 +282,66 @@ mod tests {
         };
 
         let manifest = MlPackageWriter::build_manifest(&model);
-        assert_eq!(manifest.schema_version, "1.0");
+        assert_eq!(manifest.schema_version, "1.0.0");
         assert_eq!(manifest.files.len(), 2);
         assert!(manifest.metadata.user_defined.contains_key("com.apple.coreml.mlemission"));
+    }
+
+    #[test]
+    fn test_write_mlpackage_apple_format() {
+        use crate::mir_to_proto::{build_linear_projection_mir, convert_mir_to_proto};
+        use ane_coreml_proto::mir_compat::MilDtypeCompat;
+
+        let graph = build_linear_projection_mir(
+            "test_apple_proto_disk",
+            64,
+            32,
+            1,
+            MilDtypeCompat::Fp16,
+            42,
+        );
+        let model =
+            convert_mir_to_proto(&graph, SpecVersion::V7, CoreMlComputeUnit::CpuAndNe).unwrap();
+
+        let output_path = "/tmp/miller_test_validate.mlpackage";
+        let result = MlPackageWriter::write(&model, output_path).unwrap();
+
+        assert_eq!(result.file_count, 3);
+        assert!(result.weight_count > 0);
+        assert!(result.total_size > 0);
+
+        // Verify the protobuf file was written and is parseable
+        let mlmodel_path = format!("{output_path}/Model/com.apple.CoreML/model.mlmodel");
+        let data = std::fs::read(&mlmodel_path).unwrap();
+        assert!(!data.is_empty());
+
+        // Parse with Apple's protobuf format
+        let parsed: ane_coreml_proto::apple_proto::Model =
+            prost::Message::decode(data.as_slice()).unwrap();
+        assert_eq!(parsed.specification_version, 7);
+        assert!(parsed.description.is_some());
+
+        // Verify mlProgram is present (field 502)
+        let model_type = parsed.r#type.as_ref().unwrap();
+        match model_type {
+            ane_coreml_proto::apple_proto::model::Type::MlProgram(program) => {
+                assert!(program.functions.contains_key("main"));
+                let func = program.functions.get("main").unwrap();
+                assert!(!func.block_specializations.is_empty());
+            }
+        }
+
+        // Verify weight.bin was written with actual weight data
+        let weight_bin_path = format!("{output_path}/Data/com.apple.CoreML/weights/weight.bin");
+        let weight_data = std::fs::read(&weight_bin_path).unwrap();
+        assert!(weight_data.len() > 0, "weight.bin should have data");
+
+        // Verify Manifest.json
+        let manifest_path = format!("{output_path}/Manifest.json");
+        let manifest_data = std::fs::read_to_string(&manifest_path).unwrap();
+        let manifest: serde_json::Value = serde_json::from_str(&manifest_data).unwrap();
+        assert_eq!(manifest["schemaVersion"], "1.0.0");
+        assert!(manifest["files"].is_array());
+        assert!(manifest["metadata"]["userDefined"].is_object());
     }
 }

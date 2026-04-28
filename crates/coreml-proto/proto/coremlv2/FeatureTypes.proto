@@ -1,0 +1,77 @@
+// Apple Core ML FeatureTypes — Minimal subset matching Apple's wire format exactly
+// Package: CoreML.Specification
+// Reference: https://github.com/apple/coremltools/blob/main/mlmodel/format/FeatureTypes.proto
+
+syntax = "proto3";
+package CoreML.Specification;
+
+message Int64FeatureType {}
+message DoubleFeatureType {}
+message StringFeatureType {}
+
+message SizeRange {
+    uint64 lowerBound = 1;
+    int64 upperBound = 2;
+}
+
+message ImageFeatureType {
+    enum ColorSpace {
+        INVALID_COLOR_SPACE = 0;
+        GRAYSCALE = 10;
+        RGB = 20;
+        BGR = 30;
+        GRAYSCALE_FLOAT16 = 40;
+    }
+    int64 width = 1;
+    int64 height = 2;
+    ColorSpace colorSpace = 3;
+}
+
+message ArrayFeatureType {
+    enum ArrayDataType {
+        INVALID_ARRAY_DATA_TYPE = 0;
+        FLOAT32 = 65568;
+        DOUBLE = 65600;
+        INT32 = 131104;
+        INT8 = 131080;
+        FLOAT16 = 65552;
+    }
+
+    repeated int64 shape = 1;
+    ArrayDataType dataType = 2;
+}
+
+message DictionaryFeatureType {
+    oneof KeyType {
+        Int64FeatureType int64KeyType = 1;
+        StringFeatureType stringKeyType = 2;
+    }
+}
+
+message SequenceFeatureType {
+    oneof Type {
+        Int64FeatureType int64Type = 1;
+        StringFeatureType stringType = 3;
+    }
+    SizeRange sizeRange = 101;
+}
+
+message StateFeatureType {
+    oneof Type {
+        ArrayFeatureType arrayType = 1;
+    }
+}
+
+message FeatureType {
+    oneof Type {
+        Int64FeatureType int64Type = 1;
+        DoubleFeatureType doubleType = 2;
+        StringFeatureType stringType = 3;
+        ImageFeatureType imageType = 4;
+        ArrayFeatureType multiArrayType = 5;
+        DictionaryFeatureType dictionaryType = 6;
+        SequenceFeatureType sequenceType = 7;
+        StateFeatureType stateType = 8;
+    }
+    bool isOptional = 1000;
+}

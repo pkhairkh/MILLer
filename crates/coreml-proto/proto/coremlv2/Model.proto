@@ -1,0 +1,64 @@
+// Apple Core ML Model — Minimal subset matching Apple's wire format exactly
+// Package: CoreML.Specification
+// Reference: https://github.com/apple/coremltools/blob/main/mlmodel/format/Model.proto
+//
+// This contains only the messages needed for ML Program emission:
+// Model, ModelDescription, Metadata, FunctionDescription, FeatureDescription
+
+syntax = "proto3";
+package CoreML.Specification;
+
+import "coremlv2/FeatureTypes.proto";
+import "coremlv2/MIL.proto";
+
+// Feature description
+message FeatureDescription {
+    string name = 1;
+    string shortDescription = 2;
+    FeatureType type = 3;
+}
+
+// Model metadata
+message Metadata {
+    string shortDescription = 1;
+    string versionString = 2;
+    string author = 3;
+    string license = 4;
+    map<string, string> userDefined = 100;
+}
+
+// Function description
+message FunctionDescription {
+    string name = 1;
+    repeated FeatureDescription input = 2;
+    repeated FeatureDescription output = 3;
+    repeated FeatureDescription state = 6;
+    string predictedFeatureName = 4;
+    string predictedProbabilitiesName = 5;
+}
+
+// Model description
+message ModelDescription {
+    repeated FunctionDescription functions = 20;
+    string defaultFunctionName = 21;
+    Metadata metadata = 100;
+
+    // Used when functions is empty
+    repeated FeatureDescription input = 1;
+    repeated FeatureDescription output = 10;
+    repeated FeatureDescription state = 13;
+    string predictedFeatureName = 11;
+    string predictedProbabilitiesName = 12;
+    repeated FeatureDescription trainingInput = 50;
+}
+
+// Top-level Model
+message Model {
+    int32 specificationVersion = 1;
+    ModelDescription description = 2;
+    bool isUpdatable = 10;
+
+    oneof Type {
+        MILSpec.Program mlProgram = 502;
+    }
+}

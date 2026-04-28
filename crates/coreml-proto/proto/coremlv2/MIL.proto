@@ -1,0 +1,216 @@
+// Apple Core ML MIL — Minimal subset matching Apple's wire format exactly
+// Package: CoreML.Specification.MILSpec
+// Reference: https://github.com/apple/coremltools/blob/main/mlmodel/format/MIL.proto
+
+syntax = "proto3";
+package CoreML.Specification.MILSpec;
+
+// The top level container.
+message Program {
+    int64 version = 1;
+    map<string, Function> functions = 2;
+    string docString = 3;
+    map<string, Value> attributes = 4;
+}
+
+// A program-level function.
+message Function {
+    repeated NamedValueType inputs = 1;
+    string opset = 2;
+    map<string, Block> block_specializations = 3;
+    map<string, Value> attributes = 4;
+}
+
+// A basic block in SSA form.
+message Block {
+    repeated NamedValueType inputs = 1;
+    repeated string outputs = 2;
+    repeated Operation operations = 3;
+    map<string, Value> attributes = 4;
+}
+
+// Argument is list of Binding to either name or value
+message Argument {
+    message Binding {
+        oneof binding {
+            string name = 1;
+            Value value = 2;
+        }
+    }
+    repeated Binding arguments = 1;
+}
+
+// A single operation/node/layer.
+message Operation {
+    string type = 1;
+    map<string, Argument> inputs = 2;
+    repeated NamedValueType outputs = 3;
+    repeated Block blocks = 4;
+    map<string, Value> attributes = 5;
+}
+
+// (name, type) pair
+message NamedValueType {
+    string name = 1;
+    ValueType type = 2;
+}
+
+/* ======== Types ======= */
+
+message ValueType {
+    oneof type {
+        TensorType tensorType = 1;
+        ListType listType = 2;
+        TupleType tupleType = 3;
+        DictionaryType dictionaryType = 4;
+        StateType stateType = 5;
+    }
+}
+
+enum DataType {
+    UNUSED_TYPE = 0;
+    BOOL = 1;
+    STRING = 2;
+    FLOAT8E4M3FN = 40;
+    FLOAT8E5M2 = 41;
+    FLOAT16 = 10;
+    FLOAT32 = 11;
+    FLOAT64 = 12;
+    BFLOAT16 = 13;
+    INT8 = 21;
+    INT16 = 22;
+    INT32 = 23;
+    INT64 = 24;
+    INT4 = 25;
+    UINT8 = 31;
+    UINT16 = 32;
+    UINT32 = 33;
+    UINT64 = 34;
+    UINT4 = 35;
+    UINT2 = 36;
+    UINT1 = 37;
+    UINT6 = 38;
+    UINT3 = 39;
+}
+
+message TensorType {
+    DataType dataType = 1;
+    int64 rank = 2;
+    repeated Dimension dimensions = 3;
+    map<string, Value> attributes = 4;
+}
+
+message TupleType {
+    repeated ValueType types = 1;
+}
+
+message ListType {
+    ValueType type = 1;
+    Dimension length = 2;
+}
+
+message DictionaryType {
+    ValueType keyType = 1;
+    ValueType valueType = 2;
+}
+
+message StateType {
+    ValueType wrappedType = 1;
+}
+
+message Dimension {
+    oneof dimension {
+        ConstantDimension constant = 1;
+        UnknownDimension unknown = 2;
+    }
+
+    message ConstantDimension {
+        uint64 size = 1;
+    }
+
+    message UnknownDimension {
+        bool variadic = 1;
+    }
+}
+
+/* ======== Values ======= */
+
+message Value {
+    string docString = 1;
+    ValueType type = 2;
+
+    message ImmediateValue {
+        oneof value {
+            TensorValue tensor = 1;
+            TupleValue tuple = 2;
+            ListValue list = 3;
+            DictionaryValue dictionary = 4;
+        }
+    }
+
+    message BlobFileValue {
+        string fileName = 1;
+        uint64 offset = 2;
+    }
+
+    oneof value {
+        ImmediateValue immediateValue = 3;
+        BlobFileValue blobFileValue = 5;
+    }
+}
+
+message TensorValue {
+    oneof value {
+        RepeatedFloats floats = 1;
+        RepeatedInts ints = 2;
+        RepeatedBools bools = 3;
+        RepeatedStrings strings = 4;
+        RepeatedLongInts longInts = 5;
+        RepeatedDoubles doubles = 6;
+        RepeatedBytes bytes = 7;
+    }
+
+    message RepeatedFloats {
+        repeated float values = 1 [packed = true];
+    }
+
+    message RepeatedDoubles {
+        repeated double values = 1 [packed = true];
+    }
+
+    message RepeatedInts {
+        repeated int32 values = 1 [packed = true];
+    }
+
+    message RepeatedLongInts {
+        repeated int64 values = 1 [packed = true];
+    }
+
+    message RepeatedBools {
+        repeated bool values = 1 [packed = true];
+    }
+
+    message RepeatedStrings {
+        repeated string values = 1;
+    }
+
+    message RepeatedBytes {
+        bytes values = 1;
+    }
+}
+
+message TupleValue {
+    repeated Value values = 1;
+}
+
+message ListValue {
+    repeated Value values = 1;
+}
+
+message DictionaryValue {
+    message KeyValuePair {
+        Value key = 1;
+        Value value = 2;
+    }
+    repeated KeyValuePair values = 1;
+}
