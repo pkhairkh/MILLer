@@ -6,6 +6,7 @@ members = [
     "crates/knowledge",
     "crates/lab",
     "crates/bridge",
+    "crates/trace",
     "crates/artifacts",
     "crates/report",
     "crates/cli",
@@ -33,6 +34,7 @@ ane-passes = { path = "crates/passes" }
 ane-knowledge = { path = "crates/knowledge" }
 ane-lab = { path = "crates/lab" }
 ane-bridge = { path = "crates/bridge" }
+ane-trace = { path = "crates/trace" }
 ane-artifacts = { path = "crates/artifacts" }
 ane-report = { path = "crates/report" }
 ane-coreml-proto = { path = "crates/coreml-proto" }

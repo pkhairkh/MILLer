@@ -1,0 +1,13 @@
+[package]
+name = "ane-trace"
+version = "0.1.0"
+edition = "2021"
+description = "HuggingFace transformers model tracing and ANE-faithful graph compilation"
+
+[dependencies]
+ane-ir = { workspace = true }
+ane-passes = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }

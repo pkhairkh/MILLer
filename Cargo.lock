@@ -75,6 +75,7 @@ dependencies = [
  "ane-lab",
  "ane-passes",
  "ane-report",
+ "ane-trace",
  "anyhow",
  "chrono",
  "clap",
@@ -173,6 +174,18 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "ane-trace"
+version = "0.1.0"
+dependencies = [
+ "ane-ir",
+ "ane-passes",
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

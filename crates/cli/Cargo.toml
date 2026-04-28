@@ -7,6 +7,7 @@ edition = "2021"
 ane-ir = { workspace = true }
 ane-passes = { workspace = true }
 ane-bridge = { workspace = true }
+ane-trace = { workspace = true }
 ane-artifacts = { workspace = true }
 ane-report = { workspace = true }
 ane-lab = { workspace = true }

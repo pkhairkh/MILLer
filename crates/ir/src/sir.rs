@@ -918,6 +918,8 @@ pub enum TaskOrigin {
     RealModel { name: String },
     MilImport { source: String },
     Manual,
+    /// Traced from a HuggingFace transformers model via torch.fx.
+    TransformersTrace { name: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
