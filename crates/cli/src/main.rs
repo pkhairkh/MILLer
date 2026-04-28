@@ -41,7 +41,7 @@ enum Commands {
         bridge: String,
 
         /// Path to the Python interpreter.
-        #[arg(long, default_value = "python3")]
+        #[arg(long, default_value = "python3.12")]
         python: String,
 
         /// Knowledge store directory.
@@ -73,7 +73,7 @@ enum Commands {
         bridge: String,
 
         /// Path to the Python interpreter.
-        #[arg(long, default_value = "python3")]
+        #[arg(long, default_value = "python3.12")]
         python: String,
 
         /// Knowledge store directory.
@@ -108,7 +108,7 @@ enum Commands {
         bridge: String,
 
         /// Path to the Python interpreter.
-        #[arg(long, default_value = "python3")]
+        #[arg(long, default_value = "python3.12")]
         python: String,
 
         /// Knowledge store directory (optional). When provided, shard template seeds
@@ -151,7 +151,7 @@ enum Commands {
         bridge: String,
 
         /// Path to the Python interpreter.
-        #[arg(long, default_value = "python3")]
+        #[arg(long, default_value = "python3.12")]
         python: String,
 
         /// Knowledge store directory.
@@ -190,7 +190,7 @@ enum Commands {
         bridge: String,
 
         /// Path to the Python interpreter.
-        #[arg(long, default_value = "python3")]
+        #[arg(long, default_value = "python3.12")]
         python: String,
 
         /// Knowledge store directory (required — this is the loop closer).
@@ -222,7 +222,7 @@ enum Commands {
         bridge: String,
 
         /// Path to the Python interpreter.
-        #[arg(long, default_value = "python3")]
+        #[arg(long, default_value = "python3.12")]
         python: String,
 
         /// Skip host-side inspection after compilation.
@@ -254,7 +254,7 @@ enum Commands {
         bridge: String,
 
         /// Path to the Python interpreter.
-        #[arg(long, default_value = "python3")]
+        #[arg(long, default_value = "python3.12")]
         python: String,
 
         /// Number of warmup iterations.
@@ -372,7 +372,7 @@ enum Commands {
         bridge: String,
 
         /// Path to the Python interpreter.
-        #[arg(long, default_value = "python3")]
+        #[arg(long, default_value = "python3.12")]
         python: String,
 
         /// Compute units to use for verification.
@@ -454,7 +454,7 @@ enum Commands {
         bridge: String,
 
         /// Path to the Python interpreter.
-        #[arg(long, default_value = "python3")]
+        #[arg(long, default_value = "python3.12")]
         python: String,
 
         /// Data type for model weights ("fp16" or "fp32").
@@ -646,7 +646,7 @@ fn main() {
             with_kv_cache,
             trace_script,
             bridge: _,
-            python: _,
+            python,
             dtype,
             knowledge,
         } => {
@@ -660,6 +660,7 @@ fn main() {
                 decompose,
                 with_kv_cache,
                 &trace_script,
+                &python,
                 &dtype,
                 knowledge.as_deref(),
             ) {
@@ -5222,12 +5223,13 @@ fn run_trace_compile(
     decompose: bool,
     with_kv_cache: bool,
     trace_script: &str,
+    python_path: &str,
     dtype: &str,
     knowledge_dir: Option<&str>,
 ) -> Result<(), String> {
-    use ane_trace::config::{TraceConfig, TraceTarget, InputShape};
-    use ane_trace::subprocess::trace_model;
+    use ane_trace::config::{InputShape, TraceConfig, TraceTarget};
     use ane_trace::sir_build::build_sir_from_trace;
+    use ane_trace::subprocess::trace_model;
     use ane_trace::versioned::VersionedCompiler;
 
     println!("=== MILLer — Trace-Compile Pipeline ===\n");
@@ -5257,12 +5259,11 @@ fn run_trace_compile(
         max_seq_len: seq_len * 64, // Allow longer sequences than trace input
         dtype: dtype.to_string(),
         trace_script: trace_script.to_string(),
-        python_path: "python3".to_string(),
+        python_path: python_path.to_string(),
         ..TraceConfig::default()
     };
 
-    let traced_graph = trace_model(&config)
-        .map_err(|e| format!("Model tracing failed: {}", e))?;
+    let traced_graph = trace_model(&config).map_err(|e| format!("Model tracing failed: {}", e))?;
     println!(
         "  Traced: {} nodes, architecture={}, model_type={}",
         traced_graph.nodes.len(),
@@ -5296,14 +5297,8 @@ fn run_trace_compile(
         result.report.ane_supported,
         result.report.total_ops,
     );
-    println!(
-        "  CPU fallback: {} ops",
-        result.report.cpu_fallback,
-    );
-    println!(
-        "  ANE-faithful: {}",
-        if result.report.is_faithful { "YES" } else { "NO" },
-    );
+    println!("  CPU fallback: {} ops", result.report.cpu_fallback,);
+    println!("  ANE-faithful: {}", if result.report.is_faithful { "YES" } else { "NO" },);
 
     if !result.report.warnings.is_empty() {
         println!("  Warnings:");
@@ -5322,8 +5317,7 @@ fn run_trace_compile(
     // Step 5: Write artifacts
     println!("[5/6] Writing artifacts...");
     let output_path = PathBuf::from(output);
-    fs::create_dir_all(&output_path)
-        .map_err(|e| format!("Failed to create output dir: {}", e))?;
+    fs::create_dir_all(&output_path).map_err(|e| format!("Failed to create output dir: {}", e))?;
 
     // Write traced graph
     let trace_path = output_path.join("traced_graph.json");
@@ -5337,16 +5331,14 @@ fn run_trace_compile(
     let sir_path = output_path.join("sir.json");
     let sir_json = serde_json::to_string_pretty(&sir)
         .map_err(|e| format!("SIR serialization failed: {}", e))?;
-    fs::write(&sir_path, &sir_json)
-        .map_err(|e| format!("Failed to write SIR: {}", e))?;
+    fs::write(&sir_path, &sir_json).map_err(|e| format!("Failed to write SIR: {}", e))?;
     println!("  SIR: {}", sir_path.display());
 
     // Write faithfulness report
     let report_path = output_path.join("ane_faithfulness_report.json");
     let report_json = serde_json::to_string_pretty(&result.report)
         .map_err(|e| format!("Report serialization failed: {}", e))?;
-    fs::write(&report_path, &report_json)
-        .map_err(|e| format!("Failed to write report: {}", e))?;
+    fs::write(&report_path, &report_json).map_err(|e| format!("Failed to write report: {}", e))?;
     println!("  Faithfulness report: {}", report_path.display());
 
     // Step 6: Knowledge consultation (optional)

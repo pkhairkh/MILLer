@@ -73,7 +73,7 @@ impl Default for TraceConfig {
             max_seq_len: 2048,
             dtype: "fp16".to_string(),
             trace_script: "python/trace_model.py".to_string(),
-            python_path: "python3".to_string(),
+            python_path: "python3.12".to_string(),
             model_class: "auto".to_string(),
             fx_options: FxTraceOptions::default(),
         }
