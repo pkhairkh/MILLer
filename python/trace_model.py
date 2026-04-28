@@ -408,87 +408,170 @@ def map_method_call(fx_node) -> Dict[str, Any]:
     }
 
 
+def _resolve_effective_config(model_config) -> object:
+    """Resolve the effective text-model config from a potentially nested AutoConfig.
+    
+    Many modern HuggingFace models (e.g., Qwen3.5, Llava, Qwen2-VL) are multimodal
+    and store the text decoder config in a sub-object like `text_config`. The standard
+    LLM fields (hidden_size, num_attention_heads, etc.) live there, not at the top level.
+    
+    This function walks the config structure to find the sub-config that actually
+    contains the text decoder parameters, without relying on model_type heuristics.
+    
+    Resolution order:
+    1. If the config has `hidden_size` directly → it's already the effective config
+    2. If the config has a `text_config` sub-object with `hidden_size` → use that
+    3. If the config has a `decoder` sub-object with `hidden_size` → use that (encoder-decoder)
+    4. Otherwise → return the original config and let downstream code use defaults
+    """
+    # Fast path: config already has the standard fields
+    if hasattr(model_config, "hidden_size") and getattr(model_config, "hidden_size", None) is not None:
+        return model_config
+    
+    # Walk known sub-config names that HuggingFace transformers uses
+    # for multimodal / encoder-decoder architectures
+    sub_config_names = ["text_config", "decoder", "language_model", "text_model"]
+    
+    for name in sub_config_names:
+        sub = getattr(model_config, name, None)
+        if sub is not None and hasattr(sub, "hidden_size") and getattr(sub, "hidden_size", None) is not None:
+            return sub
+    
+    # Nothing found — return original and let defaults kick in
+    return model_config
+
+
+def _detect_rope(config) -> bool:
+    """Detect whether a model uses RoPE (Rotary Position Embeddings).
+    
+    Fully dynamic: checks for the actual config fields that indicate RoPE,
+    never matches on model_type strings.
+    
+    RoPE is indicated by any of:
+    - rope_theta (most LLMs: Llama, Qwen, Mistral, etc.)
+    - rope_scaling (models with extended context)
+    - rope_parameters (newer Qwen models, contains rope_theta inside)
+    - rotary_emb_base (some older models)
+    - position_embedding_type == "rope" (explicit declaration)
+    """
+    # Explicit flag (rare but definitive)
+    explicit = getattr(config, "uses_rope", None)
+    if explicit is not None:
+        return bool(explicit)
+    
+    # Direct config field indicators
+    if hasattr(config, "rope_theta"):
+        return True
+    if hasattr(config, "rope_scaling"):
+        return True
+    if hasattr(config, "rotary_emb_base"):
+        return True
+    
+    # Nested rope_parameters dict (Qwen3, Qwen3.5)
+    rope_params = getattr(config, "rope_parameters", None)
+    if rope_params is not None and isinstance(rope_params, dict):
+        if "rope_theta" in rope_params or "rope_type" in rope_params:
+            return True
+    
+    # Explicit position_embedding_type declaration
+    pos_emb_type = getattr(config, "position_embedding_type", None)
+    if pos_emb_type is not None and "rope" in str(pos_emb_type).lower():
+        return True
+    
+    # No RoPE indicators found
+    return False
+
+
+def _detect_norm_type(config) -> str:
+    """Detect the normalization type used by a model.
+    
+    Fully dynamic: checks for the actual config fields that indicate
+    norm type, never matches on model_type strings.
+    
+    Returns: "rms_norm", "layer_norm", or "unknown"
+    
+    RMSNorm is indicated by:
+    - rms_norm_eps field present (the epsilon for RMS normalization)
+    
+    LayerNorm is indicated by:
+    - layer_norm_eps field present WITHOUT rms_norm_eps
+    """
+    has_rms_eps = hasattr(config, "rms_norm_eps")
+    has_ln_eps = hasattr(config, "layer_norm_eps")
+    
+    if has_rms_eps:
+        return "rms_norm"
+    if has_ln_eps:
+        return "layer_norm"
+    
+    return "unknown"
+
+
 def extract_model_config(model_config) -> Dict[str, Any]:
     """Extract model configuration into the TracedGraph format.
     
-    This function is fully config-driven: it derives all decomposition
-    hints from the model's AutoConfig, without requiring a hardcoded
-    model registry. Any HuggingFace model that provides the standard
-    config fields will work ad-hoc.
+    FULLY DYNAMIC — no model_type heuristics, no hardcoded model lists.
     
-    The key decomposition flags are:
-    - uses_rms_norm: Whether to decompose norms as RMSNorm (vs LayerNorm)
-    - uses_gqa: Whether the model uses Grouped Query Attention
-    - uses_rope: Whether the model uses Rotary Position Embeddings
-    - hidden_act: The activation function used in MLP blocks
+    This function derives all decomposition hints from the model's AutoConfig
+    fields alone. It works for any HuggingFace model, including future
+    architectures, without requiring code changes.
     
-    These are derived from AutoConfig fields where possible, with
-    model_type heuristics as fallback for configs that don't expose
-    these flags directly.
+    The approach:
+    1. Resolve the effective text config (handles multimodal nesting)
+    2. Detect norm type from config fields (rms_norm_eps vs layer_norm_eps)
+    3. Detect RoPE from config fields (rope_theta, rope_parameters, etc.)
+    4. Detect GQA from config fields (num_key_value_heads < num_attention_heads)
+    5. Extract all other fields directly from the config
+    
+    If a model's config doesn't expose certain fields, reasonable defaults
+    are used. No model_type string matching is ever performed.
     """
-    hidden_size = getattr(model_config, "hidden_size", 768)
-    num_heads = getattr(model_config, "num_attention_heads", 12)
-    num_kv_heads = getattr(model_config, "num_key_value_heads", num_heads)
-    model_type = getattr(model_config, "model_type", "unknown")
-
-    # ─── Derive decomposition hints from config ─────────────────
-    #
-    # Strategy: check explicit config fields first, then fall back to
-    # model_type heuristics. This ensures new architectures work
-    # without a registry as long as they follow the standard pattern.
-
-    # RMSNorm vs LayerNorm
-    # Explicit: some configs expose norm_type or rms_norm_eps
-    # Heuristic: model_type families known to use RMSNorm
-    uses_rms_norm = getattr(model_config, "uses_rms_norm", None)
-    if uses_rms_norm is None:
-        has_rms_norm_eps = hasattr(model_config, "rms_norm_eps")
-        has_layer_norm_eps_only = hasattr(model_config, "layer_norm_eps") and not has_rms_norm_eps
-        rms_norm_model_types = {
-            "llama", "qwen2", "qwen3", "qwen3_moe", "qwen3.5",
-            "mistral", "mixtral", "gemma", "gemma2", "phi3",
-            "stablelm", "falcon", "starcoder2", "internlm2",
-            "deepseek_v2", "deepseek_v3", "llava",
-        }
-        uses_rms_norm = has_rms_norm_eps or (
-            model_type.lower() in rms_norm_model_types and not has_layer_norm_eps_only
-        )
-
-    # GQA (Grouped Query Attention)
-    # Explicit: num_key_value_heads < num_attention_heads
-    # This is automatically correct from AutoConfig — no heuristic needed.
+    # Step 1: Resolve the effective config for text decoder
+    # Handles multimodal models (Qwen3.5, Llava) where fields are in text_config
+    cfg = _resolve_effective_config(model_config)
+    
+    # Step 2: Extract standard fields directly from the resolved config
+    hidden_size = getattr(cfg, "hidden_size", 768)
+    num_heads = getattr(cfg, "num_attention_heads", 12)
+    num_kv_heads = getattr(cfg, "num_key_value_heads", num_heads)
+    model_type = getattr(model_config, "model_type", "unknown")  # Top-level model_type for logging only
+    
+    # Step 3: Detect normalization type from config fields
+    norm_type = _detect_norm_type(cfg)
+    uses_rms_norm = (norm_type == "rms_norm")
+    
+    # If norm type is unknown, default to RMSNorm for modern LLMs
+    # (most post-2023 architectures use RMSNorm). This is a safe default
+    # because the legality rewrite pass will handle the decomposition.
+    if norm_type == "unknown":
+        uses_rms_norm = True  # Safe default — legality rewrite will adjust
+    
+    # Step 4: Detect RoPE from config fields
+    uses_rope = _detect_rope(cfg)
+    
+    # Step 5: GQA — purely structural, no heuristics needed
     uses_gqa = num_kv_heads < num_heads
-
-    # RoPE (Rotary Position Embeddings)
-    # Explicit: some configs expose rope_scaling or rotary_emb_base
-    # Heuristic: model_type families known to use RoPE
-    uses_rope = getattr(model_config, "uses_rope", None)
-    if uses_rope is None:
-        has_rope_scaling = hasattr(model_config, "rope_scaling") or hasattr(model_config, "rope_theta")
-        rope_model_types = {
-            "llama", "qwen2", "qwen3", "qwen3_moe", "qwen3.5",
-            "mistral", "mixtral", "gemma", "gemma2", "phi", "phi3",
-            "falcon", "starcoder2", "internlm2",
-            "deepseek_v2", "deepseek_v3", "llava",
-        }
-        uses_rope = has_rope_scaling or model_type.lower() in rope_model_types
-
-    # Activation function
-    hidden_act = getattr(model_config, "hidden_act", None)
+    
+    # Step 6: Activation function
+    hidden_act = getattr(cfg, "hidden_act", None)
     if hidden_act is None:
-        # Some configs use different field names
-        hidden_act = getattr(model_config, "activation_function", "gelu")
-
+        hidden_act = getattr(cfg, "activation_function", "gelu")
+    
+    # Step 7: Epsilon value — pick the one that matches the detected norm type
+    if uses_rms_norm:
+        layer_norm_epsilon = getattr(cfg, "rms_norm_eps", 1e-6)
+    else:
+        layer_norm_epsilon = getattr(cfg, "layer_norm_eps", 1e-5)
+    
     return {
         "hidden_size": hidden_size,
         "num_attention_heads": num_heads,
         "num_key_value_heads": num_kv_heads,
-        "num_hidden_layers": getattr(model_config, "num_hidden_layers", 12),
-        "intermediate_size": getattr(model_config, "intermediate_size", 3072),
-        "vocab_size": getattr(model_config, "vocab_size", 32000),
-        "max_position_embeddings": getattr(model_config, "max_position_embeddings", 2048),
-        "layer_norm_epsilon": getattr(model_config, "rms_norm_eps",
-                                       getattr(model_config, "layer_norm_eps", 1e-5)),
+        "num_hidden_layers": getattr(cfg, "num_hidden_layers", 12),
+        "intermediate_size": getattr(cfg, "intermediate_size", 3072),
+        "vocab_size": getattr(cfg, "vocab_size", 32000),
+        "max_position_embeddings": getattr(cfg, "max_position_embeddings", 2048),
+        "layer_norm_epsilon": layer_norm_epsilon,
         "hidden_act": hidden_act,
         "uses_rope": uses_rope,
         "uses_rms_norm": uses_rms_norm,
