@@ -1387,6 +1387,45 @@ fn make_apple_feature_desc(
     shape: &[u64],
 ) -> apple_proto::FeatureDescription {
     let array_dtype = coreml_dtype_to_apple_array(dtype);
+
+    // Core ML requires non-empty shape constraints on every multiarray feature.
+    // Empty shape → fallback to [1]. Dynamic dims (0) get ShapeRange flexibility.
+    let effective_shape: Vec<i64> = if shape.is_empty() {
+        vec![1]
+    } else {
+        shape.iter().map(|&d| if d == 0 { 1 } else { d as i64 }).collect()
+    };
+
+    let has_dynamic_dims = shape.iter().any(|&d| d == 0);
+
+    let shape_flexibility = if has_dynamic_dims {
+        // Build ShapeRange: each dimension gets a SizeRange.
+        // Dynamic dims (0) get range [1, -1] (unbounded upper), static dims get [n, n].
+        let size_ranges: Vec<apple_proto::SizeRange> = shape
+            .iter()
+            .map(|&d| {
+                if d == 0 {
+                    apple_proto::SizeRange {
+                        lower_bound: 1,
+                        upper_bound: -1, // -1 means unbounded
+                    }
+                } else {
+                    apple_proto::SizeRange {
+                        lower_bound: d,
+                        upper_bound: d as i64,
+                    }
+                }
+            })
+            .collect();
+        Some(apple_proto::array_feature_type::ShapeFlexibility::ShapeRange(
+            apple_proto::array_feature_type::ShapeRange {
+                size_ranges,
+            },
+        ))
+    } else {
+        None
+    };
+
     apple_proto::FeatureDescription {
         name: name.to_string(),
         short_description: String::new(),
@@ -1394,8 +1433,9 @@ fn make_apple_feature_desc(
             is_optional: false,
             r#type: Some(apple_proto::feature_type::Type::MultiArrayType(
                 apple_proto::ArrayFeatureType {
-                    shape: shape.iter().map(|&d| d as i64).collect(),
+                    shape: effective_shape,
                     data_type: array_dtype,
+                    shape_flexibility,
                 },
             )),
         }),
@@ -1412,6 +1452,42 @@ fn make_apple_state_feature_desc(
     shape: &[u64],
 ) -> apple_proto::FeatureDescription {
     let array_dtype = coreml_dtype_to_apple_array(dtype);
+
+    // Core ML requires non-empty shape constraints on every multiarray feature.
+    let effective_shape: Vec<i64> = if shape.is_empty() {
+        vec![1]
+    } else {
+        shape.iter().map(|&d| if d == 0 { 1 } else { d as i64 }).collect()
+    };
+
+    let has_dynamic_dims = shape.iter().any(|&d| d == 0);
+
+    let shape_flexibility = if has_dynamic_dims {
+        let size_ranges: Vec<apple_proto::SizeRange> = shape
+            .iter()
+            .map(|&d| {
+                if d == 0 {
+                    apple_proto::SizeRange {
+                        lower_bound: 1,
+                        upper_bound: -1,
+                    }
+                } else {
+                    apple_proto::SizeRange {
+                        lower_bound: d,
+                        upper_bound: d as i64,
+                    }
+                }
+            })
+            .collect();
+        Some(apple_proto::array_feature_type::ShapeFlexibility::ShapeRange(
+            apple_proto::array_feature_type::ShapeRange {
+                size_ranges,
+            },
+        ))
+    } else {
+        None
+    };
+
     apple_proto::FeatureDescription {
         name: name.to_string(),
         short_description: String::new(),
@@ -1421,8 +1497,9 @@ fn make_apple_state_feature_desc(
                 apple_proto::StateFeatureType {
                     r#type: Some(apple_proto::state_feature_type::Type::ArrayType(
                         apple_proto::ArrayFeatureType {
-                            shape: shape.iter().map(|&d| d as i64).collect(),
+                            shape: effective_shape,
                             data_type: array_dtype,
+                            shape_flexibility,
                         },
                     )),
                 },

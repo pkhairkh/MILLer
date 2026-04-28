@@ -1,4 +1,4 @@
-// Apple Core ML FeatureTypes — Minimal subset matching Apple's wire format exactly
+// Apple Core ML FeatureTypes — Matching Apple's wire format exactly
 // Package: CoreML.Specification
 // Reference: https://github.com/apple/coremltools/blob/main/mlmodel/format/FeatureTypes.proto
 
@@ -37,8 +37,35 @@ message ArrayFeatureType {
         FLOAT16 = 65552;
     }
 
+    // The required or default shape.
+    // If ShapeFlexibility is empty, shape is the required fixed shape.
+    // If ShapeFlexibility is present, shape indicates a "default" shape
+    // which must be consistent with the flexibility specified.
     repeated int64 shape = 1;
+
     ArrayDataType dataType = 2;
+
+    message Shape {
+        repeated int64 shape = 1;
+    }
+
+    message EnumeratedShapes {
+        repeated Shape shapes = 1;
+    }
+
+    message ShapeRange {
+        // sizeRanges[d] specifies the allowed range for dimension d
+        repeated SizeRange sizeRanges = 1;
+    }
+
+    // For specification version >= 3 you can specify shape flexibility.
+    oneof ShapeFlexibility {
+        // Use enumeratedShapes for a set of distinct fixed shapes
+        EnumeratedShapes enumeratedShapes = 21;
+        // Use shapeRange to allow the size of each dimension vary
+        // within independently specified ranges
+        ShapeRange shapeRange = 31;
+    }
 }
 
 message DictionaryFeatureType {
