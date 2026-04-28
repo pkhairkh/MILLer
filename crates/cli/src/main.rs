@@ -419,7 +419,8 @@ enum Commands {
         output: String,
 
         /// Target ANE family for constraint-aware compilation.
-        /// One of: A11Legacy, A12, A14, A15, A16, A18.
+        /// Accepts ANE generation codes (A11Legacy, A12, A14, A15, A16, A18)
+        /// or Apple Silicon chip names (M1, M2, M3, M4, with Pro/Max variants).
         /// Defaults to A16 (first family with reliable SDPA support).
         #[arg(long, default_value = "A16")]
         target_family: String,
@@ -5368,17 +5369,42 @@ fn run_trace_compile(
 }
 
 /// Parse an ANE family string into an AneFamily enum value.
+///
+/// Accepts both ANE generation codes (A12, A16, etc.) and Apple Silicon
+/// chip names (M1, M2, M3, etc.) as aliases. The mapping is:
+///
+/// | Chip          | ANE Gen | Notes                              |
+/// |---------------|---------|------------------------------------|
+/// | M1            | A12     | broadcast_fp16_only=true           |
+/// | M1 Pro/Max    | A14     |                                    |
+/// | M2            | A12     | same ANE as M1 (Rev V5)            |
+/// | M2 Pro/Max    | A14     |                                    |
+/// | M3            | A15     |                                    |
+/// | M3 Pro/Max    | A16     | first with reliable SDPA           |
+/// | M4            | A16     |                                    |
+/// | M4 Pro/Max    | A18     |                                    |
 fn parse_ane_family(s: &str) -> Result<ane_ir::ane_target::AneFamily, String> {
     use ane_ir::ane_target::AneFamily;
     match s.to_lowercase().as_str() {
+        // ANE generation codes
         "a11legacy" | "a11" => Ok(AneFamily::A11Legacy),
         "a12" => Ok(AneFamily::A12),
         "a14" => Ok(AneFamily::A14),
         "a15" => Ok(AneFamily::A15),
         "a16" => Ok(AneFamily::A16),
         "a18" => Ok(AneFamily::A18),
+        // Apple Silicon chip name aliases
+        "m1" => Ok(AneFamily::A12),
+        "m1pro" | "m1_max" | "m1max" | "m1ultra" => Ok(AneFamily::A14),
+        "m2" => Ok(AneFamily::A12),
+        "m2pro" | "m2_max" | "m2max" | "m2ultra" => Ok(AneFamily::A14),
+        "m3" => Ok(AneFamily::A15),
+        "m3pro" | "m3_max" | "m3max" => Ok(AneFamily::A16),
+        "m4" => Ok(AneFamily::A16),
+        "m4pro" | "m4_max" | "m4max" => Ok(AneFamily::A18),
         _ => Err(format!(
-            "Unknown ANE family '{}'. Valid options: A11Legacy, A12, A14, A15, A16, A18",
+            "Unknown ANE family '{}'. Valid: A11Legacy, A12, A14, A15, A16, A18, \
+             or chip names: M1, M2, M3, M4 (with Pro/Max variants)",
             s
         )),
     }
