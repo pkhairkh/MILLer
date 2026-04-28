@@ -2661,20 +2661,30 @@ pub fn convert_to_apple_proto_model(
         attributes: HashMap::new(),
     };
 
-    // Build model-level input/output descriptions (used when functions list is empty
-    // in ModelDescription, but we also populate the functions field for ML Program)
-    let model_input_descs: Vec<apple_proto::FeatureDescription> = model
-        .description
-        .inputs
-        .iter()
-        .map(|td| make_apple_feature_desc(&td.name, &td.dtype, &td.shape))
-        .collect();
-    let model_output_descs: Vec<apple_proto::FeatureDescription> = model
-        .description
-        .outputs
-        .iter()
-        .map(|td| make_apple_feature_desc(&td.name, &td.dtype, &td.shape))
-        .collect();
+    // Multi-function models must NOT have top-level input/output/state feature
+    // descriptions — all I/O lives inside FunctionDescription entries.
+    // Single-function models (no `functions` field) use top-level I/O instead.
+    let is_multi_function = !model.functions.is_empty();
+    let model_input_descs: Vec<apple_proto::FeatureDescription> = if is_multi_function {
+        vec![]
+    } else {
+        model
+            .description
+            .inputs
+            .iter()
+            .map(|td| make_apple_feature_desc(&td.name, &td.dtype, &td.shape))
+            .collect()
+    };
+    let model_output_descs: Vec<apple_proto::FeatureDescription> = if is_multi_function {
+        vec![]
+    } else {
+        model
+            .description
+            .outputs
+            .iter()
+            .map(|td| make_apple_feature_desc(&td.name, &td.dtype, &td.shape))
+            .collect()
+    };
 
     // Build metadata
     let mut user_defined = model.user_defined_metadata.clone();
@@ -2699,13 +2709,17 @@ pub fn convert_to_apple_proto_model(
         user_defined,
     };
 
-    // Build model-level state descriptions
-    let model_state_descs: Vec<apple_proto::FeatureDescription> = model
-        .description
-        .states
-        .iter()
-        .map(|td| make_apple_state_feature_desc(&td.name, &td.dtype, &td.shape))
-        .collect();
+    // Build model-level state descriptions (empty for multi-function models)
+    let model_state_descs: Vec<apple_proto::FeatureDescription> = if is_multi_function {
+        vec![]
+    } else {
+        model
+            .description
+            .states
+            .iter()
+            .map(|td| make_apple_state_feature_desc(&td.name, &td.dtype, &td.shape))
+            .collect()
+    };
 
     apple_proto::Model {
         specification_version: model.spec_version.proto_value(),
