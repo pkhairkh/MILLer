@@ -2935,6 +2935,10 @@ Sprint 54 is done only if:
 **Status:** DONE (host-verified, 501 Rust tests passing)
 **Residual:** Per-op constraint validation functions exist for conv, linear, gather, pooling, ArgMinMax, and tensor rank but are not yet wired into the compilation pipeline as mandatory gates. CPU_ONLY hard gate is wired into `LegalityRewritePass.make_air_node()` but only checks ops with `mb.` prefix stripped from op_pattern — direct MIR ops may not be checked. `AneInterleave`/`AneLayout` types exist but are not yet used in MIR node metadata. `AneHwLimits` values for each revision are approximate (extrapolated from limited hardware documentation) — real values need verification on actual hardware. Fusion modeling, L2/ActiveNE/OCG, and dynamic-shape kill switch remain as future work.
 
+### Sprint 61 — Documentation and ane-trace Integration Completion
+**Status:** IN PROGRESS
+**Residual:** S61.1–S61.3 (README.md, SPEC.md, STATUS.md updates) completed. S61.4 (ISSUES.md audit findings), S61.5 (crate-level rustdoc), and S61.6 (inline public API docs) remain pending.
+
 ---
 
 # Sprint 55 — Close Remaining Declared-Lowering Gaps
@@ -3248,3 +3252,62 @@ Sprint 57 is done only if:
 - [x] All workspace tests pass (440 passing, 1 ignored)
 - [x] Python syntax verification passes
 - [x] docs/tracker updated truthfully
+
+---
+
+# Sprint 61 — Documentation and ane-trace Integration Completion
+
+## Sprint goal
+Update all project documentation (README.md, SPEC.md, STATUS.md, TASKS.md, ISSUES.md) to accurately reflect the ane-trace crate, trace-compile CLI command, and versioned compilation architecture. Close remaining documentation gaps from the ane-constraints-docs audit.
+
+## Sprint Definition of Done
+Sprint 61 is done only if:
+- README.md includes ane-trace in the workspace crates table and has a dedicated "Model Tracing and Versioned Compilation" section
+- README.md directory layout includes crates/trace/ and python/trace_model.py
+- SPEC.md includes Section 19 (Model Tracing and Versioned Compilation)
+- STATUS.md includes the "Model Tracing System (ane-trace crate)" component table
+- ISSUES.md includes findings from the ane-constraints-docs audit (issues #27-#31)
+- All documentation changes are committed
+
+## Tasks
+
+### [x] S61.1 Update README.md with ane-trace crate description
+**Completed:**
+- Added `ane-trace` row to Workspace Crates table with description
+- Added `trace-compile` to ane-cli command list
+- Added "Model Tracing and Versioned Compilation" section with architecture diagram
+- Added "Supported Model Architectures" table
+- Added "ANE Version-Aware Compilation" table with family details
+- Added Usage examples for trace-compile command
+- Updated Task Families table to include Shape Hostile, Op Remap, Shard Survival
+- Updated Directory Layout to include crates/trace/ and python/trace_model.py
+- Added Key Design Decisions #2 (ANE-faithful, not just ANE-compatible)
+- Updated Key Design Decision #1 to mention ane-trace Python subprocess
+
+### [x] S61.2 Update SPEC.md with ane-trace specification
+**Completed:**
+- Added Section 19: Model Tracing and Versioned Compilation
+- 19.1 Purpose
+- 19.2 Architecture (pipeline diagram)
+- 19.3 TracedGraph Representation (data structure table)
+- 19.4 Model Architecture Registry (architecture table)
+- 19.5 ANE-Faithful SIR Construction (op classification, decomposition)
+- 19.6 Versioned Compilation (family constraint table)
+- 19.7 CLI Integration (command reference)
+- 19.8 Task Origin Tracking
+
+### [x] S61.3 Update STATUS.md with ane-trace component status
+**Completed:**
+- Added "Model Tracing System (ane-trace crate)" section with component table
+- 8 components documented with status
+- Residual statement documenting current limitations
+- Updated last-updated header to reflect 2026-04-28 changes
+
+### [ ] S61.4 Update ISSUES.md with ane-constraints-docs audit findings
+**Status:** PENDING
+
+### [ ] S61.5 Add ane-trace crate-level rustdoc with examples
+**Status:** PENDING
+
+### [ ] S61.6 Add inline documentation for public API surface of ane-trace
+**Status:** PENDING

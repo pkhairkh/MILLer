@@ -1718,3 +1718,132 @@ MILLer/
 3. **Arbitrary dynamic control flow inside Core ML**. This is a fundamental scope violation. The ANE does not support it, and pretending otherwise produces systems that compile but do not run.
 4. **Claims of exact ANE placement knowledge**. Apple does not document the ANE scheduling algorithm. Any system that claims to know exactly which ops run on the ANE is lying or relying on undocumented behavior that will break.
 5. **Cloud-dependent compilation or knowledge**. This system must work offline. Any design that requires network access for compilation decisions or knowledge queries is rejected.
+
+---
+
+# 19. Model Tracing and Versioned Compilation (ane-trace)
+
+## 19.1 Purpose
+
+The `ane-trace` crate extends MILLer to trace HuggingFace Transformers models and compile them into ANE-faithful computation graphs with per-family constraint enforcement. This provides a second input surface for the compiler alongside the existing TOML task spec and Core ML proto paths.
+
+## 19.2 Architecture
+
+The tracing pipeline extends the compiler's input surface:
+
+```
+HuggingFace Model (PyTorch)
+    │
+    ▼
+torch.fx symbolic trace (Python subprocess)
+    │
+    ▼ JSON TracedGraph
+    │
+    ▼
+ane-trace: SIR construction + ANE-faithful decomposition
+    │
+    ▼
+VersionedCompiler: per-family constraint validation
+    │
+    ▼
+Standard MILLer Pipeline: SIR → AIR → MIR → Core ML emission
+```
+
+**Key design principle**: ANE-faithful compilation enforces constraints *during* lowering, not after. Operations that would fall back to CPU at runtime are detected and either decomposed into ANE-native sequences or flagged as violations.
+
+## 19.3 TracedGraph Representation
+
+The `TracedGraph` is the intermediate representation exchanged between the Python tracer and the Rust compiler:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `model_name` | String | HuggingFace model identifier |
+| `architecture` | String | Detected architecture type (gpt2, llama, bert, phi) |
+| `nodes` | Vec<TracedNode> | Ordered computation graph nodes |
+| `model_config` | ModelConfig | Transformer config (hidden_size, num_heads, num_layers) |
+| `input_shapes` | Vec<InputShape> | Configured input dimensions |
+
+Each `TracedNode` carries:
+- `name`: Unique SSA name
+- `op_type`: Operation type (e.g., "linear", "layer_norm", "scaled_dot_product_attention")
+- `inputs`: List of input tensor names
+- `outputs`: List of output tensor names
+- `attrs`: Operation-specific attributes as key-value pairs
+
+## 19.4 Model Architecture Registry
+
+The `ModelRegistry` maps HuggingFace model types to known ANE-faithful decomposition patterns:
+
+| Architecture | `TransformerLayerKind` | Key Decomposition |
+|---|---|---|
+| GPT-2 / GPT-Neo | `CausalLm` | QKV projection → SDPA → output projection |
+| LLaMA / Qwen / Mistral | `RoPEBased` | RoPE tables + grouped-query attention |
+| BERT / RoBERTa | `EncoderOnly` | Bidirectional attention + pooler |
+| Phi / Phi-2 | `SmallFormFactor` | Parallel attention + MLP |
+
+Custom architectures can be registered via `ModelRegistry::register()` with a `ModelPattern` specifying the layer kind and decomposition strategy.
+
+## 19.5 ANE-Faithful SIR Construction
+
+The `build_sir_from_trace()` function transforms a `TracedGraph` into an ANE-faithful SIR graph through:
+
+1. **Op classification**: Each traced op is classified into a compatibility tier:
+   - **Native**: Directly supported by ANE (conv, matmul, relu, add, pool) → pass through
+   - **Decomposable**: Not directly supported but decomposable (layernorm, gelu, softmax) → expand into native ops
+   - **Emulated**: Require specialized ANE-faithful implementations (attention, embedding) → use ANE-faithful patterns
+   - **Unsupported**: Cannot run on ANE (dynamic control flow, custom ops) → flag as violation
+
+2. **Decomposition**: Decomposable ops are expanded into sequences of native ANE ops:
+   - LayerNorm → mean, variance, normalize, scale+shift
+   - GELU → fast GELU approximation compatible with ANE arithmetic
+   - Softmax → exp → sum → div with numerical stability
+
+3. **Layout adaptation**: Tensor layouts adjusted for ANE's NCHW/planar memory format
+
+4. **Constraint application**: Version-specific constraints from `VersionedCompiler` applied
+
+## 19.6 Versioned Compilation
+
+The `VersionedCompiler` provides version-aware compilation respecting hardware-specific constraints for each ANE family:
+
+| Family | Devices | SDPA | Precision | Alignment | Fusion |
+|--------|---------|------|-----------|-----------|--------|
+| A11Legacy | A11, A12, A13 | No | FP16 | Strict | Limited |
+| A14 | A14, M1 | Partial | FP16 | 8-channel | 3 ops |
+| A15 | A15, M2 | Yes | FP16 | 4-channel | 5 ops |
+| A16 | A16, M3, M4 | Yes | Mixed | 4-channel | 8 ops |
+| A18 | A17 Pro, M4+ | Yes | Full mixed | 1-channel | 12 ops |
+
+The `AnceFaithfulnessReport` provides per-op validation results:
+- `total_ops`: Total operations in the SIR graph
+- `ane_supported`: Operations that survive ANE placement
+- `cpu_fallback`: Operations that fall back to CPU
+- `is_faithful`: Whether the graph meets the ANE-only target
+- `violations`: List of constraint violations with severity
+- `warnings`: List of potential issues that do not violate hard constraints
+
+## 19.7 CLI Integration
+
+The `trace-compile` command provides the end-to-end workflow:
+
+```
+ane-cli trace-compile [OPTIONS] --model <MODEL> --output <DIR>
+
+OPTIONS:
+    --model <MODEL>           HuggingFace model ID, local path, or pre-traced JSON
+    --target-family <FAMILY>  ANE family: A11Legacy, A12, A14, A15, A16, A18 [default: A16]
+    --ane-only                Reject CPU-fallback ops
+    --batch-size <N>          Input batch size [default: 1]
+    --seq-len <N>             Input sequence length [default: 32]
+    --decompose               Decompose composite ops during tracing [default: true]
+    --with-kv-cache           Include KV-cache state in the traced graph
+    --dtype <DTYPE>           Weight dtype: fp16 or fp32 [default: fp16]
+    --knowledge <DIR>         Knowledge store directory
+```
+
+## 19.8 Task Origin Tracking
+
+SIR graphs produced by `ane-trace` carry a `TaskOrigin::TransformersTrace` tag (alongside existing `CoreMLProto` and task-spec origins). This enables:
+- Provenance tracking through all IR levels
+- Diagnostic specificity in error messages
+- Pass specialization based on graph origin (e.g., traced graphs need layout adaptation that Core ML graphs may not)

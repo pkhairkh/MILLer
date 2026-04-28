@@ -65,7 +65,8 @@ TOML task spec
 | `ane-coreml-ffi` | C API FFI skeleton: `extern "C"` functions, `coreml_validate_proto_package()`, cross-platform validation |
 | `ane-artifacts` | Manifest generation, content hashing, deterministic packaging |
 | `ane-report` | JSON and Markdown report generation |
-| `ane-cli` | CLI entry point: `compile`, `compile-full`, `compile-sharded`, `compile-full-sharded`, `lab`, `lab-loop`, `generate-tasks`, `profile`, `report`, `package` |
+| `ane-trace` | **HuggingFace Transformers model tracing** via `torch.fx`; ANE-faithful SIR construction; versioned compilation with per-family constraint enforcement; model architecture registry (GPT-2, LLaMA/Qwen, BERT, Phi) |
+| `ane-cli` | CLI entry point: `compile`, `compile-full`, `compile-sharded`, `compile-full-sharded`, `lab`, `lab-loop`, `generate-tasks`, `profile`, `report`, `package`, **`trace-compile`** |
 
 ### Task Families
 
@@ -78,6 +79,81 @@ Five task families are active with dedicated emission paths:
 | Decode Step | `--family decode` | `mb.linear` + `mb.scaled_dot_product_attention` + `mb.read_state`/`mb.coreml_update_state` | QKV → Attention → Output (stateful) |
 | MLP Block | `--family mlp` | `mb.linear` + `mb.gelu(mode="TANH_APPROXIMATION")` | Up-proj → GELU → Down-proj |
 | Attention | `--family attn` | `mb.linear` + `mb.scaled_dot_product_attention` | QKV → Multi-head attention → Output |
+| Shape Hostile | `--family shape` | `mb.linear` | Odd/prime/mismatched dimension stress testing |
+| Op Remap | `--family remap` | `mb.linear` | Formulation equivalence testing |
+| Shard Survival | `--family survival` | `mb.linear` | Shard boundary survival testing |
+
+## Model Tracing and Versioned Compilation
+
+The `ane-trace` crate extends MILLer to trace HuggingFace Transformers models and compile them into ANE-faithful computation graphs with per-family constraint enforcement. The `trace-compile` CLI command provides the end-to-end workflow:
+
+```
+HuggingFace Model (PyTorch)
+    │
+    ▼
+torch.fx symbolic trace (Python subprocess)
+    │
+    ▼ JSON TracedGraph
+    │
+    ▼
+ane-trace: SIR construction + ANE-faithful decomposition
+    │
+    ▼
+VersionedCompiler: per-family constraint validation
+    │
+    ▼
+Standard MILLer Pipeline: SIR → AIR → MIR → Core ML emission
+```
+
+### Supported Model Architectures
+
+| Architecture | Model Type | Key Decomposition |
+|---|---|---|
+| GPT-2 family | Causal LM | QKV projection → SDPA → output projection |
+| LLaMA / Qwen family | RoPE-based | RoPE tables + grouped-query attention |
+| BERT family | Encoder-only | Bidirectional attention + pooler |
+| Phi family | Small form factor | Parallel attention + MLP |
+
+Custom architectures can be registered via `ModelRegistry::register()`.
+
+### ANE Version-Aware Compilation
+
+The `VersionedCompiler` enforces constraints specific to each ANE family:
+
+| ANE Family | Devices | SDPA Support | Key Constraints |
+|---|---|---|---|
+| A11 Legacy | A11, A12, A13 | No | Limited op set, strict alignment |
+| A14 | A14, M1 | Partial | FP16 only, 8-channel alignment |
+| A15 | A15, M2 | Yes | FP16, improved fusion |
+| A16 | A16, M3, M4 | Yes | Mixed-precision, enhanced fusion |
+| A18 | A17 Pro, M4+ | Yes | Full mixed-precision, expanded op set |
+
+The `--target-family` flag selects the constraint profile. The `--ane-only` flag rejects any op that would fall back to CPU.
+
+### Usage
+
+```bash
+# Trace and compile a HuggingFace model for A16 (default, reliable SDPA)
+ane-cli trace-compile --model "bert-base-uncased" --output artifacts/bert
+
+# Trace with specific ANE family and custom input shapes
+ane-cli trace-compile \
+  --model "gpt2" \
+  --target-family A15 \
+  --batch-size 1 \
+  --seq-len 64 \
+  --output artifacts/gpt2
+
+# Enforce ANE-only compilation (reject CPU-fallback ops)
+ane-cli trace-compile \
+  --model "meta-llama/Llama-2-7b-hf" \
+  --target-family A16 \
+  --ane-only \
+  --output artifacts/llama
+
+# Load a pre-traced graph (skip Python tracing)
+ane-cli trace-compile --model traced_graph.json --output artifacts/pretraced
+```
 
 ## Key Capabilities
 
@@ -271,10 +347,12 @@ MILLer/
 │   ├── coreml-ffi/      # C API FFI skeleton for Core ML framework
 │   ├── artifacts/       # Manifest generation, hashing, packaging
 │   ├── report/          # JSON and Markdown reporting
-│   └── cli/             # CLI entry point (ane-cli)
+│   ├── trace/           # HuggingFace model tracing and ANE-faithful SIR construction
+│   └── cli/             # CLI entry point (ane-cli) including trace-compile
 ├── python/
 │   ├── bridge.py        # Bridge dispatch (15 commands including verify)
 │   ├── mil_emitter.py   # MIL program construction (10 emission paths)
+│   ├── trace_model.py   # torch.fx model tracing for HuggingFace Transformers
 │   ├── converter.py     # MIL → MLModel conversion
 │   ├── compute_plan.py  # Compute plan inspection (macOS only)
 │   ├── model_structure.py # MLModelStructure inspection + MIR comparison
@@ -293,15 +371,17 @@ MILLer/
 
 ## Key Design Decisions
 
-1. **Rust-heavy, Python at boundary only** — The compiler is Rust-first. Python/coremltools is used only for the emission boundary. Proto-direct emission (Sprint 41) progressively eliminates even this dependency.
+1. **Rust-heavy, Python at boundary only** — The compiler is Rust-first. Python/coremltools is used only for the emission boundary. Proto-direct emission (Sprint 41) progressively eliminates even this dependency. Model tracing (`ane-trace`) uses a Python subprocess for `torch.fx` symbolic tracing, but the traced graph is immediately handed back to Rust via JSON for all compilation and constraint enforcement.
 
-2. **Truth over claims** — Every feature honestly reports its verification scope. The `ArtifactManifest` includes `implementation_status`, `verification_scope`, and `environment_limitations` fields. The knowledge store rejects observations with zero evidence.
+2. **ANE-faithful, not just ANE-compatible** — The `ane-trace` crate enforces ANE constraints *during* lowering, not after. Operations that would fall back to CPU at runtime are detected and either decomposed into ANE-native sequences or flagged as violations. The `VersionedCompiler` applies per-family constraint profiles (A11 through A18) so the compiled graph is faithful to the target hardware generation.
 
-3. **Knowledge must materially change behavior** — "Self-learning compiler" claims are justified only where stored evidence changes pass pipeline output on an active path. The `PrecisionPolicyPass` and `ShardPlanPass` are the two proven knowledge-affecting passes.
+3. **Truth over claims** — Every feature honestly reports its verification scope. The `ArtifactManifest` includes `implementation_status`, `verification_scope`, and `environment_limitations` fields. The knowledge store rejects observations with zero evidence.
 
-4. **Sharding is structurally real** — Shard roles produce different op structures, not just dimension changes. `ShardOpProfile` determines the MIR op sequence; `RoleMirBuilder` constructs the graph; `op_type_signature()` proves structural divergence.
+4. **Knowledge must materially change behavior** — "Self-learning compiler" claims are justified only where stored evidence changes pass pipeline output on an active path. The `PrecisionPolicyPass` and `ShardPlanPass` are the two proven knowledge-affecting passes.
 
-5. **Proto-direct weight sharing solves a real coremltools gap** — coremltools 9.0 duplicates constants per function boundary. Rust-controlled `weight.bin` layout stores shared weights once, producing smaller packages with deduplication metrics to prove it.
+5. **Sharding is structurally real** — Shard roles produce different op structures, not just dimension changes. `ShardOpProfile` determines the MIR op sequence; `RoleMirBuilder` constructs the graph; `op_type_signature()` proves structural divergence.
+
+6. **Proto-direct weight sharing solves a real coremltools gap** — coremltools 9.0 duplicates constants per function boundary. Rust-controlled `weight.bin` layout stores shared weights once, producing smaller packages with deduplication metrics to prove it.
 
 ## Residuals
 

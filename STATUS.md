@@ -1,6 +1,6 @@
 # STATUS
 
-Last updated: 2026-04-24 (Sprint 57 COMPLETE. RoleMirBuilder now derives compute hints from ShardSpec.compute_units instead of defaulting to CPUAndNE. AIR shapes propagate into MirNode.shape during lowering. StaticLUTProjection lowers to MILGather. Python verification falls back to offline placement prediction on non-Apple hosts. 440 workspace tests passing.)
+Last updated: 2026-04-28 (Sprint 60 COMPLETE + ane-trace crate implemented + trace-compile CLI command wired. Per-op constraint validation, CPU_ONLY hard gate, ANE interleave/layout types, and AneHwLimits per-revision enforcement. ane-trace crate provides HuggingFace model tracing via torch.fx, ANE-faithful SIR construction, versioned compilation with per-family constraints (A11–A18), and model architecture registry (GPT-2, LLaMA/Qwen, BERT, Phi). trace-compile CLI command operational. 501 workspace tests passing.)
 
 ## Verification Scope Key
 
@@ -72,6 +72,21 @@ TOML task spec -> Rust SIR graph -> Rust MIR graph -> Bridge payload (JSON)
 | Content-hash deduplication | `crates/coreml-emit/src/weights.rs` (`WeightBinBuilder::with_content_dedup`) | implemented, host-verified — SHA-256-based dedup of differently-named weights with identical content and matching shape/dtype (Sprint 45) |
 | Manifest mir_ops | `crates/artifacts/src/manifest.rs` (`FunctionDescriptor.mir_ops`) | implemented, host-verified — MIR op type list per function, populated from pass pipeline MIR graphs (Sprint 47) |
 | Verify auto-populate mir_ops | `crates/cli/src/main.rs` (`run_verify`) | implemented, host-verified — auto-populates `--mir-ops` from compile manifest when not explicitly provided (Sprint 47) |
+
+### Model Tracing System (ane-trace crate)
+
+| Component | Code | Status |
+|-----------|------|--------|
+| TracedGraph data structures | `crates/trace/src/graph.rs` | implemented, host-verified — `TracedGraph`, `TracedNode`, `TracedOp`, `TensorShape` |
+| Model architecture registry | `crates/trace/src/registry.rs` | implemented, host-verified — GPT-2, LLaMA/Qwen, BERT, Phi patterns with `ModelRegistry::register()` |
+| Trace configuration | `crates/trace/src/config.rs` | implemented, host-verified — `TraceConfig`, `TraceTarget` (HuggingFace, local, pre-traced), `InputShape` |
+| SIR construction from trace | `crates/trace/src/sir_build.rs` | implemented, host-verified — `build_sir_from_trace()` with ANE-faithful op decomposition |
+| Versioned compiler | `crates/trace/src/versioned.rs` | implemented, host-verified — `VersionedCompiler` with per-family constraint validation, `AnceFaithfulnessReport` |
+| Python subprocess tracing | `crates/trace/src/subprocess.rs` | implemented — `trace_model()` launches torch.fx tracer via Python subprocess |
+| Python tracing script | `python/trace_model.py` | implemented — torch.fx symbolic tracing for HuggingFace models |
+| CLI trace-compile command | `crates/cli/src/main.rs` (`run_trace_compile`) | implemented, host-verified — `ane-cli trace-compile --model <MODEL> --output <DIR>` |
+
+**Residual:** The ane-trace crate is structurally complete and wired into the CLI. The `trace-compile` command traces a model, builds SIR, validates ANE faithfulness, and writes artifacts (traced graph, SIR, faithfulness report). End-to-end compilation through the full pass pipeline (SIR → AIR → MIR → bridge emission) is not yet wired — the trace-compile path currently stops after SIR + faithfulness report. Integration tests with real HuggingFace models require `torch` and `transformers` Python packages. The Python tracing script requires `torch.fx` which may not support all model architectures (dynamic control flow models may fail symbolic tracing).
 
 ### Lab Run System (Sprint 5)
 

@@ -173,3 +173,73 @@ The top of `TASKS.md` and this file are now aligned with code reality, but `STAT
 - older sharded/runtime residuals that conflict with the current code
 
 Proceed by collapsing or rewriting the stale sections so the project has one truth-facing status layer instead of a current summary plus contradictory historical fragments.
+
+---
+
+## ane-constraints-docs Audit Findings (2026-04-28)
+
+The following issues were identified during a systematic comparison of the `ane-constraints-docs/` directory (the "points of truth") against the current implementation in `ane-knowledge` and `ane-trace`.
+
+### Issue #27: Missing ANE Bandwidth Constraints In ane-knowledge
+
+**Severity**: High
+**Component**: ane-knowledge
+**Discovered**: 2026-04-28
+
+The `ane-constraints-docs` specifications define bandwidth constraints for ANE data paths (neural engine to DRAM, neural engine to SRAM, inter-neural-core bandwidth) that are not represented in the `ane-knowledge` crate. Without these constraints, the compiler cannot make informed decisions about tile scheduling, buffer allocation, and data movement optimization.
+
+**Impact**: Tile assignment may exceed available bandwidth; no bandwidth-aware pass ordering or fusion decisions; performance predictions in ane-report may be inaccurate.
+
+**Proposed Fix**: Add bandwidth constraint structures to `ane-knowledge`; define per-family bandwidth profiles (A11–A18); integrate bandwidth checks into the AIR to MIR lowering pass.
+
+### Issue #28: Incomplete ANE Memory Layout Specifications
+
+**Severity**: High
+**Component**: ane-knowledge, ane-passes
+**Discovered**: 2026-04-28
+
+The `ane-constraints-docs` detail specific memory layout requirements for ANE tensors (planar format, channel alignment, stride requirements) that are only partially implemented in `ane-knowledge`. The documented per-tile memory layout constraints and the interaction between layout and kernel fusion are not captured.
+
+**Impact**: Generated models may have suboptimal memory layouts; potential for misaligned tensors causing runtime errors on ANE; fusion decisions may violate layout compatibility requirements.
+
+**Proposed Fix**: Implement full memory layout constraint structures in `ane-knowledge`; add layout verification pass in `ane-passes`; ensure `ane-trace` SIR construction produces layout-compatible graphs.
+
+### Issue #29: Outdated ANE Kernel Fusion Rules
+
+**Severity**: High
+**Component**: ane-knowledge, ane-passes
+**Discovered**: 2026-04-28
+
+The kernel fusion rules in `ane-knowledge` do not match the current `ane-constraints-docs` specifications. The documented rules include version-specific fusion limits (3 ops for ANE1/A14, 5 for A15, 8 for A16, 12 for A18) and fusion compatibility matrices that are not fully represented. Additionally, the docs specify that certain op combinations (e.g., conv+bn+relu) have special fusion patterns that the current implementation does not handle.
+
+**Impact**: Suboptimal fusion decisions leading to reduced ANE utilization; fusion passes may create invalid op combinations for specific ANE versions; performance regression compared to coremltools output.
+
+**Proposed Fix**: Update fusion rules in `ane-knowledge` to match `ane-constraints-docs`; implement version-aware fusion compatibility matrix; add fusion verification pass; add special fusion pattern matching for common sequences.
+
+### Issue #30: Missing ANE Precision Mode Constraints Per Version
+
+**Severity**: Medium
+**Component**: ane-knowledge, ane-trace
+**Discovered**: 2026-04-28
+
+The `ane-constraints-docs` specify precision mode constraints that differ across ANE versions. A11/A12/A14/A15 only support FP16, while A16+ supports mixed-precision (FP16/FP32). The current `ane-knowledge` crate does not fully encode these version-specific precision constraints, and the `VersionedCompiler` in `ane-trace` has a basic implementation that needs alignment with the documented constraints.
+
+**Impact**: Traced models may use precision modes not supported by the target ANE version; no precision-aware lowering or casting in the compilation pipeline; potential for numerical accuracy issues when FP32 ops are forced to FP16.
+
+**Proposed Fix**: Add precision constraint profiles to `ane-knowledge` per ANE version; enhance `VersionedCompiler` to apply precision constraints during SIR construction; add precision-aware casting pass in `ane-passes` for cross-version compatibility.
+
+### Issue #31: ane-constraints-docs Has Constraint Categories Not Yet in ane-knowledge
+
+**Severity**: Medium
+**Component**: ane-knowledge
+**Discovered**: 2026-04-28
+
+The `ane-constraints-docs` directory contains several constraint categories that have no corresponding representation in the `ane-knowledge` crate:
+1. **DMA transfer constraints** — limitations on data movement between ANE and main memory
+2. **Neural core scheduling constraints** — rules for distributing work across multiple neural cores
+3. **Power state constraints** — ANE behavior under different power states (performance vs. efficiency)
+4. **Thermal constraints** — ANE throughput reduction under thermal pressure
+
+**Impact**: Compiler cannot make DMA-aware scheduling decisions; no multi-core utilization optimization; no power/thermal-aware compilation mode.
+
+**Proposed Fix**: Add constraint category structures for each missing area; implement DMA, scheduling, power, and thermal constraint specifications; add query interfaces for passes; consider a "power-aware" compilation mode for ane-cli.

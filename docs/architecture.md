@@ -17,14 +17,25 @@ See [STATUS.md](../STATUS.md) for what is implemented, what is verified, and wha
 | `crates/ir/src/task_spec.rs` | TOML task spec parsing |
 | `crates/ir/src/linear_slice.rs` | SIR→MIR lowering, bridge payload, function descriptors |
 | `crates/ir/src/pir.rs` | Package IR with `FunctionEntry` (multifunction seam) |
+| `crates/ir/src/ane_target.rs` | `AneFamily`, `AneRevision`, `AneTarget` types with chip-to-family mapping |
+| `crates/ir/src/ane_engine.rs` | `AneEngine` enum (NE/PE/TransposeEngine) with per-MirOp engine assignment |
+| `crates/ir/src/ane_hw_limits.rs` | `AneHwLimits` per-revision hardware limit enforcement |
+| `crates/ir/src/ane_layout.rs` | `AneInterleave`/`AneLayout` types for interleave and ChannelLast constraints |
 | `crates/bridge/src/subprocess.rs` | Rust→Python subprocess bridge, `BridgeResult` with full field capture |
-| `crates/cli/src/main.rs` | CLI compile and report commands, deterministic task hashing, spec-driven manifest |
+| `crates/cli/src/main.rs` | CLI compile, report, trace-compile commands, deterministic task hashing, spec-driven manifest |
+| `crates/trace/src/graph.rs` | `TracedGraph`, `TracedNode`, `TracedOp`, `TensorShape` data structures |
+| `crates/trace/src/registry.rs` | `ModelRegistry`, `ModelPattern`, `TransformerLayerKind` — architecture registry |
+| `crates/trace/src/config.rs` | `TraceConfig`, `TraceTarget`, `InputShape` — tracing configuration |
+| `crates/trace/src/sir_build.rs` | `build_sir_from_trace()` — ANE-faithful SIR construction from traced graphs |
+| `crates/trace/src/versioned.rs` | `VersionedCompiler`, `AnceFaithfulnessReport` — version-aware constraint validation |
+| `crates/trace/src/subprocess.rs` | `trace_model()` — Python subprocess launcher for torch.fx tracing |
 | `crates/artifacts/src/hashing.rs` | SHA-256 content hashing (file and byte), `hash_file` now implemented |
 | `crates/artifacts/src/packaging.rs` | Artifact packaging — deterministic zip archives of compile output |
 | `crates/report/src/markdown.rs` | Markdown report generation — compilation, knowledge, diagnostics reports |
 | `crates/report/src/json_report.rs` | JSON report generation — structured machine-readable reports |
 | `crates/passes/src/*.rs` | Pass pipeline (8 passes): 3 have real transformation logic (LegalityRewrite, MilLower, RiskAnnotate), 5 are pass-throughs for the current linear projection slice. Wired into `compile-full` CLI subcommand. |
-| `python/bridge.py` | Thin dispatch (subprocess entry point) — 8 commands: emit_linear_projection, emit_mlprogram, convert, palettize, compute_plan, inspect_mlpackage, host_inspect, profile |
+| `python/bridge.py` | Thin dispatch (subprocess entry point) — 15 commands including verify and validate_proto_direct |
+| `python/trace_model.py` | torch.fx symbolic tracing for HuggingFace Transformers models |
 | `python/mil_emitter.py` | MIL program construction, mlpackage save, compute plan info |
 | `python/converter.py` | Encapsulates ct.convert() for MIL→MLModel conversion; wired through bridge |
 | `python/palettize.py` | Post-training palettization; wired through bridge; fixed for coremltools 9.0 |
