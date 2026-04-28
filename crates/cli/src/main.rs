@@ -5212,7 +5212,10 @@ fn run_verify(
 /// 1. Trace the model (via Python subprocess or load pre-traced JSON)
 /// 2. Build SIR from the traced graph
 /// 3. Validate against ANE constraints (version-aware)
-/// 4. Write all artifacts (SIR, faithfulness report, traced graph)
+/// 4. LegalityRewrite (SIR→AIR)
+/// 5. MilLower (AIR→MIR)
+/// 6. Proto-direct emission (MIR→.mlpackage)
+/// 7. Write all artifacts (SIR, AIR, MIR, faithfulness report, traced graph, .mlpackage)
 fn run_trace_compile(
     model: &str,
     output: &str,
@@ -5227,6 +5230,11 @@ fn run_trace_compile(
     dtype: &str,
     knowledge_dir: Option<&str>,
 ) -> Result<(), String> {
+    use ane_bridge::proto_direct::{emit_mir_graph_proto_direct, validate_proto_direct_package};
+    use ane_passes::knowledge_query::NoKnowledge;
+    use ane_passes::legality_rewrite::{DecompositionContext, LegalityRewritePass};
+    use ane_passes::mil_lower::MilLowerPass;
+    use ane_passes::shard_plan::ShardPlan;
     use ane_trace::config::{InputShape, TraceConfig, TraceTarget};
     use ane_trace::sir_build::build_sir_from_trace;
     use ane_trace::subprocess::trace_model;
@@ -5235,12 +5243,12 @@ fn run_trace_compile(
     println!("=== MILLer — Trace-Compile Pipeline ===\n");
 
     // Step 1: Parse target family
-    println!("[1/6] Parsing target ANE family: {}", target_family);
+    println!("[1/10] Parsing target ANE family: {}", target_family);
     let family = parse_ane_family(target_family)?;
     println!("  Target: {:?}", family);
 
     // Step 2: Configure and run tracing
-    println!("[2/6] Tracing model: {}", model);
+    println!("[2/10] Tracing model: {}", model);
     let target = if model.ends_with(".json") {
         TraceTarget::PreTraced(model.to_string())
     } else if std::path::Path::new(model).is_dir() {
@@ -5278,7 +5286,7 @@ fn run_trace_compile(
     );
 
     // Step 3: Build SIR from traced graph
-    println!("[3/6] Building SIR from traced graph...");
+    println!("[3/10] Building SIR from traced graph...");
     let sir = build_sir_from_trace(&traced_graph, family)?;
     println!(
         "  SIR: {} nodes, {} inputs, {} outputs",
@@ -5288,7 +5296,7 @@ fn run_trace_compile(
     );
 
     // Step 4: Validate against ANE constraints
-    println!("[4/6] Validating ANE faithfulness...");
+    println!("[4/10] Validating ANE faithfulness...");
     let compiler = VersionedCompiler::new(family);
     let result = compiler.validate_sir(&sir, ane_only);
     println!(
@@ -5314,10 +5322,84 @@ fn run_trace_compile(
         }
     }
 
-    // Step 5: Write artifacts
-    println!("[5/6] Writing artifacts...");
+    // Step 5: Run LegalityRewritePass (SIR→AIR)
+    println!("[5/10] Running LegalityRewritePass (SIR→AIR)...");
+    let legality = LegalityRewritePass::new();
+    let no_knowledge = NoKnowledge;
+    let decomp_ctx = DecompositionContext::for_attention(
+        batch_size,
+        traced_graph.model_config.hidden_size,
+        traced_graph.model_config.num_attention_heads,
+        traced_graph.model_config.hidden_size / traced_graph.model_config.num_attention_heads,
+        seq_len,
+    );
+    let air = legality
+        .run(sir.clone(), &no_knowledge, Some(&decomp_ctx))
+        .map_err(|e| format!("LegalityRewritePass failed: {}", e))?;
+    println!(
+        "  AIR: {} nodes, {} inputs, {} outputs",
+        air.nodes.len(),
+        air.inputs.len(),
+        air.outputs.len()
+    );
+
+    // Step 6: Run MilLowerPass (AIR→MIR) with default single-shard plan
+    println!("[6/10] Running MilLowerPass (AIR→MIR)...");
+    let mil_lower = MilLowerPass::new();
+    let shard_plan = ShardPlan::default();
+    let mirs = mil_lower
+        .run(&air, &shard_plan)
+        .map_err(|e| format!("MilLowerPass failed: {}", e))?;
+    println!("  MIR: {} shard graph(s) produced", mirs.len());
+    for (i, mir) in mirs.iter().enumerate() {
+        println!(
+            "    MIR[{}]: {} nodes, {} inputs, {} outputs",
+            i,
+            mir.nodes.len(),
+            mir.inputs.len(),
+            mir.outputs.len()
+        );
+    }
+
+    // Step 7: Emit .mlpackage via proto-direct
+    println!("[7/10] Emitting .mlpackage via proto-direct...");
     let output_path = PathBuf::from(output);
     fs::create_dir_all(&output_path).map_err(|e| format!("Failed to create output dir: {}", e))?;
+
+    let mlpackage_dir = output_path.join("model.mlpackage");
+    if mirs.is_empty() {
+        return Err("MilLowerPass produced no MIR graphs — nothing to emit".to_string());
+    }
+    let emit_result = emit_mir_graph_proto_direct(&mirs[0], mlpackage_dir.to_str().unwrap_or(""))
+        .map_err(|e| format!("Proto-direct emission failed: {}", e))?;
+    println!("  Emitted: {}", mlpackage_dir.display());
+    println!("  Total size: {} bytes, {} file(s), {} weight(s)",
+        emit_result.total_size, emit_result.file_count, emit_result.weight_count);
+
+    // Step 8: Validate .mlpackage structure
+    println!("[8/10] Validating .mlpackage structure...");
+    let validation = validate_proto_direct_package(mlpackage_dir.to_str().unwrap_or(""))
+        .map_err(|e| format!("Package validation failed: {}", e))?;
+    if validation.is_valid {
+        println!("  .mlpackage: VALID");
+        if let Some(model_size) = validation.model_file_size {
+            println!("  model.mlmodel: {} bytes", model_size);
+        }
+        if let Some(weight_size) = validation.weight_file_size {
+            println!("  weight.bin: {} bytes", weight_size);
+        }
+    } else {
+        println!("  .mlpackage: INVALID");
+        for err in &validation.errors {
+            println!("    ERROR: {}", err);
+        }
+    }
+    for warn in &validation.warnings {
+        println!("    WARNING: {}", warn);
+    }
+
+    // Step 9: Write intermediate artifacts
+    println!("[9/10] Writing artifacts...");
 
     // Write traced graph
     let trace_path = output_path.join("traced_graph.json");
@@ -5334,6 +5416,20 @@ fn run_trace_compile(
     fs::write(&sir_path, &sir_json).map_err(|e| format!("Failed to write SIR: {}", e))?;
     println!("  SIR: {}", sir_path.display());
 
+    // Write AIR
+    let air_path = output_path.join("air.json");
+    let air_json = serde_json::to_string_pretty(&air)
+        .map_err(|e| format!("AIR serialization failed: {}", e))?;
+    fs::write(&air_path, &air_json).map_err(|e| format!("Failed to write AIR: {}", e))?;
+    println!("  AIR: {}", air_path.display());
+
+    // Write MIR
+    let mir_path = output_path.join("mir.json");
+    let mir_json = serde_json::to_string_pretty(&mirs[0])
+        .map_err(|e| format!("MIR serialization failed: {}", e))?;
+    fs::write(&mir_path, &mir_json).map_err(|e| format!("Failed to write MIR: {}", e))?;
+    println!("  MIR: {}", mir_path.display());
+
     // Write faithfulness report
     let report_path = output_path.join("ane_faithfulness_report.json");
     let report_json = serde_json::to_string_pretty(&result.report)
@@ -5341,8 +5437,8 @@ fn run_trace_compile(
     fs::write(&report_path, &report_json).map_err(|e| format!("Failed to write report: {}", e))?;
     println!("  Faithfulness report: {}", report_path.display());
 
-    // Step 6: Knowledge consultation (optional)
-    println!("[6/6] Knowledge consultation...");
+    // Step 10: Knowledge consultation (optional)
+    println!("[10/10] Knowledge consultation...");
     if let Some(kdir) = knowledge_dir {
         let store_path = PathBuf::from(kdir);
         if store_path.exists() {
@@ -5355,6 +5451,7 @@ fn run_trace_compile(
     }
 
     println!("\n=== Trace-compile complete ===");
+    println!("mlpackage: {}", mlpackage_dir.display());
     println!("Artifacts in: {}", output);
 
     Ok(())
