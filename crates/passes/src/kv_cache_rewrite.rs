@@ -1,34 +1,32 @@
-//! KV Cache Rewrite Pass — transform naive KV cache to reverse ring-buffer.
-//!
-//! Derived from pkhairkh/qwen3-coreml-palettized's reverse ring-buffer approach.
+//! KV Cache Rewrite Pass — transform naive KV cache to masked-blend layout.
 //!
 //! The naive KV cache uses append/shift operations that often force CPU
 //! fallback on ANE because scatter operations are not ANE-supported.
-//! The reverse ring-buffer layout keeps active context in a contiguous
-//! suffix of the sequence axis, and new K/V values are written by
-//! masked blending instead of scatter-heavy updates.
+//! The masked-blend layout keeps active context in a contiguous suffix
+//! of the sequence axis, and new K/V values are written by masked
+//! blending (Where + Mul + Add) instead of scatter-heavy updates.
 //!
 //! This pass transforms `StateRead`/`StateWrite` sequences into
-//! `KvCacheRingUpdate` ops when the KV cache layout is set to
-//! `ReverseRingBuffer`.
+//! a pattern of StateRead + Where + Mul + Add + StateWrite ops when
+//! the KV cache layout is set to `MaskedBlend`.
 
 use ane_ir::sir::{SirGraph, SirNode, SirNodeId, SirOp, KvCacheLayout};
 
 /// Result of the KV cache rewrite pass.
 #[derive(Debug, Clone)]
 pub struct KvCacheRewriteResult {
-    /// Number of StateRead/StateWrite pairs converted to KvCacheRingUpdate.
+    /// Number of StateRead/StateWrite pairs converted to masked-blend pattern.
     pub pairs_converted: usize,
-    /// Number of KvCacheRingUpdate ops inserted.
-    pub ring_updates_inserted: usize,
+    /// Number of new ops inserted (StateRead + Where + Mul + Add + StateWrite per pair).
+    pub ops_inserted: usize,
 }
 
 /// Run the KV cache rewrite pass on a SIR graph.
 ///
-/// When `kv_layout` is `ReverseRingBuffer`, this pass:
+/// When `kv_layout` is `MaskedBlend`, this pass:
 /// 1. Identifies StateRead/StateWrite pairs targeting the same KV cache state
-/// 2. Replaces them with KvCacheRingUpdate ops that use masked blending
-/// 3. Inserts position and mask inputs for the ring-buffer write logic
+/// 2. Replaces them with a masked-blend pattern: StateRead + Where + Mul + Add + StateWrite
+/// 3. Inserts position and mask inputs for the blend logic
 ///
 /// When `kv_layout` is `Naive` or `Paged`, the pass is a no-op.
 pub fn run_kv_cache_rewrite_pass(
@@ -37,10 +35,10 @@ pub fn run_kv_cache_rewrite_pass(
 ) -> KvCacheRewriteResult {
     let mut result = KvCacheRewriteResult {
         pairs_converted: 0,
-        ring_updates_inserted: 0,
+        ops_inserted: 0,
     };
 
-    if kv_layout != &KvCacheLayout::ReverseRingBuffer {
+    if kv_layout != &KvCacheLayout::MaskedBlend {
         return result;
     }
 
@@ -55,8 +53,9 @@ pub fn run_kv_cache_rewrite_pass(
         .collect();
 
     // For each KV cache read, find the corresponding write and replace
-    // the pair with a KvCacheRingUpdate. In a full implementation, this
-    // would also insert position counter and valid mask management ops.
+    // the pair with a masked-blend pattern: StateRead + Where + Mul + Add + StateWrite.
+    // In a full implementation, this would also insert position counter and
+    // valid mask management ops.
     for read_idx in kv_read_indices {
         let (state_id, offset, shape) = match &graph.nodes[read_idx].op {
             SirOp::StateRead { state_id, offset, shape } => {
@@ -85,51 +84,124 @@ pub fn run_kv_cache_rewrite_pass(
             let layer_idx = parse_layer_idx(&state_id);
             let is_key = state_id.ends_with("_key");
 
-            // Create the KvCacheRingUpdate op
-            let cache_id = SirNodeId(format!("sir_kv_cache_read_{}", graph.nodes[read_idx].id.0));
-            let position_id = SirNodeId(format!("position_counter_{}", layer_idx));
-            let mask_id = SirNodeId(format!("valid_mask_{}", layer_idx));
+            // Build the masked-blend pattern:
+            //   cached = StateRead(kv_cache_state)
+            //   blend_mask = Where(valid_mask, new_values, cached)
+            //   Alternatively: old_part = Mul(cached, inv_mask), new_part = Mul(new_values, mask),
+            //                  blended = Add(old_part, new_part)
+            //   StateWrite(kv_cache_state, blended)
 
-            let ring_node = SirNode {
-                id: SirNodeId(format!("sir_kv_ring_{}_{}", layer_idx, if is_key { "k" } else { "v" })),
-                op: SirOp::KvCacheRingUpdate {
-                    cache: cache_id,
-                    new_values: value_id,
-                    position: position_id,
-                    valid_mask: mask_id,
-                    is_key,
-                    layer_idx,
+            let base_name = format!("kv_blend_{}_{}", layer_idx, if is_key { "k" } else { "v" });
+
+            // StateRead: read the current cache contents
+            let cache_read_id = SirNodeId(format!("sir_{}_cache_read", base_name));
+            let cache_read_node = SirNode {
+                id: cache_read_id.clone(),
+                op: SirOp::StateRead {
+                    state_id: state_id.clone(),
+                    offset,
+                    shape: shape.clone(),
                 },
-                name: format!("kv_ring_{}_{}", layer_idx, if is_key { "k" } else { "v" }),
+                name: format!("{}_cache_read", base_name),
                 metadata: graph.nodes[read_idx].metadata.clone(),
             };
 
-            // Replace the read node with a placeholder that feeds into the ring update
-            // (the actual cache read happens inside KvCacheRingUpdate)
+            // Where: select between new values and cached values based on valid mask
+            let mask_id = SirNodeId(format!("valid_mask_{}", layer_idx));
+            let where_id = SirNodeId(format!("sir_{}_where", base_name));
+            let where_node = SirNode {
+                id: where_id.clone(),
+                op: SirOp::Where {
+                    condition: mask_id,
+                    x: value_id.clone(),
+                    y: cache_read_id.clone(),
+                },
+                name: format!("{}_where", base_name),
+                metadata: graph.nodes[read_idx].metadata.clone(),
+            };
+
+            // Mul: multiply cached values by inverse mask (old portion)
+            let inv_mask_id = SirNodeId(format!("inv_mask_{}", layer_idx));
+            let old_mul_id = SirNodeId(format!("sir_{}_old_mul", base_name));
+            let old_mul_node = SirNode {
+                id: old_mul_id.clone(),
+                op: SirOp::Mul {
+                    x: cache_read_id,
+                    y: inv_mask_id,
+                },
+                name: format!("{}_old_mul", base_name),
+                metadata: graph.nodes[read_idx].metadata.clone(),
+            };
+
+            // Mul: multiply new values by mask (new portion)
+            let pos_mask_id = SirNodeId(format!("pos_mask_{}", layer_idx));
+            let new_mul_id = SirNodeId(format!("sir_{}_new_mul", base_name));
+            let new_mul_node = SirNode {
+                id: new_mul_id.clone(),
+                op: SirOp::Mul {
+                    x: value_id,
+                    y: pos_mask_id,
+                },
+                name: format!("{}_new_mul", base_name),
+                metadata: graph.nodes[read_idx].metadata.clone(),
+            };
+
+            // Add: combine old and new portions
+            let add_id = SirNodeId(format!("sir_{}_add", base_name));
+            let add_node = SirNode {
+                id: add_id.clone(),
+                op: SirOp::Add {
+                    x: old_mul_id,
+                    y: new_mul_id,
+                },
+                name: format!("{}_add", base_name),
+                metadata: graph.nodes[read_idx].metadata.clone(),
+            };
+
+            // StateWrite: write the blended result back to the cache
+            let state_write_id = SirNodeId(format!("sir_{}_state_write", base_name));
+            let state_write_node = SirNode {
+                id: state_write_id.clone(),
+                op: SirOp::StateWrite {
+                    state_id: state_id.clone(),
+                    offset,
+                    value: add_id,
+                },
+                name: format!("{}_state_write", base_name),
+                metadata: graph.nodes[w_idx].metadata.clone(),
+            };
+
+            // Replace the read node with an identity that references the Where output
+            // (the where op provides the "read" result for downstream consumers)
             graph.nodes[read_idx] = SirNode {
                 id: graph.nodes[read_idx].id.clone(),
                 op: SirOp::Identity {
-                    input: SirNodeId(format!("sir_kv_ring_{}_{}", layer_idx, if is_key { "k" } else { "v" })),
+                    input: where_id,
                 },
                 name: format!("kv_read_passthrough_{}", layer_idx),
                 metadata: graph.nodes[read_idx].metadata.clone(),
             };
 
-            // Mark the write node as replaced
+            // Mark the write node as replaced (the new StateWrite handles it)
             graph.nodes[w_idx] = SirNode {
                 id: graph.nodes[w_idx].id.clone(),
                 op: SirOp::Identity {
-                    input: SirNodeId(format!("sir_kv_ring_{}_{}", layer_idx, if is_key { "k" } else { "v" })),
+                    input: state_write_id,
                 },
                 name: format!("kv_write_passthrough_{}", layer_idx),
                 metadata: graph.nodes[w_idx].metadata.clone(),
             };
 
-            // Insert the KvCacheRingUpdate op
-            graph.nodes.push(ring_node);
+            // Insert the masked-blend pattern ops
+            graph.nodes.push(cache_read_node);
+            graph.nodes.push(where_node);
+            graph.nodes.push(old_mul_node);
+            graph.nodes.push(new_mul_node);
+            graph.nodes.push(add_node);
+            graph.nodes.push(state_write_node);
 
             result.pairs_converted += 1;
-            result.ring_updates_inserted += 1;
+            result.ops_inserted += 6; // StateRead + Where + Mul + Mul + Add + StateWrite
         }
     }
 
@@ -176,11 +248,11 @@ mod tests {
 
         let result = run_kv_cache_rewrite_pass(&mut graph, &KvCacheLayout::Naive);
         assert_eq!(result.pairs_converted, 0);
-        assert_eq!(result.ring_updates_inserted, 0);
+        assert_eq!(result.ops_inserted, 0);
     }
 
     #[test]
-    fn test_kv_cache_rewrite_reverse_ring_buffer() {
+    fn test_kv_cache_rewrite_masked_blend() {
         let mut graph = SirGraph {
             nodes: vec![
                 SirNode {
@@ -218,16 +290,22 @@ mod tests {
             outputs: vec![],
         };
 
-        let result = run_kv_cache_rewrite_pass(&mut graph, &KvCacheLayout::ReverseRingBuffer);
+        let result = run_kv_cache_rewrite_pass(&mut graph, &KvCacheLayout::MaskedBlend);
 
         assert_eq!(result.pairs_converted, 1);
-        assert_eq!(result.ring_updates_inserted, 1);
+        assert_eq!(result.ops_inserted, 6); // StateRead + Where + Mul + Mul + Add + StateWrite
 
-        // Verify a KvCacheRingUpdate op was inserted
-        let has_ring = graph.nodes.iter().any(|n| {
-            matches!(n.op, SirOp::KvCacheRingUpdate { .. })
+        // Verify masked-blend pattern ops were inserted
+        let has_where = graph.nodes.iter().any(|n| {
+            matches!(n.op, SirOp::Where { .. })
         });
-        assert!(has_ring, "Graph should contain a KvCacheRingUpdate op");
+        assert!(has_where, "Graph should contain a Where op for masked blending");
+
+        let has_add = graph.nodes.iter().any(|n| {
+            matches!(n.op, SirOp::Add { .. })
+                && n.name.contains("kv_blend")
+        });
+        assert!(has_add, "Graph should contain an Add op combining old and new cache values");
     }
 
     #[test]

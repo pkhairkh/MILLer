@@ -34,18 +34,15 @@
 //! - Version-aware decomposition (e.g., SDPA only on A16+)
 //! - Dynamic shape elimination (ANE requires static shapes)
 //!
-//! # Techniques from pkhairkh/qwen3-coreml-palettized
+//! # Strategy-Driven Optimization
 //!
-//! The following techniques from the Qwen3 Core ML deployment stack have
-//! been adapted into this crate and the `ane-passes` crate:
+//! The compilation pipeline uses strategy-driven optimization to adapt
+//! to the target hardware and model characteristics:
 //!
-//! - **Dynamic-safe RMSNorm**: Pure-fp16 RMSNorm with max-abs stabilization
-//!   and two-division epsilon compensation to avoid fp16 underflow
-//! - **SLaNC pre-scales**: Per-layer scale factors that absorb norm weight /
-//!   projection weight / residual interactions into fp16-friendly pre-scales
+//! - **Normalization stabilization**: Pre-scale insertion for fp16-safe RMSNorm
 //! - **Static tables**: Pre-computed RoPE (sin/cos), causal mask, and identity
 //!   tables embedded as fp16 constants in the Core ML graph
-//! - **Reverse ring-buffer KV cache**: Active context in contiguous suffix,
+//! - **Masked-blend KV cache**: Active context in contiguous suffix,
 //!   new K/V written by masked blending instead of scatter
 //! - **Mixed quantization**: Different bit-widths for different weight types
 //!   (conservative for Q/K, aggressive for MLP, 1-bit for masks)
@@ -56,18 +53,12 @@
 
 pub mod config;
 pub mod graph;
-pub mod registry;
+pub mod discovery;
 pub mod sir_build;
 pub mod versioned;
 pub mod subprocess;
 
 pub use config::{TraceConfig, TraceTarget};
 pub use graph::{TracedGraph, TracedNode, TracedOp, TensorShape, ModelConfig};
-#[deprecated(
-    since = "0.2.0",
-    note = "ModelRegistry is deprecated — tracing works fully ad-hoc via AutoConfig. \
-            This type is kept for backward compatibility only."
-)]
-pub use registry::{ModelRegistry, ModelPattern, TransformerLayerKind};
 pub use sir_build::build_sir_from_trace;
 pub use versioned::{VersionedCompiler, VersionedCompileResult, AnceFaithfulnessReport};

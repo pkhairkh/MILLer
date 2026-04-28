@@ -21,4 +21,5 @@ pub mod pir;
 pub mod prof_ir;
 pub mod serialize;
 pub mod sir;
+pub mod strategy;
 pub mod task_spec;

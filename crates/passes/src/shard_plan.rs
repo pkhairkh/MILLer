@@ -963,7 +963,7 @@ mod tests {
         // Decode-step has a shard template with state_config
         assert!(pir.shard_template.is_some());
         let template = pir.shard_template.as_ref().unwrap();
-        assert_eq!(template.state_config, Some("per_shard_kv_reverse_ring_buffer".to_string()));
+        assert_eq!(template.state_config, Some("per_shard_kv_masked_blend".to_string()));
         assert_eq!(template.context_length, 64);
 
         // Decode-step handoffs carry different tensor names than linear

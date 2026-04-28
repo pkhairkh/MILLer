@@ -807,7 +807,7 @@ impl ShardPipelineSpec {
             ],
             io_compute_units: None,
             sampler_compute_units: None,
-            state_config: Some("per_shard_kv_reverse_ring_buffer".into()),
+            state_config: Some("per_shard_kv_masked_blend".into()),
             context_length: kv_len,
         };
 
@@ -883,9 +883,9 @@ pub struct PirGraph {
     pub context_length: usize,
     pub opset_version: String,
     pub minimum_deployment_target: String,
-    /// KV cache layout strategy. Default is Naive; set to ReverseRingBuffer
+    /// KV cache layout strategy. Default is Naive; set to MaskedBlend
     /// for ANE-optimized KV cache updates via masked blending.
-    /// Derived from pkhairkh/qwen3-coreml-palettized's reverse ring-buffer approach.
+    /// The strategy framework discovers and recommends the appropriate layout.
     pub kv_cache_layout: KvCacheLayout,
     /// Specification for the on-device sampler model, if present.
     /// When set, the deployment includes a dedicated sampler MLProgram

@@ -3,14 +3,14 @@
 //! Collection of compilation passes that transform the IR
 //! through the various levels of abstraction.
 //!
-//! ## Passes Derived from pkhairkh/qwen3-coreml-palettized
+//! ## Strategy-Driven Optimization Passes
 //!
-//! The following passes implement techniques from the qwen3-coreml-palettized
-//! deployment stack, adapted into MILLer's IR pass pipeline:
+//! The following passes implement strategy-driven optimizations that
+//! adapt to the target hardware and model characteristics:
 //!
-//! - **slanc_scales**: SLaNC pre-scale computation for fp16 numerical stabilization
+//! - **slanc_scales**: Normalization stabilization via pre-scale insertion for fp16 safety
 //! - **static_tables**: Pre-compute RoPE, causal mask, and identity tables as constants
-//! - **kv_cache_rewrite**: Transform naive KV cache to reverse ring-buffer layout
+//! - **kv_cache_rewrite**: Transform naive KV cache to masked-blend layout
 //! - **palettize_weights**: Annotate weight tensors with mixed quantization strategies
 
 pub mod canonicalize;

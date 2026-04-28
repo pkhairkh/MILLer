@@ -2017,8 +2017,7 @@ impl LegalityRewritePass {
             | SirOp::Sampler { .. }
             | SirOp::StateRead { .. }
             | SirOp::StateWrite { .. }
-            | SirOp::SlancPreScale { .. }
-            | SirOp::KvCacheRingUpdate { .. } => {
+            => {
                 unreachable!("composite ops should be handled by explicit decompositions above")
             }
         }
@@ -2424,8 +2423,6 @@ mod tests {
                     input: SirNodeId("input".into()),
                     weight: "gamma".into(),
                     epsilon: 1e-5,
-                    slanc_scale: None,
-                    dynamic_safe: false,
                 },
                 name: "norm".into(),
                 metadata: SirMetadata {

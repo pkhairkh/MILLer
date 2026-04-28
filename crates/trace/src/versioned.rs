@@ -420,17 +420,6 @@ impl OpSupportMatrix {
             SirOp::DecodeStep { .. } => OpSupport::AneSupported(AneEngineSupport::NE),
             SirOp::Sampler { .. } => OpSupport::CpuOnly("TopK sampling is CPU-only on most families".to_string()),
 
-            // ─── SLaNC / palettization (from qwen3-coreml-palettized) ─
-            SirOp::SlancPreScale { .. } => {
-                // SLaNC pre-scale is just a Mul with a constant — ANE-friendly
-                OpSupport::AneSupported(AneEngineSupport::PE)
-            }
-            SirOp::KvCacheRingUpdate { .. } => {
-                // Reverse ring-buffer KV cache uses masked blending (Where, Mul, Add)
-                // instead of scatter — ANE-friendly
-                OpSupport::AneSupported(AneEngineSupport::NE)
-            }
-
             // ─── Always CPU-only ──────────────────────────────────
             SirOp::LogicalAnd { .. }
             | SirOp::LogicalOr { .. }

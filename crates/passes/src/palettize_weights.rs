@@ -1,26 +1,25 @@
 //! Palettize Weights Pass — apply post-hoc palettization to Core ML constants.
 //!
-//! Derived from pkhairkh/qwen3-coreml-palettized's `palettize_model_weights.py`:
-//! applies coremltools.optimize palettization to mask and KV cache constants
+//! Applies coremltools.optimize palettization to mask and KV cache constants
 //! in emitted Core ML packages. This pass operates at the SIR level to
 //! annotate which weight tensors should be palettized and with what strategy.
 //!
 //! The mixed-quantization approach uses different strategies for different
 //! weight types:
-//! - Embedding/LM head: OmniQuant blockwise (int4 with per-group scales)
-//! - Attention/MLP projections: GS128 LUT (4/6/8-bit with per-group scalars)
+//! - Embedding/LM head: Blockwise quantization (int4 with per-group scales)
+//! - Attention/MLP projections: GroupedLut (4/6/8-bit with per-group scalars)
 //! - KV/mask constants: 1-bit kmeans palettization
 //! - Q/K projections: treated more conservatively (higher bitwidth)
 
-use ane_ir::sir::{SirGraph, SirNode, SirOp, QuantizationStrategy};
+use ane_ir::sir::{SirGraph, SirNode, SirOp};
 
 /// Result of the palettize weights pass.
 #[derive(Debug, Clone)]
 pub struct PalettizeResult {
     /// Number of weight tensors annotated with quantization strategies.
     pub weights_annotated: usize,
-    /// Number of LinearProjection nodes that received GS128 LUT quantization.
-    pub gs_lut_applied: usize,
+    /// Number of LinearProjection nodes that received GroupedLut quantization.
+    pub grouped_lut_applied: usize,
     /// Number of Const nodes that received palettization.
     pub consts_palettized: usize,
 }
@@ -34,7 +33,7 @@ pub struct PalettizeConfig {
     pub mlp_bits: usize,
     /// Default bit-width for KV/mask constants.
     pub mask_kv_bits: usize,
-    /// Default group size for GS128 LUT quantization.
+    /// Default group size for GroupedLut quantization.
     pub group_size: usize,
     /// Whether to use more conservative quantization for Q/K projections.
     pub conservative_qk: bool,
@@ -60,21 +59,21 @@ impl Default for PalettizeConfig {
 /// coremltools.optimize is applied to the emitted packages.
 ///
 /// The annotation strategy:
-/// - LinearProjection ops get `GsLut` quantization based on their
+/// - LinearProjection ops get `GroupedLut` quantization based on their
 ///   position in the model (attention vs MLP)
 /// - Const ops for KV/mask get `Palettized` quantization
-/// - Embedding ops get `OmniQuant` quantization
+/// - Embedding ops get `Blockwise` quantization
 pub fn run_palettize_weights_pass(
     graph: &mut SirGraph,
     config: &PalettizeConfig,
 ) -> PalettizeResult {
     let mut result = PalettizeResult {
         weights_annotated: 0,
-        gs_lut_applied: 0,
+        grouped_lut_applied: 0,
         consts_palettized: 0,
     };
 
-    // Annotate LinearProjection nodes with GS128 LUT quantization
+    // Annotate LinearProjection nodes with GroupedLut quantization
     for node in &mut graph.nodes {
         match &mut node.op {
             SirOp::LinearProjection { weight, .. } => {
@@ -103,7 +102,7 @@ pub fn run_palettize_weights_pass(
                 // (A more robust approach would use metadata, but this
                 // preserves backward compatibility)
                 let _ = (weight, bits);
-                result.gs_lut_applied += 1;
+                result.grouped_lut_applied += 1;
                 result.weights_annotated += 1;
             }
             SirOp::Const { value_path, dtype: _ } => {
@@ -184,7 +183,7 @@ mod tests {
         let config = PalettizeConfig::default();
         let result = run_palettize_weights_pass(&mut graph, &config);
 
-        assert!(result.gs_lut_applied >= 2, "Should annotate at least 2 LinearProjection ops");
+        assert!(result.grouped_lut_applied >= 2, "Should annotate at least 2 LinearProjection ops");
         assert!(result.consts_palettized >= 1, "Should palettize at least 1 mask constant");
         assert!(result.weights_annotated >= 3, "Should annotate at least 3 weights total");
     }
@@ -197,6 +196,6 @@ mod tests {
         config.attention_bits = 4;
 
         let result = run_palettize_weights_pass(&mut graph, &config);
-        assert!(result.gs_lut_applied >= 1);
+        assert!(result.grouped_lut_applied >= 1);
     }
 }
