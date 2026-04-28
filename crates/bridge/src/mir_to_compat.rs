@@ -102,21 +102,95 @@ impl WeightResolver for EmptyWeightResolver {
 ///
 /// The `resolver` is used to look up weight data for `MILConst` ops.
 /// If you don't have weight data available, use `EmptyWeightResolver`.
+///
+/// ## Weight Materialization
+///
+/// In the MIR graph, ops like `MILLinear` and `MILLayerNorm` reference weights
+/// by name (e.g., `"model.layers.0.self_attn.q_proj.weight"`) but don't carry
+/// the weight data inline. The Core ML proto format requires weight data to be
+/// present as `Const` ops (which become `WeightEntry` objects in the model).
+///
+/// This function automatically materializes `MirOpCompat::Const` entries for
+/// every weight name referenced by ops like `MILLinear` and `MILLayerNorm`.
+/// The weight data is looked up via the `resolver`. If the resolver can't find
+/// a weight, zero-filled data is used (matching the MILConst fallback behavior).
 pub fn mir_graph_to_compat(
     graph: &MirGraph,
     resolver: &dyn WeightResolver,
 ) -> Result<MirGraphCompat> {
+    // Phase 1: Convert all MIR nodes to compat ops
     let ops: Vec<MirOpCompat> = graph
         .nodes
         .iter()
         .map(|node| mir_node_to_compat(node, resolver))
         .collect::<Result<Vec<_>>>()?;
 
+    // Phase 2: Collect weight names referenced by ops but not yet materialized
+    // as Const ops. We need to emit Const entries for these so the proto
+    // emission layer has actual weight data to write to weight.bin.
+    let existing_const_names: std::collections::HashSet<String> = ops.iter()
+        .filter_map(|op| match op {
+            MirOpCompat::Const { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+
+    let mut referenced_weights: Vec<(String, Option<Vec<usize>>)> = Vec::new();
+    for op in &ops {
+        match op {
+            MirOpCompat::Linear { weight_name, bias_name, .. } => {
+                if !existing_const_names.contains(weight_name) {
+                    referenced_weights.push((weight_name.clone(), None));
+                }
+                if let Some(bias) = bias_name {
+                    if !existing_const_names.contains(bias) {
+                        referenced_weights.push((bias.clone(), None));
+                    }
+                }
+            }
+            MirOpCompat::LayerNorm { weight_name, bias_name, .. } => {
+                if !existing_const_names.contains(weight_name) {
+                    referenced_weights.push((weight_name.clone(), None));
+                }
+                if let Some(bias) = bias_name {
+                    if !existing_const_names.contains(bias) {
+                        referenced_weights.push((bias.clone(), None));
+                    }
+                }
+            }
+            // Add more op types that reference weights as needed
+            _ => {}
+        }
+    }
+
+    // Phase 3: Materialize Const ops for each referenced weight
+    let mut all_ops = ops;
+    for (weight_name, _shape_hint) in referenced_weights {
+        let (data, shape, dtype) = match resolver.resolve(&weight_name) {
+            Some(wd) => (wd.data, wd.shape, MilDtypeCompat::Fp16),
+            None => {
+                // Weight not found in resolver — use zero-filled placeholder.
+                // Default shape [1] with FP16 gives 2 bytes minimum.
+                eprintln!(
+                    "  Warning: weight '{}' not resolved — using zero-filled placeholder",
+                    weight_name
+                );
+                (vec![0u8; 2], vec![1], MilDtypeCompat::Fp16)
+            }
+        };
+        all_ops.push(MirOpCompat::Const {
+            name: weight_name,
+            data,
+            dtype,
+            shape,
+        });
+    }
+
     let inputs: Vec<String> = graph.inputs.iter().map(|id| id.0.clone()).collect();
     let outputs: Vec<String> = graph.outputs.iter().map(|id| id.0.clone()).collect();
 
     Ok(MirGraphCompat {
-        ops,
+        ops: all_ops,
         inputs,
         outputs,
         opset_version: graph.opset_version.clone(),
