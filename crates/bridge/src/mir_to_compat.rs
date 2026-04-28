@@ -189,12 +189,52 @@ pub fn mir_graph_to_compat(
     let inputs: Vec<String> = graph.inputs.iter().map(|id| id.0.clone()).collect();
     let outputs: Vec<String> = graph.outputs.iter().map(|id| id.0.clone()).collect();
 
+    // Build input/output descriptors with shapes and dtypes from the MIR nodes.
+    // This is critical for Core ML: the model description must have shapes for I/O.
+    let node_map: std::collections::HashMap<&str, &MirNode> = graph
+        .nodes
+        .iter()
+        .map(|n| (n.id.0.as_str(), n))
+        .collect();
+
+    let input_descs: Vec<ane_coreml_proto::mir_compat::TensorDescCompat> = graph
+        .inputs
+        .iter()
+        .filter_map(|id| {
+            node_map.get(id.0.as_str()).map(|node| {
+                use ane_coreml_proto::mir_compat::TensorDescCompat;
+                TensorDescCompat {
+                    name: node.id.0.clone(),
+                    shape: node.shape.clone(),
+                    dtype: mil_dtype_to_compat(&node.dtype),
+                }
+            })
+        })
+        .collect();
+
+    let output_descs: Vec<ane_coreml_proto::mir_compat::TensorDescCompat> = graph
+        .outputs
+        .iter()
+        .filter_map(|id| {
+            node_map.get(id.0.as_str()).map(|node| {
+                use ane_coreml_proto::mir_compat::TensorDescCompat;
+                TensorDescCompat {
+                    name: node.id.0.clone(),
+                    shape: node.shape.clone(),
+                    dtype: mil_dtype_to_compat(&node.dtype),
+                }
+            })
+        })
+        .collect();
+
     Ok(MirGraphCompat {
         ops: all_ops,
         inputs,
         outputs,
         opset_version: graph.opset_version.clone(),
         function_name: graph.shard_name.clone(),
+        input_descs,
+        output_descs,
     })
 }
 

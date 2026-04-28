@@ -173,6 +173,8 @@ pub enum SpecVersion {
     V7,
     /// ML Program with state support (iOS 18+, macOS 15+)
     V8,
+    /// ML Program with expanded state support (iOS 18+, macOS 15+)
+    V9,
 }
 
 impl SpecVersion {
@@ -181,12 +183,13 @@ impl SpecVersion {
         match self {
             SpecVersion::V7 => 7,
             SpecVersion::V8 => 8,
+            SpecVersion::V9 => 9,
         }
     }
 
-    /// Whether this version supports stateful models (mb.read_state / mb.coreml_update_state).
+    /// Whether this version supports stateful models (mb.read_state / mb.write_state).
     pub fn supports_state(&self) -> bool {
-        matches!(self, SpecVersion::V8)
+        matches!(self, SpecVersion::V8 | SpecVersion::V9)
     }
 }
 
@@ -530,6 +533,17 @@ pub mod mir_compat {
         },
     }
 
+    /// A named tensor descriptor for graph I/O.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct TensorDescCompat {
+        /// Tensor name.
+        pub name: String,
+        /// Tensor shape (empty if unknown).
+        pub shape: Vec<usize>,
+        /// Tensor data type.
+        pub dtype: MilDtypeCompat,
+    }
+
     /// A MIR graph in compatibility representation.
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct MirGraphCompat {
@@ -543,6 +557,14 @@ pub mod mir_compat {
         pub opset_version: String,
         /// Name of the function this graph represents.
         pub function_name: String,
+        /// Input tensor descriptors (with shape and dtype).
+        /// If empty, shapes/dtypes are inferred from graph ops.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub input_descs: Vec<TensorDescCompat>,
+        /// Output tensor descriptors (with shape and dtype).
+        /// If empty, shapes/dtypes are inferred from graph ops.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub output_descs: Vec<TensorDescCompat>,
     }
 }
 
@@ -641,6 +663,7 @@ pub fn spec_version_to_proto(sv: &SpecVersion) -> i32 {
     match sv {
         SpecVersion::V7 => proto::SpecificationVersion::SpecificationVersion7 as i32,
         SpecVersion::V8 => proto::SpecificationVersion::SpecificationVersion8 as i32,
+        SpecVersion::V9 => 9, // SpecificationVersion9 not in legacy proto enum; use raw value
     }
 }
 
@@ -1138,6 +1161,8 @@ pub fn convert_to_proto_model(model: &CoreMlModel, weight_entries: &[WeightEntry
             outputs: func.outputs.iter().map(|td| td.name.clone()).collect(),
             opset_version: "iOS18".to_string(),
             function_name: func.name.clone(),
+            input_descs: vec![],
+            output_descs: vec![],
         };
         ml_program_functions
             .insert(func.name.clone(), mir_graph_to_proto_function(&graph, weight_entries));
@@ -1317,6 +1342,44 @@ fn make_value_arg(value: apple_proto::mil_spec::Value) -> apple_proto::mil_spec:
     }
 }
 
+/// Build an `apple_proto::mil_spec::Value` for an `attributes["name"]` entry.
+///
+/// In Apple's format, every operation has an `attributes["name"]` entry containing
+/// the operation's output name as a STRING tensor with an immediate value.
+fn make_name_attribute_value(name: &str) -> apple_proto::mil_spec::Value {
+    apple_proto::mil_spec::Value {
+        doc_string: String::new(),
+        r#type: Some(apple_proto::mil_spec::ValueType {
+            r#type: Some(apple_proto::mil_spec::value_type::Type::TensorType(
+                apple_proto::mil_spec::TensorType {
+                    data_type: apple_proto::mil_spec::DataType::String as i32,
+                    rank: 0,
+                    dimensions: vec![],
+                    attributes: HashMap::new(),
+                },
+            )),
+        }),
+        value: Some(apple_proto::mil_spec::value::Value::ImmediateValue(
+            apple_proto::mil_spec::value::ImmediateValue {
+                value: Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(
+                    apple_proto::mil_spec::TensorValue {
+                        value: Some(apple_proto::mil_spec::tensor_value::Value::Strings(
+                            apple_proto::mil_spec::tensor_value::RepeatedStrings {
+                                values: vec![name.to_string()],
+                            },
+                        )),
+                    },
+                )),
+            },
+        )),
+    }
+}
+
+/// Add `attributes["name"]` to an operation's attributes map.
+fn add_name_attribute(attributes: &mut HashMap<String, apple_proto::mil_spec::Value>, name: &str) {
+    attributes.insert("name".to_string(), make_name_attribute_value(name));
+}
+
 /// Build an `apple_proto::FeatureDescription` for a tensor input/output.
 fn make_apple_feature_desc(
     name: &str,
@@ -1339,18 +1402,52 @@ fn make_apple_feature_desc(
     }
 }
 
-/// Convert `MirOpCompat` → `apple_proto::mil_spec::Operation` (Apple's generic format).
+/// Build an `apple_proto::FeatureDescription` for a state tensor.
+///
+/// State features use `StateFeatureType` wrapping `ArrayFeatureType`,
+/// matching Apple's wire format for stateful models (e.g., KV-cache).
+fn make_apple_state_feature_desc(
+    name: &str,
+    dtype: &CoreMlDataType,
+    shape: &[u64],
+) -> apple_proto::FeatureDescription {
+    let array_dtype = coreml_dtype_to_apple_array(dtype);
+    apple_proto::FeatureDescription {
+        name: name.to_string(),
+        short_description: String::new(),
+        r#type: Some(apple_proto::FeatureType {
+            is_optional: false,
+            r#type: Some(apple_proto::feature_type::Type::StateType(
+                apple_proto::StateFeatureType {
+                    r#type: Some(apple_proto::state_feature_type::Type::ArrayType(
+                        apple_proto::ArrayFeatureType {
+                            shape: shape.iter().map(|&d| d as i64).collect(),
+                            data_type: array_dtype,
+                        },
+                    )),
+                },
+            )),
+        }),
+    }
+}
+
+/// Convert `MirOpCompat` → `Vec<apple_proto::mil_spec::Operation>` (Apple's generic format).
 ///
 /// In Apple's format, every op is a generic `Operation` with:
 /// - `type`: string like "const", "linear", "add", etc.
 /// - `inputs`: map of named arguments
 /// - `outputs`: list of NamedValueType
+/// - `attributes`: map including `"name"` (op output name as STRING) and for
+///   `const` ops `"val"` (the value data)
+///
+/// Returns a Vec because some MIR ops (e.g., Cast) require emitting additional
+/// preceding const ops for their parameter values.
 ///
 /// This is fundamentally different from the legacy per-op-type proto messages.
-fn mir_op_to_apple_op(
+fn mir_op_to_apple_ops(
     op: &mir_compat::MirOpCompat,
     weight_entries: &[WeightEntry],
-) -> apple_proto::mil_spec::Operation {
+) -> Vec<apple_proto::mil_spec::Operation> {
     match op {
         mir_compat::MirOpCompat::Const { name, data, dtype, shape } => {
             let apple_dtype = mil_dtype_to_apple(dtype);
@@ -1363,16 +1460,19 @@ fn mir_op_to_apple_op(
                 make_immediate_bytes_value(data.clone(), apple_dtype, &shape_u64)
             };
 
-            let mut inputs = HashMap::new();
-            inputs.insert("value".to_string(), make_value_arg(value));
+            // Apple's format: const ops use attributes["val"] for the value
+            // and attributes["name"] for the op name (NOT inputs["value"])
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+            attributes.insert("val".to_string(), value);
 
-            apple_proto::mil_spec::Operation {
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "const".to_string(),
-                inputs,
+                inputs: HashMap::new(),
                 outputs: vec![make_apple_named_value_type(name, apple_dtype, &shape_u64)],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Linear { name, x, weight_name, bias_name } => {
             let mut inputs = HashMap::new();
@@ -1382,8 +1482,10 @@ fn mir_op_to_apple_op(
                 inputs.insert("bias".to_string(), make_name_arg(bname));
             }
 
-            // Output shape is unknown at this level — we use placeholder
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "linear".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1392,15 +1494,18 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::MatMul { name, x, y } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("y".to_string(), make_name_arg(y));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "matmul".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1409,15 +1514,18 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Add { name, x, y } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("y".to_string(), make_name_arg(y));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "add".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1426,15 +1534,18 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Mul { name, x, y } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("y".to_string(), make_name_arg(y));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "mul".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1443,15 +1554,18 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Sub { name, x, y } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("y".to_string(), make_name_arg(y));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "sub".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1460,14 +1574,17 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Abs { name, x } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "abs".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1476,15 +1593,18 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Maximum { name, x, y } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("y".to_string(), make_name_arg(y));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "maximum".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1493,15 +1613,18 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Minimum { name, x, y } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("y".to_string(), make_name_arg(y));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "minimum".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1510,8 +1633,8 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Reshape { name, x, shape } => {
             let mut inputs = HashMap::new();
@@ -1531,7 +1654,10 @@ fn mir_op_to_apple_op(
                 )),
             );
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "reshape".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1540,8 +1666,8 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Transpose { name, x, perm } => {
             let mut inputs = HashMap::new();
@@ -1561,7 +1687,10 @@ fn mir_op_to_apple_op(
                 )),
             );
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "transpose".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1570,8 +1699,8 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::SliceByIndex { name, x, begin, end } => {
             let mut inputs = HashMap::new();
@@ -1605,7 +1734,10 @@ fn mir_op_to_apple_op(
                 )),
             );
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "slice_by_index".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1614,8 +1746,8 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::SliceUpdate { name, x, update, begin, end } => {
             let mut inputs = HashMap::new();
@@ -1650,7 +1782,10 @@ fn mir_op_to_apple_op(
                 )),
             );
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "slice_update".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1659,8 +1794,8 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Concat { name, values, axis } => {
             let mut inputs = HashMap::new();
@@ -1685,7 +1820,10 @@ fn mir_op_to_apple_op(
                 )),
             );
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "concat".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1694,8 +1832,8 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Softmax { name, x, axis } => {
             let mut inputs = HashMap::new();
@@ -1711,7 +1849,10 @@ fn mir_op_to_apple_op(
                 )),
             );
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "softmax".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1720,8 +1861,8 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Gelu { name, x, mode } => {
             let mut inputs = HashMap::new();
@@ -1758,7 +1899,10 @@ fn mir_op_to_apple_op(
                 }),
             );
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "gelu".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1767,8 +1911,8 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::ScaledDotProductAttention { name, query, key, value } => {
             let mut inputs = HashMap::new();
@@ -1776,7 +1920,10 @@ fn mir_op_to_apple_op(
             inputs.insert("key".to_string(), make_name_arg(key));
             inputs.insert("value".to_string(), make_name_arg(value));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "scaled_dot_product_attention".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1785,44 +1932,38 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::ReadState { name, state_id, shape, dtype } => {
             let apple_dtype = mil_dtype_to_apple(dtype);
             let shape_u64: Vec<u64> = shape.iter().map(|&d| d as u64).collect();
             let mut inputs = HashMap::new();
-            inputs.insert(
-                "state".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    state_id.as_bytes().to_vec(),
-                    apple_proto::mil_spec::DataType::String as i32,
-                    &[],
-                )),
-            );
+            // Apple's format: state input is a name reference, not an inline string
+            inputs.insert("state".to_string(), make_name_arg(state_id));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "read_state".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(name, apple_dtype, &shape_u64)],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::CoremlUpdateState { name, state_id, value } => {
             let mut inputs = HashMap::new();
-            inputs.insert(
-                "state".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    state_id.as_bytes().to_vec(),
-                    apple_proto::mil_spec::DataType::String as i32,
-                    &[],
-                )),
-            );
+            // Apple's format: "write_state" op type, state input is a name reference
+            inputs.insert("state".to_string(), make_name_arg(state_id));
             inputs.insert("value".to_string(), make_name_arg(value));
 
-            apple_proto::mil_spec::Operation {
-                r#type: "coreml_update_state".to_string(),
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "write_state".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
                     name,
@@ -1830,8 +1971,8 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Gather { name, x, indices, axis } => {
             let mut inputs = HashMap::new();
@@ -1848,7 +1989,10 @@ fn mir_op_to_apple_op(
                 )),
             );
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "gather".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1857,8 +2001,8 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::ReduceMean { name, x, axes, keep_dims } => {
             let mut inputs = HashMap::new();
@@ -1884,7 +2028,10 @@ fn mir_op_to_apple_op(
                 )),
             );
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "reduce_mean".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1893,8 +2040,8 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::ReduceSum { name, x, axes, keep_dims } => {
             let mut inputs = HashMap::new();
@@ -1920,7 +2067,10 @@ fn mir_op_to_apple_op(
                 )),
             );
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "reduce_sum".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1929,8 +2079,8 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Conv { name, x, weight, pad_type, groups } => {
             let mut inputs = HashMap::new();
@@ -1977,7 +2127,10 @@ fn mir_op_to_apple_op(
                 )),
             );
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "conv".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -1986,23 +2139,20 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::StateWrite { name, state_ref, value } => {
             let mut inputs = HashMap::new();
-            inputs.insert(
-                "state".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    state_ref.as_bytes().to_vec(),
-                    apple_proto::mil_spec::DataType::String as i32,
-                    &[],
-                )),
-            );
+            // Apple's format: state input is a name reference
+            inputs.insert("state".to_string(), make_name_arg(state_ref));
             inputs.insert("value".to_string(), make_name_arg(value));
 
-            apple_proto::mil_spec::Operation {
-                r#type: "state_write".to_string(),
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "write_state".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
                     name,
@@ -2010,14 +2160,17 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Rsqrt { name, x } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "rsqrt".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -2026,15 +2179,18 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::RealDiv { name, x, y } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("y".to_string(), make_name_arg(y));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "real_div".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -2043,8 +2199,8 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::LayerNorm { name, x, weight_name, bias_name, epsilon, axes } => {
             let mut inputs = HashMap::new();
@@ -2074,7 +2230,10 @@ fn mir_op_to_apple_op(
                 )),
             );
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "layer_norm".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -2083,8 +2242,8 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Topk { name, x, k, axis } => {
             let mut inputs = HashMap::new();
@@ -2110,7 +2269,10 @@ fn mir_op_to_apple_op(
                 )),
             );
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "topk".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -2119,14 +2281,17 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Cos { name, x } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "cos".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -2135,14 +2300,17 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Sin { name, x } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "sin".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -2151,24 +2319,28 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Cast { name, x, dtype } => {
-            let mut inputs = HashMap::new();
-            inputs.insert("x".to_string(), make_name_arg(x));
             let apple_dtype = mil_dtype_to_apple(dtype);
 
-            // dtype as string
+            // Apple's format: dtype input references a separate const op by name
+            // (not an immediate value). We emit a preceding const op for the dtype string.
             let dtype_str = match dtype {
-                mir_compat::MilDtypeCompat::Fp16 => "FLOAT16",
-                mir_compat::MilDtypeCompat::Fp32 => "FLOAT32",
-                mir_compat::MilDtypeCompat::Int32 => "INT32",
-                mir_compat::MilDtypeCompat::UInt8 => "UINT8",
+                mir_compat::MilDtypeCompat::Fp16 => "fp16",
+                mir_compat::MilDtypeCompat::Fp32 => "fp32",
+                mir_compat::MilDtypeCompat::Int32 => "int32",
+                mir_compat::MilDtypeCompat::UInt8 => "uint8",
             };
-            inputs.insert(
-                "dtype".to_string(),
-                make_value_arg(apple_proto::mil_spec::Value {
+            let dtype_const_name = format!("{name}_dtype_0");
+
+            // Emit the dtype const op
+            let mut dtype_const_attrs = HashMap::new();
+            add_name_attribute(&mut dtype_const_attrs, &dtype_const_name);
+            dtype_const_attrs.insert(
+                "val".to_string(),
+                apple_proto::mil_spec::Value {
                     doc_string: String::new(),
                     r#type: Some(apple_proto::mil_spec::ValueType {
                         r#type: Some(apple_proto::mil_spec::value_type::Type::TensorType(
@@ -2193,16 +2365,38 @@ fn mir_op_to_apple_op(
                             )),
                         },
                     )),
-                }),
+                },
             );
 
-            apple_proto::mil_spec::Operation {
+            let dtype_const_op = apple_proto::mil_spec::Operation {
+                r#type: "const".to_string(),
+                inputs: HashMap::new(),
+                outputs: vec![make_apple_named_value_type(
+                    &dtype_const_name,
+                    apple_proto::mil_spec::DataType::String as i32,
+                    &[],
+                )],
+                blocks: vec![],
+                attributes: dtype_const_attrs,
+            };
+
+            // Emit the cast op referencing the dtype by name
+            let mut inputs = HashMap::new();
+            inputs.insert("x".to_string(), make_name_arg(x));
+            inputs.insert("dtype".to_string(), make_name_arg(&dtype_const_name));
+
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            let cast_op = apple_proto::mil_spec::Operation {
                 r#type: "cast".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(name, apple_dtype, &[])],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            };
+
+            vec![dtype_const_op, cast_op]
         }
         mir_compat::MirOpCompat::Split { name, x, axis, num_splits } => {
             let mut inputs = HashMap::new();
@@ -2228,7 +2422,10 @@ fn mir_op_to_apple_op(
                 )),
             );
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "split".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -2237,14 +2434,17 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Exp { name, x } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "exp".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -2253,14 +2453,17 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Sigmoid { name, x } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "sigmoid".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -2269,14 +2472,17 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Tanh { name, x } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "tanh".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -2285,14 +2491,17 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Relu { name, x } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "relu".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -2301,8 +2510,8 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Where { name, condition, x, y } => {
             let mut inputs = HashMap::new();
@@ -2310,7 +2519,10 @@ fn mir_op_to_apple_op(
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("y".to_string(), make_name_arg(y));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: "where".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -2319,15 +2531,18 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
         mir_compat::MirOpCompat::Unsupported { op_kind, name, params_json: _ } => {
             // Emit as identity to preserve graph structure
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(name));
 
-            apple_proto::mil_spec::Operation {
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
                 r#type: format!("identity__unsupported_{op_kind}"),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -2336,8 +2551,8 @@ fn mir_op_to_apple_op(
                     &[],
                 )],
                 blocks: vec![],
-                attributes: HashMap::new(),
-            }
+                attributes,
+            }]
         }
     }
 }
@@ -2360,7 +2575,7 @@ fn function_to_apple_proto(
     let operations: Vec<apple_proto::mil_spec::Operation> = func
         .operations
         .iter()
-        .map(|op| mir_op_to_apple_op(op, weight_entries))
+        .flat_map(|op| mir_op_to_apple_ops(op, weight_entries))
         .collect();
 
     let block = apple_proto::mil_spec::Block {
@@ -2397,7 +2612,7 @@ pub fn convert_to_apple_proto_model(
     model: &CoreMlModel,
     weight_entries: &[WeightEntry],
 ) -> apple_proto::Model {
-    let opset = "iOS16"; // Use iOS16 for maximum compatibility
+    let opset = format!("CoreML{}", model.spec_version.proto_value());
 
     // Build function descriptions for ModelDescription
     let function_descriptions: Vec<apple_proto::FunctionDescription> = model
@@ -2414,11 +2629,19 @@ pub fn convert_to_apple_proto_model(
                 .iter()
                 .map(|td| make_apple_feature_desc(&td.name, &td.dtype, &td.shape))
                 .collect();
+            // Populate state feature descriptions for models with state (e.g., KV-cache)
+            let state_descs: Vec<apple_proto::FeatureDescription> = func
+                .states
+                .iter()
+                .map(|td| {
+                    make_apple_state_feature_desc(&td.name, &td.dtype, &td.shape)
+                })
+                .collect();
             apple_proto::FunctionDescription {
                 name: func.name.clone(),
                 input: input_descs,
                 output: output_descs,
-                state: vec![],
+                state: state_descs,
                 predicted_feature_name: String::new(),
                 predicted_probabilities_name: String::new(),
             }
@@ -2428,7 +2651,7 @@ pub fn convert_to_apple_proto_model(
     // Build MILSpec.Program functions map
     let mut program_functions = HashMap::new();
     for func in &model.functions {
-        program_functions.insert(func.name.clone(), function_to_apple_proto(func, weight_entries, opset));
+        program_functions.insert(func.name.clone(), function_to_apple_proto(func, weight_entries, &opset));
     }
 
     let program = apple_proto::mil_spec::Program {
@@ -2476,6 +2699,14 @@ pub fn convert_to_apple_proto_model(
         user_defined,
     };
 
+    // Build model-level state descriptions
+    let model_state_descs: Vec<apple_proto::FeatureDescription> = model
+        .description
+        .states
+        .iter()
+        .map(|td| make_apple_state_feature_desc(&td.name, &td.dtype, &td.shape))
+        .collect();
+
     apple_proto::Model {
         specification_version: model.spec_version.proto_value(),
         description: Some(apple_proto::ModelDescription {
@@ -2484,7 +2715,7 @@ pub fn convert_to_apple_proto_model(
             metadata: Some(metadata),
             input: model_input_descs,
             output: model_output_descs,
-            state: vec![],
+            state: model_state_descs,
             predicted_feature_name: String::new(),
             predicted_probabilities_name: String::new(),
             training_input: vec![],

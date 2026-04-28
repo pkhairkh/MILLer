@@ -101,23 +101,43 @@ pub fn convert_mir_to_proto_multifunction(
             }
         }
 
-        // Build input/output descriptions from the graph
+        // Build input/output descriptions from the graph.
+        // If input_descs/output_descs are provided (from MIR node shapes),
+        // use those for accurate shape information. Otherwise, fall back
+        // to name-only descriptors with empty shapes.
         for input_name in &graph.inputs {
-            // Find the input's dtype and shape from the graph ops
-            graph_inputs.push(TensorDesc {
-                name: input_name.clone(),
-                shape: vec![], // Shape would be derived from actual op analysis
-                dtype: CoreMlDataType::Float16, // Default
-                is_state: false,
-            });
+            if let Some(desc) = graph.input_descs.iter().find(|d| d.name == *input_name) {
+                graph_inputs.push(TensorDesc {
+                    name: desc.name.clone(),
+                    shape: desc.shape.iter().map(|&d| d as u64).collect(),
+                    dtype: CoreMlDataType::from_mir_dtype(&desc.dtype),
+                    is_state: false,
+                });
+            } else {
+                graph_inputs.push(TensorDesc {
+                    name: input_name.clone(),
+                    shape: vec![], // Shape unknown — Core ML may infer from graph
+                    dtype: CoreMlDataType::Float16, // Default
+                    is_state: false,
+                });
+            }
         }
         for output_name in &graph.outputs {
-            graph_outputs.push(TensorDesc {
-                name: output_name.clone(),
-                shape: vec![], // Shape would be derived from actual op analysis
-                dtype: CoreMlDataType::Float16, // Default
-                is_state: false,
-            });
+            if let Some(desc) = graph.output_descs.iter().find(|d| d.name == *output_name) {
+                graph_outputs.push(TensorDesc {
+                    name: desc.name.clone(),
+                    shape: desc.shape.iter().map(|&d| d as u64).collect(),
+                    dtype: CoreMlDataType::from_mir_dtype(&desc.dtype),
+                    is_state: false,
+                });
+            } else {
+                graph_outputs.push(TensorDesc {
+                    name: output_name.clone(),
+                    shape: vec![], // Shape unknown — Core ML may infer from graph
+                    dtype: CoreMlDataType::Float16, // Default
+                    is_state: false,
+                });
+            }
         }
 
         functions.push(CoreMlFunction {
@@ -229,6 +249,16 @@ pub fn build_linear_projection_mir(
         outputs: vec!["output".to_string()],
         opset_version: "iOS18".to_string(),
         function_name: "main".to_string(),
+        input_descs: vec![ane_coreml_proto::mir_compat::TensorDescCompat {
+            name: "x".to_string(),
+            shape: vec![1, input_dim],
+            dtype,
+        }],
+        output_descs: vec![ane_coreml_proto::mir_compat::TensorDescCompat {
+            name: "output".to_string(),
+            shape: vec![1, output_dim],
+            dtype,
+        }],
     }
 }
 
@@ -268,6 +298,16 @@ pub fn build_multifunction_shared_weights_mir(
         outputs: vec!["embedding_output".to_string()],
         opset_version: "iOS18".to_string(),
         function_name: "embedding".to_string(),
+        input_descs: vec![ane_coreml_proto::mir_compat::TensorDescCompat {
+            name: "x".to_string(),
+            shape: vec![1, embed_dim],
+            dtype,
+        }],
+        output_descs: vec![ane_coreml_proto::mir_compat::TensorDescCompat {
+            name: "embedding_output".to_string(),
+            shape: vec![1, embed_dim],
+            dtype,
+        }],
     };
 
     // Decode step function: uses the SAME shared weight
@@ -290,6 +330,16 @@ pub fn build_multifunction_shared_weights_mir(
         outputs: vec!["decode_output".to_string()],
         opset_version: "iOS18".to_string(),
         function_name: "decode_step".to_string(),
+        input_descs: vec![ane_coreml_proto::mir_compat::TensorDescCompat {
+            name: "hidden".to_string(),
+            shape: vec![1, embed_dim],
+            dtype,
+        }],
+        output_descs: vec![ane_coreml_proto::mir_compat::TensorDescCompat {
+            name: "decode_output".to_string(),
+            shape: vec![1, embed_dim],
+            dtype,
+        }],
     };
 
     let shared_weight_names = vec!["shared_projection_weight".to_string()];
@@ -450,11 +500,11 @@ mod tests {
             ane_coreml_proto::apple_proto::model::Type::MlProgram(p) => p,
         };
         let main_func = program.functions.get("main").unwrap();
-        assert_eq!(main_func.opset, "iOS16");
+        assert_eq!(main_func.opset, "CoreML8");
 
         let block = main_func
             .block_specializations
-            .get("iOS16")
+            .get("CoreML8")
             .unwrap();
 
         // Should have 3 operations: const (weight) + const (bias) + linear
@@ -470,11 +520,19 @@ mod tests {
         assert_eq!(block.operations[1].outputs[0].name, "bias");
         assert_eq!(block.operations[2].outputs[0].name, "output");
 
+        // Check that const ops use attributes instead of inputs for values
+        let const_op0 = &block.operations[0];
+        assert!(const_op0.inputs.is_empty()); // const ops have no inputs in Apple format
+        assert!(const_op0.attributes.contains_key("val")); // value is in attributes["val"]
+        assert!(const_op0.attributes.contains_key("name")); // name attribute present
+
         // Check linear op inputs
         let linear_op = &block.operations[2];
         assert!(linear_op.inputs.contains_key("x"));
         assert!(linear_op.inputs.contains_key("weight"));
         assert!(linear_op.inputs.contains_key("bias"));
+        // All ops should have attributes["name"]
+        assert!(linear_op.attributes.contains_key("name"));
     }
 
     #[test]
@@ -513,43 +571,31 @@ mod tests {
         let main_func = program.functions.get("main").unwrap();
         let block = main_func
             .block_specializations
-            .get("iOS16")
+            .get("CoreML8")
             .unwrap();
 
-        // First const op: should have BlobFileValue with offset 0
+        // First const op: should have BlobFileValue in attributes["val"] with offset 0
         let const_op0 = &block.operations[0];
         assert_eq!(const_op0.r#type, "const");
-        let value_arg = const_op0.inputs.get("value").unwrap();
-        let binding = &value_arg.arguments[0];
-        match binding.binding.as_ref().unwrap() {
-            ane_coreml_proto::apple_proto::mil_spec::argument::binding::Binding::Value(v) => {
-                match v.value.as_ref().unwrap() {
-                    ane_coreml_proto::apple_proto::mil_spec::value::Value::BlobFileValue(bfv) => {
-                        assert_eq!(bfv.file_name, "@model_path/weights/weight.bin");
-                        assert_eq!(bfv.offset, 0);
-                    }
-                    other => panic!("Expected BlobFileValue for weight, got {:?}", other),
-                }
+        let val_attr0 = const_op0.attributes.get("val").unwrap();
+        match val_attr0.value.as_ref().unwrap() {
+            ane_coreml_proto::apple_proto::mil_spec::value::Value::BlobFileValue(bfv) => {
+                assert_eq!(bfv.file_name, "@model_path/weights/weight.bin");
+                assert_eq!(bfv.offset, 0);
             }
-            other => panic!("Expected Value binding for const, got {:?}", other),
+            other => panic!("Expected BlobFileValue for weight, got {:?}", other),
         }
 
-        // Second const op: should have BlobFileValue with offset 256
+        // Second const op: should have BlobFileValue in attributes["val"] with offset 256
         let const_op1 = &block.operations[1];
         assert_eq!(const_op1.r#type, "const");
-        let value_arg1 = const_op1.inputs.get("value").unwrap();
-        let binding1 = &value_arg1.arguments[0];
-        match binding1.binding.as_ref().unwrap() {
-            ane_coreml_proto::apple_proto::mil_spec::argument::binding::Binding::Value(v) => {
-                match v.value.as_ref().unwrap() {
-                    ane_coreml_proto::apple_proto::mil_spec::value::Value::BlobFileValue(bfv) => {
-                        assert_eq!(bfv.file_name, "@model_path/weights/weight.bin");
-                        assert_eq!(bfv.offset, 256);
-                    }
-                    other => panic!("Expected BlobFileValue for bias, got {:?}", other),
-                }
+        let val_attr1 = const_op1.attributes.get("val").unwrap();
+        match val_attr1.value.as_ref().unwrap() {
+            ane_coreml_proto::apple_proto::mil_spec::value::Value::BlobFileValue(bfv) => {
+                assert_eq!(bfv.file_name, "@model_path/weights/weight.bin");
+                assert_eq!(bfv.offset, 256);
             }
-            other => panic!("Expected Value binding for const, got {:?}", other),
+            other => panic!("Expected BlobFileValue for bias, got {:?}", other),
         }
     }
 
@@ -622,6 +668,8 @@ mod tests {
             outputs: vec!["updated_state".to_string()],
             opset_version: "iOS18".to_string(),
             function_name: "decode_step".to_string(),
+            input_descs: vec![],
+            output_descs: vec![],
         };
 
         let model =
@@ -637,13 +685,37 @@ mod tests {
         let func = program.functions.get("decode_step").unwrap();
         let block = func
             .block_specializations
-            .get("iOS16")
+            .get("CoreML8")
             .unwrap();
 
         assert_eq!(block.operations.len(), 2);
 
-        // Check op types
+        // Check op types (now using Apple's "write_state" instead of "coreml_update_state")
         assert_eq!(block.operations[0].r#type, "read_state");
-        assert_eq!(block.operations[1].r#type, "coreml_update_state");
+        assert_eq!(block.operations[1].r#type, "write_state");
+
+        // Check that state ops use name references (not inline strings)
+        let read_state_op = &block.operations[0];
+        let state_arg = read_state_op.inputs.get("state").unwrap();
+        // Should be a name reference, not an immediate value
+        match state_arg.arguments[0].binding.as_ref().unwrap() {
+            ane_coreml_proto::apple_proto::mil_spec::argument::binding::Binding::Name(name) => {
+                assert_eq!(name, "state_0");
+            }
+            other => panic!("Expected Name binding for state, got {:?}", other),
+        }
+
+        let write_state_op = &block.operations[1];
+        let state_arg2 = write_state_op.inputs.get("state").unwrap();
+        match state_arg2.arguments[0].binding.as_ref().unwrap() {
+            ane_coreml_proto::apple_proto::mil_spec::argument::binding::Binding::Name(name) => {
+                assert_eq!(name, "state_0");
+            }
+            other => panic!("Expected Name binding for state in write_state, got {:?}", other),
+        }
+
+        // All ops should have attributes["name"]
+        assert!(read_state_op.attributes.contains_key("name"));
+        assert!(write_state_op.attributes.contains_key("name"));
     }
 }
