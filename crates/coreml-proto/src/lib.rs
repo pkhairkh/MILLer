@@ -1430,6 +1430,31 @@ fn make_immediate_int32_value(values: Vec<i32>, shape: &[u64]) -> apple_proto::m
     }
 }
 
+/// Create an immediate INT64 vector value using typed `RepeatedLongInts` storage.
+///
+/// Core ML requires the stored element count to match the tensor type element
+/// count. Using raw `bytes` storage for INT64 vectors causes a mismatch: 4
+/// packed i64 values become 32 raw bytes, and Core ML counts 32 storage entries
+/// vs the declared 4-element tensor shape. The `RepeatedLongInts` proto field
+/// stores each value as a proper `int64`, so the element count is correct.
+fn make_immediate_int64_value(values: Vec<i64>, shape: &[u64]) -> apple_proto::mil_spec::Value {
+    apple_proto::mil_spec::Value {
+        doc_string: String::new(),
+        r#type: Some(make_apple_value_type(apple_proto::mil_spec::DataType::Int64 as i32, shape)),
+        value: Some(apple_proto::mil_spec::value::Value::ImmediateValue(
+            apple_proto::mil_spec::value::ImmediateValue {
+                value: Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(
+                    apple_proto::mil_spec::TensorValue {
+                        value: Some(apple_proto::mil_spec::tensor_value::Value::LongInts(
+                            apple_proto::mil_spec::tensor_value::RepeatedLongInts { values },
+                        )),
+                    },
+                )),
+            },
+        )),
+    }
+}
+
 fn make_immediate_bool_value(value: bool) -> apple_proto::mil_spec::Value {
     apple_proto::mil_spec::Value {
         doc_string: String::new(),
@@ -1867,14 +1892,11 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::Reshape { name, x, shape } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            // shape as an immediate value
-            let shape_data: Vec<i64> = shape.clone();
-            let shape_bytes = shape_data.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+            // shape as a typed INT64 immediate value (not raw bytes)
             inputs.insert(
                 "shape".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    shape_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
+                make_value_arg(make_immediate_int64_value(
+                    shape.clone(),
                     &[shape.len() as u64],
                 )),
             );
@@ -1897,14 +1919,11 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::Transpose { name, x, perm } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            // perm as an immediate value
-            let perm_data: Vec<i64> = perm.clone();
-            let perm_bytes = perm_data.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+            // perm as a typed INT64 immediate value (not raw bytes)
             inputs.insert(
                 "perm".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    perm_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
+                make_value_arg(make_immediate_int64_value(
+                    perm.clone(),
                     &[perm.len() as u64],
                 )),
             );
@@ -1928,24 +1947,20 @@ fn mir_op_to_apple_ops(
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
-            let begin_data: Vec<i64> = begin.clone();
-            let begin_bytes = begin_data.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+            // begin as a typed INT64 immediate value (not raw bytes)
             inputs.insert(
                 "begin".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    begin_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
+                make_value_arg(make_immediate_int64_value(
+                    begin.clone(),
                     &[begin.len() as u64],
                 )),
             );
 
-            let end_data: Vec<i64> = end.clone();
-            let end_bytes = end_data.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+            // end as a typed INT64 immediate value (not raw bytes)
             inputs.insert(
                 "end".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    end_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
+                make_value_arg(make_immediate_int64_value(
+                    end.clone(),
                     &[end.len() as u64],
                 )),
             );
@@ -1970,24 +1985,20 @@ fn mir_op_to_apple_ops(
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("update".to_string(), make_name_arg(update));
 
-            let begin_data: Vec<i64> = begin.clone();
-            let begin_bytes = begin_data.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+            // begin as a typed INT64 immediate value (not raw bytes)
             inputs.insert(
                 "begin".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    begin_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
+                make_value_arg(make_immediate_int64_value(
+                    begin.clone(),
                     &[begin.len() as u64],
                 )),
             );
 
-            let end_data: Vec<i64> = end.clone();
-            let end_bytes = end_data.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+            // end as a typed INT64 immediate value (not raw bytes)
             inputs.insert(
                 "end".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    end_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
+                make_value_arg(make_immediate_int64_value(
+                    end.clone(),
                     &[end.len() as u64],
                 )),
             );
@@ -2742,14 +2753,11 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::Tile { name, x, reps } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            // reps as an immediate int64 array (same encoding as Reshape's shape)
-            let reps_data: Vec<i64> = reps.clone();
-            let reps_bytes = reps_data.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+            // reps as a typed INT64 immediate value (not raw bytes)
             inputs.insert(
                 "reps".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    reps_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
+                make_value_arg(make_immediate_int64_value(
+                    reps.clone(),
                     &[reps.len() as u64],
                 )),
             );
