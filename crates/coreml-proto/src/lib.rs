@@ -539,6 +539,15 @@ pub mod mir_compat {
             x: String,
             dtype: MilDtypeCompat,
         },
+        /// Placeholder op for graph inputs. Core ML MIL program op type: "placeholder".
+        /// This is the correct way to declare a graph input in Core ML's MIL format.
+        /// Unlike Identity (which references another SSA value), Placeholder takes
+        /// no inputs and produces the named output tensor, declaring it as a function
+        /// parameter. Carries shape and dtype for the output type declaration.
+        Placeholder {
+            name: String,
+            dtype: MilDtypeCompat,
+        },
         /// Catch-all for MIL ops that don't have specialized compat representations.
         /// The proto emission layer handles these by emitting the appropriate
         /// MIL builder call based on the op_kind string.
@@ -1135,6 +1144,12 @@ pub fn mir_op_to_proto_op(
             name.clone(),
             proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
                 x: Some(proto::OperandRef { name: x.clone() }),
+            }),
+        ),
+        mir_compat::MirOpCompat::Placeholder { name, dtype: _ } => (
+            name.clone(),
+            proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                x: Some(proto::OperandRef { name: name.clone() }),
             }),
         ),
         // Unsupported ops are emitted as identity pass-through with a comment
@@ -2712,6 +2727,29 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
+        mir_compat::MirOpCompat::Placeholder { name, dtype } => {
+            // Placeholder is the Core ML MIL op for declaring graph inputs.
+            // It takes no inputs and produces the named output tensor.
+            // The block inputs define the function parameters, and the
+            // placeholder op's output name matches the block input name,
+            // establishing the SSA value for that input.
+            let mil_dtype = compat_dtype_to_apple_mil(dtype);
+
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "placeholder".to_string(),
+                inputs: HashMap::new(), // placeholder takes no inputs
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    mil_dtype,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
+                blocks: vec![],
+                attributes,
+            }]
+        }
         mir_compat::MirOpCompat::Unsupported { op_kind, name, params_json: _ } => {
             // Emit as identity to preserve graph structure
             let mut inputs = HashMap::new();
@@ -2849,23 +2887,79 @@ pub fn convert_to_apple_proto_model(
     // FunctionDescription entries instead. This applies regardless of how many
     // functions exist — even a single-function model with functions=[] populated
     // is classified as multi-function by Core ML.
-    // Since MILLer always populates the functions field, we always use the
-    // multi-function pattern: top-level I/O is always empty.
-    let model_input_descs: Vec<apple_proto::FeatureDescription> = vec![];
-    let model_output_descs: Vec<apple_proto::FeatureDescription> = vec![];
+    //
+    // For single-function models, we use the single-function schema pattern:
+    //   - description.input/output are populated from the function's I/O
+    //   - description.functions is empty
+    //   - description.defaultFunctionName is ""
+    //   - mlProgram.functions uses "main" as the function name
+    //
+    // This ensures Core ML's document decoder finds top-level outputSchema and
+    // doesn't throw missingMetadataField(named: "outputSchema").
+    //
+    // For multi-function models, we use the multi-function schema pattern:
+    //   - description.input/output/state are empty
+    //   - description.functions is populated
+    //   - description.defaultFunctionName is set
+    //   - mlProgram.functions use the original shard names
+    let is_single_function = model.functions.len() == 1;
 
-    // Reference models (e.g., ANE-SHA256D-TROPICAL) have metadata = None
-    // (field 100 absent entirely). Core ML doesn't require metadata.
-    // Omit it to match Apple's reference wire format exactly.
+    let (model_input_descs, model_output_descs, model_state_descs, final_function_descriptions, final_default_fn_name, final_program) = if is_single_function {
+        // Single-function: populate top-level I/O, leave functions empty,
+        // rename MIL program function to "main"
+        let func = &model.functions[0];
+        let top_inputs: Vec<apple_proto::FeatureDescription> = func
+            .inputs
+            .iter()
+            .map(|td| make_apple_feature_desc(&td.name, &td.dtype, &td.shape))
+            .collect();
+        let top_outputs: Vec<apple_proto::FeatureDescription> = func
+            .outputs
+            .iter()
+            .map(|td| make_apple_feature_desc(&td.name, &td.dtype, &td.shape))
+            .collect();
+        let top_states: Vec<apple_proto::FeatureDescription> = func
+            .states
+            .iter()
+            .map(|td| make_apple_state_feature_desc(&td.name, &td.dtype, &td.shape))
+            .collect();
 
-    // Build model-level state descriptions (always empty for multi-function pattern)
-    let model_state_descs: Vec<apple_proto::FeatureDescription> = vec![];
+        // Rename the single function to "main" in the MIL Program
+        let mut main_program_functions = HashMap::new();
+        if let Some(mil_func) = program.functions.get(&func.name) {
+            main_program_functions.insert("main".to_string(), mil_func.clone());
+        }
+
+        (
+            top_inputs,
+            top_outputs,
+            top_states,
+            vec![],  // empty functions list for single-function
+            String::new(),  // no defaultFunctionName for single-function
+            apple_proto::mil_spec::Program {
+                version: program.version,
+                functions: main_program_functions,
+                doc_string: program.doc_string,
+                attributes: program.attributes,
+            },
+        )
+    } else {
+        // Multi-function: top-level I/O empty, functions populated
+        (
+            vec![],
+            vec![],
+            vec![],
+            function_descriptions,
+            model.default_function_name.clone(),
+            program,
+        )
+    };
 
     apple_proto::Model {
         specification_version: model.spec_version.proto_value(),
         description: Some(apple_proto::ModelDescription {
-            functions: function_descriptions,
-            default_function_name: model.default_function_name.clone(),
+            functions: final_function_descriptions,
+            default_function_name: final_default_fn_name,
             metadata: None,
             input: model_input_descs,
             output: model_output_descs,
@@ -2875,7 +2969,7 @@ pub fn convert_to_apple_proto_model(
             training_input: vec![],
         }),
         is_updatable: false,
-        r#type: Some(apple_proto::model::Type::MlProgram(program)),
+        r#type: Some(apple_proto::model::Type::MlProgram(final_program)),
     }
 }
 

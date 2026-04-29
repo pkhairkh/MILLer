@@ -605,6 +605,8 @@ mod tests {
 
     #[test]
     fn test_apple_proto_model_description_functions() {
+        // Single-function model: should use single-function schema pattern
+        // (top-level I/O populated, functions empty, MIL program key="main")
         let graph = build_linear_projection_mir("test_desc", 32, 16, 1, MilDtypeCompat::Fp16, 99);
         let model =
             convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
@@ -613,10 +615,21 @@ mod tests {
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
 
         let desc = parsed.description.as_ref().unwrap();
-        assert_eq!(desc.default_function_name, "main");
-        // Apple format uses repeated FunctionDescription at field 20
-        assert!(!desc.functions.is_empty());
-        assert_eq!(desc.functions[0].name, "main");
+        // Single-function: no defaultFunctionName, empty functions list
+        assert_eq!(desc.default_function_name, "");
+        assert!(desc.functions.is_empty());
+
+        // Single-function: top-level I/O should be populated
+        assert!(!desc.input.is_empty());
+        assert!(!desc.output.is_empty());
+
+        // Single-function: MIL Program function key should be "main"
+        let model_type = parsed.r#type.as_ref().unwrap();
+        match model_type {
+            ane_coreml_proto::apple_proto::model::Type::MlProgram(program) => {
+                assert!(program.functions.contains_key("main"));
+            }
+        }
 
         // Check metadata — reference models have metadata = None
         assert!(desc.metadata.is_none());
@@ -685,7 +698,7 @@ mod tests {
         let program = match model_type {
             ane_coreml_proto::apple_proto::model::Type::MlProgram(p) => p,
         };
-        let func = program.functions.get("decode_step").unwrap();
+        let func = program.functions.get("main").unwrap();
         let block = func
             .block_specializations
             .get("CoreML9")

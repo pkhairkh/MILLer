@@ -299,8 +299,21 @@ fn mir_node_to_compat(node: &MirNode, resolver: &dyn WeightResolver) -> Result<M
     // For Identity, propagate the actual dtype from the MIR node so
     // the proto emission can declare the correct output type (e.g., Int32
     // for input_ids rather than hardcoded Float16).
+    //
+    // Additionally, Identity nodes that are graph inputs (x references
+    // "__placeholder__") should be converted to Placeholder ops instead,
+    // since Core ML's MIL format uses "placeholder" operations to declare
+    // function inputs. The "identity" op requires a valid SSA input name,
+    // but "__placeholder__" is a sentinel that doesn't exist in the MIL
+    // program's SSA namespace.
     if let MirOpCompat::Identity { name, x, .. } = &compat {
         let node_dtype = mil_dtype_to_compat(&node.dtype);
+        if x == "__placeholder__" {
+            return Ok(MirOpCompat::Placeholder {
+                name: name.clone(),
+                dtype: node_dtype,
+            });
+        }
         return Ok(MirOpCompat::Identity {
             name: name.clone(),
             x: x.clone(),

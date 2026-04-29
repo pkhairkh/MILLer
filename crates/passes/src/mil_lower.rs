@@ -2346,15 +2346,27 @@ impl MilLowerPass {
             // it into the MirNode and the node_shapes map.
             let inferred_shape = infer_shape(&air_node.op, &node_shapes);
 
+            // Preserve pre-seeded shapes for graph inputs. When a graph input
+            // is an Identity node with input="__placeholder__", infer_shape
+            // returns empty because "__placeholder__" isn't in node_shapes.
+            // Without this guard, the seeded shape (e.g., [1, 512] for
+            // input_ids) would be overwritten with [], producing wrong
+            // metadata throughout the rest of the graph.
+            let shape = if inferred_shape.is_empty() {
+                node_shapes.get(&air_node.id).cloned().unwrap_or(inferred_shape)
+            } else {
+                inferred_shape
+            };
+
             mir_nodes.push(MirNode {
                 id: mir_id.clone(),
                 op: mir_op,
                 dtype: mil_dtype,
-                shape: inferred_shape.clone(),
+                shape: shape.clone(),
                 compute_unit_hint: Some(compute_hint.clone()),
                 air_source: Some(air_node.id.clone()),
             });
-            node_shapes.insert(air_node.id.clone(), inferred_shape);
+            node_shapes.insert(air_node.id.clone(), shape);
         }
 
         let mir_inputs: Vec<MirNodeId> = input
