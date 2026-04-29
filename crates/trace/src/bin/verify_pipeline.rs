@@ -530,7 +530,7 @@ fn validate_mir(mir: &MirGraph) -> bool {
 }
 
 fn validate_pir(pir: &PirGraph) -> bool {
-    let mut ok = true;
+    let ok = true;
     let n_packages = pir.packages.len();
 
     println!("  PIR packages: {}", n_packages);
