@@ -2727,28 +2727,13 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
-        mir_compat::MirOpCompat::Placeholder { name, dtype } => {
-            // Placeholder is the Core ML MIL op for declaring graph inputs.
-            // It takes no inputs and produces the named output tensor.
-            // The block inputs define the function parameters, and the
-            // placeholder op's output name matches the block input name,
-            // establishing the SSA value for that input.
-            let mil_dtype = compat_dtype_to_apple_mil(dtype);
-
-            let mut attributes = HashMap::new();
-            add_name_attribute(&mut attributes, name);
-
-            vec![apple_proto::mil_spec::Operation {
-                r#type: "placeholder".to_string(),
-                inputs: HashMap::new(), // placeholder takes no inputs
-                outputs: vec![make_apple_named_value_type(
-                    name,
-                    mil_dtype,
-                    &lookup_shape_u64(name, node_shapes),
-                )],
-                blocks: vec![],
-                attributes,
-            }]
+        mir_compat::MirOpCompat::Placeholder { name: _, dtype: _ } => {
+            // Placeholder is NOT a Core ML MIL operation. It's a marker for
+            // graph inputs that gets stripped during proto emission. Function
+            // inputs are declared as block parameters (NamedValueType in
+            // Function.inputs / Block.inputs), not as operations. Core ML
+            // rejects the "placeholder" operator with "Unknown operator".
+            vec![]
         }
         mir_compat::MirOpCompat::Unsupported { op_kind, name, params_json: _ } => {
             // Emit as identity to preserve graph structure

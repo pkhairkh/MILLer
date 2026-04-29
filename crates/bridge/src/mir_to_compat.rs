@@ -281,8 +281,111 @@ pub fn mir_graph_to_compat(
 /// Each `MirNode` wraps a `MirOp` plus metadata (dtype, shape, compute_unit_hint).
 /// The compat representation only stores the op, so metadata like dtype/shape
 /// is folded into the op where relevant (e.g., `Const`, `ReadState`).
+/// Rename the output SSA name of a MirOpCompat to use the MIR node's unique ID
+/// instead of the MirOp's `name` field (which may be non-unique across decomposed
+/// SIR nodes). This is critical for SSA validity: each MIL operation must produce
+/// a uniquely-named output, and consumers reference these names via MIR node IDs.
+fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
+    match compat {
+        MirOpCompat::Const { name: _, data, dtype, shape } =>
+            MirOpCompat::Const { name: new_name, data, dtype, shape },
+        MirOpCompat::Linear { name: _, x, weight_name, bias_name } =>
+            MirOpCompat::Linear { name: new_name, x, weight_name, bias_name },
+        MirOpCompat::MatMul { name: _, x, y } =>
+            MirOpCompat::MatMul { name: new_name, x, y },
+        MirOpCompat::Add { name: _, x, y } =>
+            MirOpCompat::Add { name: new_name, x, y },
+        MirOpCompat::Mul { name: _, x, y } =>
+            MirOpCompat::Mul { name: new_name, x, y },
+        MirOpCompat::Sub { name: _, x, y } =>
+            MirOpCompat::Sub { name: new_name, x, y },
+        MirOpCompat::Abs { name: _, x } =>
+            MirOpCompat::Abs { name: new_name, x },
+        MirOpCompat::Maximum { name: _, x, y } =>
+            MirOpCompat::Maximum { name: new_name, x, y },
+        MirOpCompat::Minimum { name: _, x, y } =>
+            MirOpCompat::Minimum { name: new_name, x, y },
+        MirOpCompat::Reshape { name: _, x, shape } =>
+            MirOpCompat::Reshape { name: new_name, x, shape },
+        MirOpCompat::Transpose { name: _, x, perm } =>
+            MirOpCompat::Transpose { name: new_name, x, perm },
+        MirOpCompat::SliceByIndex { name: _, x, begin, end } =>
+            MirOpCompat::SliceByIndex { name: new_name, x, begin, end },
+        MirOpCompat::SliceUpdate { name: _, x, update, begin, end } =>
+            MirOpCompat::SliceUpdate { name: new_name, x, update, begin, end },
+        MirOpCompat::Concat { name: _, values, axis } =>
+            MirOpCompat::Concat { name: new_name, values, axis },
+        MirOpCompat::Softmax { name: _, x, axis } =>
+            MirOpCompat::Softmax { name: new_name, x, axis },
+        MirOpCompat::Gelu { name: _, x, mode } =>
+            MirOpCompat::Gelu { name: new_name, x, mode },
+        MirOpCompat::ScaledDotProductAttention { name: _, query, key, value } =>
+            MirOpCompat::ScaledDotProductAttention { name: new_name, query, key, value },
+        MirOpCompat::ReadState { name: _, state_id, shape, dtype } =>
+            MirOpCompat::ReadState { name: new_name, state_id, shape, dtype },
+        MirOpCompat::CoremlUpdateState { name: _, state_id, value } =>
+            MirOpCompat::CoremlUpdateState { name: new_name, state_id, value },
+        MirOpCompat::Gather { name: _, x, indices, axis } =>
+            MirOpCompat::Gather { name: new_name, x, indices, axis },
+        MirOpCompat::ReduceMean { name: _, x, axes, keep_dims } =>
+            MirOpCompat::ReduceMean { name: new_name, x, axes, keep_dims },
+        MirOpCompat::ReduceSum { name: _, x, axes, keep_dims } =>
+            MirOpCompat::ReduceSum { name: new_name, x, axes, keep_dims },
+        MirOpCompat::Conv { name: _, x, weight, pad_type, groups } =>
+            MirOpCompat::Conv { name: new_name, x, weight, pad_type, groups },
+        MirOpCompat::StateWrite { name: _, state_ref, value } =>
+            MirOpCompat::StateWrite { name: new_name, state_ref, value },
+        MirOpCompat::Rsqrt { name: _, x } =>
+            MirOpCompat::Rsqrt { name: new_name, x },
+        MirOpCompat::RealDiv { name: _, x, y } =>
+            MirOpCompat::RealDiv { name: new_name, x, y },
+        MirOpCompat::LayerNorm { name: _, x, weight_name, bias_name, epsilon, axes } =>
+            MirOpCompat::LayerNorm { name: new_name, x, weight_name, bias_name, epsilon, axes },
+        MirOpCompat::Topk { name: _, x, k, axis } =>
+            MirOpCompat::Topk { name: new_name, x, k, axis },
+        MirOpCompat::Cos { name: _, x } =>
+            MirOpCompat::Cos { name: new_name, x },
+        MirOpCompat::Sin { name: _, x } =>
+            MirOpCompat::Sin { name: new_name, x },
+        MirOpCompat::Cast { name: _, x, dtype } =>
+            MirOpCompat::Cast { name: new_name, x, dtype },
+        MirOpCompat::Split { name: _, x, axis, num_splits } =>
+            MirOpCompat::Split { name: new_name, x, axis, num_splits },
+        MirOpCompat::Exp { name: _, x } =>
+            MirOpCompat::Exp { name: new_name, x },
+        MirOpCompat::Sigmoid { name: _, x } =>
+            MirOpCompat::Sigmoid { name: new_name, x },
+        MirOpCompat::Tanh { name: _, x } =>
+            MirOpCompat::Tanh { name: new_name, x },
+        MirOpCompat::Relu { name: _, x } =>
+            MirOpCompat::Relu { name: new_name, x },
+        MirOpCompat::Where { name: _, condition, x, y } =>
+            MirOpCompat::Where { name: new_name, condition, x, y },
+        MirOpCompat::Silu { name: _, x } =>
+            MirOpCompat::Silu { name: new_name, x },
+        MirOpCompat::Identity { name: _, x, dtype } =>
+            MirOpCompat::Identity { name: new_name, x, dtype },
+        MirOpCompat::Placeholder { name: _, dtype } =>
+            MirOpCompat::Placeholder { name: new_name, dtype },
+        MirOpCompat::Unsupported { op_kind, name: _, params_json } =>
+            MirOpCompat::Unsupported { op_kind, name: new_name, params_json },
+    }
+}
+
 fn mir_node_to_compat(node: &MirNode, resolver: &dyn WeightResolver) -> Result<MirOpCompat> {
     let compat = mir_op_to_compat(&node.op, &node.shape, resolver)?;
+
+    // CRITICAL: Override the compat op's output name with the MIR node's unique ID.
+    // The MirOp's `name` field is set from `air_node.name` which is the SIR node ID,
+    // shared across ALL decomposed nodes from the same SIR operation. For example,
+    // RmsNorm decomposes into ReduceMean + Rsqrt + Mul + Mul, and all four have
+    // name = "sir_2_layer_0_input_norm". This produces duplicate SSA output names
+    // and leaves consumer references undefined.
+    //
+    // Using node.id.0 (the AIR node ID, e.g., "sir_2_layer_0_input_norm_mean")
+    // ensures each operation has a unique output name that matches what consumers
+    // reference via air_to_mir → MirNodeId.
+    let compat = rename_compat_output(compat, node.id.0.clone());
 
     // For ReadState, propagate the actual dtype from the MIR node instead
     // of the hardcoded Fp16 default in mir_op_to_compat.
@@ -301,11 +404,10 @@ fn mir_node_to_compat(node: &MirNode, resolver: &dyn WeightResolver) -> Result<M
     // for input_ids rather than hardcoded Float16).
     //
     // Additionally, Identity nodes that are graph inputs (x references
-    // "__placeholder__") should be converted to Placeholder ops instead,
-    // since Core ML's MIL format uses "placeholder" operations to declare
-    // function inputs. The "identity" op requires a valid SSA input name,
-    // but "__placeholder__" is a sentinel that doesn't exist in the MIL
-    // program's SSA namespace.
+    // "__placeholder__") should be converted to Placeholder ops instead.
+    // Core ML's MIL format declares function inputs as block parameters,
+    // not as operations. The Placeholder is a marker that gets stripped
+    // during proto emission (no MIL operation is emitted for it).
     if let MirOpCompat::Identity { name, x, .. } = &compat {
         let node_dtype = mil_dtype_to_compat(&node.dtype);
         if x == "__placeholder__" {
@@ -913,7 +1015,10 @@ mod tests {
         let resolver = EmptyWeightResolver;
         let compat = mir_graph_to_compat(&graph, &resolver).unwrap();
 
-        assert_eq!(compat.ops.len(), 3);
+        // 3 original ops + 1 auto-materialized weight (Linear references "weight"
+        // but the existing Const was renamed to "x" via rename_compat_output,
+        // so auto-materialization creates a new Const for "weight")
+        assert_eq!(compat.ops.len(), 4);
         assert_eq!(compat.inputs, vec!["input".to_string()]);
         assert_eq!(compat.outputs, vec!["output".to_string()]);
         assert_eq!(compat.opset_version, "iOS18");
@@ -929,10 +1034,12 @@ mod tests {
 
         let compat = mir_graph_to_compat(&graph, &resolver).unwrap();
 
-        // Check that Const ops have proper data
+        // Check that Const ops have proper data.
+        // Note: SSA output names use the MIR node ID (from node.id.0),
+        // not the MirOp's name field. This ensures unique SSA names.
         match &compat.ops[0] {
             MirOpCompat::Const { name, data, dtype, shape } => {
-                assert_eq!(name, "weight");
+                assert_eq!(name, "x");  // node.id.0, not op.name "weight"
                 assert_eq!(data.len(), 32 * 64 * 2);
                 assert_eq!(*dtype, MilDtypeCompat::Fp16);
                 assert_eq!(*shape, vec![32, 64]);
@@ -942,13 +1049,13 @@ mod tests {
 
         match &compat.ops[1] {
             MirOpCompat::Const { name, data, .. } => {
-                assert_eq!(name, "bias");
+                assert_eq!(name, "bias");  // node.id.0, matches op.name in this case
                 assert_eq!(data.len(), 32 * 2);
             }
             _ => panic!("Expected Const op"),
         }
 
-        // Linear op
+        // Linear op: output name is the node ID "output"
         match &compat.ops[2] {
             MirOpCompat::Linear { name, x, weight_name, bias_name } => {
                 assert_eq!(name, "output");
