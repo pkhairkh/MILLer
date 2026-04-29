@@ -175,6 +175,8 @@ pub enum SpecVersion {
     V8,
     /// ML Program with expanded state support (iOS 18+, macOS 15+)
     V9,
+    /// ML Program with multi-function + state support (iOS 17+, macOS 14+)
+    V10,
 }
 
 impl SpecVersion {
@@ -184,12 +186,13 @@ impl SpecVersion {
             SpecVersion::V7 => 7,
             SpecVersion::V8 => 8,
             SpecVersion::V9 => 9,
+            SpecVersion::V10 => 10,
         }
     }
 
     /// Whether this version supports stateful models (mb.read_state / mb.write_state).
     pub fn supports_state(&self) -> bool {
-        matches!(self, SpecVersion::V8 | SpecVersion::V9)
+        matches!(self, SpecVersion::V8 | SpecVersion::V9 | SpecVersion::V10)
     }
 }
 
@@ -664,6 +667,7 @@ pub fn spec_version_to_proto(sv: &SpecVersion) -> i32 {
         SpecVersion::V7 => proto::SpecificationVersion::SpecificationVersion7 as i32,
         SpecVersion::V8 => proto::SpecificationVersion::SpecificationVersion8 as i32,
         SpecVersion::V9 => 9, // SpecificationVersion9 not in legacy proto enum; use raw value
+        SpecVersion::V10 => 10, // SpecificationVersion10 not in legacy proto enum; use raw value
     }
 }
 
@@ -2689,7 +2693,11 @@ pub fn convert_to_apple_proto_model(
     model: &CoreMlModel,
     weight_entries: &[WeightEntry],
 ) -> apple_proto::Model {
-    let opset = format!("CoreML{}", model.spec_version.proto_value());
+    // The MIL opset version is independent of the specification version.
+    // Apple's reference models use opset "CoreML9" even with spec version 10.
+    // The opset determines which MIL ops are available; spec version determines
+    // the overall model format capabilities (e.g., multi-function, state support).
+    let opset = "CoreML9".to_string();
 
     // Build function descriptions for ModelDescription
     let function_descriptions: Vec<apple_proto::FunctionDescription> = model
@@ -2763,28 +2771,9 @@ pub fn convert_to_apple_proto_model(
             .collect()
     };
 
-    // Build metadata
-    let mut user_defined = model.user_defined_metadata.clone();
-    user_defined.insert(
-        "com.apple.coreml.mlemission".to_string(),
-        "MILLer/proto-direct".to_string(),
-    );
-    user_defined.insert(
-        "com.apple.coreml.emission.version".to_string(),
-        "2.0".to_string(),
-    );
-
-    let metadata = apple_proto::Metadata {
-        short_description: format!(
-            "Proto-direct emission: {} function(s), {} weight(s)",
-            model.functions.len(),
-            weight_entries.len(),
-        ),
-        version_string: "1.0".to_string(),
-        author: "MILLer".to_string(),
-        license: String::new(),
-        user_defined,
-    };
+    // Reference models (e.g., ANE-SHA256D-TROPICAL) have metadata = None
+    // (field 100 absent entirely). Core ML doesn't require metadata.
+    // Omit it to match Apple's reference wire format exactly.
 
     // Build model-level state descriptions (empty for multi-function models)
     let model_state_descs: Vec<apple_proto::FeatureDescription> = if is_multi_function {
@@ -2803,7 +2792,7 @@ pub fn convert_to_apple_proto_model(
         description: Some(apple_proto::ModelDescription {
             functions: function_descriptions,
             default_function_name: model.default_function_name.clone(),
-            metadata: Some(metadata),
+            metadata: None,
             input: model_input_descs,
             output: model_output_descs,
             state: model_state_descs,
@@ -3134,7 +3123,7 @@ mod tests {
         use prost::Message;
 
         let model = CoreMlModel {
-            spec_version: SpecVersion::V9,
+            spec_version: SpecVersion::V10,
             description: ModelDescriptionCompat {
                 inputs: vec![TensorDesc {
                     name: "x".to_string(),
@@ -3197,7 +3186,7 @@ mod tests {
         let proto_model = convert_to_proto_model(&model, &weight_entries);
 
         // Verify key fields — V9 maps to raw value 9 (not in legacy proto enum)
-        assert_eq!(proto_model.specification_version, 9);
+        assert_eq!(proto_model.specification_version, 10);
         assert!(proto_model.description.is_some());
         assert!(proto_model.ml_program.is_some());
 
@@ -3211,7 +3200,7 @@ mod tests {
         // Parse back
         let parsed = proto::Model::decode(bytes.as_slice()).unwrap();
         // V9 → raw value 9 (SpecificationVersion9 not in legacy proto enum)
-        assert_eq!(parsed.specification_version, 9);
+        assert_eq!(parsed.specification_version, 10);
         assert!(parsed.ml_program.is_some());
         assert!(parsed.ml_program.as_ref().unwrap().functions.contains_key("main"));
     }
