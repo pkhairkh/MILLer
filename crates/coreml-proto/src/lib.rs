@@ -1390,6 +1390,60 @@ fn make_immediate_bytes_value(
     }
 }
 
+fn make_immediate_int32_value(values: Vec<i32>, shape: &[u64]) -> apple_proto::mil_spec::Value {
+    apple_proto::mil_spec::Value {
+        doc_string: String::new(),
+        r#type: Some(make_apple_value_type(apple_proto::mil_spec::DataType::Int32 as i32, shape)),
+        value: Some(apple_proto::mil_spec::value::Value::ImmediateValue(
+            apple_proto::mil_spec::value::ImmediateValue {
+                value: Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(
+                    apple_proto::mil_spec::TensorValue {
+                        value: Some(apple_proto::mil_spec::tensor_value::Value::Ints(
+                            apple_proto::mil_spec::tensor_value::RepeatedInts { values },
+                        )),
+                    },
+                )),
+            },
+        )),
+    }
+}
+
+fn make_immediate_bool_value(value: bool) -> apple_proto::mil_spec::Value {
+    apple_proto::mil_spec::Value {
+        doc_string: String::new(),
+        r#type: Some(make_apple_value_type(apple_proto::mil_spec::DataType::Bool as i32, &[])),
+        value: Some(apple_proto::mil_spec::value::Value::ImmediateValue(
+            apple_proto::mil_spec::value::ImmediateValue {
+                value: Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(
+                    apple_proto::mil_spec::TensorValue {
+                        value: Some(apple_proto::mil_spec::tensor_value::Value::Bools(
+                            apple_proto::mil_spec::tensor_value::RepeatedBools { values: vec![value] },
+                        )),
+                    },
+                )),
+            },
+        )),
+    }
+}
+
+fn make_immediate_float32_value(value: f32) -> apple_proto::mil_spec::Value {
+    apple_proto::mil_spec::Value {
+        doc_string: String::new(),
+        r#type: Some(make_apple_value_type(apple_proto::mil_spec::DataType::Float32 as i32, &[])),
+        value: Some(apple_proto::mil_spec::value::Value::ImmediateValue(
+            apple_proto::mil_spec::value::ImmediateValue {
+                value: Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(
+                    apple_proto::mil_spec::TensorValue {
+                        value: Some(apple_proto::mil_spec::tensor_value::Value::Floats(
+                            apple_proto::mil_spec::tensor_value::RepeatedFloats { values: vec![value] },
+                        )),
+                    },
+                )),
+            },
+        )),
+    }
+}
+
 /// Build an `apple_proto::mil_spec::Value` referencing weight.bin via BlobFileValue.
 ///
 /// The `fileName` field uses Apple's virtual path convention:
@@ -1654,6 +1708,14 @@ fn mir_op_to_apple_ops(
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("y".to_string(), make_name_arg(y));
+            inputs.insert(
+                "transpose_x".to_string(),
+                make_value_arg(make_immediate_bool_value(false)),
+            );
+            inputs.insert(
+                "transpose_y".to_string(),
+                make_value_arg(make_immediate_bool_value(x == y)),
+            );
 
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
@@ -1963,14 +2025,9 @@ fn mir_op_to_apple_ops(
             inputs.insert("values".to_string(), concat_args);
 
             // axis as immediate value
-            let axis_bytes = axis.to_le_bytes().to_vec();
             inputs.insert(
                 "axis".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    axis_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
-                    &[],
-                )),
+                make_value_arg(make_immediate_int32_value(vec![*axis as i32], &[])),
             );
 
             let mut attributes = HashMap::new();
@@ -1992,16 +2049,10 @@ fn mir_op_to_apple_ops(
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
-            let axis_bytes = axis.to_le_bytes().to_vec();
             inputs.insert(
                 "axis".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    axis_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
-                    &[],
-                )),
+                make_value_arg(make_immediate_int32_value(vec![*axis as i32], &[])),
             );
-
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
 
@@ -2132,14 +2183,13 @@ fn mir_op_to_apple_ops(
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("indices".to_string(), make_name_arg(indices));
 
-            let axis_bytes = axis.to_le_bytes().to_vec();
             inputs.insert(
                 "axis".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    axis_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
-                    &[],
-                )),
+                make_value_arg(make_immediate_int32_value(vec![*axis as i32], &[])),
+            );
+            inputs.insert(
+                "validate_indices".to_string(),
+                make_value_arg(make_immediate_bool_value(false)),
             );
 
             let mut attributes = HashMap::new();
@@ -2161,24 +2211,17 @@ fn mir_op_to_apple_ops(
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
-            let axes_bytes = axes.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
             inputs.insert(
                 "axes".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    axes_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
+                make_value_arg(make_immediate_int32_value(
+                    axes.iter().map(|&v| v as i32).collect(),
                     &[axes.len() as u64],
                 )),
             );
 
-            let keep_dims_bytes = if *keep_dims { vec![1u8] } else { vec![0u8] };
             inputs.insert(
                 "keep_dims".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    keep_dims_bytes,
-                    apple_proto::mil_spec::DataType::Bool as i32,
-                    &[],
-                )),
+                make_value_arg(make_immediate_bool_value(*keep_dims)),
             );
 
             let mut attributes = HashMap::new();
@@ -2200,24 +2243,17 @@ fn mir_op_to_apple_ops(
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
-            let axes_bytes = axes.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
             inputs.insert(
                 "axes".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    axes_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
+                make_value_arg(make_immediate_int32_value(
+                    axes.iter().map(|&v| v as i32).collect(),
                     &[axes.len() as u64],
                 )),
             );
 
-            let keep_dims_bytes = if *keep_dims { vec![1u8] } else { vec![0u8] };
             inputs.insert(
                 "keep_dims".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    keep_dims_bytes,
-                    apple_proto::mil_spec::DataType::Bool as i32,
-                    &[],
-                )),
+                make_value_arg(make_immediate_bool_value(*keep_dims)),
             );
 
             let mut attributes = HashMap::new();
@@ -2270,14 +2306,9 @@ fn mir_op_to_apple_ops(
                 }),
             );
 
-            let groups_bytes = groups.to_le_bytes().to_vec();
             inputs.insert(
                 "groups".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    groups_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
-                    &[],
-                )),
+                make_value_arg(make_immediate_int32_value(vec![*groups as i32], &[])),
             );
 
             let mut attributes = HashMap::new();
@@ -2319,6 +2350,10 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::Rsqrt { name, x } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
+            inputs.insert(
+                "epsilon".to_string(),
+                make_value_arg(make_immediate_float32_value(0.0)),
+            );
 
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
@@ -2363,22 +2398,15 @@ fn mir_op_to_apple_ops(
                 inputs.insert("bias".to_string(), make_name_arg(bname));
             }
 
-            let eps_bytes = epsilon.to_le_bytes().to_vec();
             inputs.insert(
                 "epsilon".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    eps_bytes,
-                    apple_proto::mil_spec::DataType::Float32 as i32,
-                    &[],
-                )),
+                make_value_arg(make_immediate_float32_value(*epsilon)),
             );
 
-            let axes_bytes = axes.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
             inputs.insert(
                 "axes".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    axes_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
+                make_value_arg(make_immediate_int32_value(
+                    axes.iter().map(|&v| v as i32).collect(),
                     &[axes.len() as u64],
                 )),
             );
@@ -2402,24 +2430,14 @@ fn mir_op_to_apple_ops(
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
-            let k_bytes = k.to_le_bytes().to_vec();
             inputs.insert(
                 "k".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    k_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
-                    &[],
-                )),
+                make_value_arg(make_immediate_int32_value(vec![*k as i32], &[])),
             );
 
-            let axis_bytes = axis.to_le_bytes().to_vec();
             inputs.insert(
                 "axis".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    axis_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
-                    &[],
-                )),
+                make_value_arg(make_immediate_int32_value(vec![*axis as i32], &[])),
             );
 
             let mut attributes = HashMap::new();
@@ -2555,24 +2573,14 @@ fn mir_op_to_apple_ops(
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
-            let axis_bytes = axis.to_le_bytes().to_vec();
             inputs.insert(
                 "axis".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    axis_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
-                    &[],
-                )),
+                make_value_arg(make_immediate_int32_value(vec![*axis as i32], &[])),
             );
 
-            let num_splits_bytes = num_splits.to_le_bytes().to_vec();
             inputs.insert(
                 "num_splits".to_string(),
-                make_value_arg(make_immediate_bytes_value(
-                    num_splits_bytes,
-                    apple_proto::mil_spec::DataType::Int64 as i32,
-                    &[],
-                )),
+                make_value_arg(make_immediate_int32_value(vec![*num_splits as i32], &[])),
             );
 
             let mut attributes = HashMap::new();
@@ -2780,7 +2788,7 @@ fn function_to_apple_proto(
         .collect();
 
     let block = apple_proto::mil_spec::Block {
-        inputs: fn_inputs.clone(),
+        inputs: vec![],
         outputs: func.outputs.iter().map(|td| td.name.clone()).collect(),
         operations,
         attributes: HashMap::new(),
