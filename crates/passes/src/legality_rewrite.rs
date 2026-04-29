@@ -14,7 +14,7 @@
 //! | Split | Split (1:1) |
 //! | Concat | Concat (1:1) |
 //! | Softmax | Softmax (1:1) |
-//! | AttentionBlock | Conv1x1AsLinear + SliceByIndex + Reshape + Transpose + ScaledDotProductAttention + Conv1x1AsLinear |
+//! | AttentionBlock | Reshape(Q) + Reshape(K) + Reshape(V) + Transpose(Q) + Transpose(K) + Transpose(V) + ScaledDotProductAttention + Reshape + Conv1x1AsLinear |
 //! | DecodeStep | Conv1x1AsLinear + SliceByIndex + StateReadFixed + Reshape + ScaledDotProductAttention + Conv1x1AsLinear |
 //! | RMSNorm | ReduceMean + Rsqrt + ElementWise::Mul + ElementWise::Mul |
 //! | RoPETransform | Cos + Sin + ElementWise::Mul + ElementWise::Add |
@@ -154,7 +154,7 @@ impl LegalityRewritePass {
                     )];
                     (air_id, nodes, "mb.linear")
                 }
-                SirOp::AttentionBlock { q, k, v, mask: _, rope: _ } => {
+                SirOp::AttentionBlock { q, k, v, mask, rope: _ } => {
                     let attn_ctx = ctx.and_then(|c| {
                         // Only use the context if it has non-zero embed_dim (meaningful dimensions)
                         if c.embed_dim > 0 {
@@ -168,6 +168,7 @@ impl LegalityRewritePass {
                         q,
                         k,
                         v,
+                        mask,
                         &sir_to_air,
                         knowledge_query,
                         attn_ctx.as_ref(),
@@ -457,14 +458,15 @@ impl LegalityRewritePass {
         q_sir: &ane_ir::sir::SirNodeId,
         k_sir: &ane_ir::sir::SirNodeId,
         v_sir: &ane_ir::sir::SirNodeId,
+        mask_sir: &Option<ane_ir::sir::SirNodeId>,
         sir_to_air: &std::collections::HashMap<ane_ir::sir::SirNodeId, AirNodeId>,
         kq: &dyn PassKnowledgeQuery,
         ctx: Option<&DecompositionContext>,
     ) -> (AirNodeId, Vec<AirNode>) {
         let base = &sir_node.id.0;
         let q_air = sir_to_air.get(q_sir).cloned().unwrap_or_else(|| AirNodeId(q_sir.0.clone()));
-        let _k_air = sir_to_air.get(k_sir).cloned().unwrap_or_else(|| AirNodeId(k_sir.0.clone()));
-        let _v_air = sir_to_air.get(v_sir).cloned().unwrap_or_else(|| AirNodeId(v_sir.0.clone()));
+        let k_air = sir_to_air.get(k_sir).cloned().unwrap_or_else(|| AirNodeId(k_sir.0.clone()));
+        let v_air = sir_to_air.get(v_sir).cloned().unwrap_or_else(|| AirNodeId(v_sir.0.clone()));
 
         // Extract dimensions from context or use placeholders
         let (batch, seq, embed, heads, head_dim) = match ctx {
@@ -479,82 +481,18 @@ impl LegalityRewritePass {
         };
 
         let mut nodes = Vec::new();
-        let mut last_id = q_air;
 
-        // Step 1: QKV projection (fused)
-        let qkv_id = AirNodeId(format!("{base}_qkv_proj"));
-        nodes.push(Self::make_air_node(
-            qkv_id.clone(),
-            AirOp::Conv1x1AsLinear {
-                input: last_id.clone(),
-                weight: format!("{base}_w_qkv"),
-                pad_type: "valid".into(),
-            },
-            sir_node,
-            "mb.linear",
-            kq,
-        ));
-        last_id = qkv_id;
+        // Q, K, V come as separate projections from the SIR builder.
+        // The SIR builder already emits distinct LinearProjection ops for each,
+        // so we must NOT create a fused QKV projection here. Instead, reshape
+        // and transpose each projection output to 4D [batch, heads, seq, head_dim].
 
-        // Steps 2-4: Slice Q, K, V from the fused QKV output.
-        // With real context: Q=[0:batch, 0:seq, 0:embed], K=[0:batch, 0:seq, embed:2*embed], V=[0:batch, 0:seq, 2*embed:3*embed]
-        let q_id = AirNodeId(format!("{base}_q"));
-        nodes.push(Self::make_air_node(
-            q_id.clone(),
-            AirOp::SliceByIndex {
-                input: last_id.clone(),
-                begin: vec![0, 0, 0],
-                end: vec![batch, seq, embed],
-                stride: vec![],
-                begin_mask: vec![],
-                end_mask: vec![],
-                squeeze_mask: vec![],
-            },
-            sir_node,
-            "mb.slice_by_index",
-            kq,
-        ));
-
-        let k_id = AirNodeId(format!("{base}_k"));
-        nodes.push(Self::make_air_node(
-            k_id.clone(),
-            AirOp::SliceByIndex {
-                input: last_id.clone(),
-                begin: vec![0, 0, embed],
-                end: vec![batch, seq, 2 * embed],
-                stride: vec![],
-                begin_mask: vec![],
-                end_mask: vec![],
-                squeeze_mask: vec![],
-            },
-            sir_node,
-            "mb.slice_by_index",
-            kq,
-        ));
-
-        let v_id = AirNodeId(format!("{base}_v"));
-        nodes.push(Self::make_air_node(
-            v_id.clone(),
-            AirOp::SliceByIndex {
-                input: last_id,
-                begin: vec![0, 0, 2 * embed],
-                end: vec![batch, seq, 3 * embed],
-                stride: vec![],
-                begin_mask: vec![],
-                end_mask: vec![],
-                squeeze_mask: vec![],
-            },
-            sir_node,
-            "mb.slice_by_index",
-            kq,
-        ));
-
-        // Steps 5-7: Reshape Q, K, V to 4D [batch, seq, heads, head_dim]
+        // Steps 1-3: Reshape Q, K, V from [batch, seq, embed] to [batch, seq, heads, head_dim]
         let q_4d_id = AirNodeId(format!("{base}_q_4d"));
         nodes.push(Self::make_air_node(
             q_4d_id.clone(),
             AirOp::Reshape {
-                input: q_id,
+                input: q_air,
                 target_shape: vec![batch as usize, seq as usize, heads as usize, head_dim as usize],
             },
             sir_node,
@@ -566,7 +504,7 @@ impl LegalityRewritePass {
         nodes.push(Self::make_air_node(
             k_4d_id.clone(),
             AirOp::Reshape {
-                input: k_id,
+                input: k_air,
                 target_shape: vec![batch as usize, seq as usize, heads as usize, head_dim as usize],
             },
             sir_node,
@@ -578,7 +516,7 @@ impl LegalityRewritePass {
         nodes.push(Self::make_air_node(
             v_4d_id.clone(),
             AirOp::Reshape {
-                input: v_id,
+                input: v_air,
                 target_shape: vec![batch as usize, seq as usize, heads as usize, head_dim as usize],
             },
             sir_node,
@@ -586,7 +524,8 @@ impl LegalityRewritePass {
             kq,
         ));
 
-        // Steps 8-10: Transpose to [batch, heads, seq, head_dim]
+        // Steps 4-6: Transpose to [batch, heads, seq, head_dim]
+        // This is the layout that ANE SDPA expects.
         let q_t_id = AirNodeId(format!("{base}_q_t"));
         nodes.push(Self::make_air_node(
             q_t_id.clone(),
@@ -614,7 +553,18 @@ impl LegalityRewritePass {
             kq,
         ));
 
-        // Step 11: Scaled dot-product attention
+        // Step 7: Scaled dot-product attention.
+        // Scale = 1/√d_k, which is the standard scaling factor for dot-product
+        // attention. The mask (if present) carries the causal mask reference.
+        let mask_air = mask_sir.as_ref().and_then(|m| {
+            sir_to_air.get(m).cloned().or_else(|| Some(AirNodeId(m.0.clone())))
+        });
+        let scale = if head_dim > 0 {
+            Some(1.0 / (head_dim as f32).sqrt())
+        } else {
+            None
+        };
+
         let attn_id = AirNodeId(format!("{base}_attn"));
         nodes.push(Self::make_air_node(
             attn_id.clone(),
@@ -622,15 +572,15 @@ impl LegalityRewritePass {
                 query: q_t_id,
                 key: k_t_id,
                 value: v_t_id,
-                attention_mask: None,
-                scale: None,
+                attention_mask: mask_air,
+                scale,
             },
             sir_node,
             "mb.scaled_dot_product_attention",
             kq,
         ));
 
-        // Step 12: Reshape back to [batch, seq, embed]
+        // Step 8: Reshape back to [batch, seq, embed]
         let attn_flat_id = AirNodeId(format!("{base}_attn_flat"));
         nodes.push(Self::make_air_node(
             attn_flat_id.clone(),
@@ -643,7 +593,7 @@ impl LegalityRewritePass {
             kq,
         ));
 
-        // Step 13: Output projection
+        // Step 9: Output projection
         let out_id = AirNodeId(sir_node.id.0.clone());
         nodes.push(Self::make_air_node(
             out_id.clone(),
@@ -2339,22 +2289,14 @@ mod tests {
         let pass = LegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
-        // Should have: QKV proj + 3 slice + 3 reshape + 3 transpose + SDPA + reshape + out proj = 14 nodes
-        let has_qkv = air.nodes.iter().any(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }));
-        let has_slice = air.nodes.iter().any(|n| matches!(n.op, AirOp::SliceByIndex { .. }));
+        // Should have: 3 reshape (Q/K/V) + 3 transpose (Q/K/V) + SDPA + reshape + out proj = 10 nodes
+        // The new decomposition uses separate Q/K/V directly (no fused QKV projection or slicing).
         let has_reshape = air.nodes.iter().any(|n| matches!(n.op, AirOp::Reshape { .. }));
         let has_transpose = air.nodes.iter().any(|n| matches!(n.op, AirOp::Transpose { .. }));
         let has_sdpa =
             air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
+        let has_out_proj = air.nodes.iter().any(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }));
 
-        assert!(
-            has_qkv,
-            "AttentionBlock decomposition must include Conv1x1AsLinear for QKV projection"
-        );
-        assert!(
-            has_slice,
-            "AttentionBlock decomposition must include SliceByIndex for Q/K/V split"
-        );
         assert!(
             has_reshape,
             "AttentionBlock decomposition must include Reshape for multi-head layout"
@@ -2364,6 +2306,21 @@ mod tests {
             "AttentionBlock decomposition must include Transpose for multi-head layout"
         );
         assert!(has_sdpa, "AttentionBlock decomposition must include ScaledDotProductAttention");
+        assert!(
+            has_out_proj,
+            "AttentionBlock decomposition must include Conv1x1AsLinear for output projection"
+        );
+
+        // Verify that SDPA has scale set (1/√d_k) when context is available
+        let sdpa_node = air.nodes.iter().find(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
+        if let Some(node) = sdpa_node {
+            if let AirOp::ScaledDotProductAttention { scale, attention_mask, .. } = &node.op {
+                // Without context (head_dim=0), scale is None. With context, scale = Some(1/√d_k).
+                // This test has no context, so scale should be None.
+                assert_eq!(*scale, None, "SDPA scale should be None without DecompositionContext");
+                assert_eq!(*attention_mask, None, "SDPA mask should be None when SIR mask is None");
+            }
+        }
     }
 
     /// Test that DecodeStep decomposes into AIR ops including state read/write.
@@ -2554,31 +2511,7 @@ mod tests {
         let pass = LegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
-        // Find the Q slice: should have begin=[0,0,0], end=[2,16,128]
-        let q_slice = air.nodes.iter().find(|n| n.id.0 == "attn_q").expect("Expected attn_q node");
-        match &q_slice.op {
-            AirOp::SliceByIndex { begin, end, .. } => {
-                assert_eq!(begin, &vec![0, 0, 0], "Q slice begin should be [0, 0, 0]");
-                assert_eq!(
-                    end,
-                    &vec![2, 16, 128],
-                    "Q slice end should be [batch, seq, embed] = [2, 16, 128]"
-                );
-            }
-            other => panic!("Expected SliceByIndex for attn_q, got {:?}", other),
-        }
-
-        // Find the K slice: should have begin=[0,0,128], end=[2,16,256]
-        let k_slice = air.nodes.iter().find(|n| n.id.0 == "attn_k").expect("Expected attn_k node");
-        match &k_slice.op {
-            AirOp::SliceByIndex { begin, end, .. } => {
-                assert_eq!(begin, &vec![0, 0, 128], "K slice begin should be [0, 0, embed]");
-                assert_eq!(end, &vec![2, 16, 256], "K slice end should be [batch, seq, 2*embed]");
-            }
-            other => panic!("Expected SliceByIndex for attn_k, got {:?}", other),
-        }
-
-        // Find a reshape node and verify it has [batch, seq, heads, head_dim]
+        // Find the Q reshape: should have [batch, seq, heads, head_dim] = [2, 16, 4, 32]
         let q_4d =
             air.nodes.iter().find(|n| n.id.0 == "attn_q_4d").expect("Expected attn_q_4d node");
         match &q_4d.op {
@@ -2590,6 +2523,23 @@ mod tests {
                 );
             }
             other => panic!("Expected Reshape for attn_q_4d, got {:?}", other),
+        }
+
+        // Verify SDPA has correct scale = 1/√32 ≈ 0.17678
+        let sdpa_node = air
+            .nodes
+            .iter()
+            .find(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }))
+            .expect("Expected SDPA node");
+        if let AirOp::ScaledDotProductAttention { scale, .. } = &sdpa_node.op {
+            let expected_scale = 1.0 / (32.0_f32).sqrt();
+            let actual_scale = scale.expect("SDPA scale must be Some with DecompositionContext providing head_dim");
+            assert!(
+                (actual_scale - expected_scale).abs() < 1e-5,
+                "SDPA scale should be 1/√32 ≈ {:.5}, got {:.5}",
+                expected_scale,
+                actual_scale
+            );
         }
 
         // Verify attn_flat reshape has [batch, seq, embed]
@@ -2638,17 +2588,28 @@ mod tests {
         let pass = LegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
-        // Without context, slices should have zero-filled end bounds
-        let q_slice = air.nodes.iter().find(|n| n.id.0 == "attn_q").expect("Expected attn_q node");
-        match &q_slice.op {
-            AirOp::SliceByIndex { end, .. } => {
+        // Without context, reshape should have zero-filled target shapes
+        let q_4d =
+            air.nodes.iter().find(|n| n.id.0 == "attn_q_4d").expect("Expected attn_q_4d node");
+        match &q_4d.op {
+            AirOp::Reshape { target_shape, .. } => {
                 assert_eq!(
-                    end,
-                    &vec![0, 0, 0],
-                    "Without context, Q slice end should be placeholder [0, 0, 0]"
+                    target_shape,
+                    &vec![0, 0, 0, 0],
+                    "Without context, Q reshape should be placeholder [0, 0, 0, 0]"
                 );
             }
-            _ => panic!("Expected SliceByIndex"),
+            other => panic!("Expected Reshape for attn_q_4d, got {:?}", other),
+        }
+
+        // SDPA scale should be None without context (head_dim=0)
+        let sdpa_node = air
+            .nodes
+            .iter()
+            .find(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }))
+            .expect("Expected SDPA node");
+        if let AirOp::ScaledDotProductAttention { scale, .. } = &sdpa_node.op {
+            assert_eq!(*scale, None, "Without context, SDPA scale should be None");
         }
     }
 

@@ -29,6 +29,12 @@
 //!   mask reference that will be materialized as a static lower-triangular
 //!   table by the staticize pass.
 //!
+//! - **Pre-A16 SDPA decomposition**: On chip families where SDPA is unreliable
+//!   (A11, A12, A14, A15), attention is decomposed into explicit primitives:
+//!   `Transpose(K) → MatMul(Q, K^T) → Const(1/√d_k) → Mul → Softmax → MatMul(scores, V)`.
+//!   This is numerically equivalent to the SDPA op on A16+, preserving the
+//!   1/√d_k scaling factor that is critical for correct softmax behavior.
+//!
 //! - **RMSNorm epsilon validation**: If the traced epsilon is 0 or missing,
 //!   the builder falls back to the config's `layer_norm_epsilon` or the
 //!   standard 1e-6 default for RMSNorm models (Qwen3, Llama, etc.).
@@ -665,11 +671,48 @@ impl<'a> SirBuildContext<'a> {
                 "sdpa".to_string(),
             ));
         } else {
-            // Manual QK^T → scale → softmax → @V for pre-A16 families
-            ops.push((SirOp::MatMul { a: q_id, b: k_id }, "attn_qk".to_string()));
+            // Manual QK^T → scale → softmax → @V for pre-A16 families.
+            // This must be numerically equivalent to SDPA on A16+.
+            //
+            // Step 1: Transpose K so we compute Q @ K^T (not Q @ K).
+            // Q is [batch, heads, seq, head_dim], K is [batch, heads, seq, head_dim].
+            // We need K^T = [batch, heads, head_dim, seq] so that Q @ K^T = [batch, heads, seq, seq].
+            let k_t_id = SirNodeId(format!("sir_attn_k_t_{}", node.id));
+            ops.push((
+                SirOp::Transpose { input: k_id, perm: vec![0, 1, 3, 2] },
+                "attn_k_transpose".to_string(),
+            ));
+
+            // Step 2: Q @ K^T → [batch, heads, seq, seq]
+            ops.push((SirOp::MatMul { a: q_id, b: k_t_id }, "attn_qk".to_string()));
             let qk_id = SirNodeId(format!("sir_attn_qk_{}", node.id));
-            ops.push((SirOp::Softmax { input: qk_id, axis: -1 }, "attn_softmax".to_string()));
+
+            // Step 3: Scale by 1/√d_k. This is critical for correct softmax behavior.
+            // Without scaling, the dot products grow with √d_k, causing extremely
+            // peaked softmax distributions and degraded attention quality.
+            let scale_value = 1.0 / (head_dim as f32).sqrt();
+            let scale_const_id = SirNodeId(format!("sir_attn_scale_const_{}", node.id));
+            ops.push((
+                SirOp::Const {
+                    value_path: format!("attn_scale_{}_{:.8}", node.id, scale_value),
+                    dtype: MilDtype::Fp16,
+                },
+                "attn_scale_const".to_string(),
+            ));
+            ops.push((
+                SirOp::Mul { x: qk_id, y: scale_const_id },
+                "attn_scale".to_string(),
+            ));
+            let scaled_qk_id = SirNodeId(format!("sir_attn_scaled_{}", node.id));
+
+            // Step 4: Softmax over the last dimension (the seq axis of QK^T)
+            ops.push((
+                SirOp::Softmax { input: scaled_qk_id, axis: -1 },
+                "attn_softmax".to_string(),
+            ));
             let scores_id = SirNodeId(format!("sir_attn_softmax_{}", node.id));
+
+            // Step 5: Scores @ V → [batch, heads, seq, head_dim]
             ops.push((SirOp::MatMul { a: scores_id, b: v_id }, "attn_sv".to_string()));
         }
 
@@ -942,10 +985,17 @@ impl<'a> SirBuildContext<'a> {
         )])
     }
 
-    /// Decompose SDPA into QK^T/scale → Softmax → @V for pre-A16 families.
+    /// Decompose SDPA into K^T + QK^T/scale → Softmax → @V for pre-A16 families.
+    ///
+    /// This must be numerically equivalent to `SirOp::ScaledDotProductAttention`
+    /// on A16+. The decomposition follows the standard attention formula:
+    ///
+    ///   softmax( (Q @ K^T) / √d_k ) @ V
+    ///
+    /// Each step is explicit so the ANE can place each primitive individually.
     fn decompose_sdpa(
         &self,
-        _scale: f64,
+        scale: f64,
         node: &TracedNode,
     ) -> Result<Vec<(SirOp, String)>, String> {
         let q_id = self.resolve_input(&node.inputs, 0);
@@ -954,21 +1004,39 @@ impl<'a> SirBuildContext<'a> {
 
         let mut ops = Vec::new();
 
-        // Q @ K^T
-        ops.push((SirOp::MatMul { a: q_id, b: k_id }, "sdpa_qk".to_string()));
-
-        // Scale (multiply by 1/sqrt(d_k))
-        let qk_id = SirNodeId(format!("sir_sdpa_qk_{}", node.id));
+        // Step 1: Transpose K → K^T so that Q @ K^T computes correctly.
+        // K is [batch, heads, seq, head_dim]; K^T = [batch, heads, head_dim, seq].
+        let k_t_id = SirNodeId(format!("sir_sdpa_k_t_{}", node.id));
         ops.push((
-            SirOp::Mul { x: qk_id, y: SirNodeId(format!("const_scale_{}", node.id)) },
+            SirOp::Transpose { input: k_id, perm: vec![0, 1, 3, 2] },
+            "sdpa_k_transpose".to_string(),
+        ));
+
+        // Step 2: Q @ K^T → [batch, heads, seq, seq]
+        ops.push((SirOp::MatMul { a: q_id, b: k_t_id }, "sdpa_qk".to_string()));
+        let qk_id = SirNodeId(format!("sir_sdpa_qk_{}", node.id));
+
+        // Step 3: Scale by the provided scale factor (typically 1/√d_k).
+        // The scale value from the TracedOp is used directly, not ignored.
+        let scale_f32 = scale as f32;
+        let scale_const_id = SirNodeId(format!("sir_sdpa_scale_const_{}", node.id));
+        ops.push((
+            SirOp::Const {
+                value_path: format!("sdpa_scale_{}_{:.8}", node.id, scale_f32),
+                dtype: MilDtype::Fp16,
+            },
+            "sdpa_scale_const".to_string(),
+        ));
+        ops.push((
+            SirOp::Mul { x: qk_id, y: scale_const_id },
             "sdpa_scale".to_string(),
         ));
 
-        // Softmax
+        // Step 4: Softmax over the last dimension
         let scaled_id = SirNodeId(format!("sir_sdpa_scaled_{}", node.id));
         ops.push((SirOp::Softmax { input: scaled_id, axis: -1 }, "sdpa_softmax".to_string()));
 
-        // Scores @ V
+        // Step 5: Scores @ V → [batch, heads, seq, head_dim]
         let softmax_id = SirNodeId(format!("sir_sdpa_softmax_{}", node.id));
         ops.push((SirOp::MatMul { a: softmax_id, b: v_id }, "sdpa_sv".to_string()));
 
@@ -1839,5 +1907,135 @@ mod tests {
         if loaded_count == 0 {
             eprintln!("NOTE: No fixtures loaded — run scripts/generate_fixtures.py first");
         }
+    }
+
+    /// Test that pre-A16 (M2 = A12) attention decomposition produces correct
+    /// primitive ops: K^T transpose, scale-by-1/√d_k, and proper matmul order.
+    ///
+    /// This is a regression test for the bugs where:
+    /// - The scale-by-1/√d_k step was missing (unscaled attention scores)
+    /// - K was not transposed (computing Q@K instead of Q@K^T)
+    /// - The decompose_sdpa() ignored the _scale parameter
+    #[test]
+    fn test_m2_attention_decomposition_has_scale_and_transpose() {
+        // Build a trace with an AttentionBlock
+        let mut trace = make_simple_trace();
+        trace.nodes.push(TracedNode {
+            id: "attn_0".to_string(),
+            op: TracedOp::AttentionBlock {
+                embed_dim: 256,
+                num_heads: 4,
+                head_dim: 64,
+                use_sdpa: true,
+                has_qk_norm: false,
+            },
+            inputs: vec!["input_0".to_string()],
+            output_shape: TensorShape { dims: vec![1, 256], dtype: "fp16".to_string() },
+            is_parameter: false,
+            module_path: Some("model.layers.0.self_attn".to_string()),
+            name: "self_attn_0".to_string(),
+        });
+
+        // Build SIR targeting A12 (M2) — SDPA is unreliable here
+        let result = build_sir_from_trace(&trace, AneFamily::A12);
+        assert!(result.is_ok(), "M2 SIR build should succeed: {:?}", result.err());
+
+        let sir = result.unwrap();
+
+        // Verify the SIR contains the key pre-A16 decomposition ops:
+        // Transpose(K) → MatMul(Q, K^T) → Const(scale) → Mul → Softmax → MatMul(scores, V)
+        let has_k_transpose = sir.nodes.iter().any(|n| {
+            matches!(&n.op, SirOp::Transpose { perm, .. } if perm == &[0, 1, 3, 2])
+                && n.name.contains("k_transpose")
+        });
+        assert!(
+            has_k_transpose,
+            "M2 attention decomposition must include K^T transpose (perm [0,1,3,2])"
+        );
+
+        let has_scale_const = sir.nodes.iter().any(|n| {
+            matches!(&n.op, SirOp::Const { value_path, .. } if value_path.contains("attn_scale"))
+        });
+        assert!(
+            has_scale_const,
+            "M2 attention decomposition must include a scale constant (1/√d_k)"
+        );
+
+        let has_scale_mul = sir.nodes.iter().any(|n| {
+            matches!(n.op, SirOp::Mul { .. }) && n.name.contains("attn_scale")
+        });
+        assert!(
+            has_scale_mul,
+            "M2 attention decomposition must include Mul for scaling QK^T"
+        );
+
+        let has_softmax = sir.nodes.iter().any(|n| {
+            matches!(n.op, SirOp::Softmax { .. }) && n.name.contains("attn_softmax")
+        });
+        assert!(
+            has_softmax,
+            "M2 attention decomposition must include Softmax"
+        );
+
+        // Verify the scale constant encodes the correct value
+        let scale_node = sir.nodes.iter().find(|n| {
+            matches!(&n.op, SirOp::Const { value_path, .. } if value_path.contains("attn_scale"))
+        });
+        if let Some(node) = scale_node {
+            if let SirOp::Const { value_path, .. } = &node.op {
+                // value_path should contain the scale value (1/√64 ≈ 0.125)
+                assert!(
+                    value_path.contains("0.125"),
+                    "Scale constant value_path must encode the scale value (1/√64), got: {}",
+                    value_path
+                );
+            }
+        }
+    }
+
+    /// Test that A16+ attention decomposition uses SDPA directly (no manual decomposition).
+    #[test]
+    fn test_a16_attention_decomposition_uses_sdpa() {
+        let mut trace = make_simple_trace();
+        trace.nodes.push(TracedNode {
+            id: "attn_0".to_string(),
+            op: TracedOp::AttentionBlock {
+                embed_dim: 256,
+                num_heads: 4,
+                head_dim: 64,
+                use_sdpa: true,
+                has_qk_norm: false,
+            },
+            inputs: vec!["input_0".to_string()],
+            output_shape: TensorShape { dims: vec![1, 256], dtype: "fp16".to_string() },
+            is_parameter: false,
+            module_path: Some("model.layers.0.self_attn".to_string()),
+            name: "self_attn_0".to_string(),
+        });
+
+        // Build SIR targeting A16 — SDPA is reliable here
+        let result = build_sir_from_trace(&trace, AneFamily::A16);
+        assert!(result.is_ok(), "A16 SIR build should succeed: {:?}", result.err());
+
+        let sir = result.unwrap();
+
+        // On A16+, we should see SDPA, not manual decomposition
+        let has_sdpa = sir.nodes.iter().any(|n| {
+            matches!(n.op, SirOp::ScaledDotProductAttention { .. })
+        });
+        assert!(
+            has_sdpa,
+            "A16+ attention decomposition must use ScaledDotProductAttention"
+        );
+
+        // We should NOT see manual K transpose or scale const on A16+
+        let has_k_transpose = sir.nodes.iter().any(|n| {
+            matches!(&n.op, SirOp::Transpose { perm, .. } if perm == &[0, 1, 3, 2])
+                && n.name.contains("k_transpose")
+        });
+        assert!(
+            !has_k_transpose,
+            "A16+ attention decomposition must NOT include manual K^T transpose"
+        );
     }
 }
