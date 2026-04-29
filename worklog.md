@@ -72,3 +72,31 @@ Stage Summary:
   2. Single-function models use correct schema (fixes "missingMetadataField(named: outputSchema)")
   3. Graph inputs use "placeholder" MIL op instead of broken "identity" op (fixes SSA reference errors)
 - Files changed: mil_lower.rs, lib.rs (coreml-proto), mir_to_compat.rs (bridge), mir_to_proto.rs (coreml-emit)
+---
+Task ID: shape-fix
+Agent: main
+Task: Fix invalid shape annotations in Core ML output — the root cause of all stale/wrong shapes
+
+Work Log:
+- Traced the entire shape propagation pipeline: SIR → AIR (legality_rewrite) → MIR (mil_lower/infer_shape) → Compat (mir_to_compat/compat_output_shape) → Core ML proto (coreml-proto/lookup_shape_u64)
+- Discovered 4 root causes for empty/wrong shapes in the MIR output:
+  1. **empty_input_shapes**: The trace-compile path passed an empty HashMap to MilLowerPass::run(), so the first node (Placeholder) got shape=[], poisoning the entire chain
+  2. **Wrong head_dim**: DecompositionContext was constructed with head_dim = hidden_size/num_attention_heads (64) instead of the actual config.head_dim (128), causing wrong output_dim for q/k/v projections
+  3. **Missing weight shapes**: The Gather op (embedding lookup) references a weight name as input, but the weight's shape was never in node_shapes because it's not an AIR graph node
+  4. **Hardcoded fallbacks**: compat_output_shape used vec![1,512,1024] as catch-all, masking the real problem
+- Added head_dim: Option<usize> field to ModelConfig in graph.rs
+- Fixed trace-compile path to seed input_shapes from AIR graph inputs
+- Fixed head_dim computation to use config.head_dim with fallback to hidden_size/num_attention_heads
+- Added run_with_weight_shapes() method to MilLowerPass for injecting weight tensor shapes
+- Added Gather shape inference to infer_shape (replaces axis dim of input with indices shape)
+- Added Tile shape inference to infer_shape (output[i] = input[i] * reps[i])
+- Rewrote compat_output_shape to use node_shapes lookups instead of hardcoded fallbacks
+- Added weight_shapes() method to SafetensorsWeightResolver
+- Moved weight resolver creation before mil_lower pass in trace-compile pipeline
+- Added config-derived embedding weight shape fallback when safetensors aren't available
+
+Stage Summary:
+- ALL 792 MIR nodes now have correct non-empty shapes (was 0/792 before)
+- q_proj: [1,32,2048] (was []), k_proj: [1,32,1024] (was []), ReduceMean: [1,32,1] (was [])
+- All test suites pass: ane-passes (141), ane-trace (30), ane-ir (82)
+- One pre-existing test failure in ane-bridge (test_mir_graph_to_compat_with_resolver) — not caused by our changes

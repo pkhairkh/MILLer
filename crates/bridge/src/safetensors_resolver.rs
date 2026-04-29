@@ -251,6 +251,17 @@ impl SafetensorsWeightResolver {
     pub fn total_weight_bytes(&self) -> usize {
         self.tensors.values().map(|e| e.data.len()).sum()
     }
+
+    /// Get all weight names and their shapes as a HashMap.
+    /// Used by the mil_lower pass to seed shape inference for weight-backed
+    /// ops like Gather (embedding lookup) where the weight tensor isn't an
+    /// AIR graph node but its shape is needed for output shape inference.
+    pub fn weight_shapes(&self) -> std::collections::HashMap<String, Vec<usize>> {
+        self.tensors
+            .iter()
+            .map(|(name, entry)| (name.clone(), entry.shape.clone()))
+            .collect()
+    }
 }
 
 impl WeightResolver for SafetensorsWeightResolver {

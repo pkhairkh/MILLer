@@ -95,8 +95,11 @@ fn main() {
         batch_size: 1,
         embed_dim: cfg.hidden_size,
         num_heads: cfg.num_attention_heads,
-        head_dim: cfg.hidden_size / cfg.num_attention_heads, // 1024/16=64, but trace has 128
+        head_dim: cfg.hidden_size / cfg.num_attention_heads,
         seq_len: 32,
+        kv_heads: cfg.num_key_value_heads.unwrap_or(cfg.num_attention_heads),
+        intermediate_size: cfg.intermediate_size,
+        vocab_size: cfg.vocab_size,
     };
     let legality_pass = LegalityRewritePass::new();
     let air = legality_pass.run(sir.clone(), &kq, Some(&decomp_ctx))

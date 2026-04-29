@@ -1275,6 +1275,7 @@ mod tests {
                 model_type: "llama".to_string(),
                 model_class: "causal_lm".to_string(),
                 is_encoder_decoder: false,
+        head_dim: None,
             },
             nodes: vec![
                 TracedNode {
@@ -1382,6 +1383,7 @@ mod tests {
                 model_type: "bert".to_string(),
                 model_class: "causal_lm".to_string(),
                 is_encoder_decoder: false,
+        head_dim: None,
             },
             nodes: vec![
                 TracedNode {
@@ -1563,6 +1565,7 @@ mod tests {
             model_type: "qwen3_5_text".to_string(), // No hardcoded list needed!
             model_class: "causal_lm".to_string(),
             is_encoder_decoder: false,
+        head_dim: None,
         };
 
         let discovered = crate::graph::DiscoveredFeatures {
@@ -1613,6 +1616,7 @@ mod tests {
             model_type: "qwen3".to_string(),
             model_class: "causal_lm".to_string(),
             is_encoder_decoder: false,
+        head_dim: None,
         };
 
         let discovered = crate::graph::DiscoveredFeatures {
@@ -1656,6 +1660,7 @@ mod tests {
             model_type: "llama".to_string(),
             model_class: "causal_lm".to_string(),
             is_encoder_decoder: false,
+        head_dim: None,
         };
 
         let discovered = crate::graph::DiscoveredFeatures {
@@ -1701,6 +1706,7 @@ mod tests {
             model_type: "future_architecture_v7".to_string(), // Completely unknown!
             model_class: "causal_lm".to_string(),
             is_encoder_decoder: false,
+        head_dim: None,
         };
 
         let discovered = crate::graph::DiscoveredFeatures {
@@ -1785,6 +1791,7 @@ mod tests {
             model_type: "dolphin".to_string(),
             model_class: "seq2seq_lm".to_string(),
             is_encoder_decoder: true,
+        head_dim: None,
         };
 
         // Verify the new fields are set correctly
@@ -1815,6 +1822,7 @@ mod tests {
             model_type: "qwen3_asr".to_string(),
             model_class: "decoder_only".to_string(),
             is_encoder_decoder: false,
+        head_dim: None,
         };
 
         assert_eq!(config.model_class, "decoder_only");
@@ -1843,6 +1851,7 @@ mod tests {
             model_type: "llama".to_string(),
             model_class: "causal_lm".to_string(),
             is_encoder_decoder: false,
+        head_dim: None,
         };
 
         let json = serde_json::to_string(&config).expect("Should serialize");

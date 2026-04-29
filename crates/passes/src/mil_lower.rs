@@ -68,13 +68,26 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
         }
 
         // ─── Conv1x1AsLinear: semantically a linear projection ───
-        // Weight is a String name (not an AirNodeId), so we can't look it up.
-        // Instead, propagate the input shape (the linear output will have the
-        // same batch dimension but different feature dim; however, we can't
-        // determine the output dim without the weight shape, so we use the
-        // input shape as a conservative estimate — the compat layer and
-        // proto emitter will refine via the node_shapes map).
-        AirOp::Conv1x1AsLinear { input, .. } => node_shapes.get(input).cloned().unwrap_or_default(),
+        // Sprint 61: Use output_dim to compute the correct output shape.
+        // A linear projection y = x @ W^T maps [batch, seq, input_dim] → [batch, seq, output_dim].
+        // When output_dim is 0 (unknown), fall back to propagating the input shape.
+        AirOp::Conv1x1AsLinear { input, output_dim, .. } => {
+            match (node_shapes.get(input), output_dim) {
+                (Some(input_shape), od) if *od > 0 => {
+                    // Replace the last dimension with the output_dim
+                    let mut out = input_shape.clone();
+                    if !out.is_empty() {
+                        *out.last_mut().unwrap() = *od;
+                    }
+                    out
+                }
+                (Some(input_shape), 0) => {
+                    // output_dim unknown: propagate input shape (pre-Sprint-61 behavior)
+                    input_shape.clone()
+                }
+                _ => vec![],
+            }
+        }
 
         AirOp::ElementWise { inputs, .. } => {
             inputs.first().and_then(|id| node_shapes.get(id).cloned()).unwrap_or_default()
@@ -137,9 +150,56 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 vec![]
             }
         }
-        AirOp::Gather { input, .. } => node_shapes.get(input).cloned().unwrap_or_default(),
+        AirOp::Gather { input, indices, axis } => {
+            // Embedding lookup: Gather(embed_weight, input_ids, axis=0)
+            // The output shape replaces the axis dimension of the input (embedding
+            // table) with the shape of the indices tensor. For a 2D weight
+            // [vocab, embed_dim] gathered by [batch, seq] along axis 0, the result
+            // is [batch, seq, embed_dim].
+            match (node_shapes.get(input), node_shapes.get(indices)) {
+                (Some(input_shape), Some(indices_shape)) => {
+                    // Replace the axis dimension of input_shape with indices_shape
+                    let ax = if *axis >= 0 {
+                        *axis as usize
+                    } else {
+                        input_shape.len().saturating_sub((-*axis) as usize)
+                    };
+                    let mut out = Vec::new();
+                    for (i, &dim) in input_shape.iter().enumerate() {
+                        if i == ax {
+                            out.extend_from_slice(indices_shape);
+                        } else {
+                            out.push(dim);
+                        }
+                    }
+                    out
+                }
+                (Some(input_shape), None) => {
+                    // Indices shape unknown: use input shape as fallback
+                    input_shape.clone()
+                }
+                _ => vec![],
+            }
+        }
         AirOp::ScaledDotProductAttention { query, .. } => {
             node_shapes.get(query).cloned().unwrap_or_default()
+        }
+        AirOp::Tile { input, reps } => {
+            // Tile replicates the input tensor along each dimension by the
+            // corresponding factor in `reps`. Output shape[i] = input_shape[i] * reps[i].
+            if let Some(input_shape) = node_shapes.get(input) {
+                // Broadcast reps to match input rank if needed
+                let mut out = Vec::with_capacity(input_shape.len().max(reps.len()));
+                let max_len = input_shape.len().max(reps.len());
+                for i in 0..max_len {
+                    let dim = input_shape.get(i).copied().unwrap_or(1);
+                    let rep = reps.get(i).copied().unwrap_or(1);
+                    out.push(dim * rep);
+                }
+                out
+            } else {
+                vec![]
+            }
         }
         AirOp::SliceByIndex { input, begin, end, .. } => {
             if begin.iter().all(|v| *v >= 0)
@@ -269,6 +329,23 @@ impl MilLowerPass {
         shard_plan: &ShardPlan,
         input_shapes: &std::collections::HashMap<AirNodeId, Vec<usize>>,
     ) -> Result<Vec<MirGraph>> {
+        Self::run_with_weight_shapes(self, input, shard_plan, input_shapes, &HashMap::new())
+    }
+
+    /// Run the MIL lower pass with additional weight tensor shapes.
+    ///
+    /// Weight tensors are referenced by name (e.g., "model.embed_tokens.weight")
+    /// but aren't AIR graph nodes — they exist outside the graph. This variant
+    /// allows callers to provide their shapes so that ops like Gather (embedding
+    /// lookup) can produce correct output shapes even when the weight isn't a
+    /// prior AIR node output.
+    pub fn run_with_weight_shapes(
+        &self,
+        input: &AirGraph,
+        shard_plan: &ShardPlan,
+        input_shapes: &std::collections::HashMap<AirNodeId, Vec<usize>>,
+        weight_shapes: &HashMap<String, Vec<usize>>,
+    ) -> Result<Vec<MirGraph>> {
         let mut mir_nodes = Vec::new();
         let mut air_to_mir = std::collections::HashMap::new();
         // Sprint 57: track output shape of each AIR node so we can propagate
@@ -277,6 +354,14 @@ impl MilLowerPass {
         // Without this, Identity nodes representing graph inputs get empty shapes,
         // which propagates through the entire graph producing wrong metadata.
         let mut node_shapes: HashMap<AirNodeId, Vec<usize>> = input_shapes.clone();
+
+        // Also seed weight tensor shapes. Weight names (e.g., "model.embed_tokens.weight")
+        // appear as AirNodeId references in ops like Gather but aren't AIR graph nodes.
+        // Without seeding, Gather(embed_weight, indices) can't infer its output shape
+        // because the weight's shape is never added to node_shapes.
+        for (weight_name, shape) in weight_shapes {
+            node_shapes.insert(AirNodeId(weight_name.clone()), shape.clone());
+        }
 
         // Derive the compute unit hint from the shard plan instead of hardcoding
         // CPU_AND_NE. This fixes critique Bug 3 where the compute_unit_hint on

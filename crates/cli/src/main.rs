@@ -5356,12 +5356,21 @@ fn run_trace_compile(
     println!("[5/10] Running LegalityRewritePass (SIR→AIR)...");
     let legality = LegalityRewritePass::new();
     let no_knowledge = NoKnowledge;
-    let decomp_ctx = DecompositionContext::for_attention(
+    // Use head_dim from the model config directly rather than deriving it
+    // as hidden_size / num_attention_heads — some models (Qwen3, etc.) have
+    // head_dim that doesn't equal that quotient because the q_proj output
+    // dimension is num_heads * head_dim, which may differ from hidden_size.
+    let head_dim = traced_graph.model_config.head_dim
+        .unwrap_or(traced_graph.model_config.hidden_size / traced_graph.model_config.num_attention_heads);
+    let decomp_ctx = DecompositionContext::for_attention_full(
         batch_size,
         traced_graph.model_config.hidden_size,
         traced_graph.model_config.num_attention_heads,
-        traced_graph.model_config.hidden_size / traced_graph.model_config.num_attention_heads,
+        head_dim,
         seq_len,
+        traced_graph.model_config.num_key_value_heads.unwrap_or(traced_graph.model_config.num_attention_heads),
+        traced_graph.model_config.intermediate_size,
+        traced_graph.model_config.vocab_size,
     );
     let air = legality
         .run(sir.clone(), &no_knowledge, Some(&decomp_ctx))
@@ -5377,9 +5386,63 @@ fn run_trace_compile(
     println!("[6/10] Running MilLowerPass (AIR→MIR)...");
     let mil_lower = MilLowerPass::new();
     let shard_plan = ShardPlan::default();
-    let empty_input_shapes = std::collections::HashMap::new();
+
+    // Seed input_shapes from AIR graph inputs so shape inference has a starting
+    // point. Without this, every node gets shape=[] which poisons the entire
+    // shape propagation chain — the first Identity/Placeholder node gets empty
+    // shape, and all downstream ops inherit emptiness.
+    let mut input_shapes: std::collections::HashMap<ane_ir::air::AirNodeId, Vec<usize>> =
+        std::collections::HashMap::new();
+    for input_id in &air.inputs {
+        let shape = if input_id.0.contains("input_ids") || input_id.0.starts_with("sir_0_") {
+            vec![batch_size, seq_len]
+        } else {
+            // Fallback: use the task's primary input shape
+            vec![batch_size, seq_len, traced_graph.model_config.hidden_size]
+        };
+        input_shapes.insert(input_id.clone(), shape);
+    }
+
+    // Load real weights from safetensors files BEFORE mil_lower so we can
+    // provide weight tensor shapes to the shape inference pass. Weight tensors
+    // are referenced by name in ops like Gather (embedding lookup) but aren't
+    // AIR graph nodes, so their shapes must be explicitly seeded.
+    println!("  Resolving weights for model: {}", traced_graph.model_id);
+    let (weight_resolver, strategy) = SafetensorsWeightResolver::from_traced_graph(
+        &traced_graph.safetensors_files,
+        traced_graph.model_cache_dir.as_deref(),
+        &traced_graph.model_id,
+    );
+
+    if weight_resolver.is_empty() {
+        println!("  No safetensors files found — using zero-filled weights");
+        println!("  Attempted strategy: {}", strategy);
+    } else {
+        println!("  Weight resolution strategy: {}", strategy);
+        println!("  Loaded {} tensor(s) from safetensors", weight_resolver.len());
+    }
+
+    // Build weight_shapes for mil_lower, merging resolved weights with config-derived
+    // shapes. When safetensors files aren't available (e.g., pre-traced JSON fixtures),
+    // we still need the embedding weight shape for the Gather op's output shape
+    // inference. Also add the alias "embed_weight_embed_tokens" → model.embed_tokens.weight.
+    let mut weight_shapes: std::collections::HashMap<String, Vec<usize>> =
+        weight_resolver.weight_shapes();
+    if !weight_shapes.contains_key("model.embed_tokens.weight") {
+        weight_shapes.insert(
+            "model.embed_tokens.weight".to_string(),
+            vec![traced_graph.model_config.vocab_size, traced_graph.model_config.hidden_size],
+        );
+    }
+    if !weight_shapes.contains_key("embed_weight_embed_tokens") {
+        weight_shapes.insert(
+            "embed_weight_embed_tokens".to_string(),
+            vec![traced_graph.model_config.vocab_size, traced_graph.model_config.hidden_size],
+        );
+    }
+
     let mirs = mil_lower
-        .run(&air, &shard_plan, &empty_input_shapes)
+        .run_with_weight_shapes(&air, &shard_plan, &input_shapes, &weight_shapes)
         .map_err(|e| format!("MilLowerPass failed: {}", e))?;
     println!("  MIR: {} shard graph(s) produced", mirs.len());
     for (i, mir) in mirs.iter().enumerate() {
@@ -5397,23 +5460,9 @@ fn run_trace_compile(
     let output_path = PathBuf::from(output);
     fs::create_dir_all(&output_path).map_err(|e| format!("Failed to create output dir: {}", e))?;
 
-    // Load real weights from safetensors files using multi-strategy resolution.
-    // Strategy 1: Explicit paths from Python tracer (safetensors_files field)
-    // Strategy 2: Cache directory from Python tracer (model_cache_dir field)
-    // Strategy 3: Automatic HF cache discovery from model_id
-    println!("  Resolving weights for model: {}", traced_graph.model_id);
-    let (weight_resolver, strategy) = SafetensorsWeightResolver::from_traced_graph(
-        &traced_graph.safetensors_files,
-        traced_graph.model_cache_dir.as_deref(),
-        &traced_graph.model_id,
-    );
-
-    if weight_resolver.is_empty() {
-        println!("  No safetensors files found — using zero-filled weights");
-        println!("  Attempted strategy: {}", strategy);
-    } else {
-        println!("  Weight resolution strategy: {}", strategy);
-        println!("  Loaded {} tensor(s) from safetensors", weight_resolver.len());
+    // Weight resolver was already loaded in Step 6 for shape inference.
+    // Print detailed stats here for the user.
+    if !weight_resolver.is_empty() {
         let names = weight_resolver.tensor_names();
         let sample: Vec<&str> = names.iter().take(5).map(|s| s.as_str()).collect();
         println!("  Sample tensor names: {:?}", sample);

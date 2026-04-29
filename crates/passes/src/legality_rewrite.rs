@@ -61,6 +61,12 @@ pub struct DecompositionContext {
     pub head_dim: usize,
     /// KV-cache sequence length (decode step) or input sequence length (attention).
     pub seq_len: usize,
+    /// Number of KV heads for GQA (defaults to num_heads if 0).
+    pub kv_heads: usize,
+    /// MLP intermediate size (e.g., 3072 for Qwen3-0.6B).
+    pub intermediate_size: usize,
+    /// Vocabulary size for the language model head.
+    pub vocab_size: usize,
 }
 
 impl DecompositionContext {
@@ -72,7 +78,39 @@ impl DecompositionContext {
         head_dim: usize,
         seq_len: usize,
     ) -> Self {
-        Self { batch_size, embed_dim, num_heads, head_dim, seq_len }
+        Self {
+            batch_size,
+            embed_dim,
+            num_heads,
+            head_dim,
+            seq_len,
+            kv_heads: 0,
+            intermediate_size: 0,
+            vocab_size: 0,
+        }
+    }
+
+    /// Construct a context from an Attention task spec with full dimensions.
+    pub fn for_attention_full(
+        batch_size: usize,
+        embed_dim: usize,
+        num_heads: usize,
+        head_dim: usize,
+        seq_len: usize,
+        kv_heads: usize,
+        intermediate_size: usize,
+        vocab_size: usize,
+    ) -> Self {
+        Self {
+            batch_size,
+            embed_dim,
+            num_heads,
+            head_dim,
+            seq_len,
+            kv_heads,
+            intermediate_size,
+            vocab_size,
+        }
     }
 
     /// Construct a context from a DecodeStep task spec.
@@ -83,7 +121,63 @@ impl DecompositionContext {
         head_dim: usize,
         kv_len: usize,
     ) -> Self {
-        Self { batch_size, embed_dim, num_heads, head_dim, seq_len: kv_len }
+        Self {
+            batch_size,
+            embed_dim,
+            num_heads,
+            head_dim,
+            seq_len: kv_len,
+            kv_heads: 0,
+            intermediate_size: 0,
+            vocab_size: 0,
+        }
+    }
+
+    /// Derive the output dimension for a linear projection based on the weight name.
+    ///
+    /// Weight names follow the HuggingFace convention, e.g.:
+    /// - `model.layers.0.self_attn.q_proj.weight` → num_heads * head_dim
+    /// - `model.layers.0.self_attn.k_proj.weight` → kv_heads * head_dim
+    /// - `model.layers.0.self_attn.v_proj.weight` → kv_heads * head_dim
+    /// - `model.layers.0.self_attn.o_proj.weight` → embed_dim
+    /// - `model.layers.0.mlp.gate_proj.weight`   → intermediate_size
+    /// - `model.layers.0.mlp.up_proj.weight`     → intermediate_size
+    /// - `model.layers.0.mlp.down_proj.weight`   → embed_dim
+    /// - `model.embed_tokens.weight`              → embed_dim
+    /// - `lm_head.weight`                         → vocab_size
+    ///
+    /// Returns 0 if the output dimension cannot be determined (unknown projection).
+    pub fn output_dim_for_weight(&self, weight: &str) -> usize {
+        let kv_heads = if self.kv_heads > 0 { self.kv_heads } else { self.num_heads };
+        if weight.contains(".self_attn.q_proj.weight") {
+            self.num_heads * self.head_dim
+        } else if weight.contains(".self_attn.k_proj.weight")
+            || weight.contains(".self_attn.k_proj.weight")
+        {
+            kv_heads * self.head_dim
+        } else if weight.contains(".self_attn.v_proj.weight") {
+            kv_heads * self.head_dim
+        } else if weight.contains(".self_attn.o_proj.weight")
+            || weight.contains(".self_attn.out_proj.weight")
+        {
+            self.embed_dim
+        } else if weight.contains(".mlp.gate_proj.weight")
+            || weight.contains(".mlp.up_proj.weight")
+        {
+            if self.intermediate_size > 0 {
+                self.intermediate_size
+            } else {
+                0
+            }
+        } else if weight.contains(".mlp.down_proj.weight") {
+            self.embed_dim
+        } else if weight == "lm_head.weight" || weight.contains("lm_head.") {
+            if self.vocab_size > 0 { self.vocab_size } else { 0 }
+        } else if weight.contains("embed_tokens") {
+            self.embed_dim
+        } else {
+            0
+        }
     }
 }
 
@@ -136,10 +230,17 @@ impl LegalityRewritePass {
                     // The Python emitter uses mb.linear (Sprint 31), and the
                     // MIL lower pass maps Conv1x1AsLinear → MILLinear. Using
                     // MatMul here was inconsistent with the emission path.
+                    //
+                    // Sprint 61: Derive output_dim from the weight name and
+                    // DecompositionContext so that shape inference can propagate
+                    // correct output shapes through the AIR→MIR pipeline.
                     let a_id = sir_to_air
                         .get(sir_input)
                         .cloned()
                         .unwrap_or_else(|| AirNodeId(sir_input.0.clone()));
+                    let output_dim = ctx
+                        .map(|c| c.output_dim_for_weight(weight))
+                        .unwrap_or(0);
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
@@ -147,6 +248,7 @@ impl LegalityRewritePass {
                             input: a_id,
                             weight: weight.clone(),
                             pad_type: "valid".to_string(),
+                            output_dim,
                         },
                         sir_node,
                         "mb.linear",
@@ -601,6 +703,7 @@ impl LegalityRewritePass {
                 input: attn_flat_id,
                 weight: format!("{base}_w_out"),
                 pad_type: "valid".into(),
+                output_dim: embed as usize, // out_proj: embed_dim output
             },
             sir_node,
             "mb.linear",
@@ -667,6 +770,7 @@ impl LegalityRewritePass {
                 input: last_id,
                 weight: format!("{base}_w_qkv"),
                 pad_type: "valid".into(),
+                output_dim: (3 * embed) as usize, // QKV fused projection: 3 * embed_dim
             },
             sir_node,
             "mb.linear",
@@ -832,6 +936,7 @@ impl LegalityRewritePass {
                 input: attn_flat_id,
                 weight: format!("{base}_w_out"),
                 pad_type: "valid".into(),
+                output_dim: embed as usize, // out_proj: embed_dim output
             },
             sir_node,
             "mb.linear",
@@ -891,7 +996,7 @@ impl LegalityRewritePass {
             mean_id.clone(),
             AirOp::ReduceMean {
                 input: input_air.clone(),
-                axes: vec![1], // normalize over last dimension
+                axes: vec![2], // normalize over embedding dimension (last dim for 3D [batch, seq, embed])
                 keep_dims: true,
             },
             sir_node,

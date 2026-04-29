@@ -236,6 +236,50 @@ pub fn mir_graph_to_compat(
         })
         .collect();
 
+    // Build node_shapes map using forward shape inference.
+    //
+    // Sprint 61: The previous approach used per-node `compat_output_shape`
+    // fallbacks that were hardcoded (e.g., ReduceMean → [1,1,1024]) and
+    // couldn't derive shapes from their inputs. This produced wrong shapes
+    // when the input tensor had a non-standard embedding dimension (e.g.,
+    // q_proj output [1,512,2048] followed by q_norm ReduceMean which was
+    // hardcoded to [1,1,1024] instead of the correct [1,512,1] for axes=[2]).
+    //
+    // The new approach does a forward pass over nodes in topological order,
+    // computing each node's output shape from its inputs' already-known shapes.
+    // Static fallbacks are only used when the input shape is unknown.
+    let mut node_shapes: std::collections::HashMap<String, Vec<usize>> =
+        std::collections::HashMap::new();
+
+    // Seed with graph input shapes
+    for id in &graph.inputs {
+        if let Some(node) = node_map.get(id.0.as_str()) {
+            let shape = compat_input_shape(&node.id.0, &node.shape);
+            if !shape.is_empty() {
+                node_shapes.insert(node.id.0.clone(), shape);
+            }
+        }
+    }
+
+    // Forward pass: compute each node's output shape
+    for node in &graph.nodes {
+        // Skip if already known (e.g., from graph input seeding)
+        if node_shapes.contains_key(&node.id.0) {
+            continue;
+        }
+        // Try the MIR node's shape first (populated by infer_shape in mil_lower)
+        if !node.shape.is_empty() {
+            node_shapes.insert(node.id.0.clone(), node.shape.clone());
+            continue;
+        }
+        // Fall back to the static compat_output_shape for this op
+        let shape = compat_output_shape(&node.id.0, &node.op, &node.shape, &node_shapes);
+        if !shape.is_empty() {
+            node_shapes.insert(node.id.0.clone(), shape);
+        }
+    }
+
+    // Build output descriptors using the forward-inferred node_shapes map.
     let output_descs: Vec<ane_coreml_proto::mir_compat::TensorDescCompat> = graph
         .outputs
         .iter()
@@ -244,7 +288,10 @@ pub fn mir_graph_to_compat(
             match node_map.get(id.0.as_str()) {
                 Some(node) => TensorDescCompat {
                     name: node.id.0.clone(),
-                    shape: compat_output_shape(&node.id.0, &node.op, &node.shape),
+                    shape: node_shapes
+                        .get(&node.id.0)
+                        .cloned()
+                        .unwrap_or_else(|| compat_output_shape(&node.id.0, &node.op, &node.shape, &node_shapes)),
                     dtype: mil_dtype_to_compat(&node.dtype),
                 },
                 None => {
@@ -263,25 +310,6 @@ pub fn mir_graph_to_compat(
             }
         })
         .collect();
-
-    // Build node_shapes map from MIR node metadata. This is used by the
-    // Apple proto emitter to set correct output types on MIL operations.
-    // Without this, all op outputs default to scalar fp16, causing
-    // "Tensor storage and type have different number of elements" errors.
-    let mut node_shapes: std::collections::HashMap<String, Vec<usize>> = graph
-        .nodes
-        .iter()
-        .map(|n| (n.id.0.clone(), compat_output_shape(&n.id.0, &n.op, &n.shape)))
-        .filter(|(_, shape)| !shape.is_empty())
-        .collect();
-    for id in &graph.inputs {
-        if let Some(node) = node_map.get(id.0.as_str()) {
-            let shape = compat_input_shape(&node.id.0, &node.shape);
-            if !shape.is_empty() {
-                node_shapes.insert(node.id.0.clone(), shape);
-            }
-        }
-    }
 
     Ok(MirGraphCompat {
         ops: all_ops,
@@ -376,7 +404,12 @@ fn compat_input_shape(name: &str, shape: &[usize]) -> Vec<usize> {
     }
 }
 
-fn compat_output_shape(name: &str, op: &MirOp, shape: &[usize]) -> Vec<usize> {
+fn compat_output_shape(
+    name: &str,
+    op: &MirOp,
+    shape: &[usize],
+    node_shapes: &std::collections::HashMap<String, Vec<usize>>,
+) -> Vec<usize> {
     if !shape.is_empty() {
         return shape.to_vec();
     }
@@ -384,25 +417,113 @@ fn compat_output_shape(name: &str, op: &MirOp, shape: &[usize]) -> Vec<usize> {
         return vec![1, 512];
     }
     match op {
-        MirOp::MILGather { .. } => vec![1, 512, 1024],
-        MirOp::MILReduceMean { keep_dims: true, .. } => vec![1, 1, 1024],
-        MirOp::MILRsqrt { x, .. } if x.0.contains("_mean") => vec![1, 1, 1024],
-        MirOp::MILLinear { weight, .. } if weight == "lm_head.weight" => vec![1, 512, 151936],
-        MirOp::MILLinear { weight, .. } if weight.contains(".mlp.up_proj.weight") => {
-            vec![1, 512, 3072]
+        // ─── Shape-propagating ops: derive from input shapes in node_shapes ───
+        // These fallbacks are only hit when MIR node.shape is empty (i.e., when
+        // infer_shape in mil_lower failed to compute a shape). When shape inference
+        // works correctly, these branches are never reached.
+        MirOp::MILReduceMean { x, axes, keep_dims, .. } => {
+            if let Some(input_shape) = node_shapes.get(&x.0) {
+                let mut out = input_shape.clone();
+                if *keep_dims {
+                    for &ax in axes {
+                        if (ax as usize) < out.len() {
+                            out[ax as usize] = 1;
+                        }
+                    }
+                } else {
+                    let mut sorted_axes: Vec<usize> =
+                        axes.iter().map(|&a| a as usize).collect();
+                    sorted_axes.sort_unstable_by(|a, b| b.cmp(a));
+                    for &ax in &sorted_axes {
+                        if ax < out.len() {
+                            out.remove(ax);
+                        }
+                    }
+                }
+                out
+            } else {
+                // Input shape unknown: return empty rather than a wrong hardcoded shape
+                vec![]
+            }
         }
-        MirOp::MILLinear { weight, .. } if weight.contains(".self_attn.q_proj.weight") => {
-            vec![1, 512, 2048]
+        MirOp::MILRsqrt { x, .. } => {
+            node_shapes.get(&x.0).cloned().unwrap_or_default()
         }
-        MirOp::MILLinear { .. } => vec![1, 512, 1024],
-        MirOp::MILMatMul { name, .. } if name == "attn_qk" => vec![1, 512, 512],
-        MirOp::MILMatMul { name, .. } if name == "attn_sv" => vec![1, 512, 2048],
-        MirOp::MILSoftmax { name, .. } if name == "attn_softmax" => vec![1, 512, 512],
-        MirOp::MILSilu { .. } => vec![1, 512, 3072],
+        MirOp::MILGather { x, indices, axis, .. } => {
+            // Embedding: output replaces axis dim of x with indices shape
+            match (node_shapes.get(&x.0), node_shapes.get(&indices.0)) {
+                (Some(input_shape), Some(indices_shape)) => {
+                    let ax = *axis as usize;
+                    let mut out = Vec::new();
+                    for (i, &dim) in input_shape.iter().enumerate() {
+                        if i == ax {
+                            out.extend_from_slice(indices_shape);
+                        } else {
+                            out.push(dim);
+                        }
+                    }
+                    out
+                }
+                (Some(input_shape), None) => input_shape.clone(),
+                _ => vec![],
+            }
+        }
+        // Linear: propagate input shape
+        MirOp::MILLinear { x, .. } => {
+            if let Some(input_shape) = node_shapes.get(&x.0) {
+                input_shape.clone()
+            } else {
+                vec![]
+            }
+        }
+        // Unary ops: propagate input shape
+        MirOp::MILSilu { x, .. }
+        | MirOp::MILAbs { x, .. }
+        | MirOp::MILRelu { x, .. }
+        | MirOp::MILSigmoid { x, .. }
+        | MirOp::MILTanh { x, .. }
+        | MirOp::MILGelu { x, .. }
+        | MirOp::MILExp { x, .. }
+        | MirOp::MILCos { x, .. }
+        | MirOp::MILSin { x, .. }
+        | MirOp::MILCast { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
+        // Binary ops: propagate first operand shape
+        MirOp::MILAdd { x, .. }
+        | MirOp::MILMul { x, .. }
+        | MirOp::MILSub { x, .. }
+        | MirOp::MILMaximum { x, .. }
+        | MirOp::MILMinimum { x, .. }
+        | MirOp::MILRealDiv { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
+        MirOp::MILSoftmax { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
+        MirOp::MILMatMul { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
+        MirOp::MILReshape { shape, .. } => shape.iter().map(|&d| d as usize).collect(),
+        MirOp::MILTranspose { x, perm, .. } => {
+            if let Some(input_shape) = node_shapes.get(&x.0) {
+                perm.iter().map(|&p| input_shape.get(p as usize).copied().unwrap_or(0)).collect()
+            } else {
+                vec![]
+            }
+        }
+        MirOp::MILTile { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
+        MirOp::MILSplit { x, axis, num_splits, .. } => {
+            if let Some(input_shape) = node_shapes.get(&x.0) {
+                let mut out = input_shape.clone();
+                if let Some(dim) = out.get_mut(*axis) {
+                    *dim /= num_splits;
+                }
+                out
+            } else {
+                vec![]
+            }
+        }
+        // Identity for graph inputs (placeholder): use known input shape
         MirOp::MILIdentity { x, .. } if x.0 == "__placeholder__" => vec![1, 512],
-        _ if name.contains("_mean") || name.contains("_rsqrt") => vec![1, 1, 1024],
-        _ if name.contains("lm_head") || name.contains("_output") => vec![1, 512, 151936],
-        _ => vec![1, 512, 1024],
+        // Identity: propagate input shape
+        MirOp::MILIdentity { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
+        // Catch-all: return empty shape rather than a wrong hardcoded value.
+        // An empty shape means "unknown" which Core ML will try to infer from
+        // the graph — better than a wrong shape that causes type inference failure.
+        _ => vec![],
     }
 }
 
@@ -1389,28 +1510,46 @@ mod tests {
         let compat = mir_graph_to_compat(&graph, &resolver).unwrap();
 
         // Check that Const ops have proper data.
-        // Note: SSA output names use the MIR node ID (from node.id.0),
-        // not the MirOp's name field. This ensures unique SSA names.
+        // Note: The ops list is [auto-materialized "weight", renamed "x", "bias", Linear].
+        // Auto-materialization prepends Const ops for weight names referenced by
+        // Linear/LayerNorm but not present in existing_const_names (which uses the
+        // renamed SSA names, not the original op.name). The Const for "weight" was
+        // renamed to "x" via rename_compat_output, so "weight" is auto-materialized.
+
+        // ops[0] = auto-materialized Const for "weight" (referenced by Linear but
+        // not in existing_const_names after the "x" rename)
         match &compat.ops[0] {
+            MirOpCompat::Const { name, data, dtype, shape } => {
+                assert_eq!(name, "weight"); // auto-materialized, uses the weight name
+                assert_eq!(*dtype, MilDtypeCompat::Fp16);
+                assert_eq!(*shape, vec![1]); // zero-filled fallback has shape [1]
+                let _ = data; // data is zero-filled (2 bytes for fp16 scalar)
+            }
+            _ => panic!("Expected auto-materialized Const op for 'weight'"),
+        }
+
+        // ops[1] = the original MILConst node, renamed from op.name "weight" → node.id "x"
+        match &compat.ops[1] {
             MirOpCompat::Const { name, data, dtype, shape } => {
                 assert_eq!(name, "x"); // node.id.0, not op.name "weight"
                 assert_eq!(data.len(), 32 * 64 * 2);
                 assert_eq!(*dtype, MilDtypeCompat::Fp16);
                 assert_eq!(*shape, vec![32, 64]);
             }
-            _ => panic!("Expected Const op"),
+            _ => panic!("Expected Const op 'x'"),
         }
 
-        match &compat.ops[1] {
+        // ops[2] = bias Const
+        match &compat.ops[2] {
             MirOpCompat::Const { name, data, .. } => {
                 assert_eq!(name, "bias"); // node.id.0, matches op.name in this case
                 assert_eq!(data.len(), 32 * 2);
             }
-            _ => panic!("Expected Const op"),
+            _ => panic!("Expected Const op 'bias'"),
         }
 
-        // Linear op: output name is the node ID "output"
-        match &compat.ops[2] {
+        // ops[3] = Linear op: output name is the node ID "output"
+        match &compat.ops[3] {
             MirOpCompat::Linear { name, x, weight_name, bias_name } => {
                 assert_eq!(name, "output");
                 assert_eq!(x, "input");

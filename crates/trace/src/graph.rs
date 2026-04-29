@@ -123,6 +123,13 @@ pub struct ModelConfig {
     /// (the autoregressive generation path that runs on ANE).
     #[serde(default)]
     pub is_encoder_decoder: bool,
+    /// Dimension per attention head. When `None`, derived as
+    /// `hidden_size / num_attention_heads` (the common case for most models).
+    /// Some models (Qwen3, etc.) have head_dim != hidden_size / num_heads
+    /// because the q/k/v projection output dims are num_heads * head_dim
+    /// which may differ from hidden_size.
+    #[serde(default)]
+    pub head_dim: Option<usize>,
 }
 
 /// A single node in the traced computation graph.
