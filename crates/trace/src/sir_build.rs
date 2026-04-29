@@ -160,6 +160,79 @@ impl<'a> SirBuildContext<'a> {
             }
         }
 
+        // ─── Post-hoc alias resolution ───────────────────────────────
+        // The decompose functions create cross-references using semantic aliases
+        // (e.g., "sir_q_proj_layer_0_self_attn") that don't match the allocated
+        // node IDs (e.g., "sir_3_layer_0_self_attn"). We need to rewrite all
+        // SirOp internal references from aliases to actual IDs.
+        //
+        // Strategy: extract all SirNodeId strings from the serialized SirOps,
+        // find any that don't match a real node ID, and resolve them by matching
+        // the traced-node-ID suffix to find the correct allocated ID.
+        {
+            // Build the set of actual node IDs for quick lookup
+            let actual_ids: std::collections::HashSet<String> =
+                sir_nodes.iter().map(|n| n.id.0.clone()).collect();
+
+            // Build the alias → actual ID mapping.
+            // For each actual ID like "sir_3_layer_0_self_attn", we know:
+            //   - The traced node ID suffix is "layer_0_self_attn"
+            //   - The counter prefix is "3"
+            // Semantic aliases like "sir_q_proj_layer_0_self_attn" share the same
+            // suffix but have a different prefix. We need to find which counter-based
+            // ID corresponds to which semantic alias.
+            //
+            // Since the decompose functions push ops in a fixed order and the
+            // counter-based IDs are also allocated in that order, we can group
+            // nodes by their traced_node_id suffix and use position within the
+            // group to match aliases to actual IDs.
+            //
+            // But a simpler approach: extract all string values from the serialized
+            // SirOps that look like SirNodeId references but aren't actual IDs,
+            // then match them to the correct actual ID by the traced node ID suffix.
+            let mut alias_to_actual: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+
+            // Scan all SirOps for potential alias references
+            for node in &sir_nodes {
+                let json = serde_json::to_string(&node.op).unwrap();
+                // Find all string values in JSON that start with "sir_" and are
+                // not actual node IDs — these are the dangling semantic aliases
+                for candidate in extract_sir_ids_from_json(&json) {
+                    if !actual_ids.contains(&candidate) && candidate.starts_with("sir_") {
+                        // This is a dangling reference. Find the correct actual ID
+                        // by matching the traced node ID suffix.
+                        // The alias is like "sir_q_proj_layer_0_self_attn"
+                        // We need to find which actual ID has the same suffix
+                        // "layer_0_self_attn" and was allocated for the right op.
+                        //
+                        // The suffix after "sir_{semantic_prefix}_" is the traced node ID.
+                        // We look up node_map to find all IDs registered for that traced node.
+                        if let Some(actual_id) = resolve_alias(&candidate, &actual_ids, &self.node_map) {
+                            alias_to_actual.entry(candidate).or_insert(actual_id);
+                        }
+                    }
+                }
+            }
+
+            if !alias_to_actual.is_empty() {
+                // Rewrite SirOp references using JSON serialization
+                for node in &mut sir_nodes {
+                    let json = serde_json::to_string(&node.op).unwrap();
+                    let mut new_json = json.clone();
+                    for (alias, actual) in &alias_to_actual {
+                        new_json = new_json.replace(
+                            &format!("\"{}\"", alias),
+                            &format!("\"{}\"", actual),
+                        );
+                    }
+                    if new_json != json {
+                        node.op = serde_json::from_str(&new_json).unwrap();
+                    }
+                }
+            }
+        }
+
         Ok(SirGraph { nodes: sir_nodes, inputs: sir_inputs, outputs: sir_outputs })
     }
 
@@ -2037,5 +2110,194 @@ mod tests {
             !has_k_transpose,
             "A16+ attention decomposition must NOT include manual K^T transpose"
         );
+    }
+}
+
+/// Extract all string values from a JSON string that look like SIR node IDs
+/// (start with "sir_"). These are potential SirNodeId references.
+fn extract_sir_ids_from_json(json: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut in_string = false;
+    let mut current = String::new();
+
+    for ch in json.chars() {
+        if ch == '"' && !in_string {
+            in_string = true;
+            current.clear();
+        } else if ch == '"' && in_string {
+            in_string = false;
+            if current.starts_with("sir_") {
+                ids.push(current.clone());
+            }
+        } else if in_string {
+            current.push(ch);
+        }
+    }
+    ids
+}
+
+/// Resolve a semantic alias like "sir_q_proj_layer_0_self_attn" to the actual
+/// allocated node ID like "sir_3_layer_0_self_attn".
+///
+/// The alias format is: "sir_{semantic_prefix}_{traced_node_id}"
+/// The actual ID format is: "sir_{counter}_{traced_node_id}"
+///
+/// We need to find which actual ID corresponds to this alias. We do this by:
+/// 1. Extracting the traced_node_id suffix from the alias
+/// 2. Finding all actual IDs with that same suffix (they're all from the same
+///    traced node's decomposed ops)
+/// 3. Matching the semantic prefix to the correct position in the decomposed
+///    ops list
+///
+/// The tricky part is determining which position corresponds to which alias.
+/// The decompose functions create ops in a fixed order:
+///   - AttentionBlock: q_proj, k_proj, v_proj, [q_norm, k_norm], [gqa_k_tile, gqa_v_tile], [k_transpose], ...
+///   - MLP: gate_proj, [gate_silu], up_proj, [swiglu_mul], down_proj
+///   - RoPE: cos, [sin, rotated, cos_mul, sin_mul]
+///   - SDPA: k_transpose, qk, scale_const, scaled, softmax
+///
+/// Since we don't have the exact order without re-running the decompose functions,
+/// we use a heuristic: match the semantic prefix to the sequential allocation
+/// order for the traced node. The first op allocated for a traced node gets
+/// the first counter, and the semantic prefix tells us which op it is.
+///
+/// We build a position-based mapping using node_map: all IDs registered for
+/// the same traced_node_id are in allocation order, which matches the decompose
+/// function's push order.
+fn resolve_alias(
+    alias: &str,
+    actual_ids: &std::collections::HashSet<String>,
+    node_map: &std::collections::HashMap<String, SirNodeId>,
+) -> Option<String> {
+    // The alias is like "sir_q_proj_layer_0_self_attn"
+    // We need to find the traced_node_id suffix.
+    // Pattern: "sir_{semantic_prefix}_{traced_node_id}"
+    // The semantic prefix can contain underscores (e.g., "gqa_k_tiled"),
+    // so we can't just split on "_". Instead, we try all possible splits
+    // and check if the suffix matches a known traced node ID.
+
+    // Try each possible split point after "sir_"
+    let alias_stripped = alias.strip_prefix("sir_")?;
+
+    // Try splitting at each underscore position to find a traced_node_id
+    // that exists in node_map. We want the LONGEST possible semantic prefix
+    // (shortest traced_node_id) that matches, because semantic prefixes are
+    // specific (e.g., "gqa_k_tiled") and traced_node_ids are relatively short
+    // (e.g., "layer_0_self_attn").
+    let mut candidates: Vec<String> = Vec::new();
+    for (i, c) in alias_stripped.char_indices() {
+        if c == '_' {
+            let trace_id = &alias_stripped[i + 1..];
+            if node_map.contains_key(trace_id) {
+                // Found a valid traced_node_id suffix
+                // Now find all actual IDs that were allocated for this traced node.
+                // They all share the same suffix: "sir_{counter}_{trace_id}"
+                // Collect them in counter order.
+                let mut node_ids_for_trace: Vec<(usize, String)> = Vec::new();
+                for actual in actual_ids {
+                    if actual.ends_with(trace_id) && actual.starts_with("sir_") {
+                        // Extract the counter from "sir_{counter}_{trace_id}"
+                        let without_prefix = actual.strip_prefix("sir_").unwrap();
+                        let without_suffix = without_prefix.strip_suffix(trace_id).unwrap();
+                        let counter_str = without_suffix.strip_suffix('_').unwrap_or(without_suffix);
+                        if let Ok(counter) = counter_str.parse::<usize>() {
+                            node_ids_for_trace.push((counter, actual.clone()));
+                        }
+                    }
+                }
+                node_ids_for_trace.sort_by_key(|(c, _)| *c);
+
+                // The semantic prefix determines which position in the decomposed
+                // ops list this alias corresponds to. We need to map the semantic
+                // prefix to an index.
+                let semantic_prefix = &alias_stripped[..i];
+
+                // Map semantic prefix to position index using the known decompose
+                // function ordering. This is a fixed mapping based on the order
+                // that decompose_attention(), decompose_mlp(), decompose_rope(),
+                // and decompose_sdpa() push their ops.
+                let position = semantic_prefix_to_position(semantic_prefix);
+
+                if let Some(pos) = position {
+                    if pos < node_ids_for_trace.len() {
+                        return Some(node_ids_for_trace[pos].1.clone());
+                    }
+                }
+
+                candidates.push(format!("prefix='{}' trace_id='{}' nodes={}", semantic_prefix, trace_id, node_ids_for_trace.len()));
+            }
+        }
+    }
+
+    // If we couldn't resolve, return None
+    None
+}
+
+/// Map a semantic prefix (from an alias like "sir_q_proj_...") to the position
+/// index in the decomposed ops list for the corresponding traced node.
+///
+/// The positions correspond to the order in which decompose_attention(),
+/// decompose_mlp(), decompose_rope(), and decompose_sdpa() push their ops.
+///
+/// AttentionBlock decomposition order (without QK-Norm, without GQA):
+///   0: q_proj, 1: k_proj, 2: v_proj, 3: sdpa/out_proj, ...
+///
+/// AttentionBlock decomposition order (with QK-Norm + GQA, A16+):
+///   0: q_proj, 1: k_proj, 2: v_proj, 3: q_norm, 4: k_norm,
+///   5: gqa_k_tile, 6: gqa_v_tile, 7: sdpa, 8: out_proj, 9: residual_add
+///
+/// AttentionBlock decomposition order (with QK-Norm + GQA, pre-A16):
+///   0: q_proj, 1: k_proj, 2: v_proj, 3: q_norm, 4: k_norm,
+///   5: gqa_k_tile, 6: gqa_v_tile, 7: k_transpose, 8: qk_matmul,
+///   9: scale_const, 10: scaled_qk, 11: softmax, 12: sv_matmul,
+///   13: out_proj, 14: residual_add
+///
+/// MLP decomposition order (SwiGLU):
+///   0: gate_proj, 1: gate_silu, 2: up_proj, 3: swiglu_mul, 4: down_proj
+///
+/// MLP decomposition order (standard):
+///   0: up_proj, 1: act, 2: down_proj
+fn semantic_prefix_to_position(prefix: &str) -> Option<usize> {
+    // Attention block ops
+    match prefix {
+        "q_proj" => Some(0),
+        "k_proj" => Some(1),
+        "v_proj" => Some(2),
+        "q_norm" => Some(3),
+        "k_norm" => Some(4),
+        "gqa_k_tiled" => Some(5),
+        "gqa_v_tiled" => Some(6),
+        // Pre-A16 SDPA decomposition (positions 7-12)
+        "attn_k_t" => Some(7),
+        "attn_qk" => Some(8),
+        "attn_scale_const" => Some(9),
+        "attn_scaled" => Some(10),
+        "attn_softmax" => Some(11),
+        // After softmax comes sv_matmul at position 12, then out_proj at 13
+        "attn_out" => Some(13),
+        "out_proj" => Some(13),  // alias for attn_out
+        // A16+ path: SDPA at position 7, out_proj at position 8
+        // But we don't know the path at resolution time — need both mappings
+        // The "sdpa" prefix would be at position 7 in A16+ path
+        // MLP ops (these come from separate traced nodes, so positions restart)
+        "gate_proj" => Some(0),
+        "gate_silu" => Some(1),
+        "up_proj" => Some(2),
+        "swiglu_mul" => Some(3),
+        "down_proj" => Some(4),
+        "mlp_act" => Some(1),
+        // RoPE ops
+        "rope_cos" => Some(0),
+        "rope_sin" => Some(1),
+        "rope_rotated" => Some(2),
+        "rope_cos_mul" => Some(3),
+        "rope_sin_mul" => Some(4),
+        // Standalone SDPA decomposition
+        "sdpa_k_t" => Some(0),
+        "sdpa_qk" => Some(1),
+        "sdpa_scale_const" => Some(2),
+        "sdpa_scaled" => Some(3),
+        "sdpa_softmax" => Some(4),
+        _ => None,
     }
 }
