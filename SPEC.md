@@ -1774,18 +1774,17 @@ Each `TracedNode` carries:
 - `outputs`: List of output tensor names
 - `attrs`: Operation-specific attributes as key-value pairs
 
-## 19.4 Model Architecture Registry
+## 19.4 Config-Driven Decomposition (No Registry)
 
-The `ModelRegistry` maps HuggingFace model types to known ANE-faithful decomposition patterns:
+The SIR builder decomposes composite ops entirely from the model's `AutoConfig` fields — `hidden_act`, `uses_rms_norm`, `uses_gqa`, `uses_rope`, `rms_norm_eps`, `num_key_value_heads`. No hardcoded model registry or architecture list is required.
 
-| Architecture | `TransformerLayerKind` | Key Decomposition |
-|---|---|---|
-| GPT-2 / GPT-Neo | `CausalLm` | QKV projection → SDPA → output projection |
-| LLaMA / Qwen / Mistral | `RoPEBased` | RoPE tables + grouped-query attention |
-| BERT / RoBERTa | `EncoderOnly` | Bidirectional attention + pooler |
-| Phi / Phi-2 | `SmallFormFactor` | Parallel attention + MLP |
-
-Custom architectures can be registered via `ModelRegistry::register()` with a `ModelPattern` specifying the layer kind and decomposition strategy.
+Key decomposition decisions in `build_sir_from_trace()`:
+- **Separate Q/K/V projections** — three distinct `LinearProjection` ops with per-projection weight names (q_proj, k_proj, v_proj)
+- **SwiGLU auto-detection** — when both `gate_proj.weight` and `up_proj.weight` exist, emits `down_proj(silu(gate_proj(x)) * up_proj(x))`
+- **Residual connections** — `SirOp::Add` emitted when the traced node carries a skip/residual input
+- **Causal mask references** — SDPA receives a causal mask to be materialized by the staticize pass
+- **RMSNorm epsilon validation** — fallback chain: traced value → config.layer_norm_epsilon → 1e-6 default
+- **Non-silent input resolution** — `resolve_input` warns when producing `__unresolved__` node references
 
 ## 19.5 ANE-Faithful SIR Construction
 

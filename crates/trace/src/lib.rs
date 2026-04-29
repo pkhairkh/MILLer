@@ -21,9 +21,8 @@
 //! ad-hoc without a hardcoded registry — Qwen3, Qwen3.5, Llama-4, or
 //! any future architecture that follows the standard transformer pattern.
 //!
-//! The `ModelRegistry` is deprecated — it was never required by the build
-//! pipeline and is kept only for backward compatibility. All tracing now
-//! works fully ad-hoc via `AutoConfig`/`AutoModel`.
+//! There is no model registry — tracing is fully ad-hoc. All decomposition
+//! is driven by the model's `AutoConfig` fields discovered at runtime.
 //!
 //! # ANE-Faithful Compilation
 //!
@@ -52,13 +51,13 @@
 //!   switch, halving memory for tied-weight models
 
 pub mod config;
-pub mod graph;
 pub mod discovery;
+pub mod graph;
 pub mod sir_build;
-pub mod versioned;
 pub mod subprocess;
+pub mod versioned;
 
 pub use config::{TraceConfig, TraceTarget};
-pub use graph::{TracedGraph, TracedNode, TracedOp, TensorShape, ModelConfig, DiscoveredFeatures};
+pub use graph::{DiscoveredFeatures, ModelConfig, TensorShape, TracedGraph, TracedNode, TracedOp};
 pub use sir_build::build_sir_from_trace;
-pub use versioned::{VersionedCompiler, VersionedCompileResult, AnceFaithfulnessReport};
+pub use versioned::{AnceFaithfulnessReport, VersionedCompileResult, VersionedCompiler};

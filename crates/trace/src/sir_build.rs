@@ -8,14 +8,40 @@
 //! ops that are known to have ANE converters, and composite operations
 //! (like attention blocks) are decomposed into primitives that will
 //! survive ANE placement validation.
+//!
+//! # Key decomposition decisions
+//!
+//! - **Separate Q/K/V projections**: Attention blocks emit three distinct
+//!   `LinearProjection` ops (q_proj, k_proj, v_proj) rather than a single
+//!   merged QKV projection. This ensures each projection has its own weight
+//!   name and output node, eliminating phantom node references.
+//!
+//! - **SwiGLU MLP support**: When both `gate_proj.weight` and `up_proj.weight`
+//!   exist in the trace weights, the MLP is decomposed using the SwiGLU pattern:
+//!   `down_proj(silu(gate_proj(x)) * up_proj(x))`. Standard MLPs follow the
+//!   simpler `down_proj(activation(up_proj(x)))` path.
+//!
+//! - **Residual connections**: AttentionBlock and MlpBlock emit a trailing
+//!   `SirOp::Add` when the traced node has ≥2 inputs, connecting the block
+//!   output to the residual (skip) connection.
+//!
+//! - **Causal attention masks**: SDPA within attention blocks receives a causal
+//!   mask reference that will be materialized as a static lower-triangular
+//!   table by the staticize pass.
+//!
+//! - **RMSNorm epsilon validation**: If the traced epsilon is 0 or missing,
+//!   the builder falls back to the config's `layer_norm_epsilon` or the
+//!   standard 1e-6 default for RMSNorm models (Qwen3, Llama, etc.).
+//!
+//! - **Non-silent input resolution**: `resolve_input` emits a warning when it
+//!   cannot find a mapping, making debugging easier instead of silently
+//!   producing `__unresolved_N__` node references.
 
-use crate::graph::{TracedGraph, TracedNode, TracedOp, ModelConfig};
+use crate::graph::{ModelConfig, TracedGraph, TracedNode, TracedOp};
 use crate::versioned::VersionedCompiler;
 use ane_ir::ane_target::AneFamily;
 use ane_ir::mir::MilDtype;
-use ane_ir::sir::{
-    SirGraph, SirNode, SirNodeId, SirMetadata, SirOp, TaskOrigin, QualityContract,
-};
+use ane_ir::sir::{QualityContract, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
 
 /// Build a SIR graph from a traced computation graph.
 ///
@@ -107,12 +133,7 @@ impl<'a> SirBuildContext<'a> {
                     precision_override: None,
                 };
 
-                let sir_node = SirNode {
-                    id: id.clone(),
-                    op,
-                    name,
-                    metadata,
-                };
+                let sir_node = SirNode { id: id.clone(), op, name, metadata };
 
                 // Track inputs/outputs
                 if matches!(traced_node.op, TracedOp::Placeholder) {
@@ -133,11 +154,7 @@ impl<'a> SirBuildContext<'a> {
             }
         }
 
-        Ok(SirGraph {
-            nodes: sir_nodes,
-            inputs: sir_inputs,
-            outputs: sir_outputs,
-        })
+        Ok(SirGraph { nodes: sir_nodes, inputs: sir_inputs, outputs: sir_outputs })
     }
 
     /// Allocate a unique SIR node ID, mapping from the traced node ID.
@@ -237,15 +254,13 @@ impl<'a> SirBuildContext<'a> {
             TracedOp::MatMul { .. } => {
                 let a_id = self.resolve_input(&node.inputs, 0);
                 let b_id = self.resolve_input(&node.inputs, 1);
-                Ok(vec![(
-                    SirOp::MatMul { a: a_id, b: b_id },
-                    "matmul".to_string(),
-                )])
+                Ok(vec![(SirOp::MatMul { a: a_id, b: b_id }, "matmul".to_string())])
             }
             TracedOp::Embedding { vocab_size, embed_dim } => {
                 // Embedding lookup is CPU-only on ANE — mark for awareness
                 let input_id = self.resolve_input(&node.inputs, 0);
-                let embed_weight_name = self.resolve_weight_name(node, &format!("embed_weight_{}", node.id));
+                let embed_weight_name =
+                    self.resolve_weight_name(node, &format!("embed_weight_{}", node.id));
                 Ok(vec![(
                     SirOp::Gather {
                         input: SirNodeId(embed_weight_name),
@@ -300,10 +315,7 @@ impl<'a> SirBuildContext<'a> {
             }
             TracedOp::Softmax { axis } => {
                 let input_id = self.resolve_input(&node.inputs, 0);
-                Ok(vec![(
-                    SirOp::Softmax { input: input_id, axis: *axis },
-                    "softmax".to_string(),
-                )])
+                Ok(vec![(SirOp::Softmax { input: input_id, axis: *axis }, "softmax".to_string())])
             }
             TracedOp::Gelu { approximate: _ } => {
                 let input_id = self.resolve_input(&node.inputs, 0);
@@ -314,17 +326,11 @@ impl<'a> SirBuildContext<'a> {
             }
             TracedOp::Silu => {
                 let input_id = self.resolve_input(&node.inputs, 0);
-                Ok(vec![(
-                    SirOp::Silu { input: input_id },
-                    "silu".to_string(),
-                )])
+                Ok(vec![(SirOp::Silu { input: input_id }, "silu".to_string())])
             }
             TracedOp::Relu => {
                 let input_id = self.resolve_input(&node.inputs, 0);
-                Ok(vec![(
-                    SirOp::Relu { input: input_id },
-                    "relu".to_string(),
-                )])
+                Ok(vec![(SirOp::Relu { input: input_id }, "relu".to_string())])
             }
             TracedOp::Reshape { target_shape } => {
                 let input_id = self.resolve_input(&node.inputs, 0);
@@ -341,13 +347,9 @@ impl<'a> SirBuildContext<'a> {
                 )])
             }
             TracedOp::Concat { axis } => {
-                let inputs: Vec<SirNodeId> = node.inputs.iter()
-                    .filter_map(|id| self.lookup_sir_id(id).cloned())
-                    .collect();
-                Ok(vec![(
-                    SirOp::Concat { inputs, axis: *axis },
-                    "concat".to_string(),
-                )])
+                let inputs: Vec<SirNodeId> =
+                    node.inputs.iter().filter_map(|id| self.lookup_sir_id(id).cloned()).collect();
+                Ok(vec![(SirOp::Concat { inputs, axis: *axis }, "concat".to_string())])
             }
             TracedOp::Split { axis, num_splits } => {
                 let input_id = self.resolve_input(&node.inputs, 0);
@@ -358,7 +360,11 @@ impl<'a> SirBuildContext<'a> {
                 } else {
                     // Negative axis: resolve at SIR build time using output_shape rank
                     let rank = node.output_shape.dims.len();
-                    if rank > 0 { (rank as isize + axis) as usize } else { 0 }
+                    if rank > 0 {
+                        (rank as isize + axis) as usize
+                    } else {
+                        0
+                    }
                 };
                 Ok(vec![(
                     SirOp::Split { input: input_id, axis: axis_usize, num_splits: *num_splits },
@@ -383,76 +389,46 @@ impl<'a> SirBuildContext<'a> {
             TracedOp::Add => {
                 let x_id = self.resolve_input(&node.inputs, 0);
                 let y_id = self.resolve_input(&node.inputs, 1);
-                Ok(vec![(
-                    SirOp::Add { x: x_id, y: y_id },
-                    "add".to_string(),
-                )])
+                Ok(vec![(SirOp::Add { x: x_id, y: y_id }, "add".to_string())])
             }
             TracedOp::Mul => {
                 let x_id = self.resolve_input(&node.inputs, 0);
                 let y_id = self.resolve_input(&node.inputs, 1);
-                Ok(vec![(
-                    SirOp::Mul { x: x_id, y: y_id },
-                    "mul".to_string(),
-                )])
+                Ok(vec![(SirOp::Mul { x: x_id, y: y_id }, "mul".to_string())])
             }
             TracedOp::Div => {
                 let x_id = self.resolve_input(&node.inputs, 0);
                 let y_id = self.resolve_input(&node.inputs, 1);
-                Ok(vec![(
-                    SirOp::RealDiv { x: x_id, y: y_id },
-                    "div".to_string(),
-                )])
+                Ok(vec![(SirOp::RealDiv { x: x_id, y: y_id }, "div".to_string())])
             }
             TracedOp::Rsqrt => {
                 let input_id = self.resolve_input(&node.inputs, 0);
-                Ok(vec![(
-                    SirOp::Rsqrt { input: input_id },
-                    "rsqrt".to_string(),
-                )])
+                Ok(vec![(SirOp::Rsqrt { input: input_id }, "rsqrt".to_string())])
             }
             TracedOp::Cast { target_dtype } => {
                 let input_id = self.resolve_input(&node.inputs, 0);
                 let dtype = parse_dtype(target_dtype)?;
-                Ok(vec![(
-                    SirOp::Cast { input: input_id, dtype },
-                    "cast".to_string(),
-                )])
+                Ok(vec![(SirOp::Cast { input: input_id, dtype }, "cast".to_string())])
             }
             TracedOp::Tanh => {
                 let input_id = self.resolve_input(&node.inputs, 0);
-                Ok(vec![(
-                    SirOp::Tanh { input: input_id },
-                    "tanh".to_string(),
-                )])
+                Ok(vec![(SirOp::Tanh { input: input_id }, "tanh".to_string())])
             }
             TracedOp::Sigmoid => {
                 let input_id = self.resolve_input(&node.inputs, 0);
-                Ok(vec![(
-                    SirOp::Sigmoid { input: input_id },
-                    "sigmoid".to_string(),
-                )])
+                Ok(vec![(SirOp::Sigmoid { input: input_id }, "sigmoid".to_string())])
             }
             TracedOp::Exp => {
                 let input_id = self.resolve_input(&node.inputs, 0);
-                Ok(vec![(
-                    SirOp::Exp { input: input_id },
-                    "exp".to_string(),
-                )])
+                Ok(vec![(SirOp::Exp { input: input_id }, "exp".to_string())])
             }
             TracedOp::Cos => {
                 let input_id = self.resolve_input(&node.inputs, 0);
-                Ok(vec![(
-                    SirOp::Cos { input: input_id },
-                    "cos".to_string(),
-                )])
+                Ok(vec![(SirOp::Cos { input: input_id }, "cos".to_string())])
             }
             TracedOp::Sin => {
                 let input_id = self.resolve_input(&node.inputs, 0);
-                Ok(vec![(
-                    SirOp::Sin { input: input_id },
-                    "sin".to_string(),
-                )])
+                Ok(vec![(SirOp::Sin { input: input_id }, "sin".to_string())])
             }
             TracedOp::Gather { axis } => {
                 let input_id = self.resolve_input(&node.inputs, 0);
@@ -486,46 +462,31 @@ impl<'a> SirBuildContext<'a> {
                 let state_id = format!("kv_cache_layer_{}_key", layer_idx);
                 let value_id = self.resolve_input(&node.inputs, 0);
                 Ok(vec![(
-                    SirOp::StateWrite {
-                        state_id,
-                        offset: 0,
-                        value: value_id,
-                    },
+                    SirOp::StateWrite { state_id, offset: 0, value: value_id },
                     format!("kv_write_{}", layer_idx),
                 )])
             }
             TracedOp::Placeholder => {
                 // Create a placeholder — the input to the SIR graph
                 Ok(vec![(
-                    SirOp::Identity {
-                        input: SirNodeId("__placeholder__".to_string()),
-                    },
+                    SirOp::Identity { input: SirNodeId("__placeholder__".to_string()) },
                     "placeholder".to_string(),
                 )])
             }
             TracedOp::Output => {
                 let input_id = self.resolve_input(&node.inputs, 0);
-                Ok(vec![(
-                    SirOp::Identity { input: input_id },
-                    "output".to_string(),
-                )])
+                Ok(vec![(SirOp::Identity { input: input_id }, "output".to_string())])
             }
             TracedOp::GetItem { index: _ } => {
                 // GetItem is structural — the actual selection is handled
                 // by the node's input references
                 let input_id = self.resolve_input(&node.inputs, 0);
-                Ok(vec![(
-                    SirOp::Identity { input: input_id },
-                    "getitem".to_string(),
-                )])
+                Ok(vec![(SirOp::Identity { input: input_id }, "getitem".to_string())])
             }
             TracedOp::Identity => {
                 // No-op: contiguous, size query, etc.
                 let input_id = self.resolve_input(&node.inputs, 0);
-                Ok(vec![(
-                    SirOp::Identity { input: input_id },
-                    "identity".to_string(),
-                )])
+                Ok(vec![(SirOp::Identity { input: input_id }, "identity".to_string())])
             }
             TracedOp::ExpandDims { axis } => {
                 // Unsqueeze — treated as a reshape at the SIR level
@@ -553,22 +514,24 @@ impl<'a> SirBuildContext<'a> {
                     "index_select".to_string(),
                 )])
             }
-            TracedOp::Unknown { op_name, target } => {
-                Err(format!(
-                    "Cannot map unknown traced op '{}' (target: '{}') to SIR. \
+            TracedOp::Unknown { op_name, target } => Err(format!(
+                "Cannot map unknown traced op '{}' (target: '{}') to SIR. \
                      This op may not have an ANE-faithful mapping yet.",
-                    op_name, target
-                ))
-            }
+                op_name, target
+            )),
         }
     }
 
     /// Decompose an attention block into ANE-faithful primitives.
     ///
     /// Config-driven: uses `self.config.uses_gqa` to determine whether
-    /// KV heads need Expand+Broadcast expansion (GQA) or are already
-    /// aligned (MHA). This works for any model architecture without
-    /// a registry.
+    /// KV heads need Tile expansion (GQA) or are already aligned (MHA).
+    /// This works for any model architecture without a registry.
+    ///
+    /// Emits **separate** Q, K, V linear projections (not a single merged
+    /// QKV), each with its own weight name. This ensures every node
+    /// reference in the graph is backed by an actual SirNode, eliminating
+    /// phantom "split" IDs that pointed to nonexistent nodes.
     fn decompose_attention(
         &self,
         embed_dim: usize,
@@ -578,152 +541,126 @@ impl<'a> SirBuildContext<'a> {
         node: &TracedNode,
     ) -> Result<Vec<(SirOp, String)>, String> {
         let mut ops = Vec::new();
+        let input_id = self.resolve_input(&node.inputs, 0);
 
         // Resolve weight names using the module_path from the traced node.
         // For attention, the module_path is typically "model.layers.0.self_attn"
         // and the sub-modules are q_proj, k_proj, v_proj, o_proj.
-        let qkv_weight = if let Some(ref mp) = node.module_path {
-            self.hf_param_name(mp, "q_proj.weight")
+        let (q_weight, k_weight, v_weight, out_weight) = if let Some(ref mp) = node.module_path {
+            (
+                self.hf_param_name(mp, "q_proj.weight"),
+                self.hf_param_name(mp, "k_proj.weight"),
+                self.hf_param_name(mp, "v_proj.weight"),
+                self.hf_param_name(mp, "o_proj.weight"),
+            )
         } else {
-            format!("qkv_weight_{}", node.id)
-        };
-        let out_weight = if let Some(ref mp) = node.module_path {
-            self.hf_param_name(mp, "o_proj.weight")
-        } else {
-            format!("out_proj_weight_{}", node.id)
+            (
+                format!("q_proj_weight_{}", node.id),
+                format!("k_proj_weight_{}", node.id),
+                format!("v_proj_weight_{}", node.id),
+                format!("out_proj_weight_{}", node.id),
+            )
         };
 
-        // QKV Projection: input → [Q, K, V]
-        let input_id = self.resolve_input(&node.inputs, 0);
+        // Separate Q projection: input → Q
         ops.push((
-            SirOp::LinearProjection {
-                input: input_id,
-                weight: qkv_weight,
-                bias: None,
-            },
-            format!("qkv_proj_{}", embed_dim),
+            SirOp::LinearProjection { input: input_id.clone(), weight: q_weight, bias: None },
+            format!("q_proj_{}", embed_dim),
         ));
+        let q_id = SirNodeId(format!("sir_q_proj_{}", node.id));
+
+        // Separate K projection: input → K
+        ops.push((
+            SirOp::LinearProjection { input: input_id.clone(), weight: k_weight, bias: None },
+            format!("k_proj_{}", embed_dim),
+        ));
+        let mut k_id = SirNodeId(format!("sir_k_proj_{}", node.id));
+
+        // Separate V projection: input → V
+        ops.push((
+            SirOp::LinearProjection { input: input_id, weight: v_weight, bias: None },
+            format!("v_proj_{}", embed_dim),
+        ));
+        let mut v_id = SirNodeId(format!("sir_v_proj_{}", node.id));
+
+        // GQA expansion: if the model uses Grouped Query Attention, K/V heads
+        // need to be tiled to match the Q head count.
+        // ANE-compatible: Tile on A14+ (replaces the old ExpandDims+Identity hack).
+        let needs_gqa_expand = self.config.uses_gqa;
+        if needs_gqa_expand {
+            let num_q_heads = self.config.num_attention_heads;
+            let num_kv_heads = self.config.num_key_value_heads.unwrap_or(num_q_heads);
+            let num_replicas = num_q_heads / num_kv_heads;
+            if num_replicas > 1 {
+                // K: tile along the heads dimension
+                ops.push((
+                    SirOp::Tile { input: k_id, reps: vec![1, num_replicas, 1, 1] },
+                    "gqa_k_tile".to_string(),
+                ));
+                k_id = SirNodeId(format!("sir_gqa_k_tiled_{}", node.id));
+
+                // V: tile along the heads dimension
+                ops.push((
+                    SirOp::Tile { input: v_id, reps: vec![1, num_replicas, 1, 1] },
+                    "gqa_v_tile".to_string(),
+                ));
+                v_id = SirNodeId(format!("sir_gqa_v_tiled_{}", node.id));
+            }
+        }
 
         // Attention computation
-        // For GQA models: K/V heads need Expand+Broadcast to match Q heads.
-        // ANE-compatible: Expand+Broadcast on A14+, avoid Gather-based repeat.
-        let needs_gqa_expand = self.config.uses_gqa;
-
         if use_sdpa && self.compiler.target_family().supports_sdpa() {
-            // Use SDPA directly on A16+
-            let q_id = SirNodeId(format!("sir_qkv_split_q_{}", node.id));
-            let mut k_id = SirNodeId(format!("sir_qkv_split_k_{}", node.id));
-            let mut v_id = SirNodeId(format!("sir_qkv_split_v_{}", node.id));
-
-            // GQA: expand K and V to match Q head count
-            if needs_gqa_expand {
-                let num_q_heads = self.config.num_attention_heads;
-                let num_kv_heads = self.config.num_key_value_heads.unwrap_or(num_q_heads);
-                let num_replicas = num_q_heads / num_kv_heads;
-                if num_replicas > 1 {
-                    // Expand K: [batch, kv_heads, seq, dim] → [batch, q_heads, seq, dim]
-                    let _k_expanded_id = SirNodeId(format!("sir_gqa_k_expanded_{}", node.id));
-                    ops.push((
-                        SirOp::ExpandDims {
-                            input: k_id.clone(),
-                            axis: vec![2], // Insert repeat dim after kv_heads
-                        },
-                        "gqa_k_expand_dims".to_string(),
-                    ));
-                    // Broadcast/Tile along the new dimension
-                    let k_tiled_id = SirNodeId(format!("sir_gqa_k_tiled_{}", node.id));
-                    ops.push((
-                        SirOp::Identity { input: SirNodeId(format!("sir_gqa_k_expand_dims_{}", node.id)) },
-                        // TODO: Replace with proper Tile/Repeat op when available
-                        format!("gqa_k_tile_{}x", num_replicas),
-                    ));
-                    // Reshape back to [batch, q_heads, seq, dim]
-                    ops.push((
-                        SirOp::Reshape {
-                            input: k_tiled_id,
-                            target_shape: vec![0, num_q_heads, 0, head_dim],
-                        },
-                        "gqa_k_reshape".to_string(),
-                    ));
-                    k_id = SirNodeId(format!("sir_gqa_k_reshape_{}", node.id));
-
-                    // Same for V
-                    let _v_expanded_id = SirNodeId(format!("sir_gqa_v_expanded_{}", node.id));
-                    ops.push((
-                        SirOp::ExpandDims {
-                            input: v_id.clone(),
-                            axis: vec![2],
-                        },
-                        "gqa_v_expand_dims".to_string(),
-                    ));
-                    let v_tiled_id = SirNodeId(format!("sir_gqa_v_tiled_{}", node.id));
-                    ops.push((
-                        SirOp::Identity { input: SirNodeId(format!("sir_gqa_v_expand_dims_{}", node.id)) },
-                        format!("gqa_v_tile_{}x", num_replicas),
-                    ));
-                    ops.push((
-                        SirOp::Reshape {
-                            input: v_tiled_id,
-                            target_shape: vec![0, num_q_heads, 0, head_dim],
-                        },
-                        "gqa_v_reshape".to_string(),
-                    ));
-                    v_id = SirNodeId(format!("sir_gqa_v_reshape_{}", node.id));
-                }
-            }
-
+            // Use SDPA directly on A16+.
+            // Causal mask: reference to a lower-triangular mask that will be
+            // materialized as a static table by the staticize pass.
+            let causal_mask = Some(SirNodeId(format!("causal_mask_{}", node.id)));
             ops.push((
                 SirOp::ScaledDotProductAttention {
                     query: q_id,
                     key: k_id,
                     value: v_id,
-                    attention_mask: None,
+                    attention_mask: causal_mask,
                     scale: Some(1.0 / (head_dim as f32).sqrt()),
                 },
                 "sdpa".to_string(),
             ));
         } else {
-            // Decompose: QK^T * scale → Softmax → @ V
-            let q_id = SirNodeId(format!("sir_qkv_split_q_{}", node.id));
-            let k_id = SirNodeId(format!("sir_qkv_split_k_{}", node.id));
-            let v_id = SirNodeId(format!("sir_qkv_split_v_{}", node.id));
-
-            // MatMul: Q @ K^T
-            ops.push((
-                SirOp::MatMul { a: q_id, b: k_id },
-                "attn_qk".to_string(),
-            ));
-
-            // Softmax
+            // Manual QK^T → scale → softmax → @V for pre-A16 families
+            ops.push((SirOp::MatMul { a: q_id, b: k_id }, "attn_qk".to_string()));
             let qk_id = SirNodeId(format!("sir_attn_qk_{}", node.id));
-            ops.push((
-                SirOp::Softmax { input: qk_id, axis: -1 },
-                "attn_softmax".to_string(),
-            ));
-
-            // MatMul: scores @ V
+            ops.push((SirOp::Softmax { input: qk_id, axis: -1 }, "attn_softmax".to_string()));
             let scores_id = SirNodeId(format!("sir_attn_softmax_{}", node.id));
-            ops.push((
-                SirOp::MatMul { a: scores_id, b: v_id },
-                "attn_sv".to_string(),
-            ));
+            ops.push((SirOp::MatMul { a: scores_id, b: v_id }, "attn_sv".to_string()));
         }
 
         // Output projection
         let attn_out_id = SirNodeId(format!("sir_attn_out_{}", node.id));
         ops.push((
-            SirOp::LinearProjection {
-                input: attn_out_id,
-                weight: out_weight,
-                bias: None,
-            },
+            SirOp::LinearProjection { input: attn_out_id, weight: out_weight, bias: None },
             format!("out_proj_{}", embed_dim),
         ));
+
+        // Residual connection: if the traced node has 2+ inputs, the second
+        // input is the skip/residual connection. Emit an Add so the block
+        // output = projection_output + residual.
+        if node.inputs.len() >= 2 {
+            let residual_id = self.resolve_input(&node.inputs, 1);
+            let out_proj_id = SirNodeId(format!("sir_out_proj_{}", node.id));
+            ops.push((
+                SirOp::Add { x: out_proj_id, y: residual_id },
+                "attn_residual_add".to_string(),
+            ));
+        }
 
         Ok(ops)
     }
 
     /// Decompose an MLP block into ANE-faithful primitives.
+    ///
+    /// Detects SwiGLU automatically: if both `gate_proj.weight` AND
+    /// `up_proj.weight` exist in the trace weights, the decomposition
+    /// follows the SwiGLU pattern: `down_proj(silu(gate_proj(x)) * up_proj(x))`.
+    /// Otherwise, the standard `down_proj(activation(up_proj(x)))` path is used.
     fn decompose_mlp(
         &self,
         input_dim: usize,
@@ -735,68 +672,131 @@ impl<'a> SirBuildContext<'a> {
         let mut ops = Vec::new();
         let input_id = self.resolve_input(&node.inputs, 0);
 
+        // Detect SwiGLU: if both gate_proj and up_proj exist, use SwiGLU pattern.
+        // This is the standard pattern for Llama, Qwen, and other modern transformers.
+        let has_gate = if let Some(ref mp) = node.module_path {
+            self.trace.weights.contains_key(&self.hf_param_name(mp, "gate_proj.weight"))
+        } else {
+            false
+        };
+        let has_up = if let Some(ref mp) = node.module_path {
+            self.trace.weights.contains_key(&self.hf_param_name(mp, "up_proj.weight"))
+        } else {
+            false
+        };
+        let is_swiglu = has_gate && has_up;
+
         // Resolve weight names using module_path.
         // MLP module_path is typically "model.layers.0.mlp"
-        // Sub-modules are gate_proj/up_proj, down_proj (varies by architecture).
-        let up_weight = if let Some(ref mp) = node.module_path {
-            // Try common MLP up-projection names: gate_proj, up_proj
-            if self.trace.weights.contains_key(&self.hf_param_name(mp, "gate_proj.weight")) {
-                self.hf_param_name(mp, "gate_proj.weight")
+        // Sub-modules are gate_proj, up_proj, down_proj (varies by architecture).
+        let (gate_weight, up_weight, down_weight) = if let Some(ref mp) = node.module_path {
+            (
+                self.hf_param_name(mp, "gate_proj.weight"),
+                self.hf_param_name(mp, "up_proj.weight"),
+                self.hf_param_name(mp, "down_proj.weight"),
+            )
+        } else {
+            (
+                format!("gate_proj_weight_{}", node.id),
+                format!("up_proj_weight_{}", node.id),
+                format!("down_proj_weight_{}", node.id),
+            )
+        };
+
+        if is_swiglu {
+            // SwiGLU: down_proj(silu(gate_proj(x)) * up_proj(x))
+            // 1. gate_proj(x)
+            ops.push((
+                SirOp::LinearProjection {
+                    input: input_id.clone(),
+                    weight: gate_weight,
+                    bias: None,
+                },
+                format!("gate_proj_{}_{}", input_dim, hidden_dim),
+            ));
+            let gate_id = SirNodeId(format!("sir_gate_proj_{}", node.id));
+
+            // 2. silu(gate_proj(x))
+            ops.push((SirOp::Silu { input: gate_id }, "mlp_gate_silu".to_string()));
+            let gate_silu_id = SirNodeId(format!("sir_gate_silu_{}", node.id));
+
+            // 3. up_proj(x) — NO activation
+            ops.push((
+                SirOp::LinearProjection { input: input_id, weight: up_weight, bias: None },
+                format!("up_proj_{}_{}", input_dim, hidden_dim),
+            ));
+            let up_id = SirNodeId(format!("sir_up_proj_{}", node.id));
+
+            // 4. silu(gate) * up  (element-wise multiply)
+            ops.push((SirOp::Mul { x: gate_silu_id, y: up_id }, "mlp_swiglu_mul".to_string()));
+            let swiglu_id = SirNodeId(format!("sir_swiglu_mul_{}", node.id));
+
+            // 5. down_proj
+            ops.push((
+                SirOp::LinearProjection { input: swiglu_id, weight: down_weight, bias: None },
+                format!("down_proj_{}_{}", hidden_dim, output_dim),
+            ));
+        } else {
+            // Standard MLP: down_proj(activation(up_proj(x)))
+            // Choose the up-projection weight name: gate_proj or up_proj
+            let up_weight_resolved = if let Some(ref mp) = node.module_path {
+                if has_gate {
+                    self.hf_param_name(mp, "gate_proj.weight")
+                } else {
+                    self.hf_param_name(mp, "up_proj.weight")
+                }
             } else {
-                self.hf_param_name(mp, "up_proj.weight")
-            }
-        } else {
-            format!("up_proj_weight_{}", node.id)
-        };
-        let down_weight = if let Some(ref mp) = node.module_path {
-            self.hf_param_name(mp, "down_proj.weight")
-        } else {
-            format!("down_proj_weight_{}", node.id)
-        };
+                format!("up_proj_weight_{}", node.id)
+            };
 
-        // Up-projection: input → hidden
-        ops.push((
-            SirOp::LinearProjection {
-                input: input_id,
-                weight: up_weight,
-                bias: None,
-            },
-            format!("up_proj_{}_{}", input_dim, hidden_dim),
-        ));
+            // Up-projection: input → hidden
+            ops.push((
+                SirOp::LinearProjection { input: input_id, weight: up_weight_resolved, bias: None },
+                format!("up_proj_{}_{}", input_dim, hidden_dim),
+            ));
 
-        // Activation
-        let up_id = SirNodeId(format!("sir_up_proj_{}", node.id));
-        match activation {
-            "silu" | "swish" => {
-                ops.push((SirOp::Silu { input: up_id }, "mlp_silu".to_string()));
+            // Activation
+            let up_id = SirNodeId(format!("sir_up_proj_{}", node.id));
+            match activation {
+                "silu" | "swish" => {
+                    ops.push((SirOp::Silu { input: up_id }, "mlp_silu".to_string()));
+                }
+                "gelu" | "gelu_new" => {
+                    ops.push((
+                        SirOp::Gelu { input: up_id, mode: "EXACT".to_string() },
+                        "mlp_gelu".to_string(),
+                    ));
+                }
+                "relu" => {
+                    ops.push((SirOp::Relu { input: up_id }, "mlp_relu".to_string()));
+                }
+                _ => {
+                    return Err(format!(
+                        "Unsupported MLP activation '{}' — cannot map to ANE-faithful op",
+                        activation
+                    ));
+                }
             }
-            "gelu" | "gelu_new" => {
-                ops.push((
-                    SirOp::Gelu { input: up_id, mode: "EXACT".to_string() },
-                    "mlp_gelu".to_string(),
-                ));
-            }
-            "relu" => {
-                ops.push((SirOp::Relu { input: up_id }, "mlp_relu".to_string()));
-            }
-            _ => {
-                return Err(format!(
-                    "Unsupported MLP activation '{}' — cannot map to ANE-faithful op",
-                    activation
-                ));
-            }
+
+            // Down-projection: hidden → output
+            let act_id = SirNodeId(format!("sir_mlp_act_{}", node.id));
+            ops.push((
+                SirOp::LinearProjection { input: act_id, weight: down_weight, bias: None },
+                format!("down_proj_{}_{}", hidden_dim, output_dim),
+            ));
         }
 
-        // Down-projection: hidden → output
-        let act_id = SirNodeId(format!("sir_mlp_act_{}", node.id));
-        ops.push((
-            SirOp::LinearProjection {
-                input: act_id,
-                weight: down_weight,
-                bias: None,
-            },
-            format!("down_proj_{}_{}", hidden_dim, output_dim),
-        ));
+        // Residual connection: if the traced node has 2+ inputs, the second
+        // input is the skip/residual connection. Emit an Add so the block
+        // output = down_proj_output + residual.
+        if node.inputs.len() >= 2 {
+            let residual_id = self.resolve_input(&node.inputs, 1);
+            let down_proj_id = SirNodeId(format!("sir_down_proj_{}", node.id));
+            ops.push((
+                SirOp::Add { x: down_proj_id, y: residual_id },
+                "mlp_residual_add".to_string(),
+            ));
+        }
 
         Ok(ops)
     }
@@ -818,10 +818,7 @@ impl<'a> SirBuildContext<'a> {
 
         // cos * x
         let cos_id = SirNodeId(format!("sir_rope_cos_{}", node.id));
-        ops.push((
-            SirOp::Mul { x: input_id.clone(), y: cos_id },
-            "rope_cos_mul".to_string(),
-        ));
+        ops.push((SirOp::Mul { x: input_id.clone(), y: cos_id }, "rope_cos_mul".to_string()));
 
         // rotate_half(x) — split last dim in half, swap, concat
         // In practice, this is: concat([-x[..., d//2:], x[..., :d//2]], axis=-1)
@@ -854,18 +851,12 @@ impl<'a> SirBuildContext<'a> {
         // sin * rotate_half(x)
         let sin_id = SirNodeId(format!("sir_rope_sin_{}", node.id));
         let rotated_id = SirNodeId(format!("sir_rope_rotated_{}", node.id));
-        ops.push((
-            SirOp::Mul { x: rotated_id, y: sin_id },
-            "rope_sin_mul".to_string(),
-        ));
+        ops.push((SirOp::Mul { x: rotated_id, y: sin_id }, "rope_sin_mul".to_string()));
 
         // cos*x + sin*rotate_half(x)
         let cos_mul_id = SirNodeId(format!("sir_rope_cos_mul_{}", node.id));
         let sin_mul_id = SirNodeId(format!("sir_rope_sin_mul_{}", node.id));
-        ops.push((
-            SirOp::Add { x: cos_mul_id, y: sin_mul_id },
-            "rope_add".to_string(),
-        ));
+        ops.push((SirOp::Add { x: cos_mul_id, y: sin_mul_id }, "rope_add".to_string()));
 
         Ok(ops)
     }
@@ -894,6 +885,16 @@ impl<'a> SirBuildContext<'a> {
         let input_id = self.resolve_input(&node.inputs, 0);
         let rms_weight = self.resolve_weight_name(node, &format!("rms_weight_{}", node.id));
 
+        // Guard against zero/missing epsilon — use config's layer_norm_epsilon
+        // as fallback, or the standard 1e-6 for RMSNorm models (Qwen3, Llama, etc.).
+        let effective_epsilon = if epsilon > 0.0 {
+            epsilon as f32
+        } else if self.config.layer_norm_epsilon > 0.0 {
+            self.config.layer_norm_epsilon as f32
+        } else {
+            1e-6 // Standard default for RMSNorm (Qwen3, Llama, etc.)
+        };
+
         // Emit the composite RMSNorm op. The actual decomposition into
         // primitives (naive vs max-abs-stabilized vs other) is determined
         // by the strategy framework and applied by the legality rewrite pass.
@@ -901,11 +902,7 @@ impl<'a> SirBuildContext<'a> {
         // This keeps sir_build.rs strategy-agnostic: it records the semantic
         // intent (RMSNorm) without committing to a specific decomposition.
         Ok(vec![(
-            SirOp::RMSNorm {
-                input: input_id,
-                weight: rms_weight,
-                epsilon: epsilon as f32,
-            },
+            SirOp::RMSNorm { input: input_id, weight: rms_weight, epsilon: effective_epsilon },
             format!("rms_norm_{}", hidden_size),
         )])
     }
@@ -923,44 +920,43 @@ impl<'a> SirBuildContext<'a> {
         let mut ops = Vec::new();
 
         // Q @ K^T
-        ops.push((
-            SirOp::MatMul { a: q_id, b: k_id },
-            "sdpa_qk".to_string(),
-        ));
+        ops.push((SirOp::MatMul { a: q_id, b: k_id }, "sdpa_qk".to_string()));
 
         // Scale (multiply by 1/sqrt(d_k))
         let qk_id = SirNodeId(format!("sir_sdpa_qk_{}", node.id));
         ops.push((
-            SirOp::Mul {
-                x: qk_id,
-                y: SirNodeId(format!("const_scale_{}", node.id)),
-            },
+            SirOp::Mul { x: qk_id, y: SirNodeId(format!("const_scale_{}", node.id)) },
             "sdpa_scale".to_string(),
         ));
 
         // Softmax
         let scaled_id = SirNodeId(format!("sir_sdpa_scaled_{}", node.id));
-        ops.push((
-            SirOp::Softmax { input: scaled_id, axis: -1 },
-            "sdpa_softmax".to_string(),
-        ));
+        ops.push((SirOp::Softmax { input: scaled_id, axis: -1 }, "sdpa_softmax".to_string()));
 
         // Scores @ V
         let softmax_id = SirNodeId(format!("sir_sdpa_softmax_{}", node.id));
-        ops.push((
-            SirOp::MatMul { a: softmax_id, b: v_id },
-            "sdpa_sv".to_string(),
-        ));
+        ops.push((SirOp::MatMul { a: softmax_id, b: v_id }, "sdpa_sv".to_string()));
 
         Ok(ops)
     }
 
     /// Resolve a traced node input reference to a SIR node ID.
+    ///
+    /// Emits a warning to stderr when the input cannot be resolved,
+    /// instead of silently producing an `__unresolved_N__` node.
     fn resolve_input(&self, inputs: &[String], index: usize) -> SirNodeId {
-        inputs
-            .get(index)
-            .and_then(|id| self.lookup_sir_id(id).cloned())
-            .unwrap_or_else(|| SirNodeId(format!("__unresolved_{}__", index)))
+        inputs.get(index).and_then(|id| self.lookup_sir_id(id).cloned()).unwrap_or_else(|| {
+            let unresolved = SirNodeId(format!("__unresolved_{}__", index));
+            eprintln!(
+                "WARNING: SIR resolve_input failed — no mapping for input index {} \
+                     (inputs: {:?}, node_map keys: {:?}). Producing {}.",
+                index,
+                inputs,
+                self.node_map.keys().take(10).collect::<Vec<_>>(),
+                unresolved.0
+            );
+            unresolved
+        })
     }
 }
 
@@ -982,7 +978,6 @@ mod tests {
     use super::*;
     use crate::graph::*;
     use std::collections::HashMap;
-
 
     fn make_simple_trace() -> TracedGraph {
         TracedGraph {
@@ -1083,9 +1078,10 @@ mod tests {
     fn test_sir_has_transformers_origin() {
         let trace = make_simple_trace();
         let sir = build_sir_from_trace(&trace, AneFamily::A16).unwrap();
-        let has_trace_origin = sir.nodes.iter().any(|n| {
-            matches!(n.metadata.task_origin, TaskOrigin::TransformersTrace { .. })
-        });
+        let has_trace_origin = sir
+            .nodes
+            .iter()
+            .any(|n| matches!(n.metadata.task_origin, TaskOrigin::TransformersTrace { .. }));
         assert!(has_trace_origin);
     }
 
@@ -1175,23 +1171,30 @@ mod tests {
     fn test_rms_norm_decomposition() {
         let mut trace = make_simple_trace();
         // Replace the linear node with an RMSNorm
-        trace.nodes.insert(1, TracedNode {
-            id: "rms1".to_string(),
-            op: TracedOp::RmsNorm { hidden_size: 256, epsilon: 1e-6 },
-            name: "rms_norm".to_string(),
-            inputs: vec!["input".to_string()],
-            output_shape: TensorShape { dims: vec![1, 32, 256], dtype: "fp16".to_string() },
-            is_parameter: false,
-            module_path: None,
-        });
+        trace.nodes.insert(
+            1,
+            TracedNode {
+                id: "rms1".to_string(),
+                op: TracedOp::RmsNorm { hidden_size: 256, epsilon: 1e-6 },
+                name: "rms_norm".to_string(),
+                inputs: vec!["input".to_string()],
+                output_shape: TensorShape { dims: vec![1, 32, 256], dtype: "fp16".to_string() },
+                is_parameter: false,
+                module_path: None,
+            },
+        );
 
         let sir = build_sir_from_trace(&trace, AneFamily::A16).unwrap();
         // RMSNorm is now emitted as a single composite op (not decomposed into
         // primitives). The actual decomposition happens in the legality rewrite pass.
-        let rms_ops: Vec<_> = sir.nodes.iter()
-            .filter(|n| matches!(n.op, SirOp::RMSNorm { .. }))
-            .collect();
-        assert_eq!(rms_ops.len(), 1, "RMSNorm should produce exactly 1 SirOp::RMSNorm node, got {} nodes", rms_ops.len());
+        let rms_ops: Vec<_> =
+            sir.nodes.iter().filter(|n| matches!(n.op, SirOp::RMSNorm { .. })).collect();
+        assert_eq!(
+            rms_ops.len(),
+            1,
+            "RMSNorm should produce exactly 1 SirOp::RMSNorm node, got {} nodes",
+            rms_ops.len()
+        );
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -1206,7 +1209,10 @@ mod tests {
     /// Helper: build a TracedGraph with arbitrary ModelConfig.
     /// This simulates what the Python tracer would produce for different
     /// model architectures without requiring actual model downloads.
-    fn make_trace_with_config(config: ModelConfig, discovered: crate::graph::DiscoveredFeatures) -> TracedGraph {
+    fn make_trace_with_config(
+        config: ModelConfig,
+        discovered: crate::graph::DiscoveredFeatures,
+    ) -> TracedGraph {
         TracedGraph {
             model_id: format!("test-{}", config.model_type),
             architecture: format!("{}ForCausalLM", config.model_type),
@@ -1270,7 +1276,7 @@ mod tests {
         let config = ModelConfig {
             hidden_size: 1024,
             num_attention_heads: 16,
-            num_key_value_heads: Some(8),  // GQA: 8 KV heads for 16 Q heads
+            num_key_value_heads: Some(8), // GQA: 8 KV heads for 16 Q heads
             num_hidden_layers: 24,
             intermediate_size: 4096,
             vocab_size: 151936,
@@ -1280,7 +1286,7 @@ mod tests {
             uses_rope: true,
             uses_rms_norm: true,
             uses_gqa: true,
-            model_type: "qwen3_5_text".to_string(),  // No hardcoded list needed!
+            model_type: "qwen3_5_text".to_string(), // No hardcoded list needed!
             model_class: "causal_lm".to_string(),
             is_encoder_decoder: false,
         };
@@ -1303,8 +1309,11 @@ mod tests {
         };
 
         let trace = make_trace_with_config(config, discovered);
-        let sir = build_sir_from_trace(&trace, AneFamily::A12);  // M2 target
-        assert!(sir.is_ok(), "Qwen3.5 should trace successfully on A12 without any hardcoded heuristics");
+        let sir = build_sir_from_trace(&trace, AneFamily::A12); // M2 target
+        assert!(
+            sir.is_ok(),
+            "Qwen3.5 should trace successfully on A12 without any hardcoded heuristics"
+        );
 
         let sir = sir.unwrap();
         let has_rms = sir.nodes.iter().any(|n| matches!(n.op, SirOp::RMSNorm { .. }));
@@ -1360,7 +1369,7 @@ mod tests {
         let config = ModelConfig {
             hidden_size: 2048,
             num_attention_heads: 32,
-            num_key_value_heads: Some(8),  // GQA
+            num_key_value_heads: Some(8), // GQA
             num_hidden_layers: 16,
             intermediate_size: 8192,
             vocab_size: 128256,
@@ -1415,7 +1424,7 @@ mod tests {
             uses_rope: true,
             uses_rms_norm: true,
             uses_gqa: false,
-            model_type: "future_architecture_v7".to_string(),  // Completely unknown!
+            model_type: "future_architecture_v7".to_string(), // Completely unknown!
             model_class: "causal_lm".to_string(),
             is_encoder_decoder: false,
         };
@@ -1507,8 +1516,8 @@ mod tests {
         // Verify the new fields are set correctly
         assert_eq!(config.model_class, "seq2seq_lm");
         assert!(config.is_encoder_decoder);
-        assert!(!config.uses_rope);  // BART uses learned positional embeddings, not RoPE
-        assert!(!config.uses_rms_norm);  // BART uses LayerNorm
+        assert!(!config.uses_rope); // BART uses learned positional embeddings, not RoPE
+        assert!(!config.uses_rms_norm); // BART uses LayerNorm
     }
 
     #[test]
@@ -1528,7 +1537,7 @@ mod tests {
             hidden_act: "silu".to_string(),
             uses_rope: true,
             uses_rms_norm: true,
-            uses_gqa: true,  // 14 heads, 2 KV heads = 7x GQA
+            uses_gqa: true, // 14 heads, 2 KV heads = 7x GQA
             model_type: "qwen3_asr".to_string(),
             model_class: "decoder_only".to_string(),
             is_encoder_decoder: false,
@@ -1563,8 +1572,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&config).expect("Should serialize");
-        let deserialized: ModelConfig =
-            serde_json::from_str(&json).expect("Should deserialize");
+        let deserialized: ModelConfig = serde_json::from_str(&json).expect("Should deserialize");
 
         assert_eq!(deserialized.model_class, "causal_lm");
         assert!(!deserialized.is_encoder_decoder);
@@ -1613,7 +1621,9 @@ mod tests {
         // Llama-3.2-1B: standard causal LM with RMSNorm + RoPE + GQA
         let graph = load_fixture("llama_3_2_1b.json");
         if graph.is_none() {
-            eprintln!("SKIP: llama_3_2_1b.json fixture not found (run scripts/generate_fixtures.py)");
+            eprintln!(
+                "SKIP: llama_3_2_1b.json fixture not found (run scripts/generate_fixtures.py)"
+            );
             return;
         }
         let trace = graph.unwrap();
@@ -1670,7 +1680,9 @@ mod tests {
         // Qwen3.5-0.8B: model_type="qwen3_5_text" — no hardcoded registry needed
         let graph = load_fixture("qwen3_5_0_8b.json");
         if graph.is_none() {
-            eprintln!("SKIP: qwen3_5_0_8b.json fixture not found (run scripts/generate_fixtures.py)");
+            eprintln!(
+                "SKIP: qwen3_5_0_8b.json fixture not found (run scripts/generate_fixtures.py)"
+            );
             return;
         }
         let trace = graph.unwrap();
@@ -1693,7 +1705,9 @@ mod tests {
         // Uses LayerNorm (not RMSNorm), learned positional embeddings (no RoPE)
         let graph = load_fixture("dolphin_1_5.json");
         if graph.is_none() {
-            eprintln!("SKIP: dolphin_1_5.json fixture not found (run scripts/generate_fixtures.py)");
+            eprintln!(
+                "SKIP: dolphin_1_5.json fixture not found (run scripts/generate_fixtures.py)"
+            );
             return;
         }
         let trace = graph.unwrap();
@@ -1701,7 +1715,7 @@ mod tests {
         assert_eq!(trace.model_id, "ByteDance/Dolphin-1.5");
         assert_eq!(trace.model_config.model_class, "seq2seq_lm");
         assert!(trace.model_config.is_encoder_decoder);
-        assert!(!trace.model_config.uses_rope);  // BART uses learned embeddings
+        assert!(!trace.model_config.uses_rope); // BART uses learned embeddings
 
         // Note: Dolphin's LayerNorm requires A15+ or CPU fallback on A12
         // On A12 (M2), this may need a legality rewrite to handle LayerNorm
@@ -1719,7 +1733,9 @@ mod tests {
         // The decoder is a standard Qwen3 causal LM
         let graph = load_fixture("qwen3_asr_0_6b.json");
         if graph.is_none() {
-            eprintln!("SKIP: qwen3_asr_0_6b.json fixture not found (run scripts/generate_fixtures.py)");
+            eprintln!(
+                "SKIP: qwen3_asr_0_6b.json fixture not found (run scripts/generate_fixtures.py)"
+            );
             return;
         }
         let trace = graph.unwrap();
@@ -1746,11 +1762,11 @@ mod tests {
         // Cross-model validation: all fixtures should produce SIR graphs
         // with reasonable op counts that scale with model size
         let fixtures = [
-            ("llama_3_2_1b.json", 16),  // 16 layers
+            ("llama_3_2_1b.json", 16),   // 16 layers
             ("qwen3_0_6b.json", 28),     // 28 layers
             ("qwen3_5_0_8b.json", 24),   // 24 layers
-            ("dolphin_1_5.json", 6),      // 6 layers
-            ("qwen3_asr_0_6b.json", 24),  // 24 layers
+            ("dolphin_1_5.json", 6),     // 6 layers
+            ("qwen3_asr_0_6b.json", 24), // 24 layers
         ];
 
         let mut loaded_count = 0;
@@ -1760,14 +1776,12 @@ mod tests {
                 loaded_count += 1;
                 assert_eq!(
                     trace.model_config.num_hidden_layers, *expected_layers,
-                    "Fixture {} should have {} layers", name, expected_layers
+                    "Fixture {} should have {} layers",
+                    name, expected_layers
                 );
 
                 let sir = build_sir_from_trace(&trace, AneFamily::A12);
-                assert!(
-                    sir.is_ok(),
-                    "Fixture {} should produce valid SIR", name
-                );
+                assert!(sir.is_ok(), "Fixture {} should produce valid SIR", name);
             }
         }
 

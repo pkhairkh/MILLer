@@ -506,10 +506,7 @@ mod tests {
         let main_func = program.functions.get("main").unwrap();
         assert_eq!(main_func.opset, "CoreML9");
 
-        let block = main_func
-            .block_specializations
-            .get("CoreML9")
-            .unwrap();
+        let block = main_func.block_specializations.get("CoreML9").unwrap();
 
         // Should have 3 operations: const (weight) + const (bias) + linear
         assert_eq!(block.operations.len(), 3);
@@ -573,10 +570,7 @@ mod tests {
             ane_coreml_proto::apple_proto::model::Type::MlProgram(p) => p,
         };
         let main_func = program.functions.get("main").unwrap();
-        let block = main_func
-            .block_specializations
-            .get("CoreML9")
-            .unwrap();
+        let block = main_func.block_specializations.get("CoreML9").unwrap();
 
         // First const op: should have BlobFileValue in attributes["val"] with offset 0
         let const_op0 = &block.operations[0];
@@ -699,10 +693,7 @@ mod tests {
             ane_coreml_proto::apple_proto::model::Type::MlProgram(p) => p,
         };
         let func = program.functions.get("main").unwrap();
-        let block = func
-            .block_specializations
-            .get("CoreML9")
-            .unwrap();
+        let block = func.block_specializations.get("CoreML9").unwrap();
 
         assert_eq!(block.operations.len(), 2);
 

@@ -47,18 +47,16 @@ pub struct NormStabilizationResult {
 /// # Returns
 /// Statistics about how many scales were applied.
 pub fn run_slanc_scales_pass(graph: &mut SirGraph) -> NormStabilizationResult {
-    let mut result = NormStabilizationResult {
-        scales_applied: 0,
-        ops_inserted: 0,
-    };
+    let mut result = NormStabilizationResult { scales_applied: 0, ops_inserted: 0 };
 
     // Collect indices of RMSNorm nodes that need pre-scales
-    let rms_norm_indices: Vec<usize> = graph.nodes.iter().enumerate()
-        .filter_map(|(idx, node)| {
-            match &node.op {
-                SirOp::RMSNorm { .. } => Some(idx),
-                _ => None,
-            }
+    let rms_norm_indices: Vec<usize> = graph
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| match &node.op {
+            SirOp::RMSNorm { .. } => Some(idx),
+            _ => None,
         })
         .collect();
 
@@ -70,9 +68,7 @@ pub fn run_slanc_scales_pass(graph: &mut SirGraph) -> NormStabilizationResult {
     for idx in rms_norm_indices {
         let node = &graph.nodes[idx];
         let (input_id, weight_name, epsilon) = match &node.op {
-            SirOp::RMSNorm { input, weight, epsilon } => {
-                (input.clone(), weight.clone(), *epsilon)
-            }
+            SirOp::RMSNorm { input, weight, epsilon } => (input.clone(), weight.clone(), *epsilon),
             _ => unreachable!(),
         };
 
@@ -82,10 +78,7 @@ pub fn run_slanc_scales_pass(graph: &mut SirGraph) -> NormStabilizationResult {
 
         let const_node = SirNode {
             id: const_id.clone(),
-            op: SirOp::Const {
-                value_path: scale_name.clone(),
-                dtype: ane_ir::mir::MilDtype::Fp16,
-            },
+            op: SirOp::Const { value_path: scale_name.clone(), dtype: ane_ir::mir::MilDtype::Fp16 },
             name: format!("norm_stabilization_const_{}", node.id.0),
             metadata: node.metadata.clone(),
         };
@@ -95,10 +88,7 @@ pub fn run_slanc_scales_pass(graph: &mut SirGraph) -> NormStabilizationResult {
 
         let mul_node = SirNode {
             id: mul_id.clone(),
-            op: SirOp::Mul {
-                x: input_id,
-                y: const_id,
-            },
+            op: SirOp::Mul { x: input_id, y: const_id },
             name: format!("norm_stabilization_prescale_{}", node.id.0),
             metadata: node.metadata.clone(),
         };
@@ -106,11 +96,7 @@ pub fn run_slanc_scales_pass(graph: &mut SirGraph) -> NormStabilizationResult {
         // Update the RMSNorm to use the pre-scaled input
         let updated_rms = SirNode {
             id: node.id.clone(),
-            op: SirOp::RMSNorm {
-                input: mul_id,
-                weight: weight_name,
-                epsilon,
-            },
+            op: SirOp::RMSNorm { input: mul_id, weight: weight_name, epsilon },
             name: node.name.clone(),
             metadata: node.metadata.clone(),
         };
@@ -138,23 +124,21 @@ mod tests {
     #[test]
     fn test_norm_stabilization_inserts_prescale_ops() {
         let mut graph = SirGraph {
-            nodes: vec![
-                SirNode {
-                    id: SirNodeId("rms_0".to_string()),
-                    op: SirOp::RMSNorm {
-                        input: SirNodeId("input_0".to_string()),
-                        weight: "norm_weight_0".to_string(),
-                        epsilon: 1e-6,
-                    },
-                    name: "rms_norm_0".to_string(),
-                    metadata: SirMetadata {
-                        task_origin: TaskOrigin::Synthetic,
-                        model_id: None,
-                        quality_contract: None,
-                        precision_override: None,
-                    },
+            nodes: vec![SirNode {
+                id: SirNodeId("rms_0".to_string()),
+                op: SirOp::RMSNorm {
+                    input: SirNodeId("input_0".to_string()),
+                    weight: "norm_weight_0".to_string(),
+                    epsilon: 1e-6,
                 },
-            ],
+                name: "rms_norm_0".to_string(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
             inputs: vec![SirNodeId("input_0".to_string())],
             outputs: vec![SirNodeId("rms_0".to_string())],
         };
@@ -168,23 +152,23 @@ mod tests {
         let rms_node = graph.nodes.iter().find(|n| n.id.0 == "rms_0").unwrap();
         match &rms_node.op {
             SirOp::RMSNorm { input, .. } => {
-                assert!(input.0.contains("norm_stabilization_prescale"),
-                    "RMSNorm input should come from the pre-scale Mul op");
+                assert!(
+                    input.0.contains("norm_stabilization_prescale"),
+                    "RMSNorm input should come from the pre-scale Mul op"
+                );
             }
             _ => panic!("Expected RMSNorm op"),
         }
 
         // Verify a Const op was inserted
         let has_const = graph.nodes.iter().any(|n| {
-            matches!(n.op, SirOp::Const { .. })
-                && n.name.contains("norm_stabilization_const")
+            matches!(n.op, SirOp::Const { .. }) && n.name.contains("norm_stabilization_const")
         });
         assert!(has_const, "Graph should contain a Const op for the scale factor");
 
         // Verify a Mul op was inserted
         let has_mul = graph.nodes.iter().any(|n| {
-            matches!(n.op, SirOp::Mul { .. })
-                && n.name.contains("norm_stabilization_prescale")
+            matches!(n.op, SirOp::Mul { .. }) && n.name.contains("norm_stabilization_prescale")
         });
         assert!(has_mul, "Graph should contain a Mul op for the pre-scale");
     }

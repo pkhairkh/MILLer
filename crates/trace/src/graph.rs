@@ -178,22 +178,11 @@ pub enum TracedOp {
         use_sdpa: bool,
     },
     /// MLP / feed-forward block.
-    MlpBlock {
-        input_dim: usize,
-        hidden_dim: usize,
-        output_dim: usize,
-        activation: String,
-    },
+    MlpBlock { input_dim: usize, hidden_dim: usize, output_dim: usize, activation: String },
     /// RoPE (Rotary Position Embedding) application.
-    RopeTransform {
-        head_dim: usize,
-        max_seq_len: usize,
-    },
+    RopeTransform { head_dim: usize, max_seq_len: usize },
     /// RMSNorm layer.
-    RmsNorm {
-        hidden_size: usize,
-        epsilon: f64,
-    },
+    RmsNorm { hidden_size: usize, epsilon: f64 },
 
     // ─── Primitive Ops (after decomposition) ───────────────────────
     /// Linear projection: y = x @ W^T + b
@@ -213,19 +202,11 @@ pub enum TracedOp {
         b_shape: TensorShape,
     },
     /// Embedding lookup (vocab_size × embed_dim).
-    Embedding {
-        vocab_size: usize,
-        embed_dim: usize,
-    },
+    Embedding { vocab_size: usize, embed_dim: usize },
     /// Layer normalization.
-    LayerNorm {
-        normalized_shape: Vec<usize>,
-        epsilon: f64,
-    },
+    LayerNorm { normalized_shape: Vec<usize>, epsilon: f64 },
     /// Scaled dot-product attention.
-    ScaledDotProductAttention {
-        scale: f64,
-    },
+    ScaledDotProductAttention { scale: f64 },
     /// Softmax along an axis.
     Softmax { axis: isize },
     /// GELU activation.
@@ -288,17 +269,9 @@ pub enum TracedOp {
         axis: Vec<isize>,
     },
     /// KV-cache read.
-    KvCacheRead {
-        layer_idx: usize,
-        head_dim: usize,
-        num_heads: usize,
-    },
+    KvCacheRead { layer_idx: usize, head_dim: usize, num_heads: usize },
     /// KV-cache write.
-    KvCacheWrite {
-        layer_idx: usize,
-        head_dim: usize,
-        num_heads: usize,
-    },
+    KvCacheWrite { layer_idx: usize, head_dim: usize, num_heads: usize },
     /// Placeholder (model input).
     Placeholder,
     /// Output node.

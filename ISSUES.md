@@ -17,6 +17,7 @@ Current high-signal issues after the Sprint 60 code quality, ANE constraints gro
 - **Sprint 58 resolved**: `MilDtypeRepr` unified into `MilDtype`; `ComputeUnits` unified into `ComputeUnitHint`; `ane-ir` uses `anyhow::Result`; naming inconsistencies fixed (`MILAtanh`, `MILSinh`); stub passes implemented/removed; CI pipeline configured; Python tests added.
 - **Sprint 59 resolved**: `AneFamily`/`AneRevision`/`AneTarget` types with chip-to-family mapping; `AneEngine` with per-MirOp engine assignment; `AnePlacementValidator` for hard constraint checks; per-family op legality matrix seeded; SDPA constraint validation in AIR→MIR lowering; palettization constraints seeded.
 - **Sprint 60 resolved**: Per-op constraint validation for conv/linear/gather/pooling/ArgMinMax; dtype legality rules per ANE family; `CPU_ONLY_OPS` hard gate in `LegalityRewritePass`; `AneInterleave`/`AneLayout` types; `AneHwLimits` per-revision hardware limits.
+- **SIR Trace Bugfix Sprint resolved**: Seven critical bugs in `sir_build.rs` fixed — (1) separate Q/K/V projections instead of single merged QKV, (2) no phantom split node references, (3) residual connections emitted as `SirOp::Add`, (4) RMSNorm epsilon validation with fallback chain, (5) causal mask references in SDPA, (6) SwiGLU auto-detection when both gate_proj and up_proj exist, (7) non-silent `resolve_input` warnings. Model registry references removed from all documentation — decomposition is fully config-driven.
 
 ## Current Priorities
 

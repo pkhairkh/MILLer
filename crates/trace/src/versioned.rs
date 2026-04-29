@@ -33,11 +33,7 @@ impl VersionedCompiler {
         let revision = family_to_default_revision(family);
         let hw_limits = AneHwLimits::for_revision(revision);
         let op_support = OpSupportMatrix::for_family(family);
-        Self {
-            target_family: family,
-            hw_limits,
-            op_support,
-        }
+        Self { target_family: family, hw_limits, op_support }
     }
 
     /// The target ANE family.
@@ -106,9 +102,7 @@ impl VersionedCompiler {
                         report.violations.push(ConstraintViolation {
                             node_id: node.id.0.clone(),
                             op_name: op_name.clone(),
-                            violation_type: ViolationType::FamilyGated {
-                                required: minimum_family,
-                            },
+                            violation_type: ViolationType::FamilyGated { required: minimum_family },
                             message: reason.clone(),
                             severity: if ane_only { Severity::Error } else { Severity::Warning },
                         });
@@ -151,8 +145,7 @@ impl VersionedCompiler {
             }
             AneFamily::A15 => {
                 report.warnings.push(
-                    "A15: SDPA may not be reliable. Consider decomposing attention."
-                        .to_string(),
+                    "A15: SDPA may not be reliable. Consider decomposing attention.".to_string(),
                 );
             }
             AneFamily::A16 => {
@@ -359,7 +352,10 @@ impl OpSupportMatrix {
                 }
             }
             SirOp::InstanceNorm { .. } => OpSupport::AneSupported(AneEngineSupport::NE),
-            SirOp::BatchNorm { .. } => OpSupport::CpuOnly("BatchNorm decomposes to InstanceNorm + broadcast; may partially fall back".to_string()),
+            SirOp::BatchNorm { .. } => OpSupport::CpuOnly(
+                "BatchNorm decomposes to InstanceNorm + broadcast; may partially fall back"
+                    .to_string(),
+            ),
 
             // ─── Attention ─────────────────────────────────────────
             SirOp::ScaledDotProductAttention { .. } => {
@@ -393,12 +389,20 @@ impl OpSupportMatrix {
                 if *axis >= 0 {
                     OpSupport::AneSupported(AneEngineSupport::PE)
                 } else {
-                    OpSupport::CpuOnly("Gather with negative axis may not be ANE-compatible".to_string())
+                    OpSupport::CpuOnly(
+                        "Gather with negative axis may not be ANE-compatible".to_string(),
+                    )
                 }
             }
-            SirOp::GatherNd { .. } => OpSupport::CpuOnly("GatherNd has no ANEC converter".to_string()),
-            SirOp::Scatter { .. } => OpSupport::CpuOnly("Scatter ops have no ANEC converter".to_string()),
-            SirOp::ScatterNd { .. } => OpSupport::Unsupported("ScatterNd is never ANE-compatible".to_string()),
+            SirOp::GatherNd { .. } => {
+                OpSupport::CpuOnly("GatherNd has no ANEC converter".to_string())
+            }
+            SirOp::Scatter { .. } => {
+                OpSupport::CpuOnly("Scatter ops have no ANEC converter".to_string())
+            }
+            SirOp::ScatterNd { .. } => {
+                OpSupport::Unsupported("ScatterNd is never ANE-compatible".to_string())
+            }
 
             // ─── Quantization ──────────────────────────────────────
             SirOp::Quantize { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
@@ -418,29 +422,37 @@ impl OpSupportMatrix {
                 OpSupport::AneSupported(AneEngineSupport::PE)
             }
             SirOp::DecodeStep { .. } => OpSupport::AneSupported(AneEngineSupport::NE),
-            SirOp::Sampler { .. } => OpSupport::CpuOnly("TopK sampling is CPU-only on most families".to_string()),
+            SirOp::Sampler { .. } => {
+                OpSupport::CpuOnly("TopK sampling is CPU-only on most families".to_string())
+            }
 
             // ─── Always CPU-only ──────────────────────────────────
-            SirOp::LogicalAnd { .. }
-            | SirOp::LogicalOr { .. }
-            | SirOp::LogicalXor { .. } => OpSupport::CpuOnly("Logical ops have no ANEC converter".to_string()),
+            SirOp::LogicalAnd { .. } | SirOp::LogicalOr { .. } | SirOp::LogicalXor { .. } => {
+                OpSupport::CpuOnly("Logical ops have no ANEC converter".to_string())
+            }
             SirOp::Cumsum { .. } => OpSupport::CpuOnly("Cumsum has no ANEC converter".to_string()),
             SirOp::RandomBernoulli { .. }
             | SirOp::RandomNormal { .. }
             | SirOp::RandomUniform { .. }
-            | SirOp::RandomCategorical { .. } => OpSupport::Unsupported("Random ops are never ANE-compatible".to_string()),
-            SirOp::Cond { .. }
-            | SirOp::WhileLoop { .. } => OpSupport::Unsupported("Control flow has no ANEC converter".to_string()),
-            SirOp::Rnn { .. }
-            | SirOp::Gru { .. }
-            | SirOp::Lstm { .. } => OpSupport::CpuOnly("RNN/LSTM/GRU have no direct ANEC converter".to_string()),
+            | SirOp::RandomCategorical { .. } => {
+                OpSupport::Unsupported("Random ops are never ANE-compatible".to_string())
+            }
+            SirOp::Cond { .. } | SirOp::WhileLoop { .. } => {
+                OpSupport::Unsupported("Control flow has no ANEC converter".to_string())
+            }
+            SirOp::Rnn { .. } | SirOp::Gru { .. } | SirOp::Lstm { .. } => {
+                OpSupport::CpuOnly("RNN/LSTM/GRU have no direct ANEC converter".to_string())
+            }
 
             // ─── Const/Identity: structural, not a real compute op ─
             SirOp::Const { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Identity { .. } => OpSupport::AneSupported(AneEngineSupport::Transpose),
 
             // ─── Default: assume CPU fallback for unmapped ops ──────
-            _ => OpSupport::CpuOnly(format!("Op '{}' not yet mapped in versioned support matrix", op_name_for_sir(op))),
+            _ => OpSupport::CpuOnly(format!(
+                "Op '{}' not yet mapped in versioned support matrix",
+                op_name_for_sir(op)
+            )),
         }
     }
 }
@@ -471,7 +483,8 @@ fn op_name_for_sir(op: &SirOp) -> String {
         SirOp::StateRead { .. } => "StateRead",
         SirOp::StateWrite { .. } => "StateWrite",
         _ => name.rsplit("::").next().unwrap_or("Unknown"),
-    }.to_string()
+    }
+    .to_string()
 }
 
 /// Get the default revision for a family.
@@ -532,11 +545,7 @@ mod tests {
     #[test]
     fn test_validate_linear_graph() {
         let compiler = VersionedCompiler::new(AneFamily::A16);
-        let sir = SirGraph {
-            nodes: vec![],
-            inputs: vec![],
-            outputs: vec![],
-        };
+        let sir = SirGraph { nodes: vec![], inputs: vec![], outputs: vec![] };
         let result = compiler.validate_sir(&sir, true);
         assert!(result.report.is_faithful);
     }

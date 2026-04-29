@@ -2016,8 +2016,7 @@ impl LegalityRewritePass {
             | SirOp::DecodeStep { .. }
             | SirOp::Sampler { .. }
             | SirOp::StateRead { .. }
-            | SirOp::StateWrite { .. }
-            => {
+            | SirOp::StateWrite { .. } => {
                 unreachable!("composite ops should be handled by explicit decompositions above")
             }
         }

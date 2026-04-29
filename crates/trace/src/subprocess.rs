@@ -73,11 +73,13 @@ fn run_trace_subprocess(config: &TraceConfig) -> Result<TracedGraph> {
 
     // Write the payload to stdin
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(payload_str.as_bytes())
+        stdin
+            .write_all(payload_str.as_bytes())
             .map_err(|e| anyhow::anyhow!("Failed to write to Python tracer stdin: {}", e))?;
     }
 
-    let output = child.wait_with_output()
+    let output = child
+        .wait_with_output()
         .map_err(|e| anyhow::anyhow!("Python tracer process failed: {}", e))?;
 
     if !output.status.success() {
@@ -100,8 +102,13 @@ fn run_trace_subprocess(config: &TraceConfig) -> Result<TracedGraph> {
 
     // Parse the JSON output
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let graph: TracedGraph = serde_json::from_str(&stdout)
-        .map_err(|e| anyhow::anyhow!("Failed to parse traced graph JSON: {}\nOutput: {}", e, &stdout[..stdout.len().min(500)]))?;
+    let graph: TracedGraph = serde_json::from_str(&stdout).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to parse traced graph JSON: {}\nOutput: {}",
+            e,
+            &stdout[..stdout.len().min(500)]
+        )
+    })?;
 
     Ok(graph)
 }

@@ -24,7 +24,7 @@ See [STATUS.md](../STATUS.md) for what is implemented, what is verified, and wha
 | `crates/bridge/src/subprocess.rs` | Rust→Python subprocess bridge, `BridgeResult` with full field capture |
 | `crates/cli/src/main.rs` | CLI compile, report, trace-compile commands, deterministic task hashing, spec-driven manifest |
 | `crates/trace/src/graph.rs` | `TracedGraph`, `TracedNode`, `TracedOp`, `TensorShape` data structures |
-| `crates/trace/src/registry.rs` | `ModelRegistry`, `ModelPattern`, `TransformerLayerKind` — architecture registry |
+| `crates/trace/src/discovery.rs` | Strategy discovery for traced models — bridges strategy framework with tracing pipeline |
 | `crates/trace/src/config.rs` | `TraceConfig`, `TraceTarget`, `InputShape` — tracing configuration |
 | `crates/trace/src/sir_build.rs` | `build_sir_from_trace()` — ANE-faithful SIR construction from traced graphs |
 | `crates/trace/src/versioned.rs` | `VersionedCompiler`, `AnceFaithfulnessReport` — version-aware constraint validation |

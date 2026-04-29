@@ -22,10 +22,7 @@ use ane_ir::strategy::{discover_strategies, CompilationPlan, DiscoveryReport};
 /// The returned `DiscoveryReport` can be converted into a
 /// `CompilationPlan` that specifies which passes to run and in what
 /// order — all driven by the graph structure, not a hardcoded registry.
-pub fn discover_for_trace(
-    sir: &SirGraph,
-    target_family: AneFamily,
-) -> DiscoveryReport {
+pub fn discover_for_trace(sir: &SirGraph, target_family: AneFamily) -> DiscoveryReport {
     discover_strategies(sir, target_family)
 }
 
@@ -34,10 +31,7 @@ pub fn discover_for_trace(
 /// Convenience function that discovers strategies and creates a
 /// compilation plan. The plan specifies which passes to run and
 /// with what parameters.
-pub fn plan_for_trace(
-    sir: &SirGraph,
-    target_family: AneFamily,
-) -> CompilationPlan {
+pub fn plan_for_trace(sir: &SirGraph, target_family: AneFamily) -> CompilationPlan {
     let report = discover_for_trace(sir, target_family);
     CompilationPlan::from_discovery(report)
 }
@@ -45,16 +39,14 @@ pub fn plan_for_trace(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ane_ir::sir::{SirNode, SirNodeId, SirOp, SirMetadata, TaskOrigin};
+    use ane_ir::sir::{SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
 
     fn make_rms_norm_graph() -> SirGraph {
         SirGraph {
             nodes: vec![
                 SirNode {
                     id: SirNodeId("input".to_string()),
-                    op: SirOp::Identity {
-                        input: SirNodeId("__placeholder__".to_string()),
-                    },
+                    op: SirOp::Identity { input: SirNodeId("__placeholder__".to_string()) },
                     name: "input".to_string(),
                     metadata: SirMetadata {
                         task_origin: TaskOrigin::Synthetic,
@@ -102,9 +94,6 @@ mod tests {
         let graph = make_rms_norm_graph();
         let plan = plan_for_trace(&graph, AneFamily::A16);
 
-        assert!(
-            !plan.strategy_order.is_empty(),
-            "Plan should include at least one strategy"
-        );
+        assert!(!plan.strategy_order.is_empty(), "Plan should include at least one strategy");
     }
 }

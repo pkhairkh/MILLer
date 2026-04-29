@@ -78,9 +78,9 @@ TOML task spec -> Rust SIR graph -> Rust MIR graph -> Bridge payload (JSON)
 | Component | Code | Status |
 |-----------|------|--------|
 | TracedGraph data structures | `crates/trace/src/graph.rs` | implemented, host-verified — `TracedGraph`, `TracedNode`, `TracedOp`, `TensorShape` |
-| Model architecture registry | `crates/trace/src/registry.rs` | implemented, host-verified — GPT-2, LLaMA/Qwen, BERT, Phi patterns with `ModelRegistry::register()` |
+| Config-driven decomposition | `crates/trace/src/sir_build.rs` | implemented, host-verified — fully ad-hoc decomposition driven by ModelConfig flags (no model registry) |
 | Trace configuration | `crates/trace/src/config.rs` | implemented, host-verified — `TraceConfig`, `TraceTarget` (HuggingFace, local, pre-traced), `InputShape` |
-| SIR construction from trace | `crates/trace/src/sir_build.rs` | implemented, host-verified — `build_sir_from_trace()` with ANE-faithful op decomposition |
+| SIR construction from trace | `crates/trace/src/sir_build.rs` | implemented, host-verified — `build_sir_from_trace()` with separate Q/K/V projections, SwiGLU detection, residual connections, causal masks, and epsilon validation |
 | Versioned compiler | `crates/trace/src/versioned.rs` | implemented, host-verified — `VersionedCompiler` with per-family constraint validation, `AnceFaithfulnessReport` |
 | Python subprocess tracing | `crates/trace/src/subprocess.rs` | implemented — `trace_model()` launches torch.fx tracer via Python subprocess |
 | Python tracing script | `python/trace_model.py` | implemented — torch.fx symbolic tracing for HuggingFace models |

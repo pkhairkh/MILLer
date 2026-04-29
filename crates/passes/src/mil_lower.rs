@@ -57,9 +57,9 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 (Some(a_shape), Some(b_shape)) => {
                     match (a_shape.len(), b_shape.len()) {
                         (2, 2) => vec![a_shape[0], b_shape[1]],
-                        (1, 2) => vec![b_shape[1]],          // bias-like: [K] × [K,N] → [N]
-                        (2, 1) => vec![a_shape[0]],          // [M,K] × [K] → [M]
-                        (1, 1) => vec![],                     // scalar × scalar
+                        (1, 2) => vec![b_shape[1]], // bias-like: [K] × [K,N] → [N]
+                        (2, 1) => vec![a_shape[0]], // [M,K] × [K] → [M]
+                        (1, 1) => vec![],           // scalar × scalar
                         _ => vec![],
                     }
                 }
@@ -74,9 +74,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
         // determine the output dim without the weight shape, so we use the
         // input shape as a conservative estimate — the compat layer and
         // proto emitter will refine via the node_shapes map).
-        AirOp::Conv1x1AsLinear { input, .. } => {
-            node_shapes.get(input).cloned().unwrap_or_default()
-        }
+        AirOp::Conv1x1AsLinear { input, .. } => node_shapes.get(input).cloned().unwrap_or_default(),
 
         AirOp::ElementWise { inputs, .. } => {
             inputs.first().and_then(|id| node_shapes.get(id).cloned()).unwrap_or_default()
@@ -169,9 +167,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
         | AirOp::Mul { x, .. }
         | AirOp::Sub { x, .. }
         | AirOp::Maximum { x, .. }
-        | AirOp::Minimum { x, .. } => {
-            node_shapes.get(x).cloned().unwrap_or_default()
-        }
+        | AirOp::Minimum { x, .. } => node_shapes.get(x).cloned().unwrap_or_default(),
         // All remaining AIR ops: conservatively return empty shape
         _ => vec![],
     }

@@ -1302,7 +1302,9 @@ pub fn coreml_dtype_to_apple_array(dt: &CoreMlDataType) -> i32 {
         CoreMlDataType::Unknown => {
             apple_proto::array_feature_type::ArrayDataType::InvalidArrayDataType as i32
         }
-        CoreMlDataType::Bool => apple_proto::array_feature_type::ArrayDataType::InvalidArrayDataType as i32,
+        CoreMlDataType::Bool => {
+            apple_proto::array_feature_type::ArrayDataType::InvalidArrayDataType as i32
+        }
     }
 }
 
@@ -1328,9 +1330,9 @@ fn make_apple_tensor_type(dtype: i32, shape: &[u64]) -> apple_proto::mil_spec::T
 /// Build an `apple_proto::mil_spec::ValueType` wrapping a TensorType.
 fn make_apple_value_type(dtype: i32, shape: &[u64]) -> apple_proto::mil_spec::ValueType {
     apple_proto::mil_spec::ValueType {
-        r#type: Some(apple_proto::mil_spec::value_type::Type::TensorType(
-            make_apple_tensor_type(dtype, shape),
-        )),
+        r#type: Some(apple_proto::mil_spec::value_type::Type::TensorType(make_apple_tensor_type(
+            dtype, shape,
+        ))),
     }
 }
 
@@ -1348,11 +1350,11 @@ fn make_apple_named_value_type(
 
 /// Look up the shape of a tensor by name from the node_shapes map,
 /// converting `Vec<usize>` to `Vec<u64>`. Returns empty vec if not found.
-fn lookup_shape_u64(name: &str, node_shapes: &std::collections::HashMap<String, Vec<usize>>) -> Vec<u64> {
-    node_shapes
-        .get(name)
-        .map(|s| s.iter().map(|&d| d as u64).collect())
-        .unwrap_or_default()
+fn lookup_shape_u64(
+    name: &str,
+    node_shapes: &std::collections::HashMap<String, Vec<usize>>,
+) -> Vec<u64> {
+    node_shapes.get(name).map(|s| s.iter().map(|&d| d as u64).collect()).unwrap_or_default()
 }
 
 /// Build an `apple_proto::mil_spec::Argument` that references an SSA name.
@@ -1417,7 +1419,9 @@ fn make_immediate_bool_value(value: bool) -> apple_proto::mil_spec::Value {
                 value: Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(
                     apple_proto::mil_spec::TensorValue {
                         value: Some(apple_proto::mil_spec::tensor_value::Value::Bools(
-                            apple_proto::mil_spec::tensor_value::RepeatedBools { values: vec![value] },
+                            apple_proto::mil_spec::tensor_value::RepeatedBools {
+                                values: vec![value],
+                            },
                         )),
                     },
                 )),
@@ -1435,7 +1439,9 @@ fn make_immediate_float32_value(value: f32) -> apple_proto::mil_spec::Value {
                 value: Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(
                     apple_proto::mil_spec::TensorValue {
                         value: Some(apple_proto::mil_spec::tensor_value::Value::Floats(
-                            apple_proto::mil_spec::tensor_value::RepeatedFloats { values: vec![value] },
+                            apple_proto::mil_spec::tensor_value::RepeatedFloats {
+                                values: vec![value],
+                            },
                         )),
                     },
                 )),
@@ -1539,17 +1545,12 @@ fn make_apple_feature_desc(
                         upper_bound: -1, // -1 means unbounded
                     }
                 } else {
-                    apple_proto::SizeRange {
-                        lower_bound: d,
-                        upper_bound: d as i64,
-                    }
+                    apple_proto::SizeRange { lower_bound: d, upper_bound: d as i64 }
                 }
             })
             .collect();
         Some(apple_proto::array_feature_type::ShapeFlexibility::ShapeRange(
-            apple_proto::array_feature_type::ShapeRange {
-                size_ranges,
-            },
+            apple_proto::array_feature_type::ShapeRange { size_ranges },
         ))
     } else {
         None
@@ -1596,22 +1597,14 @@ fn make_apple_state_feature_desc(
             .iter()
             .map(|&d| {
                 if d == 0 {
-                    apple_proto::SizeRange {
-                        lower_bound: 1,
-                        upper_bound: -1,
-                    }
+                    apple_proto::SizeRange { lower_bound: 1, upper_bound: -1 }
                 } else {
-                    apple_proto::SizeRange {
-                        lower_bound: d,
-                        upper_bound: d as i64,
-                    }
+                    apple_proto::SizeRange { lower_bound: d, upper_bound: d as i64 }
                 }
             })
             .collect();
         Some(apple_proto::array_feature_type::ShapeFlexibility::ShapeRange(
-            apple_proto::array_feature_type::ShapeRange {
-                size_ranges,
-            },
+            apple_proto::array_feature_type::ShapeRange { size_ranges },
         ))
     } else {
         None
@@ -1856,10 +1849,7 @@ fn mir_op_to_apple_ops(
             inputs.insert("x".to_string(), make_name_arg(x));
             // shape as an immediate value
             let shape_data: Vec<i64> = shape.clone();
-            let shape_bytes = shape_data
-                .iter()
-                .flat_map(|v| v.to_le_bytes())
-                .collect::<Vec<u8>>();
+            let shape_bytes = shape_data.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
             inputs.insert(
                 "shape".to_string(),
                 make_value_arg(make_immediate_bytes_value(
@@ -1889,10 +1879,7 @@ fn mir_op_to_apple_ops(
             inputs.insert("x".to_string(), make_name_arg(x));
             // perm as an immediate value
             let perm_data: Vec<i64> = perm.clone();
-            let perm_bytes = perm_data
-                .iter()
-                .flat_map(|v| v.to_le_bytes())
-                .collect::<Vec<u8>>();
+            let perm_bytes = perm_data.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
             inputs.insert(
                 "perm".to_string(),
                 make_value_arg(make_immediate_bytes_value(
@@ -1922,10 +1909,7 @@ fn mir_op_to_apple_ops(
             inputs.insert("x".to_string(), make_name_arg(x));
 
             let begin_data: Vec<i64> = begin.clone();
-            let begin_bytes = begin_data
-                .iter()
-                .flat_map(|v| v.to_le_bytes())
-                .collect::<Vec<u8>>();
+            let begin_bytes = begin_data.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
             inputs.insert(
                 "begin".to_string(),
                 make_value_arg(make_immediate_bytes_value(
@@ -1936,10 +1920,7 @@ fn mir_op_to_apple_ops(
             );
 
             let end_data: Vec<i64> = end.clone();
-            let end_bytes = end_data
-                .iter()
-                .flat_map(|v| v.to_le_bytes())
-                .collect::<Vec<u8>>();
+            let end_bytes = end_data.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
             inputs.insert(
                 "end".to_string(),
                 make_value_arg(make_immediate_bytes_value(
@@ -1970,10 +1951,7 @@ fn mir_op_to_apple_ops(
             inputs.insert("update".to_string(), make_name_arg(update));
 
             let begin_data: Vec<i64> = begin.clone();
-            let begin_bytes = begin_data
-                .iter()
-                .flat_map(|v| v.to_le_bytes())
-                .collect::<Vec<u8>>();
+            let begin_bytes = begin_data.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
             inputs.insert(
                 "begin".to_string(),
                 make_value_arg(make_immediate_bytes_value(
@@ -1984,10 +1962,7 @@ fn mir_op_to_apple_ops(
             );
 
             let end_data: Vec<i64> = end.clone();
-            let end_bytes = end_data
-                .iter()
-                .flat_map(|v| v.to_le_bytes())
-                .collect::<Vec<u8>>();
+            let end_bytes = end_data.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
             inputs.insert(
                 "end".to_string(),
                 make_value_arg(make_immediate_bytes_value(
@@ -2350,10 +2325,7 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::Rsqrt { name, x } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert(
-                "epsilon".to_string(),
-                make_value_arg(make_immediate_float32_value(0.0)),
-            );
+            inputs.insert("epsilon".to_string(), make_value_arg(make_immediate_float32_value(0.0)));
 
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
@@ -2562,7 +2534,11 @@ fn mir_op_to_apple_ops(
             let cast_op = apple_proto::mil_spec::Operation {
                 r#type: "cast".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_dtype, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_dtype,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             };
@@ -2846,9 +2822,7 @@ pub fn convert_to_apple_proto_model(
             let state_descs: Vec<apple_proto::FeatureDescription> = func
                 .states
                 .iter()
-                .map(|td| {
-                    make_apple_state_feature_desc(&td.name, &td.dtype, &td.shape)
-                })
+                .map(|td| make_apple_state_feature_desc(&td.name, &td.dtype, &td.shape))
                 .collect();
             apple_proto::FunctionDescription {
                 name: func.name.clone(),
@@ -2864,7 +2838,8 @@ pub fn convert_to_apple_proto_model(
     // Build MILSpec.Program functions map
     let mut program_functions = HashMap::new();
     for func in &model.functions {
-        program_functions.insert(func.name.clone(), function_to_apple_proto(func, weight_entries, &opset));
+        program_functions
+            .insert(func.name.clone(), function_to_apple_proto(func, weight_entries, &opset));
     }
 
     let program = apple_proto::mil_spec::Program {
@@ -2897,7 +2872,14 @@ pub fn convert_to_apple_proto_model(
     //   - mlProgram.functions use the original shard names
     let is_single_function = model.functions.len() == 1;
 
-    let (model_input_descs, model_output_descs, model_state_descs, final_function_descriptions, final_default_fn_name, final_program) = if is_single_function {
+    let (
+        model_input_descs,
+        model_output_descs,
+        model_state_descs,
+        final_function_descriptions,
+        final_default_fn_name,
+        final_program,
+    ) = if is_single_function {
         // Single-function: populate top-level I/O, leave functions empty,
         // rename MIL program function to "main"
         let func = &model.functions[0];
@@ -2927,8 +2909,8 @@ pub fn convert_to_apple_proto_model(
             top_inputs,
             top_outputs,
             top_states,
-            vec![],  // empty functions list for single-function
-            String::new(),  // no defaultFunctionName for single-function
+            vec![],        // empty functions list for single-function
+            String::new(), // no defaultFunctionName for single-function
             apple_proto::mil_spec::Program {
                 version: program.version,
                 functions: main_program_functions,

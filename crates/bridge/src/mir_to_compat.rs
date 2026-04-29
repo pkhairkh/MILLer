@@ -131,7 +131,8 @@ pub fn mir_graph_to_compat(
     // Phase 2: Collect weight names referenced by ops but not yet materialized
     // as Const ops. We need to emit Const entries for these so the proto
     // emission layer has actual weight data to write to weight.bin.
-    let existing_const_names: std::collections::HashSet<String> = ops.iter()
+    let existing_const_names: std::collections::HashSet<String> = ops
+        .iter()
         .filter_map(|op| match op {
             MirOpCompat::Const { name, .. } => Some(name.clone()),
             _ => None,
@@ -167,7 +168,8 @@ pub fn mir_graph_to_compat(
         }
 
         for input_name in compat_input_names(op) {
-            if graph_value_names.contains(&input_name) || existing_const_names.contains(&input_name) {
+            if graph_value_names.contains(&input_name) || existing_const_names.contains(&input_name)
+            {
                 continue;
             }
             if resolver.resolve(&input_name).is_some() {
@@ -193,12 +195,7 @@ pub fn mir_graph_to_compat(
                 (vec![0u8; 2], vec![1], MilDtypeCompat::Fp16)
             }
         };
-        const_ops.push(MirOpCompat::Const {
-            name: weight_name,
-            data,
-            dtype,
-            shape,
-        });
+        const_ops.push(MirOpCompat::Const { name: weight_name, data, dtype, shape });
     }
     let mut all_ops = const_ops;
     all_ops.extend(ops);
@@ -208,11 +205,8 @@ pub fn mir_graph_to_compat(
 
     // Build input/output descriptors with shapes and dtypes from the MIR nodes.
     // This is critical for Core ML: the model description must have shapes for I/O.
-    let node_map: std::collections::HashMap<&str, &MirNode> = graph
-        .nodes
-        .iter()
-        .map(|n| (n.id.0.as_str(), n))
-        .collect();
+    let node_map: std::collections::HashMap<&str, &MirNode> =
+        graph.nodes.iter().map(|n| (n.id.0.as_str(), n)).collect();
 
     let input_descs: Vec<ane_coreml_proto::mir_compat::TensorDescCompat> = graph
         .inputs
@@ -345,7 +339,9 @@ fn compat_input_names(op: &MirOpCompat) -> Vec<String> {
             vec![query.clone(), key.clone(), value.clone()]
         }
         MirOpCompat::ReadState { state_id, .. } => vec![state_id.clone()],
-        MirOpCompat::CoremlUpdateState { state_id, value, .. } => vec![state_id.clone(), value.clone()],
+        MirOpCompat::CoremlUpdateState { state_id, value, .. } => {
+            vec![state_id.clone(), value.clone()]
+        }
         MirOpCompat::Conv { x, weight, .. } => vec![x.clone(), weight.clone()],
         MirOpCompat::StateWrite { state_ref, value, .. } => vec![state_ref.clone(), value.clone()],
         MirOpCompat::LayerNorm { x, weight_name, bias_name, .. } => {
@@ -391,7 +387,9 @@ fn compat_output_shape(name: &str, op: &MirOp, shape: &[usize]) -> Vec<usize> {
         MirOp::MILReduceMean { keep_dims: true, .. } => vec![1, 1, 1024],
         MirOp::MILRsqrt { x, .. } if x.0.contains("_mean") => vec![1, 1, 1024],
         MirOp::MILLinear { weight, .. } if weight == "lm_head.weight" => vec![1, 512, 151936],
-        MirOp::MILLinear { weight, .. } if weight.contains(".mlp.up_proj.weight") => vec![1, 512, 3072],
+        MirOp::MILLinear { weight, .. } if weight.contains(".mlp.up_proj.weight") => {
+            vec![1, 512, 3072]
+        }
         MirOp::MILLinear { weight, .. } if weight.contains(".self_attn.q_proj.weight") => {
             vec![1, 512, 2048]
         }
@@ -409,15 +407,25 @@ fn compat_output_shape(name: &str, op: &MirOp, shape: &[usize]) -> Vec<usize> {
 
 fn build_input_alias_map(graph: &MirGraph) -> std::collections::HashMap<String, String> {
     let mut aliases = std::collections::HashMap::new();
-    aliases.insert("embed_weight_embed_tokens".to_string(), "model.embed_tokens.weight".to_string());
+    aliases
+        .insert("embed_weight_embed_tokens".to_string(), "model.embed_tokens.weight".to_string());
 
     for node in &graph.nodes {
         match &node.op {
             MirOp::MILLinear { weight, .. } if weight.contains(".self_attn.q_proj.weight") => {
                 if let Some(layer) = layer_index_from_weight(weight) {
-                    aliases.insert(format!("sir_qkv_split_q_layer_{layer}_self_attn"), node.id.0.clone());
-                    aliases.insert(format!("sir_qkv_split_k_layer_{layer}_self_attn"), node.id.0.clone());
-                    aliases.insert(format!("sir_qkv_split_v_layer_{layer}_self_attn"), node.id.0.clone());
+                    aliases.insert(
+                        format!("sir_qkv_split_q_layer_{layer}_self_attn"),
+                        node.id.0.clone(),
+                    );
+                    aliases.insert(
+                        format!("sir_qkv_split_k_layer_{layer}_self_attn"),
+                        node.id.0.clone(),
+                    );
+                    aliases.insert(
+                        format!("sir_qkv_split_v_layer_{layer}_self_attn"),
+                        node.id.0.clone(),
+                    );
                 }
             }
             MirOp::MILLinear { weight, .. } if weight.contains(".mlp.up_proj.weight") => {
@@ -432,17 +440,22 @@ fn build_input_alias_map(graph: &MirGraph) -> std::collections::HashMap<String, 
             }
             MirOp::MILMatMul { name, .. } if name == "attn_qk" => {
                 if let Some(layer) = layer_index_from_node_id(&node.id.0) {
-                    aliases.insert(format!("sir_attn_qk_layer_{layer}_self_attn"), node.id.0.clone());
+                    aliases
+                        .insert(format!("sir_attn_qk_layer_{layer}_self_attn"), node.id.0.clone());
                 }
             }
             MirOp::MILSoftmax { name, .. } if name == "attn_softmax" => {
                 if let Some(layer) = layer_index_from_node_id(&node.id.0) {
-                    aliases.insert(format!("sir_attn_softmax_layer_{layer}_self_attn"), node.id.0.clone());
+                    aliases.insert(
+                        format!("sir_attn_softmax_layer_{layer}_self_attn"),
+                        node.id.0.clone(),
+                    );
                 }
             }
             MirOp::MILMatMul { name, .. } if name == "attn_sv" => {
                 if let Some(layer) = layer_index_from_node_id(&node.id.0) {
-                    aliases.insert(format!("sir_attn_out_layer_{layer}_self_attn"), node.id.0.clone());
+                    aliases
+                        .insert(format!("sir_attn_out_layer_{layer}_self_attn"), node.id.0.clone());
                 }
             }
             _ => {}
@@ -534,11 +547,13 @@ fn remap_compat_inputs(
                 value: remap_name(value, aliases),
             }
         }
-        MirOpCompat::CoremlUpdateState { name, state_id, value } => MirOpCompat::CoremlUpdateState {
-            name,
-            state_id: remap_name(state_id, aliases),
-            value: remap_name(value, aliases),
-        },
+        MirOpCompat::CoremlUpdateState { name, state_id, value } => {
+            MirOpCompat::CoremlUpdateState {
+                name,
+                state_id: remap_name(state_id, aliases),
+                value: remap_name(value, aliases),
+            }
+        }
         MirOpCompat::Gather { name, x, indices, axis } => MirOpCompat::Gather {
             name,
             x: remap_name(x, aliases),
@@ -616,88 +631,93 @@ fn remap_compat_inputs(
 /// a uniquely-named output, and consumers reference these names via MIR node IDs.
 fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
     match compat {
-        MirOpCompat::Const { name: _, data, dtype, shape } =>
-            MirOpCompat::Const { name: new_name, data, dtype, shape },
-        MirOpCompat::Linear { name: _, x, weight_name, bias_name } =>
-            MirOpCompat::Linear { name: new_name, x, weight_name, bias_name },
-        MirOpCompat::MatMul { name: _, x, y } =>
-            MirOpCompat::MatMul { name: new_name, x, y },
-        MirOpCompat::Add { name: _, x, y } =>
-            MirOpCompat::Add { name: new_name, x, y },
-        MirOpCompat::Mul { name: _, x, y } =>
-            MirOpCompat::Mul { name: new_name, x, y },
-        MirOpCompat::Sub { name: _, x, y } =>
-            MirOpCompat::Sub { name: new_name, x, y },
-        MirOpCompat::Abs { name: _, x } =>
-            MirOpCompat::Abs { name: new_name, x },
-        MirOpCompat::Maximum { name: _, x, y } =>
-            MirOpCompat::Maximum { name: new_name, x, y },
-        MirOpCompat::Minimum { name: _, x, y } =>
-            MirOpCompat::Minimum { name: new_name, x, y },
-        MirOpCompat::Reshape { name: _, x, shape } =>
-            MirOpCompat::Reshape { name: new_name, x, shape },
-        MirOpCompat::Transpose { name: _, x, perm } =>
-            MirOpCompat::Transpose { name: new_name, x, perm },
-        MirOpCompat::SliceByIndex { name: _, x, begin, end } =>
-            MirOpCompat::SliceByIndex { name: new_name, x, begin, end },
-        MirOpCompat::SliceUpdate { name: _, x, update, begin, end } =>
-            MirOpCompat::SliceUpdate { name: new_name, x, update, begin, end },
-        MirOpCompat::Concat { name: _, values, axis } =>
-            MirOpCompat::Concat { name: new_name, values, axis },
-        MirOpCompat::Softmax { name: _, x, axis } =>
-            MirOpCompat::Softmax { name: new_name, x, axis },
-        MirOpCompat::Gelu { name: _, x, mode } =>
-            MirOpCompat::Gelu { name: new_name, x, mode },
-        MirOpCompat::ScaledDotProductAttention { name: _, query, key, value } =>
-            MirOpCompat::ScaledDotProductAttention { name: new_name, query, key, value },
-        MirOpCompat::ReadState { name: _, state_id, shape, dtype } =>
-            MirOpCompat::ReadState { name: new_name, state_id, shape, dtype },
-        MirOpCompat::CoremlUpdateState { name: _, state_id, value } =>
-            MirOpCompat::CoremlUpdateState { name: new_name, state_id, value },
-        MirOpCompat::Gather { name: _, x, indices, axis } =>
-            MirOpCompat::Gather { name: new_name, x, indices, axis },
-        MirOpCompat::ReduceMean { name: _, x, axes, keep_dims } =>
-            MirOpCompat::ReduceMean { name: new_name, x, axes, keep_dims },
-        MirOpCompat::ReduceSum { name: _, x, axes, keep_dims } =>
-            MirOpCompat::ReduceSum { name: new_name, x, axes, keep_dims },
-        MirOpCompat::Conv { name: _, x, weight, pad_type, groups } =>
-            MirOpCompat::Conv { name: new_name, x, weight, pad_type, groups },
-        MirOpCompat::StateWrite { name: _, state_ref, value } =>
-            MirOpCompat::StateWrite { name: new_name, state_ref, value },
-        MirOpCompat::Rsqrt { name: _, x } =>
-            MirOpCompat::Rsqrt { name: new_name, x },
-        MirOpCompat::RealDiv { name: _, x, y } =>
-            MirOpCompat::RealDiv { name: new_name, x, y },
-        MirOpCompat::LayerNorm { name: _, x, weight_name, bias_name, epsilon, axes } =>
-            MirOpCompat::LayerNorm { name: new_name, x, weight_name, bias_name, epsilon, axes },
-        MirOpCompat::Topk { name: _, x, k, axis } =>
-            MirOpCompat::Topk { name: new_name, x, k, axis },
-        MirOpCompat::Cos { name: _, x } =>
-            MirOpCompat::Cos { name: new_name, x },
-        MirOpCompat::Sin { name: _, x } =>
-            MirOpCompat::Sin { name: new_name, x },
-        MirOpCompat::Cast { name: _, x, dtype } =>
-            MirOpCompat::Cast { name: new_name, x, dtype },
-        MirOpCompat::Split { name: _, x, axis, num_splits } =>
-            MirOpCompat::Split { name: new_name, x, axis, num_splits },
-        MirOpCompat::Exp { name: _, x } =>
-            MirOpCompat::Exp { name: new_name, x },
-        MirOpCompat::Sigmoid { name: _, x } =>
-            MirOpCompat::Sigmoid { name: new_name, x },
-        MirOpCompat::Tanh { name: _, x } =>
-            MirOpCompat::Tanh { name: new_name, x },
-        MirOpCompat::Relu { name: _, x } =>
-            MirOpCompat::Relu { name: new_name, x },
-        MirOpCompat::Where { name: _, condition, x, y } =>
-            MirOpCompat::Where { name: new_name, condition, x, y },
-        MirOpCompat::Silu { name: _, x } =>
-            MirOpCompat::Silu { name: new_name, x },
-        MirOpCompat::Identity { name: _, x, dtype } =>
-            MirOpCompat::Identity { name: new_name, x, dtype },
-        MirOpCompat::Placeholder { name: _, dtype } =>
-            MirOpCompat::Placeholder { name: new_name, dtype },
-        MirOpCompat::Unsupported { op_kind, name: _, params_json } =>
-            MirOpCompat::Unsupported { op_kind, name: new_name, params_json },
+        MirOpCompat::Const { name: _, data, dtype, shape } => {
+            MirOpCompat::Const { name: new_name, data, dtype, shape }
+        }
+        MirOpCompat::Linear { name: _, x, weight_name, bias_name } => {
+            MirOpCompat::Linear { name: new_name, x, weight_name, bias_name }
+        }
+        MirOpCompat::MatMul { name: _, x, y } => MirOpCompat::MatMul { name: new_name, x, y },
+        MirOpCompat::Add { name: _, x, y } => MirOpCompat::Add { name: new_name, x, y },
+        MirOpCompat::Mul { name: _, x, y } => MirOpCompat::Mul { name: new_name, x, y },
+        MirOpCompat::Sub { name: _, x, y } => MirOpCompat::Sub { name: new_name, x, y },
+        MirOpCompat::Abs { name: _, x } => MirOpCompat::Abs { name: new_name, x },
+        MirOpCompat::Maximum { name: _, x, y } => MirOpCompat::Maximum { name: new_name, x, y },
+        MirOpCompat::Minimum { name: _, x, y } => MirOpCompat::Minimum { name: new_name, x, y },
+        MirOpCompat::Reshape { name: _, x, shape } => {
+            MirOpCompat::Reshape { name: new_name, x, shape }
+        }
+        MirOpCompat::Transpose { name: _, x, perm } => {
+            MirOpCompat::Transpose { name: new_name, x, perm }
+        }
+        MirOpCompat::SliceByIndex { name: _, x, begin, end } => {
+            MirOpCompat::SliceByIndex { name: new_name, x, begin, end }
+        }
+        MirOpCompat::SliceUpdate { name: _, x, update, begin, end } => {
+            MirOpCompat::SliceUpdate { name: new_name, x, update, begin, end }
+        }
+        MirOpCompat::Concat { name: _, values, axis } => {
+            MirOpCompat::Concat { name: new_name, values, axis }
+        }
+        MirOpCompat::Softmax { name: _, x, axis } => {
+            MirOpCompat::Softmax { name: new_name, x, axis }
+        }
+        MirOpCompat::Gelu { name: _, x, mode } => MirOpCompat::Gelu { name: new_name, x, mode },
+        MirOpCompat::ScaledDotProductAttention { name: _, query, key, value } => {
+            MirOpCompat::ScaledDotProductAttention { name: new_name, query, key, value }
+        }
+        MirOpCompat::ReadState { name: _, state_id, shape, dtype } => {
+            MirOpCompat::ReadState { name: new_name, state_id, shape, dtype }
+        }
+        MirOpCompat::CoremlUpdateState { name: _, state_id, value } => {
+            MirOpCompat::CoremlUpdateState { name: new_name, state_id, value }
+        }
+        MirOpCompat::Gather { name: _, x, indices, axis } => {
+            MirOpCompat::Gather { name: new_name, x, indices, axis }
+        }
+        MirOpCompat::ReduceMean { name: _, x, axes, keep_dims } => {
+            MirOpCompat::ReduceMean { name: new_name, x, axes, keep_dims }
+        }
+        MirOpCompat::ReduceSum { name: _, x, axes, keep_dims } => {
+            MirOpCompat::ReduceSum { name: new_name, x, axes, keep_dims }
+        }
+        MirOpCompat::Conv { name: _, x, weight, pad_type, groups } => {
+            MirOpCompat::Conv { name: new_name, x, weight, pad_type, groups }
+        }
+        MirOpCompat::StateWrite { name: _, state_ref, value } => {
+            MirOpCompat::StateWrite { name: new_name, state_ref, value }
+        }
+        MirOpCompat::Rsqrt { name: _, x } => MirOpCompat::Rsqrt { name: new_name, x },
+        MirOpCompat::RealDiv { name: _, x, y } => MirOpCompat::RealDiv { name: new_name, x, y },
+        MirOpCompat::LayerNorm { name: _, x, weight_name, bias_name, epsilon, axes } => {
+            MirOpCompat::LayerNorm { name: new_name, x, weight_name, bias_name, epsilon, axes }
+        }
+        MirOpCompat::Topk { name: _, x, k, axis } => {
+            MirOpCompat::Topk { name: new_name, x, k, axis }
+        }
+        MirOpCompat::Cos { name: _, x } => MirOpCompat::Cos { name: new_name, x },
+        MirOpCompat::Sin { name: _, x } => MirOpCompat::Sin { name: new_name, x },
+        MirOpCompat::Cast { name: _, x, dtype } => MirOpCompat::Cast { name: new_name, x, dtype },
+        MirOpCompat::Split { name: _, x, axis, num_splits } => {
+            MirOpCompat::Split { name: new_name, x, axis, num_splits }
+        }
+        MirOpCompat::Exp { name: _, x } => MirOpCompat::Exp { name: new_name, x },
+        MirOpCompat::Sigmoid { name: _, x } => MirOpCompat::Sigmoid { name: new_name, x },
+        MirOpCompat::Tanh { name: _, x } => MirOpCompat::Tanh { name: new_name, x },
+        MirOpCompat::Relu { name: _, x } => MirOpCompat::Relu { name: new_name, x },
+        MirOpCompat::Where { name: _, condition, x, y } => {
+            MirOpCompat::Where { name: new_name, condition, x, y }
+        }
+        MirOpCompat::Silu { name: _, x } => MirOpCompat::Silu { name: new_name, x },
+        MirOpCompat::Identity { name: _, x, dtype } => {
+            MirOpCompat::Identity { name: new_name, x, dtype }
+        }
+        MirOpCompat::Placeholder { name: _, dtype } => {
+            MirOpCompat::Placeholder { name: new_name, dtype }
+        }
+        MirOpCompat::Unsupported { op_kind, name: _, params_json } => {
+            MirOpCompat::Unsupported { op_kind, name: new_name, params_json }
+        }
     }
 }
 
@@ -740,16 +760,9 @@ fn mir_node_to_compat(node: &MirNode, resolver: &dyn WeightResolver) -> Result<M
     if let MirOpCompat::Identity { name, x, .. } = &compat {
         let node_dtype = compat_input_dtype(&node.id.0, &node.dtype);
         if x == "__placeholder__" {
-            return Ok(MirOpCompat::Placeholder {
-                name: name.clone(),
-                dtype: node_dtype,
-            });
+            return Ok(MirOpCompat::Placeholder { name: name.clone(), dtype: node_dtype });
         }
-        return Ok(MirOpCompat::Identity {
-            name: name.clone(),
-            x: x.clone(),
-            dtype: node_dtype,
-        });
+        return Ok(MirOpCompat::Identity { name: name.clone(), x: x.clone(), dtype: node_dtype });
     }
 
     Ok(compat)
@@ -1368,7 +1381,7 @@ mod tests {
         // not the MirOp's name field. This ensures unique SSA names.
         match &compat.ops[0] {
             MirOpCompat::Const { name, data, dtype, shape } => {
-                assert_eq!(name, "x");  // node.id.0, not op.name "weight"
+                assert_eq!(name, "x"); // node.id.0, not op.name "weight"
                 assert_eq!(data.len(), 32 * 64 * 2);
                 assert_eq!(*dtype, MilDtypeCompat::Fp16);
                 assert_eq!(*shape, vec![32, 64]);
@@ -1378,7 +1391,7 @@ mod tests {
 
         match &compat.ops[1] {
             MirOpCompat::Const { name, data, .. } => {
-                assert_eq!(name, "bias");  // node.id.0, matches op.name in this case
+                assert_eq!(name, "bias"); // node.id.0, matches op.name in this case
                 assert_eq!(data.len(), 32 * 2);
             }
             _ => panic!("Expected Const op"),

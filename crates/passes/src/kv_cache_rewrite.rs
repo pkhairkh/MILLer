@@ -10,7 +10,7 @@
 //! a pattern of StateRead + Where + Mul + Add + StateWrite ops when
 //! the KV cache layout is set to `MaskedBlend`.
 
-use ane_ir::sir::{SirGraph, SirNode, SirNodeId, SirOp, KvCacheLayout};
+use ane_ir::sir::{KvCacheLayout, SirGraph, SirNode, SirNodeId, SirOp};
 
 /// Result of the KV cache rewrite pass.
 #[derive(Debug, Clone)]
@@ -33,22 +33,20 @@ pub fn run_kv_cache_rewrite_pass(
     graph: &mut SirGraph,
     kv_layout: &KvCacheLayout,
 ) -> KvCacheRewriteResult {
-    let mut result = KvCacheRewriteResult {
-        pairs_converted: 0,
-        ops_inserted: 0,
-    };
+    let mut result = KvCacheRewriteResult { pairs_converted: 0, ops_inserted: 0 };
 
     if kv_layout != &KvCacheLayout::MaskedBlend {
         return result;
     }
 
     // Find StateRead ops that read from KV cache states
-    let kv_read_indices: Vec<usize> = graph.nodes.iter().enumerate()
-        .filter_map(|(idx, node)| {
-            match &node.op {
-                SirOp::StateRead { state_id, .. } if state_id.contains("kv_cache") => Some(idx),
-                _ => None,
-            }
+    let kv_read_indices: Vec<usize> = graph
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| match &node.op {
+            SirOp::StateRead { state_id, .. } if state_id.contains("kv_cache") => Some(idx),
+            _ => None,
         })
         .collect();
 
@@ -65,12 +63,13 @@ pub fn run_kv_cache_rewrite_pass(
         };
 
         // Find the corresponding StateWrite
-        let write_idx = graph.nodes.iter().enumerate()
-            .find(|(_, node)| {
-                match &node.op {
-                    SirOp::StateWrite { state_id: ws, .. } if ws == &state_id => true,
-                    _ => false,
-                }
+        let write_idx = graph
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, node)| match &node.op {
+                SirOp::StateWrite { state_id: ws, .. } if ws == &state_id => true,
+                _ => false,
             })
             .map(|(idx, _)| idx);
 
@@ -97,11 +96,7 @@ pub fn run_kv_cache_rewrite_pass(
             let cache_read_id = SirNodeId(format!("sir_{}_cache_read", base_name));
             let cache_read_node = SirNode {
                 id: cache_read_id.clone(),
-                op: SirOp::StateRead {
-                    state_id: state_id.clone(),
-                    offset,
-                    shape: shape.clone(),
-                },
+                op: SirOp::StateRead { state_id: state_id.clone(), offset, shape: shape.clone() },
                 name: format!("{}_cache_read", base_name),
                 metadata: graph.nodes[read_idx].metadata.clone(),
             };
@@ -125,10 +120,7 @@ pub fn run_kv_cache_rewrite_pass(
             let old_mul_id = SirNodeId(format!("sir_{}_old_mul", base_name));
             let old_mul_node = SirNode {
                 id: old_mul_id.clone(),
-                op: SirOp::Mul {
-                    x: cache_read_id,
-                    y: inv_mask_id,
-                },
+                op: SirOp::Mul { x: cache_read_id, y: inv_mask_id },
                 name: format!("{}_old_mul", base_name),
                 metadata: graph.nodes[read_idx].metadata.clone(),
             };
@@ -138,10 +130,7 @@ pub fn run_kv_cache_rewrite_pass(
             let new_mul_id = SirNodeId(format!("sir_{}_new_mul", base_name));
             let new_mul_node = SirNode {
                 id: new_mul_id.clone(),
-                op: SirOp::Mul {
-                    x: value_id,
-                    y: pos_mask_id,
-                },
+                op: SirOp::Mul { x: value_id, y: pos_mask_id },
                 name: format!("{}_new_mul", base_name),
                 metadata: graph.nodes[read_idx].metadata.clone(),
             };
@@ -150,10 +139,7 @@ pub fn run_kv_cache_rewrite_pass(
             let add_id = SirNodeId(format!("sir_{}_add", base_name));
             let add_node = SirNode {
                 id: add_id.clone(),
-                op: SirOp::Add {
-                    x: old_mul_id,
-                    y: new_mul_id,
-                },
+                op: SirOp::Add { x: old_mul_id, y: new_mul_id },
                 name: format!("{}_add", base_name),
                 metadata: graph.nodes[read_idx].metadata.clone(),
             };
@@ -162,11 +148,7 @@ pub fn run_kv_cache_rewrite_pass(
             let state_write_id = SirNodeId(format!("sir_{}_state_write", base_name));
             let state_write_node = SirNode {
                 id: state_write_id.clone(),
-                op: SirOp::StateWrite {
-                    state_id: state_id.clone(),
-                    offset,
-                    value: add_id,
-                },
+                op: SirOp::StateWrite { state_id: state_id.clone(), offset, value: add_id },
                 name: format!("{}_state_write", base_name),
                 metadata: graph.nodes[w_idx].metadata.clone(),
             };
@@ -175,9 +157,7 @@ pub fn run_kv_cache_rewrite_pass(
             // (the where op provides the "read" result for downstream consumers)
             graph.nodes[read_idx] = SirNode {
                 id: graph.nodes[read_idx].id.clone(),
-                op: SirOp::Identity {
-                    input: where_id,
-                },
+                op: SirOp::Identity { input: where_id },
                 name: format!("kv_read_passthrough_{}", layer_idx),
                 metadata: graph.nodes[read_idx].metadata.clone(),
             };
@@ -185,9 +165,7 @@ pub fn run_kv_cache_rewrite_pass(
             // Mark the write node as replaced (the new StateWrite handles it)
             graph.nodes[w_idx] = SirNode {
                 id: graph.nodes[w_idx].id.clone(),
-                op: SirOp::Identity {
-                    input: state_write_id,
-                },
+                op: SirOp::Identity { input: state_write_id },
                 name: format!("kv_write_passthrough_{}", layer_idx),
                 metadata: graph.nodes[w_idx].metadata.clone(),
             };
@@ -211,10 +189,7 @@ pub fn run_kv_cache_rewrite_pass(
 /// Parse a layer index from a KV cache state ID string.
 /// E.g., "kv_cache_layer_3_key" → 3
 fn parse_layer_idx(state_id: &str) -> usize {
-    state_id.split('_')
-        .filter_map(|s| s.parse::<usize>().ok())
-        .next()
-        .unwrap_or(0)
+    state_id.split('_').filter_map(|s| s.parse::<usize>().ok()).next().unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -225,23 +200,21 @@ mod tests {
     #[test]
     fn test_kv_cache_rewrite_naive_is_noop() {
         let mut graph = SirGraph {
-            nodes: vec![
-                SirNode {
-                    id: SirNodeId("kv_read_0".to_string()),
-                    op: SirOp::StateRead {
-                        state_id: "kv_cache_layer_0_key".to_string(),
-                        offset: 0,
-                        shape: vec![1, 64, 4, 32],
-                    },
-                    name: "kv_read_0".to_string(),
-                    metadata: SirMetadata {
-                        task_origin: TaskOrigin::Synthetic,
-                        model_id: None,
-                        quality_contract: None,
-                        precision_override: None,
-                    },
+            nodes: vec![SirNode {
+                id: SirNodeId("kv_read_0".to_string()),
+                op: SirOp::StateRead {
+                    state_id: "kv_cache_layer_0_key".to_string(),
+                    offset: 0,
+                    shape: vec![1, 64, 4, 32],
                 },
-            ],
+                name: "kv_read_0".to_string(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
             inputs: vec![],
             outputs: vec![],
         };
@@ -296,15 +269,13 @@ mod tests {
         assert_eq!(result.ops_inserted, 6); // StateRead + Where + Mul + Mul + Add + StateWrite
 
         // Verify masked-blend pattern ops were inserted
-        let has_where = graph.nodes.iter().any(|n| {
-            matches!(n.op, SirOp::Where { .. })
-        });
+        let has_where = graph.nodes.iter().any(|n| matches!(n.op, SirOp::Where { .. }));
         assert!(has_where, "Graph should contain a Where op for masked blending");
 
-        let has_add = graph.nodes.iter().any(|n| {
-            matches!(n.op, SirOp::Add { .. })
-                && n.name.contains("kv_blend")
-        });
+        let has_add = graph
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, SirOp::Add { .. }) && n.name.contains("kv_blend"));
         assert!(has_add, "Graph should contain an Add op combining old and new cache values");
     }
 

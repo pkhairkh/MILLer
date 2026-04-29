@@ -32,18 +32,16 @@ pub struct StaticTablesResult {
 /// A future pass will replace the dynamic cos/sin computation with
 /// Gather ops from the static tables.
 pub fn run_static_tables_pass(graph: &mut SirGraph) -> StaticTablesResult {
-    let mut result = StaticTablesResult {
-        rope_converted: 0,
-        tables_inserted: 0,
-    };
+    let mut result = StaticTablesResult { rope_converted: 0, tables_inserted: 0 };
 
     // Find RoPETransform nodes and attach static table references
-    let rope_indices: Vec<usize> = graph.nodes.iter().enumerate()
-        .filter_map(|(idx, node)| {
-            match &node.op {
-                SirOp::RoPETransform { .. } => Some(idx),
-                _ => None,
-            }
+    let rope_indices: Vec<usize> = graph
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, node)| match &node.op {
+            SirOp::RoPETransform { .. } => Some(idx),
+            _ => None,
         })
         .collect();
 
@@ -90,22 +88,20 @@ mod tests {
     #[test]
     fn test_static_tables_inserts_constants() {
         let mut graph = SirGraph {
-            nodes: vec![
-                SirNode {
-                    id: SirNodeId("rope_0".to_string()),
-                    op: SirOp::RoPETransform {
-                        input: SirNodeId("input_0".to_string()),
-                        tables: "rope_tables_0".to_string(),
-                    },
-                    name: "rope_0".to_string(),
-                    metadata: SirMetadata {
-                        task_origin: TaskOrigin::Synthetic,
-                        model_id: None,
-                        quality_contract: None,
-                        precision_override: None,
-                    },
+            nodes: vec![SirNode {
+                id: SirNodeId("rope_0".to_string()),
+                op: SirOp::RoPETransform {
+                    input: SirNodeId("input_0".to_string()),
+                    tables: "rope_tables_0".to_string(),
                 },
-            ],
+                name: "rope_0".to_string(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
             inputs: vec![],
             outputs: vec![],
         };
@@ -116,9 +112,8 @@ mod tests {
         assert_eq!(result.tables_inserted, 4); // sin, cos, eye, mask
 
         // Verify static table constants were inserted
-        let const_count = graph.nodes.iter()
-            .filter(|n| matches!(n.op, SirOp::Const { .. }))
-            .count();
+        let const_count =
+            graph.nodes.iter().filter(|n| matches!(n.op, SirOp::Const { .. })).count();
         assert_eq!(const_count, 4);
     }
 }

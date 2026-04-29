@@ -22,9 +22,9 @@
 //! This means the same framework handles Qwen3, LLaMA, GPT-2, or any
 //! future architecture — no model registry needed.
 
-use serde::{Deserialize, Serialize};
 use super::ane_target::AneFamily;
 use super::sir::SirGraph;
+use serde::{Deserialize, Serialize};
 
 // ─── Strategy Identity ──────────────────────────────────────────────
 
@@ -43,10 +43,7 @@ pub struct StrategyId {
 
 impl StrategyId {
     pub fn new(category: StrategyCategory, variant: &str) -> Self {
-        Self {
-            category,
-            variant: variant.to_string(),
-        }
+        Self { category, variant: variant.to_string() }
     }
 }
 
@@ -268,22 +265,22 @@ impl GraphSummary {
 
         // Infer number of layers from KV cache state IDs
         // (e.g., "kv_cache_layer_3_key" → 4 layers)
-        let max_layer = graph.nodes.iter().filter_map(|node| {
-            match &node.op {
+        let max_layer = graph
+            .nodes
+            .iter()
+            .filter_map(|node| match &node.op {
                 SirOp::StateRead { state_id, .. } | SirOp::StateWrite { state_id, .. } => {
-                    state_id.split('_')
-                        .filter_map(|s| s.parse::<usize>().ok())
-                        .max()
+                    state_id.split('_').filter_map(|s| s.parse::<usize>().ok()).max()
                 }
                 _ => None,
-            }
-        }).max();
+            })
+            .max();
 
         if let Some(max_idx) = max_layer {
             summary.num_layers = max_idx + 1;
         } else if summary.rms_norm_count > 0 {
             // Rough estimate: 2 RMSNorms per layer (attention + MLP norm)
-            summary.num_layers = (summary.rms_norm_count + 1) / 2;
+            summary.num_layers = summary.rms_norm_count.div_ceil(2);
         }
 
         summary
@@ -313,10 +310,8 @@ pub fn discover_strategies(graph: &SirGraph, target_family: AneFamily) -> Discov
     evaluated.extend(probe_io_model_strategies(&summary, target_family));
 
     // Sort applicable strategies by benefit/cost ratio (descending)
-    let mut recommended: Vec<StrategySpec> = evaluated.iter()
-        .filter(|s| s.applicable)
-        .cloned()
-        .collect();
+    let mut recommended: Vec<StrategySpec> =
+        evaluated.iter().filter(|s| s.applicable).cloned().collect();
 
     recommended.sort_by(|a, b| {
         let ratio_a = if a.cost > 0.0 { a.benefit / a.cost } else { a.benefit * 100.0 };
@@ -324,12 +319,7 @@ pub fn discover_strategies(graph: &SirGraph, target_family: AneFamily) -> Discov
         ratio_b.partial_cmp(&ratio_a).unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    DiscoveryReport {
-        evaluated,
-        recommended,
-        target_family,
-        graph_summary: summary,
-    }
+    DiscoveryReport { evaluated, recommended, target_family, graph_summary: summary }
 }
 
 // ─── Strategy Probes ────────────────────────────────────────────────
@@ -470,7 +460,10 @@ fn probe_kv_cache_strategies(
     // This pattern uses Where/Mul/Add to blend new K/V values into
     // the cache instead of scatter. The "reverse ring-buffer" approach
     // from community deployments is one instance of this pattern.
-    let benefit = if matches!(target_family, AneFamily::A14 | AneFamily::A15 | AneFamily::A16 | AneFamily::A18) {
+    let benefit = if matches!(
+        target_family,
+        AneFamily::A14 | AneFamily::A15 | AneFamily::A16 | AneFamily::A18
+    ) {
         0.9 // Major benefit on ANE-targeted families
     } else {
         0.3 // Modest benefit on older families
@@ -509,7 +502,8 @@ fn probe_kv_cache_strategies(
             p.set("block_size", StrategyValue::Usize(16));
             p
         },
-        reason: "Paged KV cache — not yet implemented, reserved for future paged-attention support".to_string(),
+        reason: "Paged KV cache — not yet implemented, reserved for future paged-attention support"
+            .to_string(),
     });
 
     strategies
@@ -547,7 +541,7 @@ fn probe_quantization_strategies(
         id: StrategyId::new(StrategyCategory::Quantization, "grouped_lut"),
         applicable: true,
         benefit: 0.8, // Significant model size reduction
-        cost: 0.5, // Requires calibration and sensitivity analysis
+        cost: 0.5,    // Requires calibration and sensitivity analysis
         params: {
             let mut p = StrategyParams::new();
             p.set("method", StrategyValue::Str("lut".to_string()));
@@ -561,7 +555,9 @@ fn probe_quantization_strategies(
             p.set("mask_kv_bits", StrategyValue::Usize(1));
             p
         },
-        reason: "Grouped LUT quantization — significant size reduction with per-layer bit-width control".to_string(),
+        reason:
+            "Grouped LUT quantization — significant size reduction with per-layer bit-width control"
+                .to_string(),
     });
 
     // Blockwise quantization — per-group scales and offsets
@@ -593,7 +589,9 @@ fn probe_quantization_strategies(
             p.set("default_group_size", StrategyValue::Usize(128));
             p
         },
-        reason: "K-means palettization — post-hoc compression for constants and less sensitive weights".to_string(),
+        reason:
+            "K-means palettization — post-hoc compression for constants and less sensitive weights"
+                .to_string(),
     });
 
     strategies
@@ -619,10 +617,13 @@ fn probe_constant_hoisting_strategies(
             cost: 0.2,
             params: {
                 let mut p = StrategyParams::new();
-                p.set("tables", StrategyValue::List(vec![
-                    StrategyValue::Str("sin_tab".to_string()),
-                    StrategyValue::Str("cos_tab".to_string()),
-                ]));
+                p.set(
+                    "tables",
+                    StrategyValue::List(vec![
+                        StrategyValue::Str("sin_tab".to_string()),
+                        StrategyValue::Str("cos_tab".to_string()),
+                    ]),
+                );
                 p.set("dtype", StrategyValue::Str("fp16".to_string()));
                 p
             },
@@ -642,10 +643,13 @@ fn probe_constant_hoisting_strategies(
             cost: 0.1,
             params: {
                 let mut p = StrategyParams::new();
-                p.set("tables", StrategyValue::List(vec![
-                    StrategyValue::Str("mask_tab".to_string()),
-                    StrategyValue::Str("eye_tab".to_string()),
-                ]));
+                p.set(
+                    "tables",
+                    StrategyValue::List(vec![
+                        StrategyValue::Str("mask_tab".to_string()),
+                        StrategyValue::Str("eye_tab".to_string()),
+                    ]),
+                );
                 p.set("dtype", StrategyValue::Str("fp16".to_string()));
                 p
             },
@@ -684,7 +688,8 @@ fn probe_sampling_strategies(
                 p.set("default_min_p", StrategyValue::F32(0.05));
                 p
             },
-            reason: "On-device sampler — keeps decode loop on-device, avoids host round-trip".to_string(),
+            reason: "On-device sampler — keeps decode loop on-device, avoids host round-trip"
+                .to_string(),
         });
 
         strategies.push(StrategySpec {
@@ -693,7 +698,8 @@ fn probe_sampling_strategies(
             benefit: 0.1,
             cost: 0.0,
             params: StrategyParams::new(),
-            reason: "Host-side sampling — simpler but requires CPU round-trip for each token".to_string(),
+            reason: "Host-side sampling — simpler but requires CPU round-trip for each token"
+                .to_string(),
         });
     }
 
@@ -724,7 +730,8 @@ fn probe_io_model_strategies(
                 p.set("logit_mode_value", StrategyValue::Usize(1));
                 p
             },
-            reason: "Conditional IO model — shared embedding/LM-head weights halve memory".to_string(),
+            reason: "Conditional IO model — shared embedding/LM-head weights halve memory"
+                .to_string(),
         });
     }
 
@@ -799,45 +806,39 @@ impl CompilationPlan {
             StrategyCategory::Sharding,
         ];
 
-        let strategy_order: Vec<StrategyId> = category_order.iter()
+        let strategy_order: Vec<StrategyId> = category_order
+            .iter()
             .flat_map(|cat| {
-                let for_category: Vec<&StrategySpec> = discovery.recommended.iter()
-                    .filter(|s| s.id.category == *cat)
-                    .collect();
+                let for_category: Vec<&StrategySpec> =
+                    discovery.recommended.iter().filter(|s| s.id.category == *cat).collect();
                 // Already sorted by benefit/cost ratio from discovery
                 // Take the best strategy per category (user can override)
-                for_category.into_iter()
+                for_category
+                    .into_iter()
                     .filter(|s| s.benefit > 0.0)
                     .map(|s| s.id.clone())
                     .collect::<Vec<_>>()
             })
             .collect();
 
-        CompilationPlan {
-            discovery,
-            strategy_order,
-        }
+        CompilationPlan { discovery, strategy_order }
     }
 
     /// Whether this plan includes a specific strategy variant.
     pub fn includes(&self, category: StrategyCategory, variant: &str) -> bool {
-        self.strategy_order.iter().any(|id| {
-            id.category == category && id.variant == variant
-        })
+        self.strategy_order.iter().any(|id| id.category == category && id.variant == variant)
     }
 
     /// Get the parameters for a strategy in this plan.
     pub fn params_for(&self, id: &StrategyId) -> Option<&StrategyParams> {
-        self.discovery.recommended.iter()
-            .find(|s| &s.id == id)
-            .map(|s| &s.params)
+        self.discovery.recommended.iter().find(|s| &s.id == id).map(|s| &s.params)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sir::{SirGraph, SirNode, SirNodeId, SirOp, SirMetadata, TaskOrigin};
+    use crate::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
 
     fn make_simple_graph() -> SirGraph {
         SirGraph {
@@ -879,7 +880,9 @@ mod tests {
         let graph = make_simple_graph();
         let report = discover_strategies(&graph, AneFamily::A16);
 
-        let norm_strategies: Vec<_> = report.evaluated.iter()
+        let norm_strategies: Vec<_> = report
+            .evaluated
+            .iter()
             .filter(|s| s.id.category == StrategyCategory::Normalization)
             .collect();
 
@@ -897,12 +900,10 @@ mod tests {
         let report_a12 = discover_strategies(&graph, AneFamily::A12);
         let report_a16 = discover_strategies(&graph, AneFamily::A16);
 
-        let stabilized_a12 = report_a12.evaluated.iter()
-            .find(|s| s.id.variant == "max_abs_stabilized")
-            .unwrap();
-        let stabilized_a16 = report_a16.evaluated.iter()
-            .find(|s| s.id.variant == "max_abs_stabilized")
-            .unwrap();
+        let stabilized_a12 =
+            report_a12.evaluated.iter().find(|s| s.id.variant == "max_abs_stabilized").unwrap();
+        let stabilized_a16 =
+            report_a16.evaluated.iter().find(|s| s.id.variant == "max_abs_stabilized").unwrap();
 
         // A12 (fp16-only broadcast) should have higher benefit for stabilization
         assert!(
@@ -916,7 +917,9 @@ mod tests {
         let graph_no_cache = make_simple_graph();
         let report = discover_strategies(&graph_no_cache, AneFamily::A16);
 
-        let kv_strategies: Vec<_> = report.evaluated.iter()
+        let kv_strategies: Vec<_> = report
+            .evaluated
+            .iter()
             .filter(|s| s.id.category == StrategyCategory::KvCache)
             .collect();
 
@@ -930,10 +933,12 @@ mod tests {
         let plan = CompilationPlan::from_discovery(report);
 
         // Normalization should come before Quantization
-        let norm_idx = plan.strategy_order.iter()
+        let norm_idx = plan
+            .strategy_order
+            .iter()
             .position(|id| id.category == StrategyCategory::Normalization);
-        let quant_idx = plan.strategy_order.iter()
-            .position(|id| id.category == StrategyCategory::Quantization);
+        let quant_idx =
+            plan.strategy_order.iter().position(|id| id.category == StrategyCategory::Quantization);
 
         if let (Some(ni), Some(qi)) = (norm_idx, quant_idx) {
             assert!(ni < qi, "Normalization should run before Quantization");

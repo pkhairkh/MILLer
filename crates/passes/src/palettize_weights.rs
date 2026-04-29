@@ -67,11 +67,8 @@ pub fn run_palettize_weights_pass(
     graph: &mut SirGraph,
     config: &PalettizeConfig,
 ) -> PalettizeResult {
-    let mut result = PalettizeResult {
-        weights_annotated: 0,
-        grouped_lut_applied: 0,
-        consts_palettized: 0,
-    };
+    let mut result =
+        PalettizeResult { weights_annotated: 0, grouped_lut_applied: 0, consts_palettized: 0 };
 
     // Annotate LinearProjection nodes with GroupedLut quantization
     for node in &mut graph.nodes {
@@ -86,8 +83,7 @@ pub fn run_palettize_weights_pass(
                     || node.name.contains("out_proj")
                     || node.name.contains("qkv");
 
-                let is_qk = node.name.contains("q_proj")
-                    || node.name.contains("k_proj");
+                let is_qk = node.name.contains("q_proj") || node.name.contains("k_proj");
 
                 let bits = if is_qk && config.conservative_qk {
                     // Q/K get higher bit-width for stability

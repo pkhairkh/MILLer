@@ -65,7 +65,7 @@ TOML task spec
 | `ane-coreml-ffi` | C API FFI skeleton: `extern "C"` functions, `coreml_validate_proto_package()`, cross-platform validation |
 | `ane-artifacts` | Manifest generation, content hashing, deterministic packaging |
 | `ane-report` | JSON and Markdown report generation |
-| `ane-trace` | **HuggingFace Transformers model tracing** via `torch.fx`; ANE-faithful SIR construction; versioned compilation with per-family constraint enforcement; model architecture registry (GPT-2, LLaMA/Qwen, BERT, Phi) |
+| `ane-trace` | **HuggingFace Transformers model tracing** via `torch.fx`; config-driven ANE-faithful SIR construction with separate Q/K/V projections, SwiGLU support, residual connections, and causal masks; versioned compilation with per-family constraint enforcement |
 | `ane-cli` | CLI entry point: `compile`, `compile-full`, `compile-sharded`, `compile-full-sharded`, `lab`, `lab-loop`, `generate-tasks`, `profile`, `report`, `package`, **`trace-compile`** |
 
 ### Task Families
@@ -105,16 +105,16 @@ VersionedCompiler: per-family constraint validation
 Standard MILLer Pipeline: SIR → AIR → MIR → Core ML emission
 ```
 
-### Supported Model Architectures
+### Config-Driven Decomposition (No Registry)
 
-| Architecture | Model Type | Key Decomposition |
-|---|---|---|
-| GPT-2 family | Causal LM | QKV projection → SDPA → output projection |
-| LLaMA / Qwen family | RoPE-based | RoPE tables + grouped-query attention |
-| BERT family | Encoder-only | Bidirectional attention + pooler |
-| Phi family | Small form factor | Parallel attention + MLP |
+The SIR builder decomposes composite ops (attention, MLP, normalization) entirely from the model's `AutoConfig` fields — `hidden_act`, `uses_rms_norm`, `uses_gqa`, `uses_rope`, `rms_norm_eps`, `num_key_value_heads`. No hardcoded model registry or architecture list is required. Any HuggingFace model that provides the standard config fields works ad-hoc, including future architectures.
 
-Custom architectures can be registered via `ModelRegistry::register()`.
+Key decomposition decisions:
+- **Separate Q/K/V projections** (not merged QKV) with per-projection weight names
+- **SwiGLU auto-detection** when both `gate_proj` and `up_proj` weights exist
+- **Residual connections** emitted as `SirOp::Add` when the traced node carries a skip input
+- **Causal mask references** in SDPA for autoregressive models
+- **RMSNorm epsilon validation** with fallback chain (traced value → config → 1e-6 default)
 
 ### ANE Version-Aware Compilation
 

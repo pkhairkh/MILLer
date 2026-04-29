@@ -29,5 +29,5 @@ pub mod role_mir;
 pub mod shard_plan;
 pub mod slanc_scales;
 pub mod state_topology;
-pub mod staticize;
 pub mod static_tables;
+pub mod staticize;

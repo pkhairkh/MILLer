@@ -930,11 +930,17 @@ pub struct SirMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TaskOrigin {
     Synthetic,
-    RealModel { name: String },
-    MilImport { source: String },
+    RealModel {
+        name: String,
+    },
+    MilImport {
+        source: String,
+    },
     Manual,
     /// Traced from a HuggingFace transformers model via torch.fx.
-    TransformersTrace { name: String },
+    TransformersTrace {
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -955,11 +961,12 @@ pub struct SirGraph {
 /// The layout choice directly affects ANE provisioning behavior.
 /// Strategies are discovered dynamically by the optimization framework
 /// based on graph structure and target hardware, not hardcoded.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum KvCacheLayout {
     /// Naive append/shift scheme — new tokens appended at the end,
     /// old tokens shifted out when context is full. Requires scatter
     /// operations that often force CPU fallback on ANE.
+    #[default]
     Naive,
     /// Masked-blend write pattern: active context in contiguous suffix,
     /// new K/V values written by masked blending instead of scatter.
@@ -971,21 +978,16 @@ pub enum KvCacheLayout {
     Paged,
 }
 
-impl Default for KvCacheLayout {
-    fn default() -> Self {
-        KvCacheLayout::Naive
-    }
-}
-
 /// Quantization strategy for a weight tensor or layer.
 ///
 /// Parameterized by method and bit-width rather than named after
 /// specific projects. The strategy framework discovers which
 /// combination of parameters is appropriate for each weight tensor
 /// based on sensitivity analysis and target hardware.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum QuantizationStrategy {
     /// No quantization — full fp16/fp32 weights.
+    #[default]
     Unquantized,
     /// Blockwise weight-only quantization with per-group scales and offsets.
     /// Good for embedding/LM head matrices.
@@ -1016,12 +1018,6 @@ pub enum QuantizationStrategy {
         /// Group size for grouped channel palettization.
         group_size: usize,
     },
-}
-
-impl Default for QuantizationStrategy {
-    fn default() -> Self {
-        QuantizationStrategy::Unquantized
-    }
 }
 
 /// Specification for an on-device sampler model.
@@ -1083,10 +1079,7 @@ impl Default for IoModelSpec {
     fn default() -> Self {
         IoModelSpec {
             tied_weights: true,
-            quantization: QuantizationStrategy::Blockwise {
-                group_size: 128,
-                bits: 4,
-            },
+            quantization: QuantizationStrategy::Blockwise { group_size: 128, bits: 4 },
             embedding_mode_value: 0,
             logit_mode_value: 1,
         }

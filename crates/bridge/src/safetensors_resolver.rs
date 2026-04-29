@@ -64,10 +64,7 @@ impl SafetensorsWeightResolver {
 
         for path_str in safetensors_files {
             if let Err(e) = Self::load_safetensors_file(path_str, &mut tensors) {
-                eprintln!(
-                    "Warning: failed to load safetensors file '{}': {}",
-                    path_str, e
-                );
+                eprintln!("Warning: failed to load safetensors file '{}': {}", path_str, e);
             }
         }
 
@@ -178,10 +175,7 @@ impl SafetensorsWeightResolver {
     }
 
     /// Load a single safetensors file into the tensor index.
-    fn load_safetensors_file(
-        path: &str,
-        tensors: &mut HashMap<String, TensorEntry>,
-    ) -> Result<()> {
+    fn load_safetensors_file(path: &str, tensors: &mut HashMap<String, TensorEntry>) -> Result<()> {
         let data = fs::read(path)?;
         let st = safetensors::SafeTensors::deserialize(&data)?;
 
@@ -261,10 +255,9 @@ impl SafetensorsWeightResolver {
 
 impl WeightResolver for SafetensorsWeightResolver {
     fn resolve(&self, value_path: &str) -> Option<WeightData> {
-        self.tensors.get(value_path).map(|entry| WeightData {
-            data: entry.data.clone(),
-            shape: entry.shape.clone(),
-        })
+        self.tensors
+            .get(value_path)
+            .map(|entry| WeightData { data: entry.data.clone(), shape: entry.shape.clone() })
     }
 }
 
@@ -369,11 +362,7 @@ fn discover_hf_safetensors(model_id: &str) -> Vec<String> {
 
     let repo_dir = cache_root.join(&repo_dir_name);
     if !repo_dir.is_dir() {
-        eprintln!(
-            "  HF cache repo dir not found: {} (model_id={})",
-            repo_dir.display(),
-            model_id
-        );
+        eprintln!("  HF cache repo dir not found: {} (model_id={})", repo_dir.display(), model_id);
         return Vec::new();
     }
 
@@ -421,10 +410,7 @@ fn discover_hf_safetensors(model_id: &str) -> Vec<String> {
         }
     }
 
-    eprintln!(
-        "  No .safetensors files found in any snapshot of {}",
-        model_id
-    );
+    eprintln!("  No .safetensors files found in any snapshot of {}", model_id);
     Vec::new()
 }
 
@@ -516,11 +502,8 @@ mod tests {
 
     #[test]
     fn test_from_traced_graph_no_weights() {
-        let (resolver, strategy) = SafetensorsWeightResolver::from_traced_graph(
-            &[],
-            None,
-            "nonexistent/model-12345",
-        );
+        let (resolver, strategy) =
+            SafetensorsWeightResolver::from_traced_graph(&[], None, "nonexistent/model-12345");
         assert!(resolver.is_empty());
         assert_eq!(strategy, "no weights found");
     }

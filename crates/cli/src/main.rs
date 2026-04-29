@@ -1416,8 +1416,9 @@ fn run_compile_full(
     }
     println!("[8/13] Running MilLowerPass (AIR→MIR)...");
     let mil_lower = MilLowerPass::new();
-    let mirs =
-        mil_lower.run(&air, &shard_plan, &input_shapes).map_err(|e| format!("MilLowerPass failed: {}", e))?;
+    let mirs = mil_lower
+        .run(&air, &shard_plan, &input_shapes)
+        .map_err(|e| format!("MilLowerPass failed: {}", e))?;
     println!("  MIR: {} shard graphs produced", mirs.len());
     for (i, mir) in mirs.iter().enumerate() {
         println!(
@@ -2182,9 +2183,10 @@ fn run_compile_full_sharded(
         use ane_passes::mil_lower::MilLowerPass;
         let mil_lower = MilLowerPass::new();
         let shard_input_shapes = std::collections::HashMap::new();
-        let _shard_mirs = mil_lower.run(&shard_air, &shard_shard_plan, &shard_input_shapes).map_err(|e| {
-            format!("MilLowerPass failed for shard {}: {}", shard_spec.shard_name, e)
-        })?;
+        let _shard_mirs =
+            mil_lower.run(&shard_air, &shard_shard_plan, &shard_input_shapes).map_err(|e| {
+                format!("MilLowerPass failed for shard {}: {}", shard_spec.shard_name, e)
+            })?;
         println!(
             "    MilLower: {} MIR graph(s) produced, compute_unit_hint={}",
             _shard_mirs.len(),
@@ -5415,7 +5417,11 @@ fn run_trace_compile(
         let names = weight_resolver.tensor_names();
         let sample: Vec<&str> = names.iter().take(5).map(|s| s.as_str()).collect();
         println!("  Sample tensor names: {:?}", sample);
-        println!("  Total weight data: {} bytes ({:.1} MB)", weight_resolver.total_weight_bytes(), weight_resolver.total_weight_bytes() as f64 / 1e6);
+        println!(
+            "  Total weight data: {} bytes ({:.1} MB)",
+            weight_resolver.total_weight_bytes(),
+            weight_resolver.total_weight_bytes() as f64 / 1e6
+        );
     }
 
     let mlpackage_dir = output_path.join("model.mlpackage");
@@ -5429,8 +5435,10 @@ fn run_trace_compile(
     )
     .map_err(|e| format!("Proto-direct emission failed: {}", e))?;
     println!("  Emitted: {}", mlpackage_dir.display());
-    println!("  Total size: {} bytes, {} file(s), {} weight(s)",
-        emit_result.total_size, emit_result.file_count, emit_result.weight_count);
+    println!(
+        "  Total size: {} bytes, {} file(s), {} weight(s)",
+        emit_result.total_size, emit_result.file_count, emit_result.weight_count
+    );
 
     // Step 8: Validate .mlpackage structure
     println!("[8/10] Validating .mlpackage structure...");
