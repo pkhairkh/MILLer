@@ -200,30 +200,56 @@ pub fn mir_graph_to_compat(
     let input_descs: Vec<ane_coreml_proto::mir_compat::TensorDescCompat> = graph
         .inputs
         .iter()
-        .filter_map(|id| {
-            node_map.get(id.0.as_str()).map(|node| {
-                use ane_coreml_proto::mir_compat::TensorDescCompat;
-                TensorDescCompat {
+        .map(|id| {
+            use ane_coreml_proto::mir_compat::TensorDescCompat;
+            match node_map.get(id.0.as_str()) {
+                Some(node) => TensorDescCompat {
                     name: node.id.0.clone(),
                     shape: node.shape.clone(),
                     dtype: mil_dtype_to_compat(&node.dtype),
+                },
+                None => {
+                    // Input node not found in graph nodes — use default shape/dtype.
+                    // Core ML requires every input to have shape constraints.
+                    eprintln!(
+                        "  Warning: input node '{}' not found in MIR graph — using default shape [1]",
+                        id.0
+                    );
+                    TensorDescCompat {
+                        name: id.0.clone(),
+                        shape: vec![1],
+                        dtype: MilDtypeCompat::Fp16,
+                    }
                 }
-            })
+            }
         })
         .collect();
 
     let output_descs: Vec<ane_coreml_proto::mir_compat::TensorDescCompat> = graph
         .outputs
         .iter()
-        .filter_map(|id| {
-            node_map.get(id.0.as_str()).map(|node| {
-                use ane_coreml_proto::mir_compat::TensorDescCompat;
-                TensorDescCompat {
+        .map(|id| {
+            use ane_coreml_proto::mir_compat::TensorDescCompat;
+            match node_map.get(id.0.as_str()) {
+                Some(node) => TensorDescCompat {
                     name: node.id.0.clone(),
                     shape: node.shape.clone(),
                     dtype: mil_dtype_to_compat(&node.dtype),
+                },
+                None => {
+                    // Output node not found in graph nodes — use default shape/dtype.
+                    // Core ML requires at least one output with shape constraints.
+                    eprintln!(
+                        "  Warning: output node '{}' not found in MIR graph — using default shape [1]",
+                        id.0
+                    );
+                    TensorDescCompat {
+                        name: id.0.clone(),
+                        shape: vec![1],
+                        dtype: MilDtypeCompat::Fp16,
+                    }
                 }
-            })
+            }
         })
         .collect();
 
