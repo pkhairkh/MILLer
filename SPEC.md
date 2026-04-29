@@ -337,7 +337,7 @@ Two code paths still require per-variant match and cannot be fully generic:
 
 **Example node types**:
 - `LinearProjection(input, weight, bias?)` — semantic linear operation, no commitment to matmul vs 1x1-conv.
-- `AttentionBlock(q, k, v, mask, rope?)` — multi-head attention, no commitment to fused vs decomposed form.
+- `AttentionBlock(q, k, v, mask, rope?, qk_norm?)` — multi-head attention with optional QK-norm (q_norm/k_norm applied before SDPA, as in Qwen3). No commitment to fused vs decomposed form. `head_dim` is read from config when explicitly set (e.g., Qwen3 sets head_dim=128 independently of hidden_size/num_heads), otherwise computed as hidden_size/num_heads.
 - `RMSNorm(input, weight, epsilon)` — normalization.
 - `RoPETransform(input, tables)` — rotary positional encoding.
 - `StateRead(state_id, offset, shape)` — read from persistent state.
@@ -1781,7 +1781,7 @@ The SIR builder decomposes composite ops entirely from the model's `AutoConfig` 
 Key decomposition decisions in `build_sir_from_trace()`:
 - **Separate Q/K/V projections** — three distinct `LinearProjection` ops with per-projection weight names (q_proj, k_proj, v_proj)
 - **SwiGLU auto-detection** — when both `gate_proj.weight` and `up_proj.weight` exist, emits `down_proj(silu(gate_proj(x)) * up_proj(x))`
-- **Residual connections** — `SirOp::Add` emitted when the traced node carries a skip/residual input
+- **Residual connections** — `SirOp::Add` emitted when the traced node carries a skip/residual input. The fallback structural graph explicitly records residual inputs on `AttentionBlock` and `MlpBlock` nodes (2 inputs: `[normed_hidden, residual]`), enabling correct SIR construction even when `torch.fx` tracing fails and the structural fallback path is used.
 - **Causal mask references** — SDPA receives a causal mask to be materialized by the staticize pass
 - **RMSNorm epsilon validation** — fallback chain: traced value → config.layer_norm_epsilon → 1e-6 default
 - **Non-silent input resolution** — `resolve_input` warns when producing `__unresolved__` node references

@@ -146,7 +146,7 @@ lower-level AIR ops:
 | SIR Op | AIR Decomposition |
 |--------|-------------------|
 | LinearProjection | Conv1x1AsLinear (canonical mb.linear) |
-| AttentionBlock | Conv1x1AsLinear + SliceByIndex + Reshape + Transpose + ScaledDotProductAttention + Conv1x1AsLinear |
+| AttentionBlock | Conv1x1AsLinear + SliceByIndex + Reshape + Transpose + ScaledDotProductAttention + Conv1x1AsLinear (+ optional QK-norm: LayerNorm/RMSNorm on Q and K before SDPA) |
 | DecodeStep | Conv1x1AsLinear + SliceByIndex + StateReadFixed + Reshape + ScaledDotProductAttention + Conv1x1AsLinear + StateWriteFixed |
 | RMSNorm | ReduceMean + Rsqrt + ElementWise::Mul + ElementWise::Mul |
 | RoPETransform | Cos + Sin + ElementWise::Mul + ElementWise::Mul + ElementWise::Add |

@@ -25,10 +25,14 @@
       "LayerNorm"
     ],
     "has_rope_module": false,
-    "attention_module_types": [],
-    "mlp_module_types": [],
-    "linear_count": 0,
-    "embedding_count": 0,
+    "attention_module_types": [
+      "DolphinAttention"
+    ],
+    "mlp_module_types": [
+      "DolphinMLP"
+    ],
+    "linear_count": 43,
+    "embedding_count": 1,
     "uses_gqa": false,
     "detection_methods": {
       "norm_type": "config_field_presence",

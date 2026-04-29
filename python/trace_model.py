@@ -155,7 +155,7 @@ def trace_model_fx(
     except Exception as e:
         # Fallback: build structural graph from config
         sys.stderr.write(f"Warning: symbolic_trace failed ({e}), falling back to structural graph construction\n")
-        return build_fallback_graph(model_config, model_id, decompose, model_class=model_class)
+        return build_fallback_graph(model_config, model_id, decompose, model_class=model_class, model=model)
 
     # ─── Dynamic Feature Discovery ────────────────────────────────
     # Walk the model's modules to discover what types are actually present.
@@ -229,7 +229,9 @@ def trace_model_fx(
         num_layers = getattr(cfg, "num_hidden_layers", 1)
         num_heads = getattr(cfg, "num_attention_heads", 1)
         num_kv_heads = getattr(cfg, "num_key_value_heads", num_heads)
-        head_dim = config_section["hidden_size"] // num_heads
+        # Use explicit head_dim from config if available (e.g., Qwen3 sets head_dim=128
+        # while hidden_size/num_attention_heads would give 64)
+        head_dim = config_section.get("head_dim") or (config_section["hidden_size"] // num_heads)
 
         for layer_idx in range(num_layers):
             state_declarations.append({
@@ -429,6 +431,7 @@ def discover_model_features(model, model_config) -> Dict[str, Any]:
         "mlp_module_types": [],            # ["LlamaMLP", "Qwen2MLP", ...]
         "linear_count": 0,
         "embedding_count": 0,
+        "has_qk_norm": False,             # Qwen3-style Q/K normalization after projections
         "detection_methods": {},           # How each feature was detected
     }
     
@@ -468,6 +471,12 @@ def discover_model_features(model, model_config) -> Dict[str, Any]:
             # Don't add leaf modules (like attention scores), only blocks
             if any(child for child in module.children()):
                 attn_type_set.add(class_name)
+                # ─── QK-norm detection ────────────────────────────
+                # Some models (e.g., Qwen3) apply RMSNorm to Q and K after
+                # projection. Detect by checking for q_norm/k_norm sub-modules.
+                if hasattr(module, 'q_norm') and hasattr(module, 'k_norm'):
+                    features["has_qk_norm"] = True
+                    features["detection_methods"]["qk_norm"] = "module_type_inspection"
         
         # ─── MLP type detection ───────────────────────────────────
         if 'mlp' in class_name.lower() or 'feed_forward' in class_name.lower():
@@ -712,11 +721,14 @@ def map_module_call(fx_node, model_config, decompose: bool, model=None) -> Dict[
     # ─── Attention modules ───────────────────────────────────────
     if "attention" in target.lower() or "attn" in target.lower():
         cfg = _resolve_effective_config(model_config)
+        # Use explicit head_dim from config if available (e.g., Qwen3 sets head_dim=128
+        # while hidden_size/num_attention_heads would give 64)
+        head_dim = getattr(cfg, "head_dim", None) or (getattr(cfg, "hidden_size", 768) // getattr(cfg, "num_attention_heads", 12))
         return {
             "type": "AttentionBlock",
             "embed_dim": getattr(cfg, "hidden_size", 768),
             "num_heads": getattr(cfg, "num_attention_heads", 12),
-            "head_dim": getattr(cfg, "hidden_size", 768) // getattr(cfg, "num_attention_heads", 12),
+            "head_dim": head_dim,
             "use_sdpa": True,
             "_module_type": module_type,
         }
@@ -752,7 +764,8 @@ def map_function_call(fx_node, model_config, decompose: bool) -> Dict[str, Any]:
     func_map = {
         "scaled_dot_product_attention": lambda: {
             "type": "ScaledDotProductAttention",
-            "scale": 1.0 / ((getattr(cfg, "hidden_size", 768) // getattr(cfg, "num_attention_heads", 12)) ** 0.5),
+            # Use explicit head_dim from config if available (e.g., Qwen3 sets head_dim=128)
+            "scale": 1.0 / ((getattr(cfg, "head_dim", None) or (getattr(cfg, "hidden_size", 768) // getattr(cfg, "num_attention_heads", 12))) ** 0.5),
         },
         "rms_norm": lambda: {
             "type": "RmsNorm",
@@ -980,6 +993,11 @@ def extract_model_config(model_config) -> Dict[str, Any]:
     else:
         layer_norm_epsilon = getattr(cfg, "layer_norm_eps", 1e-5)
     
+    # Step 8: Head dimension — use explicit config value if available.
+    # Some models (e.g., Qwen3) set head_dim explicitly in config (128)
+    # while hidden_size/num_attention_heads would give a different value (64).
+    head_dim = getattr(cfg, "head_dim", None) or (hidden_size // num_heads)
+    
     return {
         "hidden_size": hidden_size,
         "num_attention_heads": num_heads,
@@ -993,6 +1011,7 @@ def extract_model_config(model_config) -> Dict[str, Any]:
         "uses_rope": uses_rope,
         "uses_rms_norm": uses_rms_norm,
         "uses_gqa": uses_gqa,
+        "head_dim": head_dim,
         "model_type": model_type,
     }
 
@@ -1342,13 +1361,25 @@ def _build_input_specs(input_ids, model_class):
         return [{"name": "input_ids", "shape": {"dims": [1, 32], "dtype": "int32"}}]
 
 
-def build_fallback_graph(model_config, model_id: str, decompose: bool, model_class: str = "causal_lm") -> Dict[str, Any]:
+def build_fallback_graph(model_config, model_id: str, decompose: bool, model_class: str = "causal_lm", model=None) -> Dict[str, Any]:
     """
     Build a TracedGraph using structural knowledge when torch.fx tracing fails.
 
     This constructs a graph based on the model's configuration rather than
     actual tracing, producing the expected layer structure for known architectures.
     ALL feature detection is fully dynamic — no model_type heuristics.
+
+    When the model object is available (passed from the fallback path in
+    trace_model_fx), this function also:
+    - Walks model.named_parameters() to populate weight metadata
+    - Calls discover_model_features() for accurate feature detection
+    - Builds a weight_name_map for the Rust-side SafetensorsWeightResolver
+    - Detects QK-norm (q_norm/k_norm in attention blocks)
+
+    Residual connections: Each AttentionBlock and MlpBlock lists 2 inputs:
+    the normed hidden state and the pre-norm residual. This makes the
+    residual connection explicit in the graph so the Rust SIR builder can
+    see it without relying on heuristics.
     """
     config = extract_model_config(model_config)
     config["model_class"] = model_class
@@ -1358,9 +1389,64 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
     hidden_size = config["hidden_size"]
     intermediate_size = config["intermediate_size"]
     num_heads = config["num_attention_heads"]
-    head_dim = hidden_size // num_heads
+    # Use explicit head_dim from config if available (e.g., Qwen3 sets head_dim=128
+    # while hidden_size/num_attention_heads would give 64)
+    head_dim = config.get("head_dim") or (hidden_size // num_heads)
 
     is_encoder_decoder = (model_class == "seq2seq_lm")
+
+    # ─── Feature discovery (use model when available) ──────────────
+    if model is not None:
+        discovered = discover_model_features(model, model_config)
+    else:
+        discovered = {
+            "norm_types_encountered": ["RMSNorm"] if config["uses_rms_norm"] else ["LayerNorm"],
+            "has_rope_module": config["uses_rope"],
+            "attention_module_types": [],
+            "mlp_module_types": [],
+            "linear_count": 0,
+            "embedding_count": 0,
+            "has_qk_norm": False,
+            "uses_gqa": config["uses_gqa"],
+            "detection_methods": {
+                "norm_type": "config_field_presence",
+                "rope": "config_field_presence",
+                "gqa": "config_field_comparison",
+            },
+        }
+
+    # ─── Weight metadata (from model when available) ───────────────
+    weights = {}
+    weight_name_map = {}
+    num_parameters = 0
+    parameter_bytes = 0
+
+    if model is not None:
+        import torch as _torch
+        for name, param in model.named_parameters():
+            weights[name] = {
+                "shape": list(param.shape),
+                "dtype": str(param.dtype).replace("torch.", ""),
+                "data_path": None,
+                "quantized": None,
+            }
+        num_parameters = sum(p.numel() for p in model.parameters())
+        parameter_bytes = sum(p.numel() * p.element_size() for p in model.parameters())
+
+        # Build weight name map from model's module tree.
+        # Maps each module_path to its weight/bias parameter paths so the
+        # Rust-side SafetensorsWeightResolver can locate real weights.
+        for mod_name, mod in model.named_modules():
+            has_params = False
+            for pname, _ in mod.named_parameters():
+                has_params = True
+                break
+            if has_params:
+                weight_name_map[mod_name] = {
+                    "module_path": mod_name,
+                    "weight": f"{mod_name}.weight" if hasattr(mod, 'weight') else None,
+                    "bias": f"{mod_name}.bias" if hasattr(mod, 'bias') and mod.bias is not None else None,
+                }
 
     nodes = []
 
@@ -1408,14 +1494,28 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
         "inputs": [embed_input],
         "output_shape": {"dims": [1, 32, hidden_size], "dtype": "fp16"},
         "is_parameter": False,
-        "module_path": None,
+        "module_path": "model.embed_tokens",
     })
 
     prev_id = "embed_tokens"
 
-    # Transformer layers
+    # Transformer layers — with explicit residual connections.
+    # In a pre-norm transformer, the computation for each layer is:
+    #   residual = hidden
+    #   hidden = norm(hidden)
+    #   hidden = attn(hidden) + residual       ← residual add
+    #   residual = hidden
+    #   hidden = norm(hidden)
+    #   hidden = mlp(hidden) + residual        ← residual add
+    #
+    # We make the residual explicit by giving each block 2 inputs:
+    #   [normed_hidden, residual]
+    # This allows the Rust SIR builder to see the residual without heuristics.
     for i in range(num_layers):
         layer_prefix = f"layer_{i}"
+
+        # Save the pre-norm hidden state as the residual for the attention block
+        attn_residual_id = prev_id
 
         # Input norm
         if config["uses_rms_norm"]:
@@ -1430,23 +1530,30 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
             })
             prev_id = f"{layer_prefix}_input_norm"
 
-        # Self-attention
+        # Self-attention — 2 inputs: [normed_hidden, residual]
+        attn_op = {
+            "type": "AttentionBlock",
+            "embed_dim": hidden_size,
+            "num_heads": num_heads,
+            "head_dim": head_dim,
+            "use_sdpa": True,
+        }
+        # Flag QK-norm presence when detected
+        if discovered.get("has_qk_norm", False):
+            attn_op["has_qk_norm"] = True
         nodes.append({
             "id": f"{layer_prefix}_self_attn",
-            "op": {
-                "type": "AttentionBlock",
-                "embed_dim": hidden_size,
-                "num_heads": num_heads,
-                "head_dim": head_dim,
-                "use_sdpa": True,
-            },
+            "op": attn_op,
             "name": f"{layer_prefix}_self_attn",
-            "inputs": [prev_id],
+            "inputs": [prev_id, attn_residual_id],
             "output_shape": {"dims": [1, 32, hidden_size], "dtype": "fp16"},
             "is_parameter": False,
             "module_path": f"model.layers.{i}.self_attn",
         })
         prev_id = f"{layer_prefix}_self_attn"
+
+        # Save the attention output (which includes the residual add) for the MLP residual
+        mlp_residual_id = prev_id
 
         # Post-attention norm
         if config["uses_rms_norm"]:
@@ -1461,7 +1568,7 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
             })
             prev_id = f"{layer_prefix}_post_attn_norm"
 
-        # MLP
+        # MLP — 2 inputs: [normed_hidden, residual]
         nodes.append({
             "id": f"{layer_prefix}_mlp",
             "op": {
@@ -1472,7 +1579,7 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
                 "activation": config["hidden_act"],
             },
             "name": f"{layer_prefix}_mlp",
-            "inputs": [prev_id],
+            "inputs": [prev_id, mlp_residual_id],
             "output_shape": {"dims": [1, 32, hidden_size], "dtype": "fp16"},
             "is_parameter": False,
             "module_path": f"model.layers.{i}.mlp",
@@ -1514,37 +1621,132 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
         "module_path": None,
     })
 
+    # Determine architecture name from model when available, otherwise from config
+    if model is not None:
+        architecture = model.__class__.__name__
+    else:
+        architecture = f"{model_config.model_type.capitalize()}ForCausalLM"
+
+    # Build input specs
+    if is_encoder_decoder:
+        input_specs = [
+            {"name": "encoder_hidden_states", "shape": {"dims": [1, 32, hidden_size], "dtype": "fp16"}},
+            {"name": "decoder_input_ids", "shape": {"dims": [1, 32], "dtype": "int32"}},
+        ]
+    else:
+        input_specs = [{"name": "input_ids", "shape": {"dims": [1, 32], "dtype": "int32"}}]
+
+    # Locate safetensors files (same strategies as trace_model_fx)
+    safetensors_files = []
+    model_cache_dir = None
+
+    if model is not None:
+        # Strategy 1a: snapshot_download local_only
+        try:
+            from huggingface_hub import snapshot_download
+            resolved_name = getattr(model, "name_or_path", None) or model_id
+            cache_dir_path = snapshot_download(
+                repo_id=resolved_name,
+                allow_patterns=["*.safetensors"],
+                local_files_only=True,
+            )
+            if cache_dir_path:
+                model_cache_dir = str(cache_dir_path)
+                from pathlib import Path as _P
+                safetensors_files = sorted([
+                    str(f) for f in _P(cache_dir_path).glob("*.safetensors")
+                ])
+        except Exception as e:
+            sys.stderr.write(f"  Fallback: Strategy 1a (snapshot_download local_only) failed: {e}\n")
+
+        # Strategy 1b: snapshot_download with download
+        if not safetensors_files:
+            try:
+                from huggingface_hub import snapshot_download
+                resolved_name = getattr(model, "name_or_path", None) or model_id
+                cache_dir_path = snapshot_download(
+                    repo_id=resolved_name,
+                    allow_patterns=["*.safetensors"],
+                )
+                if cache_dir_path:
+                    model_cache_dir = str(cache_dir_path)
+                    from pathlib import Path as _P
+                    safetensors_files = sorted([
+                        str(f) for f in _P(cache_dir_path).glob("*.safetensors")
+                    ])
+            except Exception as e:
+                sys.stderr.write(f"  Fallback: Strategy 1b (snapshot_download with download) failed: {e}\n")
+
+    # Strategy 3: model_id is a local directory
+    if not safetensors_files:
+        local_path = Path(model_id)
+        if local_path.is_dir():
+            model_cache_dir = str(local_path.resolve())
+            safetensors_files = sorted([
+                str(f) for f in local_path.glob("*.safetensors")
+            ])
+
+    # Strategy 4: Manual HF cache walk
+    if not safetensors_files:
+        import os
+        repo_dir_name = "models--" + model_id.replace("/", "--")
+        hf_cache = os.environ.get("HF_HUB_CACHE") or os.environ.get("HUGGINGFACE_HUB_CACHE")
+        if not hf_cache:
+            hf_home = os.environ.get("HF_HOME")
+            if hf_home:
+                hf_cache = os.path.join(hf_home, "hub")
+            else:
+                hf_cache = os.path.expanduser("~/.cache/huggingface/hub")
+        repo_dir = os.path.join(hf_cache, repo_dir_name)
+        if os.path.isdir(repo_dir):
+            snapshots_dir = os.path.join(repo_dir, "snapshots")
+            if os.path.isdir(snapshots_dir):
+                snapshot_dirs = []
+                try:
+                    for d in os.listdir(snapshots_dir):
+                        sd = os.path.join(snapshots_dir, d)
+                        if os.path.isdir(sd):
+                            snapshot_dirs.append(sd)
+                except OSError:
+                    pass
+                snapshot_dirs.sort(key=lambda d: os.path.getmtime(d), reverse=True)
+                for sd in snapshot_dirs:
+                    st_files = sorted([
+                        os.path.join(sd, f)
+                        for f in os.listdir(sd)
+                        if f.endswith(".safetensors")
+                    ])
+                    if st_files:
+                        model_cache_dir = sd
+                        safetensors_files = st_files
+                        break
+
+    if safetensors_files:
+        sys.stderr.write(f"  Found {len(safetensors_files)} safetensors file(s) in {model_cache_dir}\n")
+    else:
+        sys.stderr.write("  WARNING: No safetensors files found in fallback — weights will be zero-filled\n")
+
     return {
         "model_id": model_id,
-        "architecture": f"{model_config.model_type.capitalize()}ForCausalLM",
+        "architecture": architecture,
         "transformers_version": _get_transformers_version(),
         "torch_version": "0.0.0",
         "model_config": config,
-        "discovered_features": {
-            "norm_types_encountered": ["RMSNorm"] if config["uses_rms_norm"] else ["LayerNorm"],
-            "has_rope_module": config["uses_rope"],
-            "attention_module_types": [],
-            "mlp_module_types": [],
-            "linear_count": 0,
-            "embedding_count": 0,
-            "uses_gqa": config["uses_gqa"],
-            "detection_methods": {
-                "norm_type": "config_field_presence",
-                "rope": "config_field_presence",
-                "gqa": "config_field_comparison",
-            },
-        },
+        "discovered_features": discovered,
         "nodes": nodes,
-        "weights": {},
-        "inputs": [{"name": "input_ids", "shape": {"dims": [1, 32], "dtype": "int32"}}],
+        "weights": weights,
+        "weight_name_map": weight_name_map,
+        "model_cache_dir": model_cache_dir,
+        "safetensors_files": safetensors_files,
+        "inputs": input_specs,
         "outputs": [{"name": "logits", "shape": {"dims": [1, 32, config["vocab_size"]], "dtype": "fp16"}}],
         "state_declarations": [],
         "trace_metadata": {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "trace_duration_secs": 0.0,
             "num_nodes": len(nodes),
-            "num_parameters": 0,
-            "parameter_bytes": 0,
+            "num_parameters": num_parameters,
+            "parameter_bytes": parameter_bytes,
             "decomposed": decompose,
             "warnings": ["Built via structural fallback (torch.fx tracing failed)"],
         },

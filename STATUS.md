@@ -80,7 +80,7 @@ TOML task spec -> Rust SIR graph -> Rust MIR graph -> Bridge payload (JSON)
 | TracedGraph data structures | `crates/trace/src/graph.rs` | implemented, host-verified — `TracedGraph`, `TracedNode`, `TracedOp`, `TensorShape` |
 | Config-driven decomposition | `crates/trace/src/sir_build.rs` | implemented, host-verified — fully ad-hoc decomposition driven by ModelConfig flags (no model registry) |
 | Trace configuration | `crates/trace/src/config.rs` | implemented, host-verified — `TraceConfig`, `TraceTarget` (HuggingFace, local, pre-traced), `InputShape` |
-| SIR construction from trace | `crates/trace/src/sir_build.rs` | implemented, host-verified — `build_sir_from_trace()` with separate Q/K/V projections, SwiGLU detection, residual connections, causal masks, and epsilon validation |
+| SIR construction from trace | `crates/trace/src/sir_build.rs` | implemented, host-verified — `build_sir_from_trace()` with separate Q/K/V projections, SwiGLU detection, residual connections (explicit on AttentionBlock/MlpBlock nodes as `[normed_hidden, residual]` inputs), QK-norm support (via `has_qk_norm` config flag for Qwen3 and similar architectures), `head_dim` from config override, causal masks, and epsilon validation |
 | Versioned compiler | `crates/trace/src/versioned.rs` | implemented, host-verified — `VersionedCompiler` with per-family constraint validation, `AnceFaithfulnessReport` |
 | Python subprocess tracing | `crates/trace/src/subprocess.rs` | implemented — `trace_model()` launches torch.fx tracer via Python subprocess |
 | Python tracing script | `python/trace_model.py` | implemented — torch.fx symbolic tracing for HuggingFace models |
@@ -775,7 +775,7 @@ A knowledge store uses the following canonical directory structure:
 | AirOp::Gelu | `crates/ir/src/air.rs` | implemented — input, mode string |
 | AirOp::Relu | `crates/ir/src/air.rs` | implemented — input |
 | LinearProjection → Conv1x1AsLinear (not MatMul) | `crates/passes/src/legality_rewrite.rs` | implemented — Critique Bug 1 fix |
-| AttentionBlock decomposition | `crates/passes/src/legality_rewrite.rs` | implemented — 14 AIR ops: Conv1x1AsLinear + SliceByIndex×3 + Reshape×3 + Transpose×3 + SDPA + Reshape + Conv1x1AsLinear |
+| AttentionBlock decomposition | `crates/passes/src/legality_rewrite.rs` | implemented — 14 AIR ops (base): Conv1x1AsLinear + SliceByIndex×3 + Reshape×3 + Transpose×3 + SDPA + Reshape + Conv1x1AsLinear. Qwen3 and other models with `has_qk_norm=true` add optional QK-norm (RMSNorm on Q and K before SDPA). `head_dim` is read from config when explicitly set (e.g., Qwen3 head_dim=128), otherwise computed as hidden_size/num_heads. |
 | DecodeStep decomposition | `crates/passes/src/legality_rewrite.rs` | implemented — 15 AIR ops including StateReadFixed×2 + StateWriteFixed×2 |
 | RMSNorm decomposition | `crates/passes/src/legality_rewrite.rs` | implemented — ReduceMean + Rsqrt + ElementWise::Mul×2 |
 | RoPETransform decomposition | `crates/passes/src/legality_rewrite.rs` | implemented — Cos + Sin + ElementWise::Mul×2 + ElementWise::Add |

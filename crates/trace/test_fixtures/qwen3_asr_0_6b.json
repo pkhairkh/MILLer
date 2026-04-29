@@ -18,23 +18,29 @@
     "uses_gqa": true,
     "model_type": "qwen3_asr",
     "model_class": "decoder_only",
-    "is_encoder_decoder": false
+    "is_encoder_decoder": false,
+    "head_dim": 128
   },
   "discovered_features": {
     "norm_types_encountered": [
       "RMSNorm"
     ],
     "has_rope_module": true,
-    "attention_module_types": [],
-    "mlp_module_types": [],
-    "linear_count": 0,
-    "embedding_count": 0,
+    "attention_module_types": [
+      "Qwen3Attention"
+    ],
+    "mlp_module_types": [
+      "Qwen3MLP"
+    ],
+    "linear_count": 169,
+    "embedding_count": 1,
     "uses_gqa": true,
     "detection_methods": {
       "norm_type": "config_field_presence",
       "rope": "config_field_presence",
       "gqa": "config_field_comparison"
-    }
+    },
+    "has_qk_norm": true
   },
   "nodes": [
     {
@@ -104,12 +110,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_0_self_attn",
       "inputs": [
-        "layer_0_input_norm"
+        "layer_0_input_norm",
+        "embed_tokens"
       ],
       "output_shape": {
         "dims": [
@@ -155,7 +163,8 @@
       },
       "name": "layer_0_mlp",
       "inputs": [
-        "layer_0_post_attn_norm"
+        "layer_0_post_attn_norm",
+        "layer_0_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -196,12 +205,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_1_self_attn",
       "inputs": [
-        "layer_1_input_norm"
+        "layer_1_input_norm",
+        "layer_0_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -247,7 +258,8 @@
       },
       "name": "layer_1_mlp",
       "inputs": [
-        "layer_1_post_attn_norm"
+        "layer_1_post_attn_norm",
+        "layer_1_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -288,12 +300,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_2_self_attn",
       "inputs": [
-        "layer_2_input_norm"
+        "layer_2_input_norm",
+        "layer_1_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -339,7 +353,8 @@
       },
       "name": "layer_2_mlp",
       "inputs": [
-        "layer_2_post_attn_norm"
+        "layer_2_post_attn_norm",
+        "layer_2_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -380,12 +395,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_3_self_attn",
       "inputs": [
-        "layer_3_input_norm"
+        "layer_3_input_norm",
+        "layer_2_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -431,7 +448,8 @@
       },
       "name": "layer_3_mlp",
       "inputs": [
-        "layer_3_post_attn_norm"
+        "layer_3_post_attn_norm",
+        "layer_3_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -472,12 +490,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_4_self_attn",
       "inputs": [
-        "layer_4_input_norm"
+        "layer_4_input_norm",
+        "layer_3_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -523,7 +543,8 @@
       },
       "name": "layer_4_mlp",
       "inputs": [
-        "layer_4_post_attn_norm"
+        "layer_4_post_attn_norm",
+        "layer_4_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -564,12 +585,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_5_self_attn",
       "inputs": [
-        "layer_5_input_norm"
+        "layer_5_input_norm",
+        "layer_4_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -615,7 +638,8 @@
       },
       "name": "layer_5_mlp",
       "inputs": [
-        "layer_5_post_attn_norm"
+        "layer_5_post_attn_norm",
+        "layer_5_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -656,12 +680,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_6_self_attn",
       "inputs": [
-        "layer_6_input_norm"
+        "layer_6_input_norm",
+        "layer_5_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -707,7 +733,8 @@
       },
       "name": "layer_6_mlp",
       "inputs": [
-        "layer_6_post_attn_norm"
+        "layer_6_post_attn_norm",
+        "layer_6_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -748,12 +775,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_7_self_attn",
       "inputs": [
-        "layer_7_input_norm"
+        "layer_7_input_norm",
+        "layer_6_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -799,7 +828,8 @@
       },
       "name": "layer_7_mlp",
       "inputs": [
-        "layer_7_post_attn_norm"
+        "layer_7_post_attn_norm",
+        "layer_7_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -840,12 +870,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_8_self_attn",
       "inputs": [
-        "layer_8_input_norm"
+        "layer_8_input_norm",
+        "layer_7_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -891,7 +923,8 @@
       },
       "name": "layer_8_mlp",
       "inputs": [
-        "layer_8_post_attn_norm"
+        "layer_8_post_attn_norm",
+        "layer_8_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -932,12 +965,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_9_self_attn",
       "inputs": [
-        "layer_9_input_norm"
+        "layer_9_input_norm",
+        "layer_8_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -983,7 +1018,8 @@
       },
       "name": "layer_9_mlp",
       "inputs": [
-        "layer_9_post_attn_norm"
+        "layer_9_post_attn_norm",
+        "layer_9_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1024,12 +1060,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_10_self_attn",
       "inputs": [
-        "layer_10_input_norm"
+        "layer_10_input_norm",
+        "layer_9_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1075,7 +1113,8 @@
       },
       "name": "layer_10_mlp",
       "inputs": [
-        "layer_10_post_attn_norm"
+        "layer_10_post_attn_norm",
+        "layer_10_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1116,12 +1155,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_11_self_attn",
       "inputs": [
-        "layer_11_input_norm"
+        "layer_11_input_norm",
+        "layer_10_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1167,7 +1208,8 @@
       },
       "name": "layer_11_mlp",
       "inputs": [
-        "layer_11_post_attn_norm"
+        "layer_11_post_attn_norm",
+        "layer_11_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1208,12 +1250,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_12_self_attn",
       "inputs": [
-        "layer_12_input_norm"
+        "layer_12_input_norm",
+        "layer_11_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1259,7 +1303,8 @@
       },
       "name": "layer_12_mlp",
       "inputs": [
-        "layer_12_post_attn_norm"
+        "layer_12_post_attn_norm",
+        "layer_12_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1300,12 +1345,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_13_self_attn",
       "inputs": [
-        "layer_13_input_norm"
+        "layer_13_input_norm",
+        "layer_12_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1351,7 +1398,8 @@
       },
       "name": "layer_13_mlp",
       "inputs": [
-        "layer_13_post_attn_norm"
+        "layer_13_post_attn_norm",
+        "layer_13_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1392,12 +1440,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_14_self_attn",
       "inputs": [
-        "layer_14_input_norm"
+        "layer_14_input_norm",
+        "layer_13_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1443,7 +1493,8 @@
       },
       "name": "layer_14_mlp",
       "inputs": [
-        "layer_14_post_attn_norm"
+        "layer_14_post_attn_norm",
+        "layer_14_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1484,12 +1535,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_15_self_attn",
       "inputs": [
-        "layer_15_input_norm"
+        "layer_15_input_norm",
+        "layer_14_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1535,7 +1588,8 @@
       },
       "name": "layer_15_mlp",
       "inputs": [
-        "layer_15_post_attn_norm"
+        "layer_15_post_attn_norm",
+        "layer_15_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1576,12 +1630,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_16_self_attn",
       "inputs": [
-        "layer_16_input_norm"
+        "layer_16_input_norm",
+        "layer_15_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1627,7 +1683,8 @@
       },
       "name": "layer_16_mlp",
       "inputs": [
-        "layer_16_post_attn_norm"
+        "layer_16_post_attn_norm",
+        "layer_16_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1668,12 +1725,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_17_self_attn",
       "inputs": [
-        "layer_17_input_norm"
+        "layer_17_input_norm",
+        "layer_16_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1719,7 +1778,8 @@
       },
       "name": "layer_17_mlp",
       "inputs": [
-        "layer_17_post_attn_norm"
+        "layer_17_post_attn_norm",
+        "layer_17_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1760,12 +1820,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_18_self_attn",
       "inputs": [
-        "layer_18_input_norm"
+        "layer_18_input_norm",
+        "layer_17_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1811,7 +1873,8 @@
       },
       "name": "layer_18_mlp",
       "inputs": [
-        "layer_18_post_attn_norm"
+        "layer_18_post_attn_norm",
+        "layer_18_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1852,12 +1915,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_19_self_attn",
       "inputs": [
-        "layer_19_input_norm"
+        "layer_19_input_norm",
+        "layer_18_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1903,7 +1968,8 @@
       },
       "name": "layer_19_mlp",
       "inputs": [
-        "layer_19_post_attn_norm"
+        "layer_19_post_attn_norm",
+        "layer_19_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1944,12 +2010,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_20_self_attn",
       "inputs": [
-        "layer_20_input_norm"
+        "layer_20_input_norm",
+        "layer_19_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1995,7 +2063,8 @@
       },
       "name": "layer_20_mlp",
       "inputs": [
-        "layer_20_post_attn_norm"
+        "layer_20_post_attn_norm",
+        "layer_20_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -2036,12 +2105,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_21_self_attn",
       "inputs": [
-        "layer_21_input_norm"
+        "layer_21_input_norm",
+        "layer_20_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -2087,7 +2158,8 @@
       },
       "name": "layer_21_mlp",
       "inputs": [
-        "layer_21_post_attn_norm"
+        "layer_21_post_attn_norm",
+        "layer_21_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -2128,12 +2200,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_22_self_attn",
       "inputs": [
-        "layer_22_input_norm"
+        "layer_22_input_norm",
+        "layer_21_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -2179,7 +2253,8 @@
       },
       "name": "layer_22_mlp",
       "inputs": [
-        "layer_22_post_attn_norm"
+        "layer_22_post_attn_norm",
+        "layer_22_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -2220,12 +2295,14 @@
         "type": "AttentionBlock",
         "embed_dim": 896,
         "num_heads": 14,
-        "head_dim": 64,
-        "use_sdpa": true
+        "head_dim": 128,
+        "use_sdpa": true,
+        "has_qk_norm": true
       },
       "name": "layer_23_self_attn",
       "inputs": [
-        "layer_23_input_norm"
+        "layer_23_input_norm",
+        "layer_22_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -2271,7 +2348,8 @@
       },
       "name": "layer_23_mlp",
       "inputs": [
-        "layer_23_post_attn_norm"
+        "layer_23_post_attn_norm",
+        "layer_23_self_attn"
       ],
       "output_shape": {
         "dims": [

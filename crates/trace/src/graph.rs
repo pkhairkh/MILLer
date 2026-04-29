@@ -176,6 +176,8 @@ pub enum TracedOp {
         head_dim: usize,
         #[serde(default)]
         use_sdpa: bool,
+        #[serde(default)]
+        has_qk_norm: bool,
     },
     /// MLP / feed-forward block.
     MlpBlock { input_dim: usize, hidden_dim: usize, output_dim: usize, activation: String },
@@ -330,7 +332,9 @@ pub struct WeightNameMapEntry {
     /// PyTorch module path (e.g., "model.layers.0.self_attn.q_proj").
     pub module_path: String,
     /// HuggingFace weight parameter name (e.g., "model.layers.0.self_attn.q_proj.weight").
-    pub weight: String,
+    /// `None` for modules that have parameters but no `.weight` attribute
+    /// (e.g., norm layers with only a single parameter not named "weight").
+    pub weight: Option<String>,
     /// HuggingFace bias parameter name, if the module has a bias.
     pub bias: Option<String>,
 }

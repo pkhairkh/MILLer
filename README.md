@@ -65,7 +65,7 @@ TOML task spec
 | `ane-coreml-ffi` | C API FFI skeleton: `extern "C"` functions, `coreml_validate_proto_package()`, cross-platform validation |
 | `ane-artifacts` | Manifest generation, content hashing, deterministic packaging |
 | `ane-report` | JSON and Markdown report generation |
-| `ane-trace` | **HuggingFace Transformers model tracing** via `torch.fx`; config-driven ANE-faithful SIR construction with separate Q/K/V projections, SwiGLU support, residual connections, and causal masks; versioned compilation with per-family constraint enforcement |
+| `ane-trace` | **HuggingFace Transformers model tracing** via `torch.fx`; config-driven ANE-faithful SIR construction with separate Q/K/V projections, SwiGLU support, residual connections (explicit on AttentionBlock/MlpBlock nodes), QK-norm support (`has_qk_norm` for Qwen3-like architectures), `head_dim` from config override, and causal masks; versioned compilation with per-family constraint enforcement |
 | `ane-cli` | CLI entry point: `compile`, `compile-full`, `compile-sharded`, `compile-full-sharded`, `lab`, `lab-loop`, `generate-tasks`, `profile`, `report`, `package`, **`trace-compile`** |
 
 ### Task Families
@@ -112,7 +112,9 @@ The SIR builder decomposes composite ops (attention, MLP, normalization) entirel
 Key decomposition decisions:
 - **Separate Q/K/V projections** (not merged QKV) with per-projection weight names
 - **SwiGLU auto-detection** when both `gate_proj` and `up_proj` weights exist
-- **Residual connections** emitted as `SirOp::Add` when the traced node carries a skip input
+- **Residual connections** emitted as `SirOp::Add` when the traced node carries a skip input. The fallback structural graph explicitly records residual inputs on `AttentionBlock` and `MlpBlock` nodes (2 inputs: `[normed_hidden, residual]`)
+- **QK-norm support** — models with `has_qk_norm=true` (e.g., Qwen3) apply RMSNorm to Q and K before SDPA
+- **`head_dim` from config override** — when `head_dim` is explicitly set in config (e.g., Qwen3 sets `head_dim=128` regardless of `hidden_size/num_heads`), the override value is used instead of computing `hidden_size/num_heads`
 - **Causal mask references** in SDPA for autoregressive models
 - **RMSNorm epsilon validation** with fallback chain (traced value → config → 1e-6 default)
 

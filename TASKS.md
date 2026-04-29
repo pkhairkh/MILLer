@@ -1214,14 +1214,17 @@ that no `AirOp::MatMul` is produced from a LinearProjection SIR node.
 
 ### SIR→AIR Decomposition for AttentionBlock
 
-`SirOp::AttentionBlock` now decomposes into 14 AIR ops:
+`SirOp::AttentionBlock` decomposes into 14 AIR ops (base), with optional QK-norm:
 1. QKV projection (Conv1x1AsLinear)
 2-4. Q, K, V split (SliceByIndex × 3)
 5-7. Multi-head reshape (Reshape × 3)
 8-10. Transpose for attention layout (Transpose × 3)
-11. Scaled dot-product attention (ScaledDotProductAttention)
-12. Reshape back to 3D (Reshape)
-13. Output projection (Conv1x1AsLinear)
+11. **Optional QK-norm**: when `has_qk_norm=true` (Qwen3, etc.), RMSNorm is applied to Q and K before SDPA
+12. Scaled dot-product attention (ScaledDotProductAttention)
+13. Reshape back to 3D (Reshape)
+14. Output projection (Conv1x1AsLinear)
+
+**Note on `head_dim`**: When `head_dim` is explicitly set in the model config (e.g., Qwen3 sets `head_dim=128` regardless of `hidden_size/num_heads`), the config override value is used. Otherwise, `head_dim` is computed as `hidden_size / num_attention_heads`.
 
 **Test:** `test_attention_block_decomposition` verifies all expected op types are present.
 

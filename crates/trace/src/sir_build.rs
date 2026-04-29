@@ -179,7 +179,10 @@ impl<'a> SirBuildContext<'a> {
     fn resolve_weight_name(&self, node: &TracedNode, fallback: &str) -> String {
         if let Some(ref module_path) = node.module_path {
             if let Some(entry) = self.trace.weight_name_map.get(&node.id) {
-                return entry.weight.clone();
+                if let Some(ref weight) = entry.weight {
+                    return weight.clone();
+                }
+                // weight is None — fall through to construct from module_path
             }
             // Fallback: construct from module_path + ".weight"
             format!("{}.weight", module_path)
@@ -220,8 +223,8 @@ impl<'a> SirBuildContext<'a> {
     ) -> Result<Vec<(SirOp, String)>, String> {
         match op {
             // ─── Composite Ops: Decompose into primitives ───────────
-            TracedOp::AttentionBlock { embed_dim, num_heads, head_dim, use_sdpa } => {
-                self.decompose_attention(*embed_dim, *num_heads, *head_dim, *use_sdpa, node)
+            TracedOp::AttentionBlock { embed_dim, num_heads, head_dim, use_sdpa, has_qk_norm } => {
+                self.decompose_attention(*embed_dim, *num_heads, *head_dim, *use_sdpa, *has_qk_norm, node)
             }
             TracedOp::MlpBlock { input_dim, hidden_dim, output_dim, activation } => {
                 self.decompose_mlp(*input_dim, *hidden_dim, *output_dim, activation, node)
@@ -302,12 +305,15 @@ impl<'a> SirBuildContext<'a> {
                 let q_id = self.resolve_input(&node.inputs, 0);
                 let k_id = self.resolve_input(&node.inputs, 1);
                 let v_id = self.resolve_input(&node.inputs, 2);
+                // Causal mask for standalone SDPA — reference to a lower-triangular
+                // mask that will be materialized by the staticize pass.
+                let causal_mask = Some(SirNodeId(format!("causal_mask_{}", node.id)));
                 Ok(vec![(
                     SirOp::ScaledDotProductAttention {
                         query: q_id,
                         key: k_id,
                         value: v_id,
-                        attention_mask: None,
+                        attention_mask: causal_mask,
                         scale: Some(*scale as f32),
                     },
                     "sdpa".to_string(),
@@ -538,6 +544,7 @@ impl<'a> SirBuildContext<'a> {
         _num_heads: usize,
         head_dim: usize,
         use_sdpa: bool,
+        has_qk_norm: bool,
         node: &TracedNode,
     ) -> Result<Vec<(SirOp, String)>, String> {
         let mut ops = Vec::new();
@@ -567,7 +574,7 @@ impl<'a> SirBuildContext<'a> {
             SirOp::LinearProjection { input: input_id.clone(), weight: q_weight, bias: None },
             format!("q_proj_{}", embed_dim),
         ));
-        let q_id = SirNodeId(format!("sir_q_proj_{}", node.id));
+        let mut q_id = SirNodeId(format!("sir_q_proj_{}", node.id));
 
         // Separate K projection: input → K
         ops.push((
@@ -582,6 +589,39 @@ impl<'a> SirBuildContext<'a> {
             format!("v_proj_{}", embed_dim),
         ));
         let mut v_id = SirNodeId(format!("sir_v_proj_{}", node.id));
+
+        // QK-Norm: some models (Qwen3) apply RMSNorm to Q and K after projection
+        if has_qk_norm {
+            let q_norm_weight = if let Some(ref mp) = node.module_path {
+                self.hf_param_name(mp, "q_norm.weight")
+            } else {
+                format!("q_norm_weight_{}", node.id)
+            };
+            ops.push((
+                SirOp::RMSNorm {
+                    input: q_id.clone(),
+                    weight: q_norm_weight,
+                    epsilon: self.effective_epsilon(0.0),
+                },
+                "q_norm".to_string(),
+            ));
+            q_id = SirNodeId(format!("sir_q_norm_{}", node.id));
+
+            let k_norm_weight = if let Some(ref mp) = node.module_path {
+                self.hf_param_name(mp, "k_norm.weight")
+            } else {
+                format!("k_norm_weight_{}", node.id)
+            };
+            ops.push((
+                SirOp::RMSNorm {
+                    input: k_id.clone(),
+                    weight: k_norm_weight,
+                    epsilon: self.effective_epsilon(0.0),
+                },
+                "k_norm".to_string(),
+            ));
+            k_id = SirNodeId(format!("sir_k_norm_{}", node.id));
+        }
 
         // GQA expansion: if the model uses Grouped Query Attention, K/V heads
         // need to be tiled to match the Q head count.
@@ -684,7 +724,8 @@ impl<'a> SirBuildContext<'a> {
         } else {
             false
         };
-        let is_swiglu = has_gate && has_up;
+        let is_swiglu = (has_gate && has_up)
+            || (self.config.hidden_act == "silu" && has_gate);
 
         // Resolve weight names using module_path.
         // MLP module_path is typically "model.layers.0.mlp"
@@ -887,13 +928,7 @@ impl<'a> SirBuildContext<'a> {
 
         // Guard against zero/missing epsilon — use config's layer_norm_epsilon
         // as fallback, or the standard 1e-6 for RMSNorm models (Qwen3, Llama, etc.).
-        let effective_epsilon = if epsilon > 0.0 {
-            epsilon as f32
-        } else if self.config.layer_norm_epsilon > 0.0 {
-            self.config.layer_norm_epsilon as f32
-        } else {
-            1e-6 // Standard default for RMSNorm (Qwen3, Llama, etc.)
-        };
+        let effective_epsilon = self.effective_epsilon(epsilon);
 
         // Emit the composite RMSNorm op. The actual decomposition into
         // primitives (naive vs max-abs-stabilized vs other) is determined
@@ -938,6 +973,21 @@ impl<'a> SirBuildContext<'a> {
         ops.push((SirOp::MatMul { a: softmax_id, b: v_id }, "sdpa_sv".to_string()));
 
         Ok(ops)
+    }
+
+    /// Compute the effective epsilon for RMSNorm, with fallback logic.
+    ///
+    /// If the provided epsilon is > 0, use it directly. Otherwise fall back
+    /// to the config's `layer_norm_epsilon`, or the standard 1e-6 default
+    /// for RMSNorm models (Qwen3, Llama, etc.).
+    fn effective_epsilon(&self, epsilon: f64) -> f32 {
+        if epsilon > 0.0 {
+            epsilon as f32
+        } else if self.config.layer_norm_epsilon > 0.0 {
+            self.config.layer_norm_epsilon as f32
+        } else {
+            1e-6 // Standard default for RMSNorm (Qwen3, Llama, etc.)
+        }
     }
 
     /// Resolve a traced node input reference to a SIR node ID.

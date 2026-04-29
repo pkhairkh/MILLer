@@ -25,10 +25,14 @@
       "RMSNorm"
     ],
     "has_rope_module": true,
-    "attention_module_types": [],
-    "mlp_module_types": [],
-    "linear_count": 0,
-    "embedding_count": 0,
+    "attention_module_types": [
+      "LlamaAttention"
+    ],
+    "mlp_module_types": [
+      "LlamaMLP"
+    ],
+    "linear_count": 113,
+    "embedding_count": 1,
     "uses_gqa": true,
     "detection_methods": {
       "norm_type": "config_field_presence",
@@ -109,7 +113,8 @@
       },
       "name": "layer_0_self_attn",
       "inputs": [
-        "layer_0_input_norm"
+        "layer_0_input_norm",
+        "embed_tokens"
       ],
       "output_shape": {
         "dims": [
@@ -155,7 +160,8 @@
       },
       "name": "layer_0_mlp",
       "inputs": [
-        "layer_0_post_attn_norm"
+        "layer_0_post_attn_norm",
+        "layer_0_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -201,7 +207,8 @@
       },
       "name": "layer_1_self_attn",
       "inputs": [
-        "layer_1_input_norm"
+        "layer_1_input_norm",
+        "layer_0_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -247,7 +254,8 @@
       },
       "name": "layer_1_mlp",
       "inputs": [
-        "layer_1_post_attn_norm"
+        "layer_1_post_attn_norm",
+        "layer_1_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -293,7 +301,8 @@
       },
       "name": "layer_2_self_attn",
       "inputs": [
-        "layer_2_input_norm"
+        "layer_2_input_norm",
+        "layer_1_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -339,7 +348,8 @@
       },
       "name": "layer_2_mlp",
       "inputs": [
-        "layer_2_post_attn_norm"
+        "layer_2_post_attn_norm",
+        "layer_2_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -385,7 +395,8 @@
       },
       "name": "layer_3_self_attn",
       "inputs": [
-        "layer_3_input_norm"
+        "layer_3_input_norm",
+        "layer_2_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -431,7 +442,8 @@
       },
       "name": "layer_3_mlp",
       "inputs": [
-        "layer_3_post_attn_norm"
+        "layer_3_post_attn_norm",
+        "layer_3_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -477,7 +489,8 @@
       },
       "name": "layer_4_self_attn",
       "inputs": [
-        "layer_4_input_norm"
+        "layer_4_input_norm",
+        "layer_3_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -523,7 +536,8 @@
       },
       "name": "layer_4_mlp",
       "inputs": [
-        "layer_4_post_attn_norm"
+        "layer_4_post_attn_norm",
+        "layer_4_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -569,7 +583,8 @@
       },
       "name": "layer_5_self_attn",
       "inputs": [
-        "layer_5_input_norm"
+        "layer_5_input_norm",
+        "layer_4_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -615,7 +630,8 @@
       },
       "name": "layer_5_mlp",
       "inputs": [
-        "layer_5_post_attn_norm"
+        "layer_5_post_attn_norm",
+        "layer_5_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -661,7 +677,8 @@
       },
       "name": "layer_6_self_attn",
       "inputs": [
-        "layer_6_input_norm"
+        "layer_6_input_norm",
+        "layer_5_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -707,7 +724,8 @@
       },
       "name": "layer_6_mlp",
       "inputs": [
-        "layer_6_post_attn_norm"
+        "layer_6_post_attn_norm",
+        "layer_6_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -753,7 +771,8 @@
       },
       "name": "layer_7_self_attn",
       "inputs": [
-        "layer_7_input_norm"
+        "layer_7_input_norm",
+        "layer_6_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -799,7 +818,8 @@
       },
       "name": "layer_7_mlp",
       "inputs": [
-        "layer_7_post_attn_norm"
+        "layer_7_post_attn_norm",
+        "layer_7_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -845,7 +865,8 @@
       },
       "name": "layer_8_self_attn",
       "inputs": [
-        "layer_8_input_norm"
+        "layer_8_input_norm",
+        "layer_7_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -891,7 +912,8 @@
       },
       "name": "layer_8_mlp",
       "inputs": [
-        "layer_8_post_attn_norm"
+        "layer_8_post_attn_norm",
+        "layer_8_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -937,7 +959,8 @@
       },
       "name": "layer_9_self_attn",
       "inputs": [
-        "layer_9_input_norm"
+        "layer_9_input_norm",
+        "layer_8_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -983,7 +1006,8 @@
       },
       "name": "layer_9_mlp",
       "inputs": [
-        "layer_9_post_attn_norm"
+        "layer_9_post_attn_norm",
+        "layer_9_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1029,7 +1053,8 @@
       },
       "name": "layer_10_self_attn",
       "inputs": [
-        "layer_10_input_norm"
+        "layer_10_input_norm",
+        "layer_9_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1075,7 +1100,8 @@
       },
       "name": "layer_10_mlp",
       "inputs": [
-        "layer_10_post_attn_norm"
+        "layer_10_post_attn_norm",
+        "layer_10_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1121,7 +1147,8 @@
       },
       "name": "layer_11_self_attn",
       "inputs": [
-        "layer_11_input_norm"
+        "layer_11_input_norm",
+        "layer_10_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1167,7 +1194,8 @@
       },
       "name": "layer_11_mlp",
       "inputs": [
-        "layer_11_post_attn_norm"
+        "layer_11_post_attn_norm",
+        "layer_11_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1213,7 +1241,8 @@
       },
       "name": "layer_12_self_attn",
       "inputs": [
-        "layer_12_input_norm"
+        "layer_12_input_norm",
+        "layer_11_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1259,7 +1288,8 @@
       },
       "name": "layer_12_mlp",
       "inputs": [
-        "layer_12_post_attn_norm"
+        "layer_12_post_attn_norm",
+        "layer_12_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1305,7 +1335,8 @@
       },
       "name": "layer_13_self_attn",
       "inputs": [
-        "layer_13_input_norm"
+        "layer_13_input_norm",
+        "layer_12_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1351,7 +1382,8 @@
       },
       "name": "layer_13_mlp",
       "inputs": [
-        "layer_13_post_attn_norm"
+        "layer_13_post_attn_norm",
+        "layer_13_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1397,7 +1429,8 @@
       },
       "name": "layer_14_self_attn",
       "inputs": [
-        "layer_14_input_norm"
+        "layer_14_input_norm",
+        "layer_13_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1443,7 +1476,8 @@
       },
       "name": "layer_14_mlp",
       "inputs": [
-        "layer_14_post_attn_norm"
+        "layer_14_post_attn_norm",
+        "layer_14_self_attn"
       ],
       "output_shape": {
         "dims": [
@@ -1489,7 +1523,8 @@
       },
       "name": "layer_15_self_attn",
       "inputs": [
-        "layer_15_input_norm"
+        "layer_15_input_norm",
+        "layer_14_mlp"
       ],
       "output_shape": {
         "dims": [
@@ -1535,7 +1570,8 @@
       },
       "name": "layer_15_mlp",
       "inputs": [
-        "layer_15_post_attn_norm"
+        "layer_15_post_attn_norm",
+        "layer_15_self_attn"
       ],
       "output_shape": {
         "dims": [
