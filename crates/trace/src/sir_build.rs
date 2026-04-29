@@ -121,6 +121,13 @@ impl<'a> SirBuildContext<'a> {
             self.config.hidden_act,
         );
 
+        // Build a name-based alias map: for each traced node's decomposed ops,
+        // record the mapping from {name_tag}_{traced_node_id} → actual allocated ID.
+        // This replaces the fragile position-based resolution that couldn't handle
+        // different decomposition paths (±QK-Norm, ±GQA, SDPA vs manual).
+        let mut name_alias_to_actual: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+
         // Process each traced node in order
         for traced_node in &self.trace.nodes {
             let sir_ops = self.map_traced_op(&traced_node.op, traced_node)?;
@@ -138,6 +145,25 @@ impl<'a> SirBuildContext<'a> {
                     }),
                     precision_override: None,
                 };
+
+                // Register name-based alias: "sir_{name}_{traced_node_id}" → actual ID.
+                // For example, if the op has name "sdpa" and traced_node.id is "attn_0",
+                // then "sir_sdpa_attn_0" maps to the allocated "sir_7_attn_0" (or whatever).
+                // The decompose functions create references using these semantic aliases;
+                // this mapping lets us resolve them to actual counter-based IDs.
+                let alias_key = format!("sir_{}_{}", name, traced_node.id);
+                name_alias_to_actual.entry(alias_key).or_insert(id.0.clone());
+
+                // Also register a short-prefix alias for names like "q_proj_1024" → "q_proj".
+                // The decompose functions use short prefixes (e.g., "sir_q_proj_layer_0")
+                // while the name tags include dimensions (e.g., "q_proj_1024").
+                // Extract the short prefix by trimming trailing "_\d+" segments.
+                if let Some(short) = strip_trailing_dim_suffix(&name) {
+                    if short != name {
+                        let short_alias_key = format!("sir_{}_{}", short, traced_node.id);
+                        name_alias_to_actual.entry(short_alias_key).or_insert(id.0.clone());
+                    }
+                }
 
                 let sir_node = SirNode { id: id.clone(), op, name, metadata };
 
@@ -167,29 +193,16 @@ impl<'a> SirBuildContext<'a> {
         // SirOp internal references from aliases to actual IDs.
         //
         // Strategy: extract all SirNodeId strings from the serialized SirOps,
-        // find any that don't match a real node ID, and resolve them by matching
-        // the traced-node-ID suffix to find the correct allocated ID.
+        // find any that don't match a real node ID, and resolve them using the
+        // name-based alias map built during allocation. This map records the
+        // correspondence between "sir_{name_tag}_{traced_node_id}" and the
+        // actual counter-based ID, so it works for any decomposition path
+        // (±QK-Norm, ±GQA, SDPA vs manual) without hardcoded positions.
         {
             // Build the set of actual node IDs for quick lookup
             let actual_ids: std::collections::HashSet<String> =
                 sir_nodes.iter().map(|n| n.id.0.clone()).collect();
 
-            // Build the alias → actual ID mapping.
-            // For each actual ID like "sir_3_layer_0_self_attn", we know:
-            //   - The traced node ID suffix is "layer_0_self_attn"
-            //   - The counter prefix is "3"
-            // Semantic aliases like "sir_q_proj_layer_0_self_attn" share the same
-            // suffix but have a different prefix. We need to find which counter-based
-            // ID corresponds to which semantic alias.
-            //
-            // Since the decompose functions push ops in a fixed order and the
-            // counter-based IDs are also allocated in that order, we can group
-            // nodes by their traced_node_id suffix and use position within the
-            // group to match aliases to actual IDs.
-            //
-            // But a simpler approach: extract all string values from the serialized
-            // SirOps that look like SirNodeId references but aren't actual IDs,
-            // then match them to the correct actual ID by the traced node ID suffix.
             let mut alias_to_actual: std::collections::HashMap<String, String> =
                 std::collections::HashMap::new();
 
@@ -200,16 +213,15 @@ impl<'a> SirBuildContext<'a> {
                 // not actual node IDs — these are the dangling semantic aliases
                 for candidate in extract_sir_ids_from_json(&json) {
                     if !actual_ids.contains(&candidate) && candidate.starts_with("sir_") {
-                        // This is a dangling reference. Find the correct actual ID
-                        // by matching the traced node ID suffix.
-                        // The alias is like "sir_q_proj_layer_0_self_attn"
-                        // We need to find which actual ID has the same suffix
-                        // "layer_0_self_attn" and was allocated for the right op.
-                        //
-                        // The suffix after "sir_{semantic_prefix}_" is the traced node ID.
-                        // We look up node_map to find all IDs registered for that traced node.
-                        if let Some(actual_id) = resolve_alias(&candidate, &actual_ids, &self.node_map) {
-                            alias_to_actual.entry(candidate).or_insert(actual_id);
+                        // Try the name-based alias map first (handles all decomposition paths)
+                        if let Some(actual_id) = name_alias_to_actual.get(&candidate) {
+                            alias_to_actual.entry(candidate).or_insert(actual_id.clone());
+                        } else {
+                            // Fallback: try the legacy position-based resolution
+                            // (handles aliases that don't match the name tag pattern)
+                            if let Some(actual_id) = resolve_alias(&candidate, &actual_ids, &self.node_map) {
+                                alias_to_actual.entry(candidate).or_insert(actual_id);
+                            }
                         }
                     }
                 }
@@ -230,6 +242,69 @@ impl<'a> SirBuildContext<'a> {
                         node.op = serde_json::from_str(&new_json).unwrap();
                     }
                 }
+            }
+        }
+
+        // ─── SSA validation ────────────────────────────────────────
+        // After alias resolution, every input reference must resolve to either
+        // a function/block input or the output of a prior operation. We also
+        // reject self-referential edges (a node consuming its own output).
+        {
+            let mut available: std::collections::HashSet<String> =
+                sir_inputs.iter().map(|id| id.0.clone()).collect();
+            let mut errors: Vec<String> = Vec::new();
+
+            for node in &sir_nodes {
+                let node_outputs = std::collections::HashSet::from([node.id.0.clone()]);
+
+                // Extract all SirNodeId references from the op's serialized form
+                let json = serde_json::to_string(&node.op).unwrap();
+                for input_ref in extract_sir_ids_from_json(&json) {
+                    // Skip internal placeholder markers
+                    if input_ref == "__placeholder__" {
+                        continue;
+                    }
+                    // Self-input: this node references its own output as an input
+                    if node_outputs.contains(&input_ref) {
+                        errors.push(format!(
+                            "SSA self-input: node '{}' references its own output as input '{}'",
+                            node.id.0, input_ref
+                        ));
+                    }
+                    // Unresolved: the referenced name was never produced by any prior op
+                    else if !available.contains(&input_ref) {
+                        errors.push(format!(
+                            "SSA unresolved: node '{}' references '{}' which is not available",
+                            node.id.0, input_ref
+                        ));
+                    }
+                }
+
+                // Make this node's output available for subsequent nodes
+                available.insert(node.id.0.clone());
+            }
+
+            if !errors.is_empty() {
+                // Report up to 10 errors to avoid log spam
+                let display_limit = 10;
+                let display_errors: Vec<String> =
+                    errors.iter().take(display_limit).cloned().collect();
+                let remaining = errors.len().saturating_sub(display_limit);
+                let msg = if remaining > 0 {
+                    format!(
+                        "SIR SSA validation failed with {} errors:\n  {}\n  ... and {} more",
+                        errors.len(),
+                        display_errors.join("\n  "),
+                        remaining
+                    )
+                } else {
+                    format!(
+                        "SIR SSA validation failed with {} errors:\n  {}",
+                        errors.len(),
+                        display_errors.join("\n  ")
+                    )
+                };
+                return Err(msg);
             }
         }
 
@@ -716,14 +791,14 @@ impl<'a> SirBuildContext<'a> {
                     SirOp::Tile { input: k_id, reps: vec![1, num_replicas, 1, 1] },
                     "gqa_k_tile".to_string(),
                 ));
-                k_id = SirNodeId(format!("sir_gqa_k_tiled_{}", node.id));
+                k_id = SirNodeId(format!("sir_gqa_k_tile_{}", node.id));
 
                 // V: tile along the heads dimension
                 ops.push((
                     SirOp::Tile { input: v_id, reps: vec![1, num_replicas, 1, 1] },
                     "gqa_v_tile".to_string(),
                 ));
-                v_id = SirNodeId(format!("sir_gqa_v_tiled_{}", node.id));
+                v_id = SirNodeId(format!("sir_gqa_v_tile_{}", node.id));
             }
         }
 
@@ -750,7 +825,7 @@ impl<'a> SirBuildContext<'a> {
             // Step 1: Transpose K so we compute Q @ K^T (not Q @ K).
             // Q is [batch, heads, seq, head_dim], K is [batch, heads, seq, head_dim].
             // We need K^T = [batch, heads, head_dim, seq] so that Q @ K^T = [batch, heads, seq, seq].
-            let k_t_id = SirNodeId(format!("sir_attn_k_t_{}", node.id));
+            let k_t_id = SirNodeId(format!("sir_attn_k_transpose_{}", node.id));
             ops.push((
                 SirOp::Transpose { input: k_id, perm: vec![0, 1, 3, 2] },
                 "attn_k_transpose".to_string(),
@@ -776,7 +851,7 @@ impl<'a> SirBuildContext<'a> {
                 SirOp::Mul { x: qk_id, y: scale_const_id },
                 "attn_scale".to_string(),
             ));
-            let scaled_qk_id = SirNodeId(format!("sir_attn_scaled_{}", node.id));
+            let scaled_qk_id = SirNodeId(format!("sir_attn_scale_{}", node.id));
 
             // Step 4: Softmax over the last dimension (the seq axis of QK^T)
             ops.push((
@@ -789,10 +864,18 @@ impl<'a> SirBuildContext<'a> {
             ops.push((SirOp::MatMul { a: scores_id, b: v_id }, "attn_sv".to_string()));
         }
 
-        // Output projection
-        let attn_out_id = SirNodeId(format!("sir_attn_out_{}", node.id));
+        // Output projection: its input is the attention computation output.
+        // Use a path-specific semantic alias so the post-hoc resolver can map
+        // it to the correct position:
+        //   - Pre-A16: sir_attn_sv_{node.id} → position of the sv_matmul op
+        //   - A16+:    sir_sdpa_{node.id}     → position of the SDPA op
+        let attn_result_id = if use_sdpa && self.compiler.target_family().supports_sdpa() {
+            SirNodeId(format!("sir_sdpa_{}", node.id))
+        } else {
+            SirNodeId(format!("sir_attn_sv_{}", node.id))
+        };
         ops.push((
-            SirOp::LinearProjection { input: attn_out_id, weight: out_weight, bias: None },
+            SirOp::LinearProjection { input: attn_result_id, weight: out_weight, bias: None },
             format!("out_proj_{}", embed_dim),
         ));
 
@@ -875,7 +958,7 @@ impl<'a> SirBuildContext<'a> {
 
             // 2. silu(gate_proj(x))
             ops.push((SirOp::Silu { input: gate_id }, "mlp_gate_silu".to_string()));
-            let gate_silu_id = SirNodeId(format!("sir_gate_silu_{}", node.id));
+            let gate_silu_id = SirNodeId(format!("sir_mlp_gate_silu_{}", node.id));
 
             // 3. up_proj(x) — NO activation
             ops.push((
@@ -886,7 +969,7 @@ impl<'a> SirBuildContext<'a> {
 
             // 4. silu(gate) * up  (element-wise multiply)
             ops.push((SirOp::Mul { x: gate_silu_id, y: up_id }, "mlp_swiglu_mul".to_string()));
-            let swiglu_id = SirNodeId(format!("sir_swiglu_mul_{}", node.id));
+            let swiglu_id = SirNodeId(format!("sir_mlp_swiglu_mul_{}", node.id));
 
             // 5. down_proj
             ops.push((
@@ -916,16 +999,16 @@ impl<'a> SirBuildContext<'a> {
             let up_id = SirNodeId(format!("sir_up_proj_{}", node.id));
             match activation {
                 "silu" | "swish" => {
-                    ops.push((SirOp::Silu { input: up_id }, "mlp_silu".to_string()));
+                    ops.push((SirOp::Silu { input: up_id }, "mlp_act".to_string()));
                 }
                 "gelu" | "gelu_new" => {
                     ops.push((
                         SirOp::Gelu { input: up_id, mode: "EXACT".to_string() },
-                        "mlp_gelu".to_string(),
+                        "mlp_act".to_string(),
                     ));
                 }
                 "relu" => {
-                    ops.push((SirOp::Relu { input: up_id }, "mlp_relu".to_string()));
+                    ops.push((SirOp::Relu { input: up_id }, "mlp_act".to_string()));
                 }
                 _ => {
                     return Err(format!(
@@ -2113,6 +2196,49 @@ mod tests {
     }
 }
 
+/// Strip trailing dimension-like suffixes from a name tag.
+///
+/// For example:
+/// - "q_proj_1024" → "q_proj"
+/// - "out_proj_1024" → "out_proj"
+/// - "linear_256_1024" → "linear"
+/// - "sdpa" → None (no dimension suffix to strip)
+/// - "attn_sv" → None (no dimension suffix)
+/// - "embedding_32000_1024" → "embedding"
+///
+/// This is used to register short-prefix aliases so that semantic references
+/// like "sir_q_proj_layer_0" can be resolved even though the actual name tag
+/// is "q_proj_1024".
+fn strip_trailing_dim_suffix(name: &str) -> Option<String> {
+    // Find trailing segments that are purely numeric, and strip them.
+    // For "q_proj_1024", we want "q_proj".
+    // For "linear_256_1024", we want "linear".
+    // For "sdpa", there's nothing to strip → return None.
+    let parts: Vec<&str> = name.split('_').collect();
+    if parts.is_empty() {
+        return None;
+    }
+
+    // Find the first numeric segment from the right
+    let mut end = parts.len();
+    while end > 0 && parts[end - 1].parse::<usize>().is_ok() {
+        end -= 1;
+    }
+
+    if end == parts.len() {
+        // No trailing numeric segments found
+        return None;
+    }
+
+    if end == 0 {
+        // Entire name is numeric segments (shouldn't happen)
+        return None;
+    }
+
+    // Reconstruct the prefix by joining the non-numeric parts
+    Some(parts[..end].join("_"))
+}
+
 /// Extract all string values from a JSON string that look like SIR node IDs
 /// (start with "sir_"). These are potential SirNodeId references.
 fn extract_sir_ids_from_json(json: &str) -> Vec<String> {
@@ -2258,32 +2384,34 @@ fn resolve_alias(
 /// MLP decomposition order (standard):
 ///   0: up_proj, 1: act, 2: down_proj
 fn semantic_prefix_to_position(prefix: &str) -> Option<usize> {
-    // Attention block ops
+    // NOTE: This position-based mapping is a LEGACY FALLBACK. The primary
+    // alias resolution is now done via the name-based alias map (which is
+    // built dynamically from the actual name tags). This function is only
+    // used for aliases that don't match any name tag pattern.
+    //
+    // Attention block ops (positions for the QK-Norm + GQA + pre-A16 path)
     match prefix {
         "q_proj" => Some(0),
         "k_proj" => Some(1),
         "v_proj" => Some(2),
         "q_norm" => Some(3),
         "k_norm" => Some(4),
-        "gqa_k_tiled" => Some(5),
-        "gqa_v_tiled" => Some(6),
+        "gqa_k_tile" => Some(5),
+        "gqa_v_tile" => Some(6),
         // Pre-A16 SDPA decomposition (positions 7-12)
-        "attn_k_t" => Some(7),
+        "attn_k_transpose" => Some(7),
         "attn_qk" => Some(8),
         "attn_scale_const" => Some(9),
-        "attn_scaled" => Some(10),
+        "attn_scale" => Some(10),
         "attn_softmax" => Some(11),
-        // After softmax comes sv_matmul at position 12, then out_proj at 13
-        "attn_out" => Some(13),
-        "out_proj" => Some(13),  // alias for attn_out
-        // A16+ path: SDPA at position 7, out_proj at position 8
-        // But we don't know the path at resolution time — need both mappings
-        // The "sdpa" prefix would be at position 7 in A16+ path
+        "attn_sv" => Some(12),
+        "out_proj" => Some(13),
+        "sdpa" => Some(7),
         // MLP ops (these come from separate traced nodes, so positions restart)
         "gate_proj" => Some(0),
-        "gate_silu" => Some(1),
+        "mlp_gate_silu" => Some(1),
         "up_proj" => Some(2),
-        "swiglu_mul" => Some(3),
+        "mlp_swiglu_mul" => Some(3),
         "down_proj" => Some(4),
         "mlp_act" => Some(1),
         // RoPE ops
