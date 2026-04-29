@@ -2822,48 +2822,23 @@ pub fn convert_to_apple_proto_model(
         attributes: HashMap::new(),
     };
 
-    // Multi-function models must NOT have top-level input/output/state feature
-    // descriptions — all I/O lives inside FunctionDescription entries.
-    // Single-function models populate top-level I/O from the default function.
-    // Core ML's outputSchema validation requires non-empty top-level I/O when
-    // there is only one function.
-    let is_multi_function = model.functions.len() > 1;
-    let model_input_descs: Vec<apple_proto::FeatureDescription> = if is_multi_function {
-        vec![]
-    } else {
-        model
-            .description
-            .inputs
-            .iter()
-            .map(|td| make_apple_feature_desc(&td.name, &td.dtype, &td.shape))
-            .collect()
-    };
-    let model_output_descs: Vec<apple_proto::FeatureDescription> = if is_multi_function {
-        vec![]
-    } else {
-        model
-            .description
-            .outputs
-            .iter()
-            .map(|td| make_apple_feature_desc(&td.name, &td.dtype, &td.shape))
-            .collect()
-    };
+    // Core ML's model classification rule is binary: if ModelDescription.functions
+    // is non-empty, the model is "multi-function" and MUST NOT have top-level
+    // input/output/state feature descriptions. All I/O lives inside
+    // FunctionDescription entries instead. This applies regardless of how many
+    // functions exist — even a single-function model with functions=[] populated
+    // is classified as multi-function by Core ML.
+    // Since MILLer always populates the functions field, we always use the
+    // multi-function pattern: top-level I/O is always empty.
+    let model_input_descs: Vec<apple_proto::FeatureDescription> = vec![];
+    let model_output_descs: Vec<apple_proto::FeatureDescription> = vec![];
 
     // Reference models (e.g., ANE-SHA256D-TROPICAL) have metadata = None
     // (field 100 absent entirely). Core ML doesn't require metadata.
     // Omit it to match Apple's reference wire format exactly.
 
-    // Build model-level state descriptions (empty for multi-function models)
-    let model_state_descs: Vec<apple_proto::FeatureDescription> = if is_multi_function {
-        vec![]
-    } else {
-        model
-            .description
-            .states
-            .iter()
-            .map(|td| make_apple_state_feature_desc(&td.name, &td.dtype, &td.shape))
-            .collect()
-    };
+    // Build model-level state descriptions (always empty for multi-function pattern)
+    let model_state_descs: Vec<apple_proto::FeatureDescription> = vec![];
 
     apple_proto::Model {
         specification_version: model.spec_version.proto_value(),
