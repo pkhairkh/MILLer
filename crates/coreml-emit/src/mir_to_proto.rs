@@ -61,6 +61,29 @@ pub fn convert_mir_to_proto_multifunction(
         std::collections::HashMap::new();
 
     for graph in graphs {
+        // Validation gate: reject any Unsupported ops before they can produce
+        // illegal MIL operator names like "identity__unsupported_tile" that
+        // coremlcompiler will reject. Fail early with a clear error rather
+        // than writing an invalid .mlpackage.
+        let unsupported: Vec<_> = graph.ops.iter().filter_map(|op| {
+            if let MirOpCompat::Unsupported { op_kind, name, .. } = op {
+                Some(format!("  {name} (kind={op_kind})"))
+            } else {
+                None
+            }
+        }).collect();
+        if !unsupported.is_empty() {
+            anyhow::bail!(
+                "Cannot emit Core ML package: {} unsupported MIR operation(s) in function '{}'. \
+                 These would produce illegal 'identity__unsupported_*' operator names that \
+                 coremlcompiler rejects.\nUnsupported ops:\n{}\n\
+                 Each unsupported op needs a specialized MirOpCompat variant and emission path.",
+                unsupported.len(),
+                graph.function_name,
+                unsupported.join("\n")
+            );
+        }
+
         // Extract weights from constants
         let mut graph_weights = Vec::new();
         let mut graph_inputs = Vec::new();

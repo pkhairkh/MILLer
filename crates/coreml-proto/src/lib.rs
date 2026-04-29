@@ -548,6 +548,15 @@ pub mod mir_compat {
             name: String,
             dtype: MilDtypeCompat,
         },
+        /// Tile / repeat op. Core ML MIL program op type: "tile".
+        /// Repeats the input tensor along each dimension according to `reps`.
+        /// For example, GQA K/V expansion uses reps=[1, n_rep, 1, 1] to
+        /// replicate KV heads to match the number of query heads.
+        Tile {
+            name: String,
+            x: String,
+            reps: Vec<i64>,
+        },
         /// Catch-all for MIL ops that don't have specialized compat representations.
         /// The proto emission layer handles these by emitting the appropriate
         /// MIL builder call based on the op_kind string.
@@ -1152,6 +1161,17 @@ pub fn mir_op_to_proto_op(
                 x: Some(proto::OperandRef { name: name.clone() }),
             }),
         ),
+        mir_compat::MirOpCompat::Tile { name, x, reps: _ } => {
+            // Legacy proto has no MilTileOp variant; emit as identity.
+            // The Apple wire-format emitter (mir_op_to_apple_ops) handles
+            // the real "tile" MIL operation encoding for production use.
+            (
+                name.clone(),
+                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                    x: Some(proto::OperandRef { name: x.clone() }),
+                }),
+            )
+        }
         // Unsupported ops are emitted as identity pass-through with a comment
         // marker in the function name. The op_kind and params are preserved
         // for downstream Python emission or manual inspection.
@@ -2719,6 +2739,36 @@ fn mir_op_to_apple_ops(
             // rejects the "placeholder" operator with "Unknown operator".
             vec![]
         }
+        mir_compat::MirOpCompat::Tile { name, x, reps } => {
+            let mut inputs = HashMap::new();
+            inputs.insert("x".to_string(), make_name_arg(x));
+            // reps as an immediate int64 array (same encoding as Reshape's shape)
+            let reps_data: Vec<i64> = reps.clone();
+            let reps_bytes = reps_data.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>();
+            inputs.insert(
+                "reps".to_string(),
+                make_value_arg(make_immediate_bytes_value(
+                    reps_bytes,
+                    apple_proto::mil_spec::DataType::Int64 as i32,
+                    &[reps.len() as u64],
+                )),
+            );
+
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "tile".to_string(),
+                inputs,
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
+                blocks: vec![],
+                attributes,
+            }]
+        }
         mir_compat::MirOpCompat::Unsupported { op_kind, name, params_json: _ } => {
             // Emit as identity to preserve graph structure
             let mut inputs = HashMap::new();
@@ -3252,6 +3302,11 @@ mod tests {
                 name: "cast".to_string(),
                 x: "x".to_string(),
                 dtype: mir_compat::MilDtypeCompat::Fp16,
+            },
+            mir_compat::MirOpCompat::Tile {
+                name: "tile".to_string(),
+                x: "x".to_string(),
+                reps: vec![1, 2, 1, 1],
             },
         ];
 

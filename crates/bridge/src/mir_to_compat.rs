@@ -330,7 +330,8 @@ fn compat_input_names(op: &MirOpCompat) -> Vec<String> {
         | MirOpCompat::Tanh { x, .. }
         | MirOpCompat::Relu { x, .. }
         | MirOpCompat::Silu { x, .. }
-        | MirOpCompat::Identity { x, .. } => vec![x.clone()],
+        | MirOpCompat::Identity { x, .. }
+        | MirOpCompat::Tile { x, .. } => vec![x.clone()],
         MirOpCompat::Gather { x, indices, .. } => vec![x.clone(), indices.clone()],
         MirOpCompat::SliceByIndex { x, .. } => vec![x.clone()],
         MirOpCompat::SliceUpdate { x, update, .. } => vec![x.clone(), update.clone()],
@@ -616,6 +617,9 @@ fn remap_compat_inputs(
         MirOpCompat::Identity { name, x, dtype } => {
             MirOpCompat::Identity { name, x: remap_name(x, aliases), dtype }
         }
+        MirOpCompat::Tile { name, x, reps } => {
+            MirOpCompat::Tile { name, x: remap_name(x, aliases), reps }
+        }
         other => other,
     }
 }
@@ -711,6 +715,9 @@ fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
         MirOpCompat::Silu { name: _, x } => MirOpCompat::Silu { name: new_name, x },
         MirOpCompat::Identity { name: _, x, dtype } => {
             MirOpCompat::Identity { name: new_name, x, dtype }
+        }
+        MirOpCompat::Tile { name: _, x, reps } => {
+            MirOpCompat::Tile { name: new_name, x, reps }
         }
         MirOpCompat::Placeholder { name: _, dtype } => {
             MirOpCompat::Placeholder { name: new_name, dtype }
@@ -1016,12 +1023,17 @@ pub fn mir_op_to_compat(
             keep_dims: *keep_dims,
         }),
 
-        // ─── SiLU and Identity: real Core ML MIL ops, not unsupported ───
+        // ─── SiLU, Identity, and Tile: real Core ML MIL ops ───
         MirOp::MILSilu { name, x } => Ok(MirOpCompat::Silu { name: name.clone(), x: x.0.clone() }),
         MirOp::MILIdentity { name, x } => Ok(MirOpCompat::Identity {
             name: name.clone(),
             x: x.0.clone(),
             dtype: MilDtypeCompat::Fp16, // will be overridden by mir_node_to_compat
+        }),
+        MirOp::MILTile { name, x, reps } => Ok(MirOpCompat::Tile {
+            name: name.clone(),
+            x: x.0.clone(),
+            reps: reps.iter().map(|&r| r as i64).collect(),
         }),
 
         // ─── Full-coverage wildcard for all remaining MirOp variants ───
@@ -1186,7 +1198,7 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILSpaceToBatch { name, .. } => ("space_to_batch".into(), name.clone(), "{}".into()),
         MirOp::MILPad { name, .. } => ("pad".into(), name.clone(), "{}".into()),
         MirOp::MILStack { name, .. } => ("stack".into(), name.clone(), "{}".into()),
-        MirOp::MILTile { name, .. } => ("tile".into(), name.clone(), "{}".into()),
+        MirOp::MILTile { .. } => unreachable!("MILTile is handled by mir_op_to_compat"),
         MirOp::MILCumsum { name, .. } => ("cumsum".into(), name.clone(), "{}".into()),
         MirOp::MILFill { name, .. } => ("fill".into(), name.clone(), "{}".into()),
         MirOp::MILFillLike { name, .. } => ("fill_like".into(), name.clone(), "{}".into()),
