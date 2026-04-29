@@ -3411,4 +3411,114 @@ mod tests {
         assert!(parsed.ml_program.is_some());
         assert!(parsed.ml_program.as_ref().unwrap().functions.contains_key("main"));
     }
+
+    /// Verify that INT64 immediate vector values use RepeatedLongInts (typed
+    /// int64 elements), NOT RepeatedBytes (raw byte arrays). Core ML rejects
+    /// packages where the stored element count doesn't match the tensor type:
+    /// an INT64[4] stored as 32 bytes looks like 32 stored elements vs 4
+    /// declared, producing "Tensor storage and type have different number of
+    /// elements".
+    #[test]
+    fn test_int64_immediate_uses_long_ints_not_bytes() {
+        use prost::Message;
+
+        // Test make_immediate_int64_value directly
+        let val = make_immediate_int64_value(vec![1i64, 2, 1, 1], &[4]);
+
+        // Serialize to protobuf bytes and parse back
+        let bytes = val.encode_to_vec();
+        let parsed = apple_proto::mil_spec::Value::decode(bytes.as_slice())
+            .expect("should parse back");
+
+        // Verify it uses ImmediateValue → Tensor → LongInts (NOT Bytes)
+        let imm = match &parsed.value {
+            Some(apple_proto::mil_spec::value::Value::ImmediateValue(iv)) => iv,
+            _ => panic!("expected ImmediateValue"),
+        };
+        let tensor = match &imm.value {
+            Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv)) => tv,
+            _ => panic!("expected Tensor"),
+        };
+        match &tensor.value {
+            Some(apple_proto::mil_spec::tensor_value::Value::LongInts(long_ints)) => {
+                assert_eq!(long_ints.values, vec![1i64, 2, 1, 1],
+                    "INT64 vector should be stored as typed int64 elements");
+            }
+            Some(apple_proto::mil_spec::tensor_value::Value::Bytes(_)) => {
+                panic!("INT64 vectors must NOT be stored as raw bytes — \
+                       this causes 'Tensor storage and type have different number of elements'");
+            }
+            other => {
+                panic!("unexpected storage variant: {:?}", other);
+            }
+        }
+
+        // Also verify via mir_op_to_apple_ops that tile.reps is LongInts
+        let tile_op = mir_compat::MirOpCompat::Tile {
+            name: "tile_out".to_string(),
+            x: "x".to_string(),
+            reps: vec![1, 2, 1, 1],
+        };
+        let ops = mir_op_to_apple_ops(&tile_op, &[], &std::collections::HashMap::new());
+        let tile_mil = ops.iter().find(|op| op.r#type == "tile").expect("tile op");
+        let reps_arg = tile_mil.inputs.get("reps").expect("reps input");
+
+        let reps_binding = match &reps_arg.arguments.first().unwrap().binding {
+            Some(apple_proto::mil_spec::argument::binding::Binding::Value(v)) => v,
+            _ => panic!("reps should be a Value binding"),
+        };
+        let reps_imm = match &reps_binding.value {
+            Some(apple_proto::mil_spec::value::Value::ImmediateValue(iv)) => iv,
+            _ => panic!("reps should be ImmediateValue"),
+        };
+        let reps_tensor = match &reps_imm.value {
+            Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv)) => tv,
+            _ => panic!("reps should be Tensor"),
+        };
+        match &reps_tensor.value {
+            Some(apple_proto::mil_spec::tensor_value::Value::LongInts(long_ints)) => {
+                assert_eq!(long_ints.values, vec![1i64, 2, 1, 1]);
+            }
+            Some(apple_proto::mil_spec::tensor_value::Value::Bytes(_)) => {
+                panic!("tile.reps must NOT use bytes storage");
+            }
+            other => {
+                panic!("tile.reps unexpected variant: {:?}", other);
+            }
+        }
+
+        // Also verify transpose.perm uses LongInts
+        let transpose_op = mir_compat::MirOpCompat::Transpose {
+            name: "trans_out".to_string(),
+            x: "x".to_string(),
+            perm: vec![0, 1, 3, 2],
+        };
+        let ops = mir_op_to_apple_ops(&transpose_op, &[], &std::collections::HashMap::new());
+        let trans_mil = ops.iter().find(|op| op.r#type == "transpose").expect("transpose op");
+        let perm_arg = trans_mil.inputs.get("perm").expect("perm input");
+
+        let perm_binding = match &perm_arg.arguments.first().unwrap().binding {
+            Some(apple_proto::mil_spec::argument::binding::Binding::Value(v)) => v,
+            _ => panic!("perm should be a Value binding"),
+        };
+        let perm_imm = match &perm_binding.value {
+            Some(apple_proto::mil_spec::value::Value::ImmediateValue(iv)) => iv,
+            _ => panic!("perm should be ImmediateValue"),
+        };
+        let perm_tensor = match &perm_imm.value {
+            Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv)) => tv,
+            _ => panic!("perm should be Tensor"),
+        };
+        match &perm_tensor.value {
+            Some(apple_proto::mil_spec::tensor_value::Value::LongInts(long_ints)) => {
+                assert_eq!(long_ints.values, vec![0i64, 1, 3, 2]);
+            }
+            Some(apple_proto::mil_spec::tensor_value::Value::Bytes(_)) => {
+                panic!("transpose.perm must NOT use bytes storage");
+            }
+            other => {
+                panic!("transpose.perm unexpected variant: {:?}", other);
+            }
+        }
+    }
 }
