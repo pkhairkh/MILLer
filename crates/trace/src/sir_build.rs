@@ -704,6 +704,36 @@ impl<'a> SirBuildContext<'a> {
         let mut ops = Vec::new();
         let input_id = self.resolve_input(&node.inputs, 0);
 
+        // ─── IR DIALECT: Attention Shape Flow ──────────────────────────
+        //
+        // Qwen3-0.6B attention shape flow (the "dialect" this compiler uses):
+        //
+        //   1. hidden_state:              [B, S, hidden_size]       = [1, 512, 1024]
+        //   2. q_proj (Linear):           [B, S, num_heads*D]      = [1, 512, 2048]
+        //   3. k_proj (Linear):           [B, S, kv_heads*D]       = [1, 512, 1024]
+        //   4. v_proj (Linear):           [B, S, kv_heads*D]       = [1, 512, 1024]
+        //   5. q_norm (RMSNorm axes=3):   reshape→4D, norm, reshape→3D  (no shape change)
+        //   6. k_norm (RMSNorm axes=3):   reshape→4D, norm, reshape→3D  (no shape change)
+        //   7. reshape_q to 4D:           [B, S, num_heads, D]     = [1, 512, 16, 128]
+        //   8. reshape_k to 4D:           [B, S, kv_heads, D]      = [1, 512, 8, 128]
+        //   9. reshape_v to 4D:           [B, S, kv_heads, D]      = [1, 512, 8, 128]
+        //  10. transpose_q:               [B, num_heads, S, D]     = [1, 16, 512, 128]
+        //  11. transpose_k:               [B, kv_heads, S, D]      = [1, 8, 512, 128]
+        //  12. transpose_v:               [B, kv_heads, S, D]      = [1, 8, 512, 128]
+        //  13. gqa_tile_k:                [B, num_heads, S, D]     = [1, 16, 512, 128]
+        //  14. gqa_tile_v:                [B, num_heads, S, D]     = [1, 16, 512, 128]
+        //  15. SDPA:                      [B, num_heads, S, D]     = [1, 16, 512, 128]
+        //  16. reshape_attn to 3D:        [B, S, num_heads*D]      = [1, 512, 2048]
+        //  17. out_proj (Linear):         [B, S, hidden_size]      = [1, 512, 1024]
+        //  18. residual_add:              [B, S, hidden_size]      = [1, 512, 1024]
+        //
+        // Key constraints:
+        //   - q/k norm weights are [head_dim] = [128], must broadcast with 4D layout
+        //   - SDPA requires 4D inputs [B, heads, S, D]
+        //   - GQA tile requires 4D inputs [B, heads, S, D]
+        //   - out_proj output must match hidden_size for residual add
+        //   - Final graph output must be lm_head logits [B, S, vocab_size]
+
         // Qwen3 and similar models use Grouped Query Attention (GQA).
         // kv_heads < q_heads, so k_proj/v_proj output a smaller tensor than q_proj.
         let num_kv_heads = self.config.num_key_value_heads.unwrap_or(num_heads);
@@ -729,6 +759,7 @@ impl<'a> SirBuildContext<'a> {
             )
         };
 
+        // Step 1-3: Q/K/V projections (flat 3D outputs)
         // Separate Q projection: input → Q (flat [B, S, q_heads*head_dim])
         ops.push((
             SirOp::LinearProjection { input: input_id.clone(), weight: q_weight, bias: None },
@@ -750,7 +781,8 @@ impl<'a> SirBuildContext<'a> {
         ));
         let mut v_id = SirNodeId(format!("sir_v_proj_{}", node.id));
 
-        // QK-Norm: some models (Qwen3) apply RMSNorm to Q and K after projection.
+        // Step 4-5: QK-Norm (if present)
+        // Some models (Qwen3) apply RMSNorm to Q and K after projection.
         //
         // The q/k norm weights are per-head-dimension sized [head_dim], not
         // per-hidden-size [embed_dim]. To broadcast correctly, the norm must
@@ -797,8 +829,60 @@ impl<'a> SirBuildContext<'a> {
             k_id = SirNodeId(format!("sir_k_norm_{}", node.id));
         }
 
-        // GQA expansion: if the model uses Grouped Query Attention, K/V heads
-        // need to be tiled to match the Q head count.
+        // Step 6: Reshape Q/K/V from flat 3D to 4D head layout.
+        // This is critical: GQA tile and SDPA both require 4D inputs.
+        // Q: [B, S, num_heads*D] → [B, S, num_heads, D]
+        // K: [B, S, kv_heads*D] → [B, S, kv_heads, D]
+        // V: [B, S, kv_heads*D] → [B, S, kv_heads, D]
+        ops.push((
+            SirOp::Reshape {
+                input: q_id,
+                target_shape: vec![0, 0, num_heads, head_dim], // 0 = infer from input
+            },
+            "q_reshape_4d".to_string(),
+        ));
+        q_id = SirNodeId(format!("sir_q_reshape_4d_{}", node.id));
+
+        ops.push((
+            SirOp::Reshape {
+                input: k_id,
+                target_shape: vec![0, 0, num_kv_heads, head_dim],
+            },
+            "k_reshape_4d".to_string(),
+        ));
+        k_id = SirNodeId(format!("sir_k_reshape_4d_{}", node.id));
+
+        ops.push((
+            SirOp::Reshape {
+                input: v_id,
+                target_shape: vec![0, 0, num_kv_heads, head_dim],
+            },
+            "v_reshape_4d".to_string(),
+        ));
+        v_id = SirNodeId(format!("sir_v_reshape_4d_{}", node.id));
+
+        // Step 7: Transpose Q/K/V from [B, S, heads, D] to [B, heads, S, D]
+        // This is the layout that ANE SDPA expects.
+        ops.push((
+            SirOp::Transpose { input: q_id, perm: vec![0, 2, 1, 3] },
+            "q_transpose".to_string(),
+        ));
+        q_id = SirNodeId(format!("sir_q_transpose_{}", node.id));
+
+        ops.push((
+            SirOp::Transpose { input: k_id, perm: vec![0, 2, 1, 3] },
+            "k_transpose".to_string(),
+        ));
+        k_id = SirNodeId(format!("sir_k_transpose_{}", node.id));
+
+        ops.push((
+            SirOp::Transpose { input: v_id, perm: vec![0, 2, 1, 3] },
+            "v_transpose".to_string(),
+        ));
+        v_id = SirNodeId(format!("sir_v_transpose_{}", node.id));
+
+        // Step 8: GQA expansion (if needed)
+        // K/V heads need to be tiled to match the Q head count.
         // ANE-compatible: Tile on A14+ (replaces the old ExpandDims+Identity hack).
         let needs_gqa_expand = self.config.uses_gqa;
         if needs_gqa_expand {
@@ -806,7 +890,7 @@ impl<'a> SirBuildContext<'a> {
             let gqa_kv_heads = self.config.num_key_value_heads.unwrap_or(num_q_heads);
             let num_replicas = num_q_heads / gqa_kv_heads;
             if num_replicas > 1 {
-                // K: tile along the heads dimension
+                // K: tile along the heads dimension (axis 1 in [B, heads, S, D])
                 ops.push((
                     SirOp::Tile { input: k_id, reps: vec![1, num_replicas, 1, 1] },
                     "gqa_k_tile".to_string(),
@@ -822,7 +906,7 @@ impl<'a> SirBuildContext<'a> {
             }
         }
 
-        // Attention computation
+        // Step 9: Attention computation
         if use_sdpa && self.compiler.target_family().supports_sdpa() {
             // Use SDPA directly on A16+.
             // Causal mask: reference to a lower-triangular mask that will be
@@ -884,24 +968,40 @@ impl<'a> SirBuildContext<'a> {
             ops.push((SirOp::MatMul { a: scores_id, b: v_id }, "attn_sv".to_string()));
         }
 
-        // Output projection: its input is the attention computation output.
-        // Use a path-specific semantic alias so the post-hoc resolver can map
-        // it to the correct position:
-        //   - Pre-A16: sir_attn_sv_{node.id} → position of the sv_matmul op
-        //   - A16+:    sir_sdpa_{node.id}     → position of the SDPA op
+        // Output projection: its input is the attention computation output,
+        // which is currently 4D [B, num_heads, S, D]. We need to reshape it
+        // back to 3D [B, S, num_heads*D] before the linear projection.
         let attn_result_id = if use_sdpa && self.compiler.target_family().supports_sdpa() {
             SirNodeId(format!("sir_sdpa_{}", node.id))
         } else {
             SirNodeId(format!("sir_attn_sv_{}", node.id))
         };
+
+        // Step 10: Reshape attention output from 4D [B, heads, S, D] to
+        // 3D [B, S, num_heads*D] for the output projection.
+        // The output projection expects a 3D input because it's a Conv1x1AsLinear.
         ops.push((
-            SirOp::LinearProjection { input: attn_result_id, weight: out_weight, bias: None },
+            SirOp::Reshape {
+                input: attn_result_id,
+                target_shape: vec![0, 0, q_proj_dim], // [B, S, num_heads*head_dim]
+            },
+            "attn_reshape_3d".to_string(),
+        ));
+        let attn_flat_id = SirNodeId(format!("sir_attn_reshape_3d_{}", node.id));
+
+        // Step 11: Output projection (o_proj)
+        // Input: [B, S, num_heads*D] = [1, 512, 2048]
+        // Output: [B, S, hidden_size] = [1, 512, 1024]
+        ops.push((
+            SirOp::LinearProjection { input: attn_flat_id, weight: out_weight, bias: None },
             format!("out_proj_{}", embed_dim),
         ));
 
-        // Residual connection: if the traced node has 2+ inputs, the second
-        // input is the skip/residual connection. Emit an Add so the block
+        // Step 12: Residual connection
+        // If the traced node has 2+ inputs, the second input is the
+        // skip/residual connection. Emit an Add so the block
         // output = projection_output + residual.
+        // Both operands must have the same shape [B, S, hidden_size].
         if node.inputs.len() >= 2 {
             let residual_id = self.resolve_input(&node.inputs, 1);
             let out_proj_id = SirNodeId(format!("sir_out_proj_{}", node.id));
@@ -2223,6 +2323,76 @@ mod tests {
             "A16+ attention decomposition must NOT include manual K^T transpose"
         );
     }
+
+    /// Sprint 62: Verify that the Qwen3-0.6B fixture produces SIR RMSNorm ops
+    /// with axes=[3] for q/k norm (per-head-dimension normalization).
+    /// This is critical for the legality_rewrite to insert the 4D reshape
+    /// that makes [128] weights broadcastable with head-reshaped tensors.
+    #[test]
+    fn test_qwen3_qk_norm_sir_has_axes3() {
+        let graph = load_fixture("qwen3_0_6b.json");
+        if graph.is_none() {
+            eprintln!("SKIP: qwen3_0_6b.json fixture not found");
+            return;
+        }
+        let trace = graph.unwrap();
+        let sir = build_sir_from_trace(&trace, AneFamily::A16).unwrap();
+
+        // Find RMSNorm ops that have axes=[3] (q/k norm)
+        let axes3_norms: Vec<_> = sir.nodes.iter()
+            .filter_map(|n| {
+                if let SirOp::RMSNorm { axes, weight, .. } = &n.op {
+                    if axes.contains(&3) {
+                        Some((n.id.0.clone(), weight.clone(), axes.clone()))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Find RMSNorm ops that have axes=[2] (standard layer norm)
+        let axes2_norms: Vec<_> = sir.nodes.iter()
+            .filter_map(|n| {
+                if let SirOp::RMSNorm { axes, weight, .. } = &n.op {
+                    if axes.contains(&2) && !axes.contains(&3) {
+                        Some((n.id.0.clone(), weight.clone()))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        eprintln!("RMSNorm with axes=[3] (q/k norm): {} ops", axes3_norms.len());
+        for (id, weight, axes) in &axes3_norms {
+            eprintln!("  {} weight={} axes={:?}", id, weight, axes);
+        }
+        eprintln!("RMSNorm with axes=[2] (layer norm): {} ops", axes2_norms.len());
+
+        // Qwen3-0.6B has 28 layers, each with q_norm and k_norm → 56 axes=[3] norms
+        // Plus 28+1 input norms and 28 post-attn norms → 57 axes=[2] norms
+        assert!(
+            !axes3_norms.is_empty(),
+            "Qwen3-0.6B with has_qk_norm=True MUST produce RMSNorm ops with axes=[3]"
+        );
+
+        // Verify the axes3 norms reference q_norm or k_norm weights
+        let q_norm_count = axes3_norms.iter().filter(|(_, w, _)| w.contains("q_norm")).count();
+        let k_norm_count = axes3_norms.iter().filter(|(_, w, _)| w.contains("k_norm")).count();
+        assert!(
+            q_norm_count > 0,
+            "Expected at least one q_norm RMSNorm with axes=[3], found 0"
+        );
+        assert!(
+            k_norm_count > 0,
+            "Expected at least one k_norm RMSNorm with axes=[3], found 0"
+        );
+    }
 }
 
 /// Strip trailing dimension-like suffixes from a name tag.
@@ -2399,13 +2569,18 @@ fn resolve_alias(
 ///
 /// AttentionBlock decomposition order (with QK-Norm + GQA, A16+):
 ///   0: q_proj, 1: k_proj, 2: v_proj, 3: q_norm, 4: k_norm,
-///   5: gqa_k_tile, 6: gqa_v_tile, 7: sdpa, 8: out_proj, 9: residual_add
+///   5: q_reshape_4d, 6: k_reshape_4d, 7: v_reshape_4d,
+///   8: q_transpose, 9: k_transpose, 10: v_transpose,
+///   11: gqa_k_tile, 12: gqa_v_tile, 13: sdpa,
+///   14: attn_reshape_3d, 15: out_proj, 16: residual_add
 ///
 /// AttentionBlock decomposition order (with QK-Norm + GQA, pre-A16):
 ///   0: q_proj, 1: k_proj, 2: v_proj, 3: q_norm, 4: k_norm,
-///   5: gqa_k_tile, 6: gqa_v_tile, 7: k_transpose, 8: qk_matmul,
-///   9: scale_const, 10: scaled_qk, 11: softmax, 12: sv_matmul,
-///   13: out_proj, 14: residual_add
+///   5: q_reshape_4d, 6: k_reshape_4d, 7: v_reshape_4d,
+///   8: q_transpose, 9: k_transpose, 10: v_transpose,
+///   11: gqa_k_tile, 12: gqa_v_tile,
+///   13: attn_k_transpose, 14: qk_matmul, 15: scale_const, 16: scaled_qk,
+///   17: softmax, 18: sv_matmul, 19: attn_reshape_3d, 20: out_proj, 21: residual_add
 ///
 /// MLP decomposition order (SwiGLU):
 ///   0: gate_proj, 1: gate_silu, 2: up_proj, 3: swiglu_mul, 4: down_proj
@@ -2418,24 +2593,31 @@ fn semantic_prefix_to_position(prefix: &str) -> Option<usize> {
     // built dynamically from the actual name tags). This function is only
     // used for aliases that don't match any name tag pattern.
     //
-    // Attention block ops (positions for the QK-Norm + GQA + pre-A16 path)
+    // Attention block ops (positions for the QK-Norm + GQA + A16 path)
     match prefix {
         "q_proj" => Some(0),
         "k_proj" => Some(1),
         "v_proj" => Some(2),
         "q_norm" => Some(3),
         "k_norm" => Some(4),
-        "gqa_k_tile" => Some(5),
-        "gqa_v_tile" => Some(6),
-        // Pre-A16 SDPA decomposition (positions 7-12)
-        "attn_k_transpose" => Some(7),
-        "attn_qk" => Some(8),
-        "attn_scale_const" => Some(9),
-        "attn_scale" => Some(10),
-        "attn_softmax" => Some(11),
-        "attn_sv" => Some(12),
-        "out_proj" => Some(13),
-        "sdpa" => Some(7),
+        "q_reshape_4d" => Some(5),
+        "k_reshape_4d" => Some(6),
+        "v_reshape_4d" => Some(7),
+        "q_transpose" => Some(8),
+        "k_transpose" => Some(9),
+        "v_transpose" => Some(10),
+        "gqa_k_tile" => Some(11),
+        "gqa_v_tile" => Some(12),
+        // Pre-A16 SDPA decomposition (positions 13-18)
+        "attn_k_transpose" => Some(13),
+        "attn_qk" => Some(14),
+        "attn_scale_const" => Some(15),
+        "attn_scale" => Some(16),
+        "attn_softmax" => Some(17),
+        "attn_sv" => Some(18),
+        "sdpa" => Some(13),
+        "attn_reshape_3d" => Some(14), // A16+: position 14; pre-A16: position 19
+        "out_proj" => Some(15),        // A16+: position 15; pre-A16: position 20
         // MLP ops (these come from separate traced nodes, so positions restart)
         "gate_proj" => Some(0),
         "mlp_gate_silu" => Some(1),
