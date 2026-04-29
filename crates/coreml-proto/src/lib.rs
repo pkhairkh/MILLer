@@ -525,6 +525,20 @@ pub mod mir_compat {
             x: String,
             y: String,
         },
+        /// SiLU (Sigmoid Linear Unit) activation: x * sigmoid(x).
+        /// Core ML MIL program op type: "silu".
+        Silu {
+            name: String,
+            x: String,
+        },
+        /// Identity / passthrough op. Core ML MIL program op type: "identity".
+        /// Carries the output dtype so the MIL operation's output type matches
+        /// the input (critical for integer inputs like input_ids).
+        Identity {
+            name: String,
+            x: String,
+            dtype: MilDtypeCompat,
+        },
         /// Catch-all for MIL ops that don't have specialized compat representations.
         /// The proto emission layer handles these by emitting the appropriate
         /// MIL builder call based on the op_kind string.
@@ -1101,6 +1115,18 @@ pub fn mir_op_to_proto_op(
                 y: Some(proto::OperandRef { name: y.clone() }),
             }),
         ),
+        mir_compat::MirOpCompat::Silu { name, x } => (
+            name.clone(),
+            proto::mil_operation::Operation::SiluOp(proto::MilSiluOp {
+                x: Some(proto::OperandRef { name: x.clone() }),
+            }),
+        ),
+        mir_compat::MirOpCompat::Identity { name, x, dtype: _ } => (
+            name.clone(),
+            proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                x: Some(proto::OperandRef { name: x.clone() }),
+            }),
+        ),
         // Unsupported ops are emitted as identity pass-through with a comment
         // marker in the function name. The op_kind and params are preserved
         // for downstream Python emission or manual inspection.
@@ -1224,6 +1250,16 @@ pub fn coreml_dtype_to_apple_mil(dt: &CoreMlDataType) -> i32 {
         CoreMlDataType::Float64 => apple_proto::mil_spec::DataType::Float64 as i32,
         CoreMlDataType::Unknown => apple_proto::mil_spec::DataType::UnusedType as i32,
         CoreMlDataType::Bool => apple_proto::mil_spec::DataType::Bool as i32,
+    }
+}
+
+/// Convert `MilDtypeCompat` → `apple_proto::mil_spec::DataType` (Apple MIL enum values).
+fn compat_dtype_to_apple_mil(dt: &mir_compat::MilDtypeCompat) -> i32 {
+    match dt {
+        mir_compat::MilDtypeCompat::Fp16 => apple_proto::mil_spec::DataType::Float16 as i32,
+        mir_compat::MilDtypeCompat::Fp32 => apple_proto::mil_spec::DataType::Float32 as i32,
+        mir_compat::MilDtypeCompat::Int32 => apple_proto::mil_spec::DataType::Int32 as i32,
+        mir_compat::MilDtypeCompat::UInt8 => apple_proto::mil_spec::DataType::Uint8 as i32,
     }
 }
 
@@ -2615,6 +2651,46 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
+        mir_compat::MirOpCompat::Silu { name, x } => {
+            let mut inputs = HashMap::new();
+            inputs.insert("x".to_string(), make_name_arg(x));
+
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "silu".to_string(),
+                inputs,
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &[],
+                )],
+                blocks: vec![],
+                attributes,
+            }]
+        }
+        mir_compat::MirOpCompat::Identity { name, x, dtype } => {
+            let mil_dtype = compat_dtype_to_apple_mil(dtype);
+
+            let mut inputs = HashMap::new();
+            inputs.insert("x".to_string(), make_name_arg(x));
+
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "identity".to_string(),
+                inputs,
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    mil_dtype,
+                    &[],
+                )],
+                blocks: vec![],
+                attributes,
+            }]
+        }
         mir_compat::MirOpCompat::Unsupported { op_kind, name, params_json: _ } => {
             // Emit as identity to preserve graph structure
             let mut inputs = HashMap::new();
@@ -2748,8 +2824,10 @@ pub fn convert_to_apple_proto_model(
 
     // Multi-function models must NOT have top-level input/output/state feature
     // descriptions — all I/O lives inside FunctionDescription entries.
-    // Single-function models (no `functions` field) use top-level I/O instead.
-    let is_multi_function = !model.functions.is_empty();
+    // Single-function models populate top-level I/O from the default function.
+    // Core ML's outputSchema validation requires non-empty top-level I/O when
+    // there is only one function.
+    let is_multi_function = model.functions.len() > 1;
     let model_input_descs: Vec<apple_proto::FeatureDescription> = if is_multi_function {
         vec![]
     } else {

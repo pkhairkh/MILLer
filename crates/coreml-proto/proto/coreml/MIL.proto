@@ -83,6 +83,7 @@ message MilOperation {
         MilSigmoidOp sigmoid_op = 121;
         MilTanhOp tanh_op = 122;
         MilWhereOp where_op = 123;
+        MilSiluOp silu_op = 124;
 
         // Identity / passthrough (for unsupported op preservation)
         MilIdentityOp identity_op = 200;
@@ -321,6 +322,12 @@ message MilWhereOp {
     OperandRef condition = 1;
     OperandRef x = 2;
     OperandRef y = 3;
+}
+
+// ─── SiLU (Sigmoid Linear Unit) activation ──────────────────────────────
+
+message MilSiluOp {
+    OperandRef x = 1;
 }
 
 // ─── Identity (passthrough for unsupported ops) ──────────────────────────

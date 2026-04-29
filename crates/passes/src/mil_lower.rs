@@ -253,13 +253,31 @@ impl MilLowerPass {
             // due to a known precision hazard), that override propagates through AIR
             // and must be respected in the MIR, ensuring the knowledge-informed
             // precision decision reaches the emitted mlpackage.
+            //
+            // Special case: Identity nodes that are graph inputs with integer-like
+            // names (e.g., "input_ids", "attention_mask") should use Int32, since
+            // Core ML's gather op expects integer indices and these inputs represent
+            // token indices or masks, not floating-point data.
             let mil_dtype = match &air_node.precision_override {
                 Some(dtype) => match dtype.as_str() {
                     "fp32" => MilDtype::Fp32,
                     "fp16" => MilDtype::Fp16,
+                    "int32" => MilDtype::Int32,
                     _ => MilDtype::Fp16,
                 },
-                None => MilDtype::Fp16,
+                None => {
+                    // Heuristic: Identity ops that are graph inputs with names
+                    // containing "ids" (e.g., input_ids) or "mask" are integer tensors.
+                    if matches!(&air_node.op, AirOp::Identity { .. })
+                        && (air_node.name.ends_with("_ids")
+                            || air_node.name.contains("input_ids")
+                            || air_node.name.contains("mask"))
+                    {
+                        MilDtype::Int32
+                    } else {
+                        MilDtype::Fp16
+                    }
+                }
             };
 
             let mir_op = match &air_node.op {

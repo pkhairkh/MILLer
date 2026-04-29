@@ -284,6 +284,18 @@ fn mir_node_to_compat(node: &MirNode, resolver: &dyn WeightResolver) -> Result<M
         });
     }
 
+    // For Identity, propagate the actual dtype from the MIR node so
+    // the proto emission can declare the correct output type (e.g., Int32
+    // for input_ids rather than hardcoded Float16).
+    if let MirOpCompat::Identity { name, x, .. } = &compat {
+        let node_dtype = mil_dtype_to_compat(&node.dtype);
+        return Ok(MirOpCompat::Identity {
+            name: name.clone(),
+            x: x.clone(),
+            dtype: node_dtype,
+        });
+    }
+
     Ok(compat)
 }
 
@@ -533,6 +545,14 @@ pub fn mir_op_to_compat(
             x: x.0.clone(),
             axes: axes.iter().map(|&a| a as i64).collect(),
             keep_dims: *keep_dims,
+        }),
+
+        // ─── SiLU and Identity: real Core ML MIL ops, not unsupported ───
+        MirOp::MILSilu { name, x } => Ok(MirOpCompat::Silu { name: name.clone(), x: x.0.clone() }),
+        MirOp::MILIdentity { name, x } => Ok(MirOpCompat::Identity {
+            name: name.clone(),
+            x: x.0.clone(),
+            dtype: MilDtypeCompat::Fp16, // will be overridden by mir_node_to_compat
         }),
 
         // ─── Full-coverage wildcard for all remaining MirOp variants ───
