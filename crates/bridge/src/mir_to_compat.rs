@@ -253,6 +253,17 @@ pub fn mir_graph_to_compat(
         })
         .collect();
 
+    // Build node_shapes map from MIR node metadata. This is used by the
+    // Apple proto emitter to set correct output types on MIL operations.
+    // Without this, all op outputs default to scalar fp16, causing
+    // "Tensor storage and type have different number of elements" errors.
+    let node_shapes: std::collections::HashMap<String, Vec<usize>> = graph
+        .nodes
+        .iter()
+        .filter(|n| !n.shape.is_empty())
+        .map(|n| (n.id.0.clone(), n.shape.clone()))
+        .collect();
+
     Ok(MirGraphCompat {
         ops: all_ops,
         inputs,
@@ -261,6 +272,7 @@ pub fn mir_graph_to_compat(
         function_name: graph.shard_name.clone(),
         input_descs,
         output_descs,
+        node_shapes,
     })
 }
 

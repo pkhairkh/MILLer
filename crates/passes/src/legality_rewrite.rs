@@ -2296,7 +2296,8 @@ mod tests {
 
         let mil_lower = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
-        let mirs = mil_lower.run(&air, &shard_plan).unwrap();
+        let input_shapes = std::collections::HashMap::new();
+        let mirs = mil_lower.run(&air, &shard_plan, &input_shapes).unwrap();
 
         // After the fix, Conv1x1AsLinear → MILLinear (not MatMul)
         let linear_node = mirs[0]

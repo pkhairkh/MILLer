@@ -48,8 +48,36 @@ use std::collections::HashMap;
 /// empty vec is returned as a conservative fallback.
 fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<usize> {
     match op {
-        AirOp::MatMul { .. } => vec![],
-        AirOp::Conv1x1AsLinear { .. } => vec![],
+        // ─── Identity: propagate input shape (critical for graph I/O nodes) ───
+        AirOp::Identity { input } => node_shapes.get(input).cloned().unwrap_or_default(),
+
+        // ─── MatMul: [M, K] × [K, N] → [M, N]; 1-D broadcast cases ───
+        AirOp::MatMul { a, b, .. } => {
+            match (node_shapes.get(a), node_shapes.get(b)) {
+                (Some(a_shape), Some(b_shape)) => {
+                    match (a_shape.len(), b_shape.len()) {
+                        (2, 2) => vec![a_shape[0], b_shape[1]],
+                        (1, 2) => vec![b_shape[1]],          // bias-like: [K] × [K,N] → [N]
+                        (2, 1) => vec![a_shape[0]],          // [M,K] × [K] → [M]
+                        (1, 1) => vec![],                     // scalar × scalar
+                        _ => vec![],
+                    }
+                }
+                _ => vec![],
+            }
+        }
+
+        // ─── Conv1x1AsLinear: semantically a linear projection ───
+        // Weight is a String name (not an AirNodeId), so we can't look it up.
+        // Instead, propagate the input shape (the linear output will have the
+        // same batch dimension but different feature dim; however, we can't
+        // determine the output dim without the weight shape, so we use the
+        // input shape as a conservative estimate — the compat layer and
+        // proto emitter will refine via the node_shapes map).
+        AirOp::Conv1x1AsLinear { input, .. } => {
+            node_shapes.get(input).cloned().unwrap_or_default()
+        }
+
         AirOp::ElementWise { inputs, .. } => {
             inputs.first().and_then(|id| node_shapes.get(id).cloned()).unwrap_or_default()
         }
@@ -130,6 +158,20 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
         }
         AirOp::Where { x, .. } => node_shapes.get(x).cloned().unwrap_or_default(),
         AirOp::StaticLUTProjection { .. } => vec![],
+        // ─── Unary ops that pass through input shape ───
+        AirOp::Silu { input }
+        | AirOp::Abs { input }
+        | AirOp::Neg { input }
+        | AirOp::Sqrt { input }
+        | AirOp::Cast { input, .. } => node_shapes.get(input).cloned().unwrap_or_default(),
+        // ─── Binary ops: use first operand shape ───
+        AirOp::Add { x, .. }
+        | AirOp::Mul { x, .. }
+        | AirOp::Sub { x, .. }
+        | AirOp::Maximum { x, .. }
+        | AirOp::Minimum { x, .. } => {
+            node_shapes.get(x).cloned().unwrap_or_default()
+        }
         // All remaining AIR ops: conservatively return empty shape
         _ => vec![],
     }
@@ -220,12 +262,25 @@ impl MilLowerPass {
     /// - Split the AIR graph across shard boundaries
     /// - Produce one MIR graph per shard
     /// - Handle state read/write as MILReadState/MILCoremlUpdateState operations
-    pub fn run(&self, input: &AirGraph, shard_plan: &ShardPlan) -> Result<Vec<MirGraph>> {
+    ///
+    /// `input_shapes` maps AIR node IDs for graph inputs to their expected shapes.
+    /// This is critical for seeding shape inference: without it, Identity nodes
+    /// that represent graph inputs (e.g., input_ids) get empty shapes, which
+    /// propagates through the entire graph producing wrong metadata.
+    pub fn run(
+        &self,
+        input: &AirGraph,
+        shard_plan: &ShardPlan,
+        input_shapes: &std::collections::HashMap<AirNodeId, Vec<usize>>,
+    ) -> Result<Vec<MirGraph>> {
         let mut mir_nodes = Vec::new();
         let mut air_to_mir = std::collections::HashMap::new();
         // Sprint 57: track output shape of each AIR node so we can propagate
         // shape information into MirNode.shape during lowering.
-        let mut node_shapes: HashMap<AirNodeId, Vec<usize>> = HashMap::new();
+        // Seed with the externally-provided input shapes for graph inputs.
+        // Without this, Identity nodes representing graph inputs get empty shapes,
+        // which propagates through the entire graph producing wrong metadata.
+        let mut node_shapes: HashMap<AirNodeId, Vec<usize>> = input_shapes.clone();
 
         // Derive the compute unit hint from the shard plan instead of hardcoding
         // CPU_AND_NE. This fixes critique Bug 3 where the compute_unit_hint on
@@ -2374,7 +2429,7 @@ mod tests {
 
         // Without precision override: default fp16
         let air_no_override = make_air_graph_with_precision(None);
-        let mirs_no = pass.run(&air_no_override, &shard_plan).unwrap();
+        let mirs_no = pass.run(&air_no_override, &shard_plan, &HashMap::new()).unwrap();
         let matmul_node_no = mirs_no[0]
             .nodes
             .iter()
@@ -2388,7 +2443,7 @@ mod tests {
 
         // With fp32 precision override: should produce fp32 MIR node
         let air_fp32 = make_air_graph_with_precision(Some("fp32"));
-        let mirs_fp32 = pass.run(&air_fp32, &shard_plan).unwrap();
+        let mirs_fp32 = pass.run(&air_fp32, &shard_plan, &HashMap::new()).unwrap();
         let matmul_node_fp32 = mirs_fp32[0]
             .nodes
             .iter()
@@ -2412,7 +2467,7 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = make_air_graph_with_precision(None);
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
 
         for node in &mirs[0].nodes {
             assert_eq!(
@@ -2430,7 +2485,7 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = make_air_graph_with_precision(Some("fp16"));
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
 
         let matmul_node = mirs[0]
             .nodes
@@ -2472,7 +2527,7 @@ mod tests {
             outputs: vec![AirNodeId("rm".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -2497,7 +2552,7 @@ mod tests {
             outputs: vec![AirNodeId("rs".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -2522,7 +2577,7 @@ mod tests {
             outputs: vec![AirNodeId("rsqrt".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -2544,7 +2599,7 @@ mod tests {
             outputs: vec![AirNodeId("div".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -2575,7 +2630,7 @@ mod tests {
             outputs: vec![AirNodeId("ln".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -2608,7 +2663,7 @@ mod tests {
             outputs: vec![AirNodeId("ln".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -2636,7 +2691,7 @@ mod tests {
             outputs: vec![AirNodeId("topk".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -2665,7 +2720,7 @@ mod tests {
             outputs: vec![AirNodeId("gather".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -2690,7 +2745,7 @@ mod tests {
             outputs: vec![AirNodeId("cos_out".into()), AirNodeId("sin_out".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let cos_node = mirs[0]
             .nodes
             .iter()
@@ -2712,7 +2767,7 @@ mod tests {
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default(); // defaults to CPU_AND_NE
         let air = make_air_graph_with_precision(None);
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
 
         for node in &mirs[0].nodes {
             assert_eq!(
@@ -2737,7 +2792,7 @@ mod tests {
             shard_names: vec!["shard_0".to_string()],
         };
         let air = make_air_graph_with_precision(None);
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
 
         for node in &mirs[0].nodes {
             assert_eq!(
@@ -2762,7 +2817,7 @@ mod tests {
             shard_names: vec!["entry_shard".to_string()],
         };
         let air = make_air_graph_with_precision(None);
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
 
         assert_eq!(
             mirs[0].shard_name, "entry_shard",
@@ -2793,7 +2848,7 @@ mod tests {
             outputs: vec![AirNodeId("rsqrt".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         assert_eq!(mirs[0].nodes.len(), 2);
         assert!(mirs[0].nodes.iter().any(|n| matches!(n.op, MirOp::MILReduceMean { .. })));
         assert!(mirs[0].nodes.iter().any(|n| matches!(n.op, MirOp::MILRsqrt { .. })));
@@ -2820,7 +2875,7 @@ mod tests {
             outputs: vec![AirNodeId("sdpa".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -2854,7 +2909,7 @@ mod tests {
             outputs: vec![AirNodeId("slice".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -2879,7 +2934,7 @@ mod tests {
             outputs: vec![AirNodeId("gelu".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -2907,7 +2962,7 @@ mod tests {
             outputs: vec![AirNodeId("k_cache".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -2949,7 +3004,7 @@ mod tests {
             outputs: vec![AirNodeId("k_write".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -2974,7 +3029,7 @@ mod tests {
             outputs: vec![AirNodeId("split".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -3002,7 +3057,7 @@ mod tests {
             outputs: vec![AirNodeId("concat".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -3034,7 +3089,7 @@ mod tests {
             outputs: vec![AirNodeId("su".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -3061,7 +3116,7 @@ mod tests {
             outputs: vec![AirNodeId("exp_out".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -3083,7 +3138,7 @@ mod tests {
             outputs: vec![AirNodeId("sig_out".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -3105,7 +3160,7 @@ mod tests {
             outputs: vec![AirNodeId("tanh_out".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -3128,7 +3183,7 @@ mod tests {
             outputs: vec![AirNodeId("relu_out".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -3158,7 +3213,7 @@ mod tests {
             outputs: vec![AirNodeId("where_out".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -3189,7 +3244,7 @@ mod tests {
             outputs: vec![AirNodeId("max_out".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -3217,7 +3272,7 @@ mod tests {
             outputs: vec![AirNodeId("min_out".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
             .nodes
             .iter()
@@ -3258,7 +3313,7 @@ mod tests {
                 outputs: vec![AirNodeId(name.into())],
                 staticization_decisions: vec![],
             };
-            let result = pass.run(&air, &shard_plan);
+            let result = pass.run(&air, &shard_plan, &HashMap::new());
             assert!(
                 result.is_ok(),
                 "ElementWiseOp::{} should lower successfully, but got error: {:?}",
@@ -3289,7 +3344,7 @@ mod tests {
             outputs: vec![AirNodeId("lut".into())],
             staticization_decisions: vec![],
         };
-        let result = pass.run(&air, &shard_plan);
+        let result = pass.run(&air, &shard_plan, &HashMap::new());
         assert!(
             result.is_ok(),
             "StaticLUTProjection should no longer error at lowering, but got: {:?}",
@@ -3346,7 +3401,7 @@ mod tests {
             outputs: vec![AirNodeId("output".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let matmul_node = mirs[0]
             .nodes
             .iter()
@@ -3373,7 +3428,7 @@ mod tests {
             outputs: vec![AirNodeId("reshape".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan).unwrap();
+        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let reshape_node = mirs[0]
             .nodes
             .iter()

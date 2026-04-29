@@ -582,6 +582,12 @@ pub mod mir_compat {
         /// If empty, shapes/dtypes are inferred from graph ops.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pub output_descs: Vec<TensorDescCompat>,
+        /// Map from tensor name to shape, built from MIR node metadata.
+        /// Used by the Apple proto emitter to set correct output types on
+        /// MIL operations (e.g., Linear, MatMul, Silu, etc. all need to
+        /// declare their output shape/dtype in the MIL program).
+        #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+        pub node_shapes: std::collections::HashMap<String, Vec<usize>>,
     }
 }
 
@@ -598,6 +604,10 @@ pub struct CoreMlFunction {
     pub states: Vec<TensorDesc>,
     /// Operations in this function.
     pub operations: Vec<mir_compat::MirOpCompat>,
+    /// Map from tensor name to shape, used for emitting correct output types
+    /// in the MIL program. Without this, all op outputs default to scalar fp16.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub node_shapes: std::collections::HashMap<String, Vec<usize>>,
 }
 
 /// Tensor description for function I/O.
@@ -1193,6 +1203,7 @@ pub fn convert_to_proto_model(model: &CoreMlModel, weight_entries: &[WeightEntry
             function_name: func.name.clone(),
             input_descs: vec![],
             output_descs: vec![],
+            node_shapes: std::collections::HashMap::new(),
         };
         ml_program_functions
             .insert(func.name.clone(), mir_graph_to_proto_function(&graph, weight_entries));
@@ -1318,6 +1329,15 @@ fn make_apple_named_value_type(
         name: name.to_string(),
         r#type: Some(make_apple_value_type(dtype, shape)),
     }
+}
+
+/// Look up the shape of a tensor by name from the node_shapes map,
+/// converting `Vec<usize>` to `Vec<u64>`. Returns empty vec if not found.
+fn lookup_shape_u64(name: &str, node_shapes: &std::collections::HashMap<String, Vec<usize>>) -> Vec<u64> {
+    node_shapes
+        .get(name)
+        .map(|s| s.iter().map(|&d| d as u64).collect())
+        .unwrap_or_default()
 }
 
 /// Build an `apple_proto::mil_spec::Argument` that references an SSA name.
@@ -1564,6 +1584,7 @@ fn make_apple_state_feature_desc(
 fn mir_op_to_apple_ops(
     op: &mir_compat::MirOpCompat,
     weight_entries: &[WeightEntry],
+    node_shapes: &std::collections::HashMap<String, Vec<usize>>,
 ) -> Vec<apple_proto::mil_spec::Operation> {
     match op {
         mir_compat::MirOpCompat::Const { name, data, dtype, shape } => {
@@ -1608,7 +1629,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -1628,7 +1649,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -1648,7 +1669,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -1668,7 +1689,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -1688,7 +1709,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -1707,7 +1728,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -1727,7 +1748,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -1747,7 +1768,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -1780,7 +1801,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -1813,7 +1834,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -1860,7 +1881,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -1908,7 +1929,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -1946,7 +1967,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -1975,7 +1996,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2025,7 +2046,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2046,7 +2067,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2085,7 +2106,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2115,7 +2136,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2154,7 +2175,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2193,7 +2214,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2253,7 +2274,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2274,7 +2295,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2293,7 +2314,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2313,7 +2334,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2356,7 +2377,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2395,7 +2416,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2414,7 +2435,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2433,7 +2454,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2508,7 +2529,7 @@ fn mir_op_to_apple_ops(
             let cast_op = apple_proto::mil_spec::Operation {
                 r#type: "cast".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_dtype, &[])],
+                outputs: vec![make_apple_named_value_type(name, apple_dtype, &lookup_shape_u64(name, node_shapes))],
                 blocks: vec![],
                 attributes,
             };
@@ -2548,7 +2569,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2567,7 +2588,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2586,7 +2607,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2605,7 +2626,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2624,7 +2645,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2645,7 +2666,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2664,7 +2685,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2685,7 +2706,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     mil_dtype,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2705,7 +2726,7 @@ fn mir_op_to_apple_ops(
                 outputs: vec![make_apple_named_value_type(
                     name,
                     apple_proto::mil_spec::DataType::Float16 as i32,
-                    &[],
+                    &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
                 attributes,
@@ -2732,7 +2753,7 @@ fn function_to_apple_proto(
     let operations: Vec<apple_proto::mil_spec::Operation> = func
         .operations
         .iter()
-        .flat_map(|op| mir_op_to_apple_ops(op, weight_entries))
+        .flat_map(|op| mir_op_to_apple_ops(op, weight_entries, &func.node_shapes))
         .collect();
 
     let block = apple_proto::mil_spec::Block {
@@ -3220,6 +3241,7 @@ mod tests {
                         y: "weight".to_string(),
                     },
                 ],
+                node_shapes: std::collections::HashMap::new(),
             }],
             default_function_name: "main".to_string(),
             weights: vec![WeightEntry {

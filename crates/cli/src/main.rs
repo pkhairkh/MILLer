@@ -1390,10 +1390,34 @@ fn run_compile_full(
     println!("  PIR: {} packages, {} handoffs", pir.packages.len(), pir.handoffs.len());
 
     // Step 8: Run MilLowerPass (AIR→Vec<MIR>)
+    // Build input_shapes map from task spec so the mil_lower pass can seed
+    // shape inference for graph inputs. Without this, Identity nodes at graph
+    // boundaries get empty shapes, producing wrong metadata throughout.
+    let mut input_shapes: std::collections::HashMap<ane_ir::air::AirNodeId, Vec<usize>> =
+        std::collections::HashMap::new();
+    for input_id in &air.inputs {
+        // Try to match the AIR input to a known task input shape.
+        // The first input of an Attention model is input_ids [batch, seq_len].
+        // For other models, use the task's input_tensor_shape().
+        let shape = if input_id.0.contains("input_ids") || input_id.0.starts_with("sir_0_") {
+            // Token index input: [batch_size, seq_len]
+            let (_, _, batch_size, _) = spec.op.primary_dims();
+            let seq_len = match &spec.op {
+                ane_ir::task_spec::TaskOp::Attention { seq_len, .. } => *seq_len,
+                ane_ir::task_spec::TaskOp::DecodeStep { kv_len, .. } => *kv_len,
+                ane_ir::task_spec::TaskOp::ShardedDecodeStep { kv_len, .. } => *kv_len,
+                _ => 1,
+            };
+            vec![batch_size, seq_len]
+        } else {
+            spec.op.input_tensor_shape()
+        };
+        input_shapes.insert(input_id.clone(), shape);
+    }
     println!("[8/13] Running MilLowerPass (AIR→MIR)...");
     let mil_lower = MilLowerPass::new();
     let mirs =
-        mil_lower.run(&air, &shard_plan).map_err(|e| format!("MilLowerPass failed: {}", e))?;
+        mil_lower.run(&air, &shard_plan, &input_shapes).map_err(|e| format!("MilLowerPass failed: {}", e))?;
     println!("  MIR: {} shard graphs produced", mirs.len());
     for (i, mir) in mirs.iter().enumerate() {
         println!(
@@ -2157,7 +2181,8 @@ fn run_compile_full_sharded(
         // the multi-shard plan's actual compute unit assignment.
         use ane_passes::mil_lower::MilLowerPass;
         let mil_lower = MilLowerPass::new();
-        let _shard_mirs = mil_lower.run(&shard_air, &shard_shard_plan).map_err(|e| {
+        let shard_input_shapes = std::collections::HashMap::new();
+        let _shard_mirs = mil_lower.run(&shard_air, &shard_shard_plan, &shard_input_shapes).map_err(|e| {
             format!("MilLowerPass failed for shard {}: {}", shard_spec.shard_name, e)
         })?;
         println!(
@@ -5350,8 +5375,9 @@ fn run_trace_compile(
     println!("[6/10] Running MilLowerPass (AIR→MIR)...");
     let mil_lower = MilLowerPass::new();
     let shard_plan = ShardPlan::default();
+    let empty_input_shapes = std::collections::HashMap::new();
     let mirs = mil_lower
-        .run(&air, &shard_plan)
+        .run(&air, &shard_plan, &empty_input_shapes)
         .map_err(|e| format!("MilLowerPass failed: {}", e))?;
     println!("  MIR: {} shard graph(s) produced", mirs.len());
     for (i, mir) in mirs.iter().enumerate() {

@@ -146,6 +146,7 @@ pub fn convert_mir_to_proto_multifunction(
             outputs: graph_outputs,
             states: graph_states,
             operations: graph.ops.clone(),
+            node_shapes: graph.node_shapes.clone(),
         });
 
         all_weights.extend(graph_weights);
@@ -259,6 +260,7 @@ pub fn build_linear_projection_mir(
             shape: vec![1, output_dim],
             dtype,
         }],
+        node_shapes: std::collections::HashMap::new(),
     }
 }
 
@@ -308,6 +310,7 @@ pub fn build_multifunction_shared_weights_mir(
             shape: vec![1, embed_dim],
             dtype,
         }],
+        node_shapes: std::collections::HashMap::new(),
     };
 
     // Decode step function: uses the SAME shared weight
@@ -340,6 +343,7 @@ pub fn build_multifunction_shared_weights_mir(
             shape: vec![1, embed_dim],
             dtype,
         }],
+        node_shapes: std::collections::HashMap::new(),
     };
 
     let shared_weight_names = vec!["shared_projection_weight".to_string()];
@@ -668,6 +672,7 @@ mod tests {
             function_name: "decode_step".to_string(),
             input_descs: vec![],
             output_descs: vec![],
+            node_shapes: std::collections::HashMap::new(),
         };
 
         let model =
