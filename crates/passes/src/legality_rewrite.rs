@@ -290,14 +290,16 @@ impl LegalityRewritePass {
                     );
                     (final_id, nodes, "mb.scaled_dot_product_attention")
                 }
-                SirOp::RMSNorm { input, weight, epsilon, .. } => {
+                SirOp::RMSNorm { input, weight, epsilon, axes } => {
                     let (final_id, nodes) = Self::decompose_rms_norm(
                         sir_node,
                         input,
                         weight,
                         *epsilon,
+                        axes,
                         &sir_to_air,
                         knowledge_query,
+                        ctx,
                     );
                     (final_id, nodes, "mb.layer_norm")
                 }
@@ -571,15 +573,16 @@ impl LegalityRewritePass {
         let v_air = sir_to_air.get(v_sir).cloned().unwrap_or_else(|| AirNodeId(v_sir.0.clone()));
 
         // Extract dimensions from context or use placeholders
-        let (batch, seq, embed, heads, head_dim) = match ctx {
+        let (batch, seq, embed, heads, kv_heads, head_dim) = match ctx {
             Some(c) => (
                 c.batch_size as i64,
                 c.seq_len as i64,
                 c.embed_dim as i64,
                 c.num_heads as i64,
+                c.kv_heads.max(1) as i64,
                 c.head_dim as i64,
             ),
-            None => (0, 0, 0, 0, 0),
+            None => (0, 0, 0, 0, 0, 0),
         };
 
         let mut nodes = Vec::new();
@@ -590,6 +593,8 @@ impl LegalityRewritePass {
         // and transpose each projection output to 4D [batch, heads, seq, head_dim].
 
         // Steps 1-3: Reshape Q, K, V from [batch, seq, embed] to [batch, seq, heads, head_dim]
+        // For GQA models, K/V use kv_heads (not num_heads) because their projection
+        // output is [B, S, kv_heads*head_dim], not [B, S, num_heads*head_dim].
         let q_4d_id = AirNodeId(format!("{base}_q_4d"));
         nodes.push(Self::make_air_node(
             q_4d_id.clone(),
@@ -607,7 +612,7 @@ impl LegalityRewritePass {
             k_4d_id.clone(),
             AirOp::Reshape {
                 input: k_air,
-                target_shape: vec![batch as usize, seq as usize, heads as usize, head_dim as usize],
+                target_shape: vec![batch as usize, seq as usize, kv_heads as usize, head_dim as usize],
             },
             sir_node,
             "mb.reshape",
@@ -619,7 +624,7 @@ impl LegalityRewritePass {
             v_4d_id.clone(),
             AirOp::Reshape {
                 input: v_air,
-                target_shape: vec![batch as usize, seq as usize, heads as usize, head_dim as usize],
+                target_shape: vec![batch as usize, seq as usize, kv_heads as usize, head_dim as usize],
             },
             sir_node,
             "mb.reshape",
@@ -978,25 +983,74 @@ impl LegalityRewritePass {
         input_sir: &ane_ir::sir::SirNodeId,
         weight: &str,
         _epsilon: f32,
+        axes: &[usize],
         sir_to_air: &std::collections::HashMap<ane_ir::sir::SirNodeId, AirNodeId>,
         kq: &dyn PassKnowledgeQuery,
+        ctx: Option<&DecompositionContext>,
     ) -> (AirNodeId, Vec<AirNode>) {
         let base = &sir_node.id.0;
-        let input_air =
+        let mut input_air =
             sir_to_air.get(input_sir).cloned().unwrap_or_else(|| AirNodeId(input_sir.0.clone()));
 
         let mut nodes = Vec::new();
 
+        // Use the axes from the SIR op. For 3D tensors the default is [2]
+        // (normalize over embedding dimension), for 4D head-layout tensors
+        // it's [3] (normalize over head_dim).
+        let norm_axes = if axes.is_empty() { vec![2] } else { axes.to_vec() };
+
+        // ── Per-head RMSNorm (axes=[3]) ───────────────────────────────
+        //
+        // When axes=[3], the norm is applied per-head-dimension (e.g., Qwen3 q/k norm).
+        // The input is a flat 3D tensor [batch, seq, heads*head_dim] but the
+        // weight is [head_dim], which can't broadcast with the flat last dimension.
+        //
+        // Fix: reshape the input to 4D [batch, seq, heads, head_dim], apply the norm
+        // with axes=[3], then reshape back to 3D.
+        //
+        // We need the DecompositionContext to know the actual dimensions.
+        // When ctx is None, fall back to axes=[2] (3D tensor norm).
+        //
+        // For k_norm, the head count is kv_heads (not num_heads) because k_proj
+        // outputs [B, S, kv_heads*head_dim], not [B, S, num_heads*head_dim].
+        // We detect this by checking if the node name contains "k_norm".
+        let needs_4d_reshape = norm_axes.contains(&3);
+        let (batch, seq, heads, head_dim) = match ctx {
+            Some(c) if needs_4d_reshape => {
+                let is_k_norm = sir_node.id.0.contains("k_norm");
+                let h = if is_k_norm {
+                    c.kv_heads.max(1) // kv_heads for k_norm
+                } else {
+                    c.num_heads
+                };
+                (c.batch_size, c.seq_len, h, c.head_dim)
+            }
+            _ => (0, 0, 0, 0),
+        };
+
+        if needs_4d_reshape && batch > 0 {
+            // Reshape flat [B, S, heads*head_dim] → [B, S, heads, head_dim]
+            let reshape_4d_id = AirNodeId(format!("{base}_reshape_4d"));
+            nodes.push(Self::make_air_node(
+                reshape_4d_id.clone(),
+                AirOp::Reshape {
+                    input: input_air,
+                    target_shape: vec![batch, seq, heads, head_dim],
+                },
+                sir_node,
+                "mb.reshape",
+                kq,
+            ));
+            input_air = reshape_4d_id;
+        }
+
         // Step 1: x^2 mean via ReduceMean
-        // (In a full decomposition, we'd first compute x^2 via Mul(x, x),
-        // then ReduceMean. For this decomposition we use ReduceMean directly
-        // as the AIR representation — the MIL emitter will expand properly.)
         let mean_id = AirNodeId(format!("{base}_mean"));
         nodes.push(Self::make_air_node(
             mean_id.clone(),
             AirOp::ReduceMean {
                 input: input_air.clone(),
-                axes: vec![2], // normalize over embedding dimension (last dim for 3D [batch, seq, embed])
+                axes: norm_axes.clone(),
                 keep_dims: true,
             },
             sir_node,
@@ -1025,9 +1079,14 @@ impl LegalityRewritePass {
         ));
 
         // Step 4: normed * weight (gamma)
-        let out_id = AirNodeId(sir_node.id.0.clone());
+        // In 4D mode, this produces [B, S, heads, head_dim] * [head_dim] → [B, S, heads, head_dim]
+        let mul_out_id = if needs_4d_reshape && batch > 0 {
+            AirNodeId(format!("{base}_normed_weighted"))
+        } else {
+            AirNodeId(sir_node.id.0.clone())
+        };
         nodes.push(Self::make_air_node(
-            out_id.clone(),
+            mul_out_id.clone(),
             AirOp::ElementWise {
                 op: ElementWiseOp::Mul,
                 inputs: vec![normed_id, AirNodeId(weight.into())],
@@ -1036,6 +1095,24 @@ impl LegalityRewritePass {
             "mb.mul",
             kq,
         ));
+
+        // Step 5 (4D mode only): reshape back to 3D [B, S, heads*head_dim]
+        let out_id = if needs_4d_reshape && batch > 0 {
+            let flat_id = AirNodeId(sir_node.id.0.clone());
+            nodes.push(Self::make_air_node(
+                flat_id.clone(),
+                AirOp::Reshape {
+                    input: mul_out_id,
+                    target_shape: vec![batch, seq, heads * head_dim],
+                },
+                sir_node,
+                "mb.reshape",
+                kq,
+            ));
+            flat_id
+        } else {
+            mul_out_id
+        };
 
         (out_id, nodes)
     }
@@ -2485,6 +2562,7 @@ mod tests {
                     input: SirNodeId("input".into()),
                     weight: "gamma".into(),
                     epsilon: 1e-5,
+                    axes: vec![2],
                 },
                 name: "norm".into(),
                 metadata: SirMetadata {

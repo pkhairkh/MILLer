@@ -71,7 +71,7 @@ fn main() {
         let desc = match &node.op {
             SirOp::LinearProjection { input, weight, bias } => 
                 format!("Linear(in={}, w={}, b={:?})", input.0, weight, bias),
-            SirOp::RMSNorm { input, weight: _, epsilon } =>
+            SirOp::RMSNorm { input, weight: _, epsilon, axes: _ } =>
                 format!("RMSNorm(in={}, eps={})", input.0, epsilon),
             SirOp::ScaledDotProductAttention { query, key, value, attention_mask, scale } =>
                 format!("SDPA(q={},k={},v={},mask={:?},scale={:?})", query.0, key.0, value.0, attention_mask, scale),

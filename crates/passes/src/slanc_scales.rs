@@ -67,8 +67,8 @@ pub fn run_slanc_scales_pass(graph: &mut SirGraph) -> NormStabilizationResult {
     // ops and mark them for later weight-dependent computation.
     for idx in rms_norm_indices {
         let node = &graph.nodes[idx];
-        let (input_id, weight_name, epsilon) = match &node.op {
-            SirOp::RMSNorm { input, weight, epsilon } => (input.clone(), weight.clone(), *epsilon),
+        let (input_id, weight_name, epsilon, axes) = match &node.op {
+            SirOp::RMSNorm { input, weight, epsilon, axes } => (input.clone(), weight.clone(), *epsilon, axes.clone()),
             _ => unreachable!(),
         };
 
@@ -96,7 +96,7 @@ pub fn run_slanc_scales_pass(graph: &mut SirGraph) -> NormStabilizationResult {
         // Update the RMSNorm to use the pre-scaled input
         let updated_rms = SirNode {
             id: node.id.clone(),
-            op: SirOp::RMSNorm { input: mul_id, weight: weight_name, epsilon },
+            op: SirOp::RMSNorm { input: mul_id, weight: weight_name, epsilon, axes: axes.clone() },
             name: node.name.clone(),
             metadata: node.metadata.clone(),
         };
@@ -130,6 +130,7 @@ mod tests {
                     input: SirNodeId("input_0".to_string()),
                     weight: "norm_weight_0".to_string(),
                     epsilon: 1e-6,
+                    axes: vec![2],
                 },
                 name: "rms_norm_0".to_string(),
                 metadata: SirMetadata {
@@ -183,6 +184,7 @@ mod tests {
                         input: SirNodeId("input_0".to_string()),
                         weight: "norm_weight_0".to_string(),
                         epsilon: 1e-6,
+                        axes: vec![2],
                     },
                     name: "rms_norm_0".to_string(),
                     metadata: SirMetadata {
@@ -198,6 +200,7 @@ mod tests {
                         input: SirNodeId("input_1".to_string()),
                         weight: "norm_weight_1".to_string(),
                         epsilon: 1e-5,
+                        axes: vec![2],
                     },
                     name: "rms_norm_1".to_string(),
                     metadata: SirMetadata {

@@ -695,7 +695,7 @@ impl<'a> SirBuildContext<'a> {
     fn decompose_attention(
         &self,
         embed_dim: usize,
-        _num_heads: usize,
+        num_heads: usize,
         head_dim: usize,
         use_sdpa: bool,
         has_qk_norm: bool,
@@ -703,6 +703,12 @@ impl<'a> SirBuildContext<'a> {
     ) -> Result<Vec<(SirOp, String)>, String> {
         let mut ops = Vec::new();
         let input_id = self.resolve_input(&node.inputs, 0);
+
+        // Qwen3 and similar models use Grouped Query Attention (GQA).
+        // kv_heads < q_heads, so k_proj/v_proj output a smaller tensor than q_proj.
+        let num_kv_heads = self.config.num_key_value_heads.unwrap_or(num_heads);
+        let q_proj_dim = num_heads * head_dim; // e.g., 16 * 128 = 2048
+        let kv_proj_dim = num_kv_heads * head_dim; // e.g., 8 * 128 = 1024
 
         // Resolve weight names using the module_path from the traced node.
         // For attention, the module_path is typically "model.layers.0.self_attn"
@@ -723,28 +729,40 @@ impl<'a> SirBuildContext<'a> {
             )
         };
 
-        // Separate Q projection: input → Q
+        // Separate Q projection: input → Q (flat [B, S, q_heads*head_dim])
         ops.push((
             SirOp::LinearProjection { input: input_id.clone(), weight: q_weight, bias: None },
-            format!("q_proj_{}", embed_dim),
+            format!("q_proj_{}", q_proj_dim),
         ));
         let mut q_id = SirNodeId(format!("sir_q_proj_{}", node.id));
 
-        // Separate K projection: input → K
+        // Separate K projection: input → K (flat [B, S, kv_heads*head_dim])
         ops.push((
             SirOp::LinearProjection { input: input_id.clone(), weight: k_weight, bias: None },
-            format!("k_proj_{}", embed_dim),
+            format!("k_proj_{}", kv_proj_dim),
         ));
         let mut k_id = SirNodeId(format!("sir_k_proj_{}", node.id));
 
-        // Separate V projection: input → V
+        // Separate V projection: input → V (flat [B, S, kv_heads*head_dim])
         ops.push((
             SirOp::LinearProjection { input: input_id, weight: v_weight, bias: None },
-            format!("v_proj_{}", embed_dim),
+            format!("v_proj_{}", kv_proj_dim),
         ));
         let mut v_id = SirNodeId(format!("sir_v_proj_{}", node.id));
 
-        // QK-Norm: some models (Qwen3) apply RMSNorm to Q and K after projection
+        // QK-Norm: some models (Qwen3) apply RMSNorm to Q and K after projection.
+        //
+        // The q/k norm weights are per-head-dimension sized [head_dim], not
+        // per-hidden-size [embed_dim]. To broadcast correctly, the norm must
+        // be applied in head-aware 4D layout [B, S, heads, head_dim] with
+        // axes=[3] (normalize over head_dim).
+        //
+        // The legality_rewrite pass will:
+        //   1. Reshape the flat projection to 4D using DecompositionContext dims
+        //   2. Apply ReduceMean/Rsqrt/Mul with axes=[3]
+        //   3. Reshape back to 3D
+        //
+        // Without the 4D layout, [128] cannot broadcast with [1,512,2048].
         if has_qk_norm {
             let q_norm_weight = if let Some(ref mp) = node.module_path {
                 self.hf_param_name(mp, "q_norm.weight")
@@ -756,6 +774,7 @@ impl<'a> SirBuildContext<'a> {
                     input: q_id.clone(),
                     weight: q_norm_weight,
                     epsilon: self.effective_epsilon(0.0),
+                    axes: vec![3], // normalize over head_dim in 4D layout
                 },
                 "q_norm".to_string(),
             ));
@@ -771,6 +790,7 @@ impl<'a> SirBuildContext<'a> {
                     input: k_id.clone(),
                     weight: k_norm_weight,
                     epsilon: self.effective_epsilon(0.0),
+                    axes: vec![3], // normalize over head_dim in 4D layout
                 },
                 "k_norm".to_string(),
             ));
@@ -783,8 +803,8 @@ impl<'a> SirBuildContext<'a> {
         let needs_gqa_expand = self.config.uses_gqa;
         if needs_gqa_expand {
             let num_q_heads = self.config.num_attention_heads;
-            let num_kv_heads = self.config.num_key_value_heads.unwrap_or(num_q_heads);
-            let num_replicas = num_q_heads / num_kv_heads;
+            let gqa_kv_heads = self.config.num_key_value_heads.unwrap_or(num_q_heads);
+            let num_replicas = num_q_heads / gqa_kv_heads;
             if num_replicas > 1 {
                 // K: tile along the heads dimension
                 ops.push((
@@ -1136,7 +1156,7 @@ impl<'a> SirBuildContext<'a> {
         // This keeps sir_build.rs strategy-agnostic: it records the semantic
         // intent (RMSNorm) without committing to a specific decomposition.
         Ok(vec![(
-            SirOp::RMSNorm { input: input_id, weight: rms_weight, epsilon: effective_epsilon },
+            SirOp::RMSNorm { input: input_id, weight: rms_weight, epsilon: effective_epsilon, axes: vec![2] },
             format!("rms_norm_{}", hidden_size),
         )])
     }

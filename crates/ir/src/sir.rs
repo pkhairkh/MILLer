@@ -10,6 +10,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SirNodeId(pub String);
 
+/// Default axes for RMSNorm: [2] for 3D [batch, seq, embed] tensors.
+/// Used for serde backward compatibility when deserializing older SIR
+/// graphs that lack the `axes` field.
+fn default_rms_norm_axes() -> Vec<usize> {
+    vec![2]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SirOp {
     // ─── Composite / High-Level Semantic Ops ─────────────────────
@@ -29,6 +36,11 @@ pub enum SirOp {
         input: SirNodeId,
         weight: String,
         epsilon: f32,
+        /// Axes to reduce over for norm computation.
+        /// For 3D [batch, seq, embed]: axes=[2] (standard layer norm / rms norm).
+        /// For 4D [batch, seq, heads, head_dim]: axes=[3] (per-head q/k norm).
+        #[serde(default = "default_rms_norm_axes")]
+        axes: Vec<usize>,
     },
     RoPETransform {
         input: SirNodeId,

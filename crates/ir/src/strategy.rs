@@ -860,6 +860,7 @@ mod tests {
                         input: SirNodeId("input".to_string()),
                         weight: "norm_weight".to_string(),
                         epsilon: 1e-6,
+                        axes: vec![2],
                     },
                     name: "rms_norm".to_string(),
                     metadata: SirMetadata {
