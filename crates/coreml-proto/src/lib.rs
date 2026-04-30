@@ -4049,6 +4049,118 @@ fn validate_fill_dtype_consistency(operations: &[apple_proto::mil_spec::Operatio
     }
 }
 
+/// Validate that elementwise binary ops (mul, add, sub, etc.) declare an output
+/// shape consistent with numpy-style broadcasting of their inputs.
+///
+/// Core ML's `ios19.mul` (etc.) type inference applies standard broadcasting,
+/// so the declared output shape must equal the broadcast result. If it doesn't,
+/// Core ML rejects the model with:
+///   "Output '0' has unexpected type 'ios19.mul'. Expected tensor<fp16, [...]>;
+///    got tensor<fp16, [...]>."
+fn validate_elementwise_broadcast_shapes(operations: &[apple_proto::mil_spec::Operation]) {
+    let elementwise_types: &[&str] = &[
+        "mul", "add", "sub", "real_div", "maximum", "minimum",
+        "pow", "floor_div", "mod",
+        "equal", "not_equal", "greater", "greater_equal", "less", "less_equal",
+        "logical_and", "logical_or",
+    ];
+
+    for op in operations {
+        if !elementwise_types.contains(&op.r#type.as_str()) {
+            continue;
+        }
+
+        let op_name = op.attributes.get("name")
+            .and_then(|v| v.value.as_ref())
+            .and_then(|iv| match iv {
+                apple_proto::mil_spec::value::Value::ImmediateValue(imv) => imv.value.as_ref(),
+                _ => None,
+            })
+            .and_then(|v| match v {
+                apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv) => {
+                    match tv.value.as_ref() {
+                        Some(apple_proto::mil_spec::tensor_value::Value::Strings(rs)) => rs.values.first().cloned(),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| format!("<unnamed {}>", op.r#type));
+
+        // Extract input shapes for x and y
+        let extract_shape = |arg_name: &str| -> Option<Vec<u64>> {
+            op.inputs.get(arg_name)
+                .and_then(|arg| arg.arguments.first())
+                .and_then(|binding| match &binding.binding {
+                    Some(apple_proto::mil_spec::argument::binding::Binding::Value(v)) => Some(v),
+                    _ => None,
+                })
+                .and_then(|v| v.r#type.as_ref())
+                .and_then(|vt| vt.r#type.as_ref())
+                .and_then(|t| match t {
+                    apple_proto::mil_spec::value_type::Type::TensorType(tt) => {
+                        if tt.dimensions.is_empty() { None } else { Some(tt.dimensions.clone()) }
+                    }
+                    _ => None,
+                })
+                .map(|dims| {
+                    dims.iter().filter_map(|d| match &d.dimension {
+                        Some(apple_proto::mil_spec::dimension::Dimension::Constant(cd)) => Some(cd.size),
+                        _ => None,
+                    }).collect::<Vec<_>>()
+                })
+                .filter(|v: &Vec<u64>| !v.is_empty())
+        };
+
+        let shape_x = extract_shape("x");
+        let shape_y = extract_shape("y");
+
+        // Extract declared output shape
+        let output_shape: Option<Vec<u64>> = op.outputs.first()
+            .and_then(|nvt| nvt.r#type.as_ref())
+            .and_then(|vt| vt.r#type.as_ref())
+            .and_then(|t| match t {
+                apple_proto::mil_spec::value_type::Type::TensorType(tt) => {
+                    if tt.dimensions.is_empty() { None } else { Some(tt.dimensions.clone()) }
+                }
+                _ => None,
+            })
+            .map(|dims| {
+                dims.iter().filter_map(|d| match &d.dimension {
+                    Some(apple_proto::mil_spec::dimension::Dimension::Constant(cd)) => Some(cd.size),
+                    _ => None,
+                }).collect::<Vec<_>>()
+            })
+            .filter(|v| !v.is_empty());
+
+        if let (Some(sx), Some(sy), Some(os)) = (&shape_x, &shape_y, &output_shape) {
+            // Compute expected broadcast shape
+            let max_rank = sx.len().max(sy.len());
+            let mut expected = Vec::with_capacity(max_rank);
+            let mut compatible = true;
+            for i in 0..max_rank {
+                let da = if i < max_rank - sx.len() { 1u64 } else { sx[i - (max_rank - sx.len())] };
+                let db = if i < max_rank - sy.len() { 1u64 } else { sy[i - (max_rank - sy.len())] };
+                if da != db && da != 1 && db != 1 {
+                    compatible = false;
+                    break;
+                }
+                expected.push(da.max(db));
+            }
+
+            if compatible && expected != *os {
+                panic!(
+                    "{}: {} output shape is {:?} but broadcast of x={:?} and y={:?} \
+                     produces {:?} — Core ML will reject this. The elementwise \
+                     broadcast shape inference must compute the broadcast result, \
+                     not just propagate x's shape.",
+                    op_name, op.r#type, os, sx, sy, expected
+                );
+            }
+        }
+    }
+}
+
 /// Convert a `CoreMlFunction` into an Apple-compatible `MILSpec.Function`.
 fn function_to_apple_proto(
     func: &CoreMlFunction,
@@ -4073,6 +4185,11 @@ fn function_to_apple_proto(
     // Validate fill/fill_like dtype consistency before writing.
     // Core ML rejects fill ops where the value parameter dtype differs from the output dtype.
     validate_fill_dtype_consistency(&operations);
+
+    // Validate elementwise broadcast output shapes before writing.
+    // Core ML rejects mul/add/etc. ops where the declared output shape doesn't match
+    // the broadcast result of the inputs.
+    validate_elementwise_broadcast_shapes(&operations);
 
     let block = apple_proto::mil_spec::Block {
         inputs: vec![],

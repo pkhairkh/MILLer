@@ -123,13 +123,26 @@ pub fn compat_output_shape(
         | MirOp::MILCos { x, .. }
         | MirOp::MILSin { x, .. }
         | MirOp::MILCast { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
-        // Binary ops: propagate first operand shape
-        MirOp::MILAdd { x, .. }
-        | MirOp::MILMul { x, .. }
-        | MirOp::MILSub { x, .. }
-        | MirOp::MILMaximum { x, .. }
-        | MirOp::MILMinimum { x, .. }
-        | MirOp::MILRealDiv { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
+        // Binary ops: compute broadcast output shape (not just x's shape).
+        // Core ML's type inference applies standard numpy-style broadcasting,
+        // so the declared output shape must match the broadcast result.
+        MirOp::MILAdd { x, y, .. }
+        | MirOp::MILMul { x, y, .. }
+        | MirOp::MILSub { x, y, .. }
+        | MirOp::MILMaximum { x, y, .. }
+        | MirOp::MILMinimum { x, y, .. }
+        | MirOp::MILRealDiv { x, y, .. } => {
+            let shape_a = node_shapes.get(&x.0).cloned().unwrap_or_default();
+            let shape_b = node_shapes.get(&y.0).cloned().unwrap_or_default();
+            if !shape_a.is_empty() && !shape_b.is_empty() {
+                broadcast_shape_compat(&shape_a, &shape_b)
+                    .unwrap_or_else(|| shape_a.clone())
+            } else if !shape_a.is_empty() {
+                shape_a
+            } else {
+                shape_b
+            }
+        }
         MirOp::MILSoftmax { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
         MirOp::MILMatMul { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
         MirOp::MILReshape { shape, .. } => shape.iter().map(|&d| d as usize).collect(),
@@ -156,18 +169,29 @@ pub fn compat_output_shape(
         | MirOp::MILLog { x, .. }
         | MirOp::MILLeakyRelu { x, .. }
         | MirOp::MILClip { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
-        // New binary ops: propagate first operand shape
-        MirOp::MILPow { x, .. }
-        | MirOp::MILFloorDiv { x, .. }
-        | MirOp::MILMod { x, .. }
-        | MirOp::MILEqual { x, .. }
-        | MirOp::MILNotEqual { x, .. }
-        | MirOp::MILGreater { x, .. }
-        | MirOp::MILGreaterEqual { x, .. }
-        | MirOp::MILLess { x, .. }
-        | MirOp::MILLessEqual { x, .. }
-        | MirOp::MILLogicalAnd { x, .. }
-        | MirOp::MILLogicalOr { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
+        // New binary ops: compute broadcast output shape
+        MirOp::MILPow { x, y, .. }
+        | MirOp::MILFloorDiv { x, y, .. }
+        | MirOp::MILMod { x, y, .. }
+        | MirOp::MILEqual { x, y, .. }
+        | MirOp::MILNotEqual { x, y, .. }
+        | MirOp::MILGreater { x, y, .. }
+        | MirOp::MILGreaterEqual { x, y, .. }
+        | MirOp::MILLess { x, y, .. }
+        | MirOp::MILLessEqual { x, y, .. }
+        | MirOp::MILLogicalAnd { x, y, .. }
+        | MirOp::MILLogicalOr { x, y, .. } => {
+            let shape_a = node_shapes.get(&x.0).cloned().unwrap_or_default();
+            let shape_b = node_shapes.get(&y.0).cloned().unwrap_or_default();
+            if !shape_a.is_empty() && !shape_b.is_empty() {
+                broadcast_shape_compat(&shape_a, &shape_b)
+                    .unwrap_or_else(|| shape_a.clone())
+            } else if !shape_a.is_empty() {
+                shape_a
+            } else {
+                shape_b
+            }
+        }
         // ExpandDims: insert 1-sized dims at specified axes
         MirOp::MILExpandDims { x, axis, .. } => {
             if let Some(input_shape) = node_shapes.get(&x.0) {
@@ -242,6 +266,25 @@ pub fn compat_output_shape(
         // the graph — better than a wrong shape that causes type inference failure.
         _ => vec![],
     }
+}
+
+/// Compute the broadcast output shape from two input shapes (numpy-style).
+///
+/// For each dimension pair (right-aligned), the output dimension is the larger
+/// of the two inputs. Missing dimensions in the shorter shape are treated as 1.
+/// Returns `None` if the shapes are not broadcast-compatible.
+fn broadcast_shape_compat(a: &[usize], b: &[usize]) -> Option<Vec<usize>> {
+    let max_rank = a.len().max(b.len());
+    let mut result = Vec::with_capacity(max_rank);
+    for i in 0..max_rank {
+        let da = if i < max_rank - a.len() { 1 } else { a[i - (max_rank - a.len())] };
+        let db = if i < max_rank - b.len() { 1 } else { b[i - (max_rank - b.len())] };
+        if da != db && da != 1 && db != 1 {
+            return None; // incompatible
+        }
+        result.push(da.max(db));
+    }
+    Some(result)
 }
 
 /// Compute the output shape of a reduction operation.

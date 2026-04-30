@@ -91,24 +91,33 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
 
         AirOp::Add { x, y } | AirOp::Mul { x, y } | AirOp::Sub { x, y }
         | AirOp::Maximum { x, y } | AirOp::Minimum { x, y } => {
-            // Sprint 62: Validate broadcast compatibility for binary elementwise ops.
-            // Core ML requires broadcasting rules: dimensions must be compatible
-            // (equal, or one of them is 1, or one is missing from the shorter shape).
-            // Invalid broadcasts like [1,512,2048] * [128] will be caught here.
+            // Sprint 62→63: Compute the broadcast output shape for binary elementwise ops.
+            // Core ML's type inference applies standard numpy-style broadcasting, so
+            // the declared output shape must match the broadcast result. Previously we
+            // returned x's shape directly, which is wrong when y has a larger dimension
+            // (e.g., GQA tile: [1,8,1,512,128] * [1,1,2,1,1] → [1,8,2,512,128]).
             let shape_a = node_shapes.get(x).cloned().unwrap_or_default();
             let shape_b = node_shapes.get(y).cloned().unwrap_or_default();
             if !shape_a.is_empty() && !shape_b.is_empty() {
-                if let Err(e) = validate_broadcast_compatibility(&shape_a, &shape_b) {
+                if let Some(bs) = broadcast_shape(&shape_a, &shape_b) {
+                    bs
+                } else {
+                    // Shapes are incompatible — warn and fall back to x's shape
+                    // (Core ML will reject the model anyway).
                     eprintln!(
-                        "[WARN] Broadcast incompatibility: {} * {} — {}. \
-                         This will fail Core ML type inference.",
+                        "[WARN] Broadcast incompatibility: {} * {} — \
+                         shapes are not broadcast-compatible. \
+                         Core ML will reject this model.",
                         format_shape(&shape_a),
                         format_shape(&shape_b),
-                        e
                     );
+                    node_shapes.get(x).cloned().unwrap_or_default()
                 }
+            } else if !shape_a.is_empty() {
+                shape_a
+            } else {
+                shape_b
             }
-            node_shapes.get(x).cloned().unwrap_or_default()
         }
         AirOp::Reshape { input, target_shape } => {
             // Resolve zero-placeholder dimensions in the target shape.
@@ -405,33 +414,26 @@ fn reduce_shape(mut shape: Vec<usize>, axes: &[usize], keep_dims: bool) -> Vec<u
     }
 }
 
-/// Sprint 62: Validate that two shapes are broadcast-compatible per Core ML rules.
+/// Compute the broadcast output shape from two input shapes.
 ///
-/// Core ML (and numpy-style) broadcasting requires that for each dimension pair
-/// (from the right/end), one of the following holds:
-/// - The dimensions are equal
-/// - One of the dimensions is 1
-/// - One of the shapes doesn't have this dimension (shorter shape)
+/// Standard numpy-style right-aligned broadcasting: for each dimension pair
+/// (from the right), the output dimension is the larger of the two inputs
+/// (or the non-1 dimension if one is 1). Missing dimensions in the shorter
+/// shape are treated as 1.
 ///
-/// Returns Err with a description if incompatible, Ok(()) if compatible.
-fn validate_broadcast_compatibility(a: &[usize], b: &[usize]) -> Result<(), String> {
+/// Returns `None` if the shapes are not broadcast-compatible.
+fn broadcast_shape(a: &[usize], b: &[usize]) -> Option<Vec<usize>> {
     let max_rank = a.len().max(b.len());
+    let mut result = Vec::with_capacity(max_rank);
     for i in 0..max_rank {
-        let da = if i < max_rank - a.len() { None } else { Some(a[i - (max_rank - a.len())]) };
-        let db = if i < max_rank - b.len() { None } else { Some(b[i - (max_rank - b.len())]) };
-        match (da, db) {
-            (Some(da), Some(db)) => {
-                if da != db && da != 1 && db != 1 {
-                    return Err(format!(
-                        "dimension {} mismatch: {} vs {} (neither is 1)",
-                        i, da, db
-                    ));
-                }
-            }
-            _ => {} // one shape missing this dimension → broadcast from 1
+        let da = if i < max_rank - a.len() { 1 } else { a[i - (max_rank - a.len())] };
+        let db = if i < max_rank - b.len() { 1 } else { b[i - (max_rank - b.len())] };
+        if da != db && da != 1 && db != 1 {
+            return None; // incompatible
         }
+        result.push(da.max(db));
     }
-    Ok(())
+    Some(result)
 }
 
 /// Sprint 62: Format a shape as a human-readable string like "[1, 512, 2048]".
