@@ -1266,11 +1266,38 @@ pub fn mir_op_to_compat(
             Ok(MirOpCompat::Minimum { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
         }
 
-        MirOp::MILReshape { name, x, shape } => Ok(MirOpCompat::Reshape {
-            name: name.clone(),
-            x: x.0.clone(),
-            shape: shape.iter().map(|&d| d as i32).collect(),
-        }),
+        MirOp::MILReshape { name, x, shape } => {
+            // Use node_shape (the resolved output shape from infer_shape)
+            // instead of the raw MirOp shape, which may contain zero placeholders.
+            // Core ML's ios19.reshape treats 0 as a literal zero dimension,
+            // so zeros MUST be resolved against the actual input tensor shape
+            // before emission. infer_shape() in mil_lower.rs resolves zeros
+            // position-by-position against the input shape, producing the
+            // correct concrete dimensions in MirNode.shape (passed here as
+            // node_shape). For example:
+            //   input [1,512,2048] + target [0,0,16,128] → resolved [1,512,16,128]
+            // Fallback to zero-resolution if node_shape is empty or has a
+            // different rank (shouldn't happen, but defensive).
+            let resolved_shape = if !node_shape.is_empty() && node_shape.len() == shape.len() {
+                node_shape.iter().map(|&d| d as i32).collect()
+            } else {
+                // Defensive fallback: resolve zeros against node_shape if possible
+                let mut resolved = shape.clone();
+                for i in 0..resolved.len() {
+                    if resolved[i] == 0 {
+                        if let Some(&dim) = node_shape.get(i) {
+                            resolved[i] = dim;
+                        }
+                    }
+                }
+                resolved.iter().map(|&d| d as i32).collect()
+            };
+            Ok(MirOpCompat::Reshape {
+                name: name.clone(),
+                x: x.0.clone(),
+                shape: resolved_shape,
+            })
+        }
 
         MirOp::MILTranspose { name, x, perm } => Ok(MirOpCompat::Transpose {
             name: name.clone(),
@@ -2370,6 +2397,88 @@ mod tests {
                 );
             }
             _ => panic!("Expected ReadState compat"),
+        }
+    }
+
+    /// Test that reshape zero-placeholders are resolved against node_shape.
+    /// This is the core fix for the "seq_len=32 instead of 512" bug:
+    /// SIR emits [0,0,16,128], infer_shape resolves to [1,512,16,128],
+    /// and the bridge must use node_shape (not the raw MirOp shape) for
+    /// the emitted reshape target.
+    #[test]
+    fn test_reshape_zero_placeholders_resolved_from_node_shape() {
+        let resolver = EmptyWeightResolver;
+
+        // Case 1: Zero placeholders in shape, node_shape has resolved dims
+        // This simulates: reshape([1,512,2048], [0,0,16,128]) → [1,512,16,128]
+        let op = MirOp::MILReshape {
+            name: "attn_q_4d".into(),
+            x: MirNodeId("q_proj".into()),
+            shape: vec![0, 0, 16, 128], // zeros for batch, seq_len
+        };
+        let node_shape = &[1, 512, 16, 128]; // resolved by infer_shape
+
+        let compat = mir_op_to_compat(&op, node_shape, &resolver).unwrap();
+        match compat {
+            MirOpCompat::Reshape { name, x, shape } => {
+                assert_eq!(name, "attn_q_4d");
+                assert_eq!(x, "q_proj");
+                assert_eq!(shape, vec![1, 512, 16, 128],
+                    "Zero placeholders must be resolved from node_shape");
+            }
+            _ => panic!("Expected Reshape compat"),
+        }
+
+        // Case 2: 3D reshape with zero placeholders for batch/seq
+        // reshape([1,512,2048], [0,0,2048]) → [1,512,2048]
+        let op2 = MirOp::MILReshape {
+            name: "attn_flat".into(),
+            x: MirNodeId("attn_result".into()),
+            shape: vec![0, 0, 2048], // zeros for batch, seq_len
+        };
+        let node_shape2 = &[1, 512, 2048];
+
+        let compat2 = mir_op_to_compat(&op2, node_shape2, &resolver).unwrap();
+        match compat2 {
+            MirOpCompat::Reshape { shape, .. } => {
+                assert_eq!(shape, vec![1, 512, 2048],
+                    "3D zero placeholders must be resolved from node_shape");
+            }
+            _ => panic!("Expected Reshape compat"),
+        }
+
+        // Case 3: No zeros in shape, node_shape matches — should use node_shape
+        let op3 = MirOp::MILReshape {
+            name: "simple".into(),
+            x: MirNodeId("x".into()),
+            shape: vec![2, 4], // no zeros
+        };
+        let node_shape3 = &[2, 4];
+
+        let compat3 = mir_op_to_compat(&op3, node_shape3, &resolver).unwrap();
+        match compat3 {
+            MirOpCompat::Reshape { shape, .. } => {
+                assert_eq!(shape, vec![2, 4]);
+            }
+            _ => panic!("Expected Reshape compat"),
+        }
+
+        // Case 4: Empty node_shape — defensive fallback with zero-resolution
+        let op4 = MirOp::MILReshape {
+            name: "fallback".into(),
+            x: MirNodeId("x".into()),
+            shape: vec![0, 0, 16, 128],
+        };
+        let node_shape4: &[usize] = &[];
+
+        let compat4 = mir_op_to_compat(&op4, node_shape4, &resolver).unwrap();
+        match compat4 {
+            MirOpCompat::Reshape { shape, .. } => {
+                // With empty node_shape, can't resolve zeros — they stay as 0
+                assert_eq!(shape, vec![0, 0, 16, 128],
+                    "Empty node_shape should preserve raw shape (no resolution possible)");
+            }
+            _ => panic!("Expected Reshape compat"),
         }
     }
 }
