@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum KnowledgeType {
     LegalityRule,
     MotifCatalog,
@@ -46,6 +46,21 @@ pub enum EvidenceSource {
     /// This is deterministic for a given hardware+OS combination,
     /// so observations from this source carry confidence 0.9.
     ComputePlan,
+}
+
+impl std::fmt::Display for EvidenceSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EvidenceSource::SyntheticRun => write!(f, "SyntheticRun"),
+            EvidenceSource::RealModelRun => write!(f, "RealModelRun"),
+            EvidenceSource::CompileFailure => write!(f, "CompileFailure"),
+            EvidenceSource::LoadFailure => write!(f, "LoadFailure"),
+            EvidenceSource::RuntimeAnomaly => write!(f, "RuntimeAnomaly"),
+            EvidenceSource::ManualEntry => write!(f, "ManualEntry"),
+            EvidenceSource::CrossValidated => write!(f, "CrossValidated"),
+            EvidenceSource::ComputePlan => write!(f, "ComputePlan"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

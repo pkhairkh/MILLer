@@ -8,5 +8,6 @@ description = "FFI bindings for Core ML C API — strategic foundation for on-de
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+thiserror = { workspace = true }
 ane-coreml-proto = { workspace = true }
 prost = { workspace = true }

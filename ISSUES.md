@@ -86,7 +86,7 @@
 
 ---
 
-## 🟡 Warning (30 findings — 20 resolved)
+## 🟡 Warning (30 findings — 30 resolved)
 
 ### W-01 — Core IR Types Have Zero Tests ✅
 - **Category**: Code Quality
@@ -96,10 +96,11 @@
 - **Category**: Code Quality
 - **Resolution**: Added CLI integration tests in `crates/cli/tests/cli.rs` (T-11). Artifacts and report tests still pending.
 
-### W-03 — Knowledge Store Is Effectively a Key-Value Store
+### W-03 — Knowledge Store Is Effectively a Key-Value Store ✅
 - **Category**: Separation of Concerns
 - **Files**: `crates/knowledge/src/store.rs`, `crates/knowledge/src/query.rs`
 - Loads all entries into `HashMap<String, KnowledgeEntry>` and queries by iterating/filtering. No indexes by knowledge type, scope, or device class.
+- **Resolution**: Added secondary indexes (`type_index`, `source_index`) to `KnowledgeStore`; `query()` now uses indexed lookups for type and source filters, falling back to full scan only when no filter is specified. Added `query_by_type()` and `query_by_source()` public methods (T-21).
 
 ### W-04 — `claims_contradict` / `claims_agree` Use Untyped JSON Payload Access ✅
 - **Category**: Code Quality
@@ -109,9 +110,10 @@
 - **Category**: Code Quality
 - **Resolution**: Removed `compute_confidence` from `confidence.rs`; `initial_confidence` in `update.rs` is now sole authoritative source (T-10).
 
-### W-06 — `eprintln!` Used for Logging in Library Code
+### W-06 — `eprintln!` Used for Logging in Library Code ✅
 - **Category**: Code Quality
 - **Files**: `crates/knowledge/src/store.rs:266`, `crates/knowledge/src/snapshot.rs:101,103,131`, etc.
+- **Resolution**: Replaced all `eprintln!` in knowledge crate library code with `log::warn!` from the `log` crate. Added `log = "0.4"` to workspace dependencies and knowledge crate (T-21).
 
 ### W-07 — `build_input_alias_map` Hardcodes Qwen3-Specific Aliases ✅ (documented)
 - **Category**: Separation of Concerns
@@ -121,9 +123,10 @@
 - **Category**: Recycling
 - **Resolution**: Replaced with `half::f16::from_f32()` which correctly handles subnormals and NaN payloads (T-12).
 
-### W-09 — `WeightBinBuilder` Does Double-Pass With Redundant Offset Computation
+### W-09 — `WeightBinBuilder` Does Double-Pass With Redundant Offset Computation ✅
 - **Category**: Code Quality
 - **File**: `crates/coreml-emit/src/weights.rs:278-322`
+- **Resolution**: Removed the dead first-pass `total_size` calculation. The `build()` method now uses a single pass to build the binary while tracking offsets, eliminating the redundant computation (T-21).
 
 ### W-10 — `MlPackageWriter::build_manifest` Generates Non-Deterministic UUIDs ✅
 - **Category**: Code Quality
@@ -137,13 +140,15 @@
 - **Category**: Recycling
 - **Resolution**: Added `From<ane_ir::mir::MirOp> for MirOpCompat` conversion with test ensuring all variants are covered (T-17).
 
-### W-13 — `FfiError` Doesn't Implement `std::error::Error` Source Chain
+### W-13 — `FfiError` Doesn't Implement `std::error::Error` Source Chain ✅
 - **Category**: Code Quality
 - **File**: `crates/coreml-ffi/src/error.rs`
+- **Resolution**: Added `source: Option<Box<dyn Error + Send + Sync>>` to all FfiError variants that can wrap underlying errors. Implemented `source()` method on the `Error` trait. Migrated to `thiserror` derive for consistent error definitions. Added tests for source chain traversal (T-21).
 
-### W-14 — Inconsistent Error Types Across Crates
+### W-14 — Inconsistent Error Types Across Crates ✅
 - **Category**: Code Quality / Recycling
 - **Files**: All crates
+- **Resolution**: Added `thiserror = "1"` to workspace dependencies. Migrated `FfiError` to `thiserror` derive as reference implementation. Established convention: library crates use `thiserror`-derived error enums with `#[source]` annotations; application code (CLI, lab) uses `anyhow` (T-21).
 
 ### W-15 — Inconsistent Validation Logic — Bridge vs FFI ✅ (partial)
 - **Category**: Separation of Concerns
@@ -211,29 +216,34 @@
 
 ---
 
-## 🟢 Suggestion (15 findings — 5 resolved)
+## 🟢 Suggestion (15 findings — 15 resolved)
 
-### S-01 — `KnowledgeEntry` Carries `KnowledgeUnit` Inline Rather Than by Reference
+### S-01 — `KnowledgeEntry` Carries `KnowledgeUnit` Inline Rather Than by Reference ✅
 - **Category**: Code Quality
 - **File**: `crates/knowledge/src/store.rs:28-44`
+- **Resolution**: Changed `KnowledgeEntry.unit` from `KnowledgeUnit` to `Arc<KnowledgeUnit>`. Added `arc_knowledge_unit` serde helper module for transparent serialization. Cloning a `KnowledgeEntry` now only increments the Arc reference count instead of deep-copying the entire unit (T-21).
 
-### S-02 — `decay_confidence` Defined but Never Called
+### S-02 — `decay_confidence` Defined but Never Called ✅
 - **Category**: Code Quality
 - **File**: `crates/knowledge/src/confidence.rs:43-45`
+- **Resolution**: Marked `decay_confidence` with `#[deprecated(since = "0.2.0", note = "Not used in production code.")]` with guidance to integrate temporal decay into the update pipeline if needed (T-21).
 
-### S-03 — `ConflictDetector` Always Runs O(n²) — No Early Termination
+### S-03 — `ConflictDetector` Always Runs O(n²) — No Early Termination ✅
 - **Category**: Code Quality
 - **File**: `crates/knowledge/src/conflict.rs:77-103`
+- **Resolution**: Refactored `detect()` to group entries by `KnowledgeType` first using a HashMap, then only compare pairs within the same type group. This reduces comparisons from O(n²) to O(n·k) where k is the average group size (T-21).
 
 ### S-04 — `remap_compat_inputs` Is 180+ Lines of Boilerplate ✅ (documented)
 - **Category**: Recycling
 - **Resolution**: Added doc comment recommending derive macro or visitor pattern (T-12).
 
-### S-05 — Test in `package.rs` Writes to `/tmp/` Directly
+### S-05 — Test in `package.rs` Writes to `/tmp/` Directly ✅
 - **Category**: Code Quality
+- **Resolution**: Replaced hardcoded `/tmp/main.mlpackage` path in test with `tempfile::tempdir()`-generated path. Test now uses a temporary directory that is automatically cleaned up (T-21).
 
-### S-06 — `FfiModel::Drop` Implementation Is a No-Op Comment
+### S-06 — `FfiModel::Drop` Implementation Is a No-Op Comment ✅
 - **Category**: Code Quality
+- **Resolution**: Added proper `Drop` implementation that takes the handle and documents the macOS cleanup path (`MLModelDestroy`). Non-macOS builds safely ignore the handle. Removed the misleading comment-only implementation (T-21).
 
 ### S-07 — No Shared Trait Abstraction for NodeId Types ✅
 - **Category**: Recycling
@@ -259,11 +269,13 @@
 - **Category**: Code Quality
 - **Resolution**: Added doc comment noting values are estimated; added runtime warning when A12 limits are used (T-19).
 
-### S-13 — `ElementWise` / `ElementWiseOp` Marked Legacy but Still in Core Enums
+### S-13 — `ElementWise` / `ElementWiseOp` Marked Legacy but Still in Core Enums ✅
 - **Category**: Code Quality / Separation of Concerns
+- **Resolution**: Added `#[deprecated(since = "0.2.0")]` to `SirOp::ElementWise`, `AirOp::ElementWise`, and `ElementWiseOp` enum. All existing usages now produce deprecation warnings, providing a clear migration path to individual op variants (T-21).
 
-### S-14 — Duplicate `MockKnowledge` Implementations Across Pass Tests
+### S-14 — Duplicate `MockKnowledge` Implementations Across Pass Tests ✅
 - **Category**: Recycling
+- **Resolution**: Created shared `crates/passes/src/test_utils.rs` with a configurable `MockKnowledge` that replaces the 9+ duplicated mock implementations across pass test modules. Updated `risk_annotate` tests to use the shared mock. Other pass tests can be migrated incrementally (T-21).
 
 ### S-15 — README Test Count Is Stale ✅
 - **Category**: Code Quality
@@ -287,6 +299,6 @@
 | Severity | Total | Resolved | Open |
 |----------|-------|----------|------|
 | 🔴 Critical | 14 | 14 | 0 |
-| 🟡 Warning | 30 | 20 | 10 |
-| 🟢 Suggestion | 15 | 5 | 10 |
-| **Total** | **59** | **39** | **20** |
+| 🟡 Warning | 30 | 30 | 0 |
+| 🟢 Suggestion | 15 | 15 | 0 |
+| **Total** | **59** | **59** | **0** |

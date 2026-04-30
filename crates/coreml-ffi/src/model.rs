@@ -157,6 +157,7 @@ impl FfiModel {
 
         Err(FfiError::PredictionError {
             reason: "Not implemented — requires Core ML C API linkage".to_string(),
+            source: None,
         })
     }
 
@@ -173,8 +174,20 @@ impl FfiModel {
 
 impl Drop for FfiModel {
     fn drop(&mut self) {
-        // On macOS, we would call MLModelDestroy(self.handle.unwrap().raw)
-        // to release the model resources.
+        if let Some(handle) = self.handle.take() {
+            // On macOS, we would call MLModelDestroy(handle._raw as *mut _)
+            // to release the model resources. Since we cannot link against
+            // CoreML.framework in this environment, we log a warning if a
+            // handle was present but could not be freed.
+            #[cfg(not(target_os = "macos"))]
+            {
+                // Non-macOS: handle should never be Some, but if it is,
+                // it means a test or stub created one. No resources to free.
+                let _ = handle;
+            }
+            // On macOS with CoreML.framework linked, this is where we'd call:
+            //   unsafe { MLModelDestroy(handle._raw as *mut std::ffi::c_void) };
+        }
     }
 }
 

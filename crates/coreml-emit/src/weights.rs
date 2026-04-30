@@ -280,14 +280,9 @@ impl WeightBinBuilder {
         let mut data = Vec::new();
         let mut current_pos: u64 = 0;
 
-        // First pass: calculate total size
-        let mut total_size: u64 = 0;
-        for entry in &self.entries {
-            let aligned_offset = align_up(total_size, self.alignment);
-            total_size = aligned_offset + entry.size;
-        }
-
-        // Second pass: build the binary
+        // Single pass: build the binary while tracking offsets.
+        // The first-pass total_size calculation in the original code was dead —
+        // the result used current_pos instead. Removed the redundant first pass.
         let mut updated_entries = Vec::with_capacity(total_entries);
         let deduplicated_count = self.name_dedup_count;
         let deduplicated_bytes = self.name_dedup_bytes_saved;

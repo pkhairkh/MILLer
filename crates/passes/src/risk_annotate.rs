@@ -160,94 +160,9 @@ impl RiskAnnotatePass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::knowledge_query::{
-        ComputePlanPlacementInfo, LegalityInfo, NoKnowledge, PassKnowledgeQuery,
-        PrecisionHazardInfo, RiskInfo,
-    };
+    use crate::test_utils::MockKnowledge;
+    use crate::knowledge_query::NoKnowledge;
     use ane_ir::air::{AirNode, AirNodeId};
-    use ane_ir::kir::KnowledgeScope;
-
-    /// A mock knowledge query that can return configurable compute plan placement.
-    struct MockKnowledge {
-        risk_info: Option<RiskInfo>,
-        compute_plan_placement: Option<ComputePlanPlacementInfo>,
-    }
-
-    impl MockKnowledge {
-        fn new() -> Self {
-            Self { risk_info: None, compute_plan_placement: None }
-        }
-
-        fn with_compute_plan_not_ane(mut self, op_pattern: &str) -> Self {
-            self.compute_plan_placement = Some(ComputePlanPlacementInfo {
-                op_pattern: op_pattern.to_string(),
-                ane_placed: false,
-                preferred_device: "CPU".to_string(),
-                confidence: 0.9,
-                evidence_count: 1,
-                source_id: Some("cp_test".to_string()),
-            });
-            self
-        }
-
-        fn with_compute_plan_ane(mut self, op_pattern: &str) -> Self {
-            self.compute_plan_placement = Some(ComputePlanPlacementInfo {
-                op_pattern: op_pattern.to_string(),
-                ane_placed: true,
-                preferred_device: "NeuralEngine".to_string(),
-                confidence: 0.9,
-                evidence_count: 1,
-                source_id: Some("cp_test".to_string()),
-            });
-            self
-        }
-
-        fn with_risk(mut self, fallback_risk: f32, drift_risk: f32) -> Self {
-            self.risk_info = Some(RiskInfo {
-                fallback_risk,
-                drift_risk,
-                confidence: 0.5,
-                evidence_count: 1,
-                source_id: Some("test_risk".to_string()),
-            });
-            self
-        }
-    }
-
-    impl PassKnowledgeQuery for MockKnowledge {
-        fn query_legality(
-            &self,
-            _op_pattern: &str,
-            _scope: Option<&KnowledgeScope>,
-        ) -> Option<LegalityInfo> {
-            None
-        }
-
-        fn query_risk(
-            &self,
-            _op_pattern: &str,
-            _scope: Option<&KnowledgeScope>,
-        ) -> Option<RiskInfo> {
-            self.risk_info.clone()
-        }
-
-        fn query_precision_hazard(
-            &self,
-            _op_pattern: &str,
-            _current_dtype: &str,
-            _scope: Option<&KnowledgeScope>,
-        ) -> Option<PrecisionHazardInfo> {
-            None
-        }
-
-        fn query_compute_plan_placement(
-            &self,
-            _op_pattern: &str,
-            _scope: Option<&KnowledgeScope>,
-        ) -> Option<ComputePlanPlacementInfo> {
-            self.compute_plan_placement.clone()
-        }
-    }
 
     fn make_simple_graph(op: AirOp) -> AirGraph {
         AirGraph {

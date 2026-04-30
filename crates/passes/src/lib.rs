@@ -31,3 +31,6 @@ pub mod slanc_scales;
 pub mod state_topology;
 pub mod static_tables;
 pub mod staticize;
+
+#[cfg(test)]
+pub mod test_utils;

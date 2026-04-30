@@ -184,6 +184,7 @@ mod tests {
     use crate::store::{ConflictStatus, EntryOrigin, EntryProvenance, EntrySource};
     use ane_ir::kir::KnowledgeScope;
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     fn make_synthetic_entry(id: &str, ane_legal: bool, confidence: f32) -> KnowledgeEntry {
         let mut payload = HashMap::new();
@@ -191,7 +192,7 @@ mod tests {
         payload.insert("op_pattern".to_string(), serde_json::json!("mb.matmul"));
 
         KnowledgeEntry {
-            unit: KnowledgeUnit {
+            unit: Arc::new(KnowledgeUnit {
                 id: id.to_string(),
                 version: 1,
                 timestamp: chrono::Utc::now().to_rfc3339(),
@@ -206,7 +207,7 @@ mod tests {
                 },
                 conflict_priority: 0,
                 payload,
-            },
+            }),
             provenance: EntryProvenance {
                 origin: EntryOrigin::RunObservation,
                 inserted_at: chrono::Utc::now().to_rfc3339(),
@@ -221,7 +222,11 @@ mod tests {
 
     fn make_real_entry(id: &str, ane_legal: bool, confidence: f32) -> KnowledgeEntry {
         let mut entry = make_synthetic_entry(id, ane_legal, confidence);
-        entry.unit.evidence_source = EvidenceSource::RealModelRun;
+        // Arc<KnowledgeUnit> is immutable, so we need to create a new Arc
+        // with the modified unit.
+        let mut unit = (*entry.unit).clone();
+        unit.evidence_source = EvidenceSource::RealModelRun;
+        entry.unit = Arc::new(unit);
         entry
     }
 
@@ -236,7 +241,9 @@ mod tests {
     fn test_transfer_unsafe_for_shard_template() {
         let transfer = SyntheticTransfer::new();
         let mut entry = make_synthetic_entry("synth_shard", true, 0.5);
-        entry.unit.knowledge_type = KnowledgeType::ShardTemplateKnowledge;
+        let mut unit = (*entry.unit).clone();
+        unit.knowledge_type = KnowledgeType::ShardTemplateKnowledge;
+        entry.unit = Arc::new(unit);
         assert!(!transfer.is_transfer_safe(&entry));
     }
 

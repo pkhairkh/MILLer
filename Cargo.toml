@@ -32,6 +32,8 @@ half = "2"
 prost = "0.12"
 prost-types = "0.12"
 prost-build = "0.12"
+log = "0.4"
+thiserror = "1"
 
 # Internal crates
 ane-ir = { path = "crates/ir" }

@@ -67,6 +67,7 @@ impl CoreMlApi {
         Err(FfiError::ModelCompileError {
             path: source_path.to_string(),
             reason: "Not implemented — requires Core ML C API linkage".to_string(),
+            source: None,
         })
     }
 

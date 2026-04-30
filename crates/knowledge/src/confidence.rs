@@ -18,6 +18,15 @@
 /// Given a current confidence value and a half-life in days,
 /// returns the confidence after `elapsed_days` have passed.
 /// Uses exponential decay: `c * 0.5^(elapsed / halflife)`.
+///
+/// **Note**: This function is currently only used in tests. Production code
+/// should use [`update::initial_confidence`] for computing initial confidence
+/// values. If temporal decay is needed in production, integrate this into the
+/// update pipeline rather than calling it directly.
+#[deprecated(
+    since = "0.2.0",
+    note = "Not used in production code. Integrate temporal decay into the update pipeline if needed."
+)]
 pub fn decay_confidence(current: f32, halflife_days: f32, elapsed_days: f32) -> f32 {
     current * 0.5f32.powf(elapsed_days / halflife_days)
 }

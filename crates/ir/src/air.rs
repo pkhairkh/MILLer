@@ -880,6 +880,10 @@ pub enum AirOp {
         lut: String,
         group_size: usize,
     },
+    #[deprecated(
+        since = "0.2.0",
+        note = "Legacy variant. Use individual AirOp variants instead. See SIR ElementWise deprecation."
+    )]
     ElementWise {
         op: super::sir::ElementWiseOp,
         inputs: Vec<AirNodeId>,

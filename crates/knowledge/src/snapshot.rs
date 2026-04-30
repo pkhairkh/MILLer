@@ -99,9 +99,9 @@ impl SnapshotImport {
         // Validate first
         let warnings = Self::validate(snapshot)?;
         if !warnings.is_empty() {
-            eprintln!("Snapshot validation warnings:");
+            log::warn!("Snapshot validation warnings:");
             for w in &warnings {
-                eprintln!("  - {}", w);
+                log::warn!("  - {}", w);
             }
         }
 
@@ -125,11 +125,11 @@ impl SnapshotImport {
 
         // Import observations
         for entry in &snapshot.observations {
-            match store.insert_observation(entry.unit.clone()) {
+            match store.insert_observation((*entry.unit).clone()) {
                 Ok(()) => stats.observations_imported += 1,
                 Err(e) => {
                     stats.observations_failed += 1;
-                    eprintln!("Warning: failed to import observation '{}': {}", entry.unit.id, e);
+                    log::warn!("failed to import observation '{}': {}", entry.unit.id, e);
                 }
             }
         }

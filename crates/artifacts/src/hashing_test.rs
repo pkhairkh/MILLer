@@ -37,6 +37,9 @@ fn test_hash_bytes_different_inputs() {
 
 #[test]
 fn test_manifest_serialization_roundtrip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let model_path = tmp.path().join("main.mlpackage").to_string_lossy().to_string();
+
     let manifest = ArtifactManifest {
         version: "1.0.0".into(),
         model_id: "test_model".into(),
@@ -45,7 +48,7 @@ fn test_manifest_serialization_roundtrip() {
         packages: vec![PackageEntry {
             name: "main_pkg".into(),
             role: "prefill".into(),
-            path: Some("/tmp/main.mlpackage".into()),
+            path: Some(model_path.into()),
             content_hash: Some("sha256:def456".into()),
             size_bytes: 1024,
             functions: vec![FunctionDescriptor {

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::util::{payload_ane_legal, payload_quality_impact, sanitize_id, scopes_overlap};
 
@@ -26,10 +27,15 @@ pub const STORE_SCHEMA_VERSION: &str = "1.0.0";
 /// This extends `KnowledgeUnit` from KIR with store-level metadata:
 /// provenance tracking, revision semantics, and conflict metadata.
 /// Entries are not arbitrary JSON blobs — they have a fixed schema.
+///
+/// The `unit` field uses `Arc<KnowledgeUnit>` to avoid expensive clones
+/// when multiple parts of the system reference the same knowledge unit
+/// (e.g., during queries that return many results, or snapshot export).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KnowledgeEntry {
-    /// The core knowledge unit data.
-    pub unit: KnowledgeUnit,
+    /// The core knowledge unit data, wrapped in Arc for cheap cloning.
+    #[serde(with = "arc_knowledge_unit")]
+    pub unit: Arc<KnowledgeUnit>,
 
     /// Store-level provenance: how this entry entered the store.
     pub provenance: EntryProvenance,
@@ -125,6 +131,12 @@ pub struct KnowledgeStore {
     index: HashMap<String, KnowledgeEntry>,
     /// The store metadata.
     store_index: StoreIndex,
+    /// Secondary index: knowledge type → entry IDs.
+    /// Allows O(1) lookup of all entries of a given type instead of O(n) scan.
+    type_index: HashMap<KnowledgeType, Vec<String>>,
+    /// Secondary index: evidence source → entry IDs.
+    /// Allows O(1) lookup of entries by source instead of O(n) scan.
+    source_index: HashMap<String, Vec<String>>,
 }
 
 impl KnowledgeStore {
@@ -163,7 +175,13 @@ impl KnowledgeStore {
             entry_ids: vec![],
         };
 
-        let store = Self { path: store_path.to_path_buf(), index: HashMap::new(), store_index };
+        let store = Self {
+            path: store_path.to_path_buf(),
+            index: HashMap::new(),
+            store_index,
+            type_index: HashMap::new(),
+            source_index: HashMap::new(),
+        };
 
         store.write_store_index()?;
         Ok(store)
@@ -182,26 +200,30 @@ impl KnowledgeStore {
             .with_context(|| format!("Failed to parse store index: {}", index_path.display()))?;
 
         let mut index = HashMap::new();
+        let mut type_index: HashMap<KnowledgeType, Vec<String>> = HashMap::new();
+        let mut source_index: HashMap<String, Vec<String>> = HashMap::new();
 
         // Load seed entries
         let seeds_dir = store_path.join("seeds");
         if seeds_dir.exists() {
-            Self::load_entries_from_dir(&seeds_dir, &mut index)?;
+            Self::load_entries_from_dir_indexed(&seeds_dir, &mut index, &mut type_index, &mut source_index)?;
         }
 
         // Load observation entries
         let observations_dir = store_path.join("observations");
         if observations_dir.exists() {
-            Self::load_entries_from_dir(&observations_dir, &mut index)?;
+            Self::load_entries_from_dir_indexed(&observations_dir, &mut index, &mut type_index, &mut source_index)?;
         }
 
-        Ok(Self { path: store_path.to_path_buf(), index, store_index })
+        Ok(Self { path: store_path.to_path_buf(), index, store_index, type_index, source_index })
     }
 
-    /// Load all entries from a directory.
-    fn load_entries_from_dir(
+    /// Load all entries from a directory, updating both primary and secondary indexes.
+    fn load_entries_from_dir_indexed(
         dir: &Path,
         index: &mut HashMap<String, KnowledgeEntry>,
+        type_index: &mut HashMap<KnowledgeType, Vec<String>>,
+        source_index: &mut HashMap<String, Vec<String>>,
     ) -> Result<()> {
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
@@ -209,9 +231,12 @@ impl KnowledgeStore {
             if path.extension().and_then(|e| e.to_str()) == Some("json") {
                 let json = fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read entry: {}", path.display()))?;
-                let entry: KnowledgeEntry = serde_json::from_str(&json)
+                let ke: KnowledgeEntry = serde_json::from_str(&json)
                     .with_context(|| format!("Failed to parse entry: {}", path.display()))?;
-                index.insert(entry.unit.id.clone(), entry);
+                let id = ke.unit.id.clone();
+                type_index.entry(ke.unit.knowledge_type).or_default().push(id.clone());
+                source_index.entry(ke.unit.evidence_source.to_string()).or_default().push(id.clone());
+                index.insert(id, ke);
             }
         }
         Ok(())
@@ -257,15 +282,17 @@ impl KnowledgeStore {
                                 source: EntrySource::Seed,
                                 conflict_status: ConflictStatus::NoConflict,
                                 revision: 0,
-                                unit,
+                                unit: Arc::new(unit),
                             };
                             let id = knowledge_entry.unit.id.clone();
+                            self.type_index.entry(knowledge_entry.unit.knowledge_type).or_default().push(id.clone());
+                            self.source_index.entry(knowledge_entry.unit.evidence_source.to_string()).or_default().push(id.clone());
                             self.index.insert(id, knowledge_entry);
                             loaded += 1;
                         }
                         Err(e) => {
                             // Log but don't fail — seed files may contain extra fields
-                            eprintln!("Warning: skipping malformed seed entry: {}", e);
+                            log::warn!("skipping malformed seed entry: {}", e);
                         }
                     }
                 }
@@ -316,11 +343,26 @@ impl KnowledgeStore {
                 source: EntrySource::Observation,
                 conflict_status: existing.conflict_status.clone(),
                 revision: existing.revision + 1,
-                unit,
+                unit: Arc::new(unit),
             };
 
             // Check for conflicts: does this contradict an existing entry?
             self.check_conflicts_for_entry(&mut updated);
+
+            // Update secondary indexes if knowledge type or evidence source changed
+            if existing.unit.knowledge_type != updated.unit.knowledge_type {
+                if let Some(ids) = self.type_index.get_mut(&existing.unit.knowledge_type) {
+                    ids.retain(|x| x != &id);
+                }
+                self.type_index.entry(updated.unit.knowledge_type).or_default().push(id.clone());
+            }
+            if existing.unit.evidence_source.to_string() != updated.unit.evidence_source.to_string() {
+                let old_src = existing.unit.evidence_source.to_string();
+                if let Some(ids) = self.source_index.get_mut(&old_src) {
+                    ids.retain(|x| x != &id);
+                }
+                self.source_index.entry(updated.unit.evidence_source.to_string()).or_default().push(id.clone());
+            }
 
             self.index.insert(id.clone(), updated);
         } else {
@@ -334,11 +376,15 @@ impl KnowledgeStore {
                 source: EntrySource::Observation,
                 conflict_status: ConflictStatus::NoConflict,
                 revision: 0,
-                unit,
+                unit: Arc::new(unit.clone()),
             };
 
             // Check for conflicts
             self.check_conflicts_for_entry(&mut entry);
+
+            // Update secondary indexes for new entry
+            self.type_index.entry(unit.knowledge_type).or_default().push(id.clone());
+            self.source_index.entry(unit.evidence_source.to_string()).or_default().push(id.clone());
 
             self.index.insert(id.clone(), entry);
         }
@@ -403,6 +449,44 @@ impl KnowledgeStore {
         self.index.values()
     }
 
+    /// Look up entries by knowledge type using the secondary index.
+    ///
+    /// Returns an iterator over entries matching the given type.
+    /// This is O(k) where k is the number of entries of that type,
+    /// compared to O(n) for scanning all entries.
+    pub fn query_by_type(&self, kt: KnowledgeType) -> impl Iterator<Item = &KnowledgeEntry> {
+        self.type_index
+            .get(&kt)
+            .map(|ids| ids.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|id| self.index.get(id))
+    }
+
+    /// Look up entries by evidence source using the secondary index.
+    ///
+    /// Returns an iterator over entries matching the given source.
+    /// This is O(k) where k is the number of entries from that source,
+    /// compared to O(n) for scanning all entries.
+    pub fn query_by_source(&self, source: &str) -> impl Iterator<Item = &KnowledgeEntry> {
+        self.source_index
+            .get(source)
+            .map(|ids| ids.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|id| self.index.get(id))
+    }
+
+    /// Access the knowledge type secondary index (for query optimisation).
+    pub fn type_index(&self) -> &HashMap<KnowledgeType, Vec<String>> {
+        &self.type_index
+    }
+
+    /// Access the evidence source secondary index (for query optimisation).
+    pub fn source_index(&self) -> &HashMap<String, Vec<String>> {
+        &self.source_index
+    }
+
     /// Get the store's root directory path.
     pub fn path(&self) -> &Path {
         &self.path
@@ -460,6 +544,31 @@ impl KnowledgeStore {
 }
 
 // scopes_overlap is now provided by crate::util
+
+/// Serde helper module for `Arc<KnowledgeUnit>`.
+///
+/// Serialises the inner `KnowledgeUnit` directly (not the Arc pointer),
+/// and deserialises by constructing a new `Arc<KnowledgeUnit>`. This
+/// ensures JSON output is clean and not polluted with Arc metadata.
+mod arc_knowledge_unit {
+    use ane_ir::kir::KnowledgeUnit;
+    use std::sync::Arc;
+
+    pub fn serialize<S>(arc: &Arc<KnowledgeUnit>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serde::Serialize::serialize(arc.as_ref(), serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<KnowledgeUnit>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let unit: KnowledgeUnit = serde::Deserialize::deserialize(deserializer)?;
+        Ok(Arc::new(unit))
+    }
+}
 
 /// Check if two knowledge units make contradictory claims.
 ///
@@ -588,7 +697,7 @@ mod tests {
         // Manually insert a seed entry
         let seed_unit = make_unit("seed_1", KnowledgeType::LegalityRule, true, 0.7);
         let seed_entry = KnowledgeEntry {
-            unit: seed_unit,
+            unit: Arc::new(seed_unit),
             provenance: EntryProvenance {
                 origin: EntryOrigin::SeedFile,
                 inserted_at: chrono::Utc::now().to_rfc3339(),

@@ -75,27 +75,38 @@ impl ConflictDetector {
     /// Compares all pairs of entries of the same knowledge type
     /// that have overlapping scopes. Returns conflicts where
     /// contradictory claims are detected.
+    ///
+    /// The algorithm skips entries with different knowledge types
+    /// early (O(1) per pair), and skips non-overlapping scopes
+    /// before checking for contradictions. When a conflict is
+    /// found, the pair is not re-examined.
     pub fn detect(&self, entries: &[KnowledgeEntry]) -> Result<Vec<Conflict>> {
         let mut conflicts = Vec::new();
 
-        for i in 0..entries.len() {
-            for j in (i + 1)..entries.len() {
-                let a = &entries[i];
-                let b = &entries[j];
+        // Group entries by knowledge type for O(n·k) instead of O(n²)
+        // where k is the average number of entries per type.
+        let mut type_groups: std::collections::HashMap<KnowledgeType, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (i, entry) in entries.iter().enumerate() {
+            type_groups.entry(entry.unit.knowledge_type).or_default().push(i);
+        }
 
-                // Only compare entries of the same knowledge type
-                if a.unit.knowledge_type != b.unit.knowledge_type {
-                    continue;
-                }
+        for (_kt, indices) in &type_groups {
+            for i_pos in 0..indices.len() {
+                let i = indices[i_pos];
+                for &j in &indices[i_pos + 1..] {
+                    let a = &entries[i];
+                    let b = &entries[j];
 
-                // Check for scope overlap
-                if !scopes_overlap(&a.unit.scope, &b.unit.scope) {
-                    continue;
-                }
+                    // Check for scope overlap
+                    if !scopes_overlap(&a.unit.scope, &b.unit.scope) {
+                        continue;
+                    }
 
-                // Check for specific contradiction types
-                if let Some(conflict) = self.check_pair(a, b) {
-                    conflicts.push(conflict);
+                    // Check for specific contradiction types
+                    if let Some(conflict) = self.check_pair(a, b) {
+                        conflicts.push(conflict);
+                    }
                 }
             }
         }
@@ -185,6 +196,7 @@ mod tests {
     use crate::store::{ConflictStatus, EntryOrigin, EntryProvenance, EntrySource};
     use ane_ir::kir::{EvidenceSource, KnowledgeScope};
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     fn make_entry(
         id: &str,
@@ -197,7 +209,7 @@ mod tests {
         payload.insert("op_pattern".to_string(), serde_json::json!("mb.matmul"));
 
         KnowledgeEntry {
-            unit: KnowledgeUnit {
+            unit: Arc::new(KnowledgeUnit {
                 id: id.to_string(),
                 version: 1,
                 timestamp: chrono::Utc::now().to_rfc3339(),
@@ -212,7 +224,7 @@ mod tests {
                 },
                 conflict_priority: 0,
                 payload,
-            },
+            }),
             provenance: EntryProvenance {
                 origin: EntryOrigin::RunObservation,
                 inserted_at: chrono::Utc::now().to_rfc3339(),

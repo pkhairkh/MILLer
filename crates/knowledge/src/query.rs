@@ -6,7 +6,7 @@
 use ane_ir::kir::{EvidenceSource, KnowledgeScope, KnowledgeType, KnowledgeUnit};
 use anyhow::Result;
 
-use crate::store::KnowledgeStore;
+use crate::store::{KnowledgeEntry, KnowledgeStore};
 
 /// A query against the knowledge store.
 #[derive(Debug, Clone)]
@@ -89,31 +89,38 @@ impl KnowledgeQuery {
 
 /// Implement the queryable trait for KnowledgeStore.
 ///
-/// Queries filter the in-memory index by type, scope, confidence,
-/// and evidence source. Scope matching is conservative: an entry
-/// with "unknown" scope matches any query scope.
+/// Queries use secondary indexes for knowledge type and evidence source
+/// to avoid O(n) full-table scans. Scope and confidence filters are
+/// applied on the smaller candidate set. When no type or source filter
+/// is specified, falls back to a full scan (same as before).
 impl KnowledgeQueryable for KnowledgeStore {
     fn query(&self, query: &KnowledgeQuery) -> Result<Vec<KnowledgeUnit>> {
-        let mut results: Vec<KnowledgeUnit> = self
-            .index_values()
-            .filter(|entry| {
-                // Filter by knowledge type
-                if let Some(ref kt) = query.knowledge_type {
-                    if entry.unit.knowledge_type != *kt {
-                        return false;
-                    }
-                }
+        // Use secondary indexes to narrow candidates before filtering.
+        // If both type and source are specified, intersect the two ID sets.
+        let candidates: Vec<&KnowledgeEntry> = match (&query.knowledge_type, &query.evidence_source) {
+            (Some(kt), Some(source)) => {
+                // Intersect: only IDs present in both indexes
+                let type_ids: std::collections::HashSet<&String> =
+                    self.type_index().get(kt).map(|v| v.iter().collect()).unwrap_or_default();
+                let source_ids = self.source_index().get(&source.to_string())
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                source_ids.iter()
+                    .filter(|id| type_ids.contains(id))
+                    .filter_map(|id| self.get(id))
+                    .collect()
+            }
+            (Some(kt), None) => self.query_by_type(*kt).collect(),
+            (None, Some(source)) => self.query_by_source(&source.to_string()).collect(),
+            (None, None) => self.index_values().collect(),
+        };
 
+        let mut results: Vec<KnowledgeUnit> = candidates
+            .into_iter()
+            .filter(|entry| {
                 // Filter by minimum confidence
                 if let Some(min_conf) = query.min_confidence {
                     if entry.unit.confidence < min_conf {
-                        return false;
-                    }
-                }
-
-                // Filter by evidence source
-                if let Some(ref source) = query.evidence_source {
-                    if entry.unit.evidence_source != *source {
                         return false;
                     }
                 }
@@ -127,7 +134,7 @@ impl KnowledgeQueryable for KnowledgeStore {
 
                 true
             })
-            .map(|entry| entry.unit.clone())
+            .map(|entry| (*entry.unit).clone())
             .collect();
 
         // Sort by confidence descending
