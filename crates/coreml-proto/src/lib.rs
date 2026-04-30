@@ -2071,9 +2071,20 @@ fn make_immediate_bool_value(value: bool) -> apple_proto::mil_spec::Value {
 }
 
 fn make_immediate_float32_value(value: f32) -> apple_proto::mil_spec::Value {
+    make_immediate_float_value(apple_proto::mil_spec::DataType::Float32 as i32, value)
+}
+
+/// Create a float scalar immediate value whose *declared* dtype matches `apple_dtype`.
+///
+/// Core ML requires the `fill.value` parameter dtype to match the fill output dtype.
+/// The proto `TensorValue.floats` field always stores `float` (f32) bits, but the
+/// `ValueType` tag tells Core ML the logical dtype.  For `Float16` outputs the tag
+/// must be `Float16`; Core ML will truncate the f32 representation to f16 at load
+/// time.
+fn make_immediate_float_value(apple_dtype: i32, value: f32) -> apple_proto::mil_spec::Value {
     apple_proto::mil_spec::Value {
         doc_string: String::new(),
-        r#type: Some(make_apple_value_type(apple_proto::mil_spec::DataType::Float32 as i32, &[])),
+        r#type: Some(make_apple_value_type(apple_dtype, &[])),
         value: Some(apple_proto::mil_spec::value::Value::ImmediateValue(
             apple_proto::mil_spec::value::ImmediateValue {
                 value: Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(
@@ -3420,12 +3431,13 @@ fn mir_op_to_apple_ops(
                     &[shape.len() as u64],
                 )),
             );
-            // value as FLOAT32 scalar immediate (Core ML accepts this for all
-            // float dtypes; for integer dtypes it would need a different path,
-            // but fill in MILLer is only used for FP16 constants currently).
+            // value as scalar immediate whose dtype matches the fill output dtype.
+            // Core ML requires fill.value and fill.output to have the same data type.
+            // For FP16 outputs, the value's ValueType tag must be Float16; the proto
+            // `floats` field still stores f32 bits which Core ML truncates to f16.
             inputs.insert(
                 "value".to_string(),
-                make_value_arg(make_immediate_float32_value(*value)),
+                make_value_arg(make_immediate_float_value(apple_dtype, *value)),
             );
 
             let mut attributes = HashMap::new();
@@ -3450,9 +3462,10 @@ fn mir_op_to_apple_ops(
 
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(ref_tensor));
+            // value dtype must match the fill_like output dtype (same rule as fill).
             inputs.insert(
                 "value".to_string(),
-                make_value_arg(make_immediate_float32_value(*value)),
+                make_value_arg(make_immediate_float_value(apple_dtype, *value)),
             );
 
             let mut attributes = HashMap::new();
@@ -3902,6 +3915,74 @@ fn mir_op_to_apple_ops(
     }
 }
 
+/// Validate that every `fill` and `fill_like` operation has a value parameter whose
+/// declared dtype matches the output dtype.  Core ML's parser rejects the model
+/// otherwise with: "In 'fill' operations, tensors parameter value[0], and output at
+/// index 0 must have the same data type."
+fn validate_fill_dtype_consistency(operations: &[apple_proto::mil_spec::Operation]) {
+    for op in operations {
+        if op.r#type != "fill" && op.r#type != "fill_like" {
+            continue;
+        }
+        let op_name = op.attributes.get("name")
+            .and_then(|v| v.value.as_ref())
+            .and_then(|iv| match iv {
+                apple_proto::mil_spec::value::Value::ImmediateValue(imv) => imv.value.as_ref(),
+                _ => None,
+            })
+            .and_then(|v| match v {
+                apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv) => {
+                    match tv.value.as_ref() {
+                        Some(apple_proto::mil_spec::tensor_value::Value::Strings(rs)) => rs.values.first().cloned(),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| format!("<unnamed {}>", op.r#type));
+
+        // Extract value parameter dtype: inputs["value"] → Argument → first Binding → Value → ValueType
+        let value_dtype = op.inputs.get("value")
+            .and_then(|arg| arg.arguments.first())
+            .and_then(|binding| match &binding.binding {
+                Some(apple_proto::mil_spec::argument::binding::Binding::Value(v)) => Some(v),
+                _ => None,
+            })
+            .and_then(|v| v.r#type.as_ref())
+            .and_then(|vt| vt.r#type.as_ref())
+            .and_then(|t| match t {
+                apple_proto::mil_spec::value_type::Type::TensorType(tt) => Some(tt.data_type),
+                _ => None,
+            });
+
+        // Extract output dtype (first output)
+        let output_dtype = op.outputs.first()
+            .and_then(|nvt| nvt.r#type.as_ref())
+            .and_then(|vt| vt.r#type.as_ref())
+            .and_then(|t| match t {
+                apple_proto::mil_spec::value_type::Type::TensorType(tt) => Some(tt.data_type),
+                _ => None,
+            });
+
+        match (value_dtype, output_dtype) {
+            (Some(vd), Some(od)) if vd != od => {
+                panic!(
+                    "{}: fill value dtype ({}) != output dtype ({}) — \
+                     Core ML requires them to match. Value is likely encoded as \
+                     FLOAT32 but output is FLOAT16; use make_immediate_float_value() \
+                     with the output dtype instead of make_immediate_float32_value().",
+                    op_name, vd, od
+                );
+            }
+            (None, _) | (_, None) => {
+                // Could not extract dtype — this shouldn't happen in practice,
+                // but don't panic since it might be a valid edge case we haven't seen.
+            }
+            _ => {} // dtypes match, all good
+        }
+    }
+}
+
 /// Convert a `CoreMlFunction` into an Apple-compatible `MILSpec.Function`.
 fn function_to_apple_proto(
     func: &CoreMlFunction,
@@ -3922,6 +4003,10 @@ fn function_to_apple_proto(
         .iter()
         .flat_map(|op| mir_op_to_apple_ops(op, weight_entries, &func.node_shapes))
         .collect();
+
+    // Validate fill/fill_like dtype consistency before writing.
+    // Core ML rejects fill ops where the value parameter dtype differs from the output dtype.
+    validate_fill_dtype_consistency(&operations);
 
     let block = apple_proto::mil_spec::Block {
         inputs: vec![],
@@ -4652,6 +4737,21 @@ mod tests {
             None => panic!("fill output should have a type"),
         };
         assert_eq!(output_dtype, apple_proto::mil_spec::DataType::Float16 as i32);
+
+        // Verify fill value dtype matches fill output dtype (Core ML requirement).
+        // Previously fill.value was always encoded as FLOAT32 even when output was
+        // FLOAT16, causing Core ML to reject the model.
+        let value_dtype = match &value_binding.r#type {
+            Some(vt) => match &vt.r#type {
+                Some(apple_proto::mil_spec::value_type::Type::TensorType(tt)) => tt.data_type,
+                other => panic!("fill value should be TensorType, got: {:?}", other),
+            },
+            None => panic!("fill value should have a type"),
+        };
+        assert_eq!(value_dtype, output_dtype,
+            "fill.value dtype ({}) must match fill.output dtype ({}) — \
+             Core ML requires them to be identical",
+            value_dtype, output_dtype);
 
         // ── Reshape.shape should be INT32 ──
         let reshape_op = mir_compat::MirOpCompat::Reshape {
