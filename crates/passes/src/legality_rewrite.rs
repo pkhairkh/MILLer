@@ -313,12 +313,16 @@ impl LegalityRewritePass {
                     (final_id, nodes, "mb.topk")
                 }
                 SirOp::Tile { input, reps } => {
+                    let tile_ctx = ctx.and_then(|c| {
+                        if c.embed_dim > 0 { Some(c.clone()) } else { None }
+                    });
                     let (final_id, nodes) = Self::decompose_tile(
                         sir_node,
                         input,
                         reps,
                         &sir_to_air,
                         knowledge_query,
+                        tile_ctx.as_ref(),
                     );
                     (final_id, nodes, "mb.mul") // decomposition root is broadcast Mul
                 }
@@ -1251,6 +1255,7 @@ impl LegalityRewritePass {
         reps: &[usize],
         sir_to_air: &std::collections::HashMap<ane_ir::sir::SirNodeId, AirNodeId>,
         kq: &dyn PassKnowledgeQuery,
+        ctx: Option<&DecompositionContext>,
     ) -> (AirNodeId, Vec<AirNode>) {
         let base = &sir_node.id.0;
         let input_air =
@@ -1283,20 +1288,55 @@ impl LegalityRewritePass {
         // ── Step 1: Reshape to insert a size-1 dim at the tiling axis ──
         //
         // For reps=[1, R, 1, 1] on shape [B, H, S, D]:
-        //   → Reshape to [B, H, 1, S, D] (insert axis at position 2, i.e. tile_axis+1 in the 5D view)
+        //   → Reshape to [B, H, 1, S, D] (insert axis at position tile_axis+1 in the 5D view)
         //
-        // The reshape target_shape has len = reps.len() + 1, with a 1 inserted
-        // after the tile_axis position.
-        let mut reshape_shape: Vec<usize> = Vec::with_capacity(reps.len() + 1);
-        for (i, &r) in reps.iter().enumerate() {
-            reshape_shape.push(if i == tile_axis { r } else { r });
-            if i == tile_axis {
-                reshape_shape.push(1); // insert the new size-1 dim
+        // CRITICAL: The reshape target_shape MUST preserve the actual input dimensions.
+        // The previous code used `reps` values as a "shape template" (e.g., [1, R, 1, 1, 1]),
+        // but Core ML treats every value as a literal dimension — there is no "infer from
+        // input" sentinel. Shape inference in mil_lower only resolves zero-placeholders,
+        // and zero-placeholders cannot handle rank-changing reshapes with multiple unknowns.
+        //
+        // We therefore use the DecompositionContext to supply concrete input dimensions
+        // when available. For the GQA case (reps=[1, R, 1, 1] on [B, kv_heads, S, D]),
+        // this produces the correct reshape target [B, kv_heads, 1, S, D].
+        let input_shape: Vec<usize> = if let Some(c) = ctx {
+            // Reconstruct the input shape from context.
+            // The only tile ops in the current codebase are GQA K/V head expansion,
+            // which tile along axis 1 of a 4D [batch, kv_heads, seq, head_dim] tensor.
+            let kv_h = if c.kv_heads > 0 { c.kv_heads } else { c.num_heads };
+            match reps.len() {
+                4 => vec![c.batch_size, kv_h, c.seq_len, c.head_dim],
+                _ => vec![], // unknown layout; fall through to old logic
             }
-        }
-        // For the GQA case: reps=[1, R, 1, 1] → reshape_shape = [1, R, 1, 1, 1]
-        // This is a "shape template" from the reps; the actual shapes will be
-        // resolved during MIL lowering shape inference.
+        } else {
+            vec![] // no context; fall through to old logic
+        };
+
+        let reshape_shape: Vec<usize> = if !input_shape.is_empty() {
+            // Build the correct reshape target from actual input dimensions:
+            // Insert a size-1 dim at position (tile_axis + 1).
+            // E.g., [B, H, S, D] with tile_axis=1 → [B, H, 1, S, D]
+            let mut shape = Vec::with_capacity(input_shape.len() + 1);
+            for (i, &dim) in input_shape.iter().enumerate() {
+                shape.push(dim);
+                if i == tile_axis {
+                    shape.push(1); // insert the new size-1 dim after tile_axis
+                }
+            }
+            shape
+        } else {
+            // Fallback: no context available. Use reps-driven template.
+            // This produces WRONG shapes (e.g., [1, R, 1, 1, 1] instead of [B, H, 1, S, D]),
+            // but preserves the old behavior for non-GQA cases without context.
+            let mut shape = Vec::with_capacity(reps.len() + 1);
+            for (i, &r) in reps.iter().enumerate() {
+                shape.push(r);
+                if i == tile_axis {
+                    shape.push(1);
+                }
+            }
+            shape
+        };
 
         let reshape_id = AirNodeId(format!("{base}_tile_reshape_expand"));
         let mut nodes = vec![Self::make_air_node(
@@ -1350,14 +1390,23 @@ impl LegalityRewritePass {
         // ── Step 4: Reshape back to the tiled output shape ──
         //
         // [B, H, R, S, D] → [B, H*R, S, D] (merge the expanded axis back)
-        // The output shape is reps[i] * input_dim[i] for each axis.
-        // Since we only tile one axis, the output shape is the same as
+        // The output shape is input_shape[i] * reps[i] for each axis.
+        // Since only one axis has reps > 1, the output shape is the same as
         // the input shape with tile_axis multiplied by tile_factor.
-        // We express this as the reps-driven shape from shape inference.
-        let mut output_shape: Vec<usize> = Vec::with_capacity(reps.len());
-        for (_, &r) in reps.iter().enumerate() {
-            output_shape.push(r); // will be corrected by shape inference in mil_lower
-        }
+        let output_shape: Vec<usize> = if !input_shape.is_empty() {
+            // Compute the correct tiled output shape from actual input dimensions:
+            // output[i] = input[i] * reps[i]. Since only tile_axis has reps > 1,
+            // only tile_axis changes: output[tile_axis] = input[tile_axis] * tile_factor.
+            // E.g., [B, kv_heads, S, D] with tile_factor=2 → [B, kv_heads*2, S, D] = [B, q_heads, S, D]
+            input_shape
+                .iter()
+                .enumerate()
+                .map(|(i, &dim)| if i == tile_axis { dim * tile_factor } else { dim })
+                .collect()
+        } else {
+            // Fallback: no context. Use reps as template (WRONG for GQA but preserves old behavior).
+            reps.to_vec()
+        };
 
         let out_id = AirNodeId(sir_node.id.0.clone());
         nodes.push(Self::make_air_node(
