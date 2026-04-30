@@ -178,10 +178,6 @@ pub fn validate_tensor_rank(rank: usize) -> Result<(), OpConstraintViolation> {
     Ok(())
 }
 
-fn is_power_of_two(n: u64) -> bool {
-    n > 0 && (n & (n - 1)) == 0
-}
-
 // MirOp is referenced but not directly used in constraint functions above.
 // It is kept as an import for future per-op dispatch use.
 const _: fn() = || {

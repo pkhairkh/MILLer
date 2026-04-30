@@ -293,7 +293,7 @@ impl OpSupportMatrix {
             SirOp::MatMul { .. } => OpSupport::AneSupported(AneEngineSupport::NE),
             SirOp::Conv { .. } => OpSupport::AneSupported(AneEngineSupport::NE),
 
-            // ─── Elementwise: always ANE-supported on PE ───────────
+            // ─── Elementwise binary: ANE-supported on PE ──────────
             SirOp::Add { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Mul { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Sub { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
@@ -309,22 +309,108 @@ impl OpSupportMatrix {
                     OpSupport::AneSupported(AneEngineSupport::PE)
                 }
             }
+            SirOp::FloorDiv { .. } => OpSupport::CpuOnly(
+                "FloorDiv (integer division) has no FP16 ANEC converter".to_string(),
+            ),
+            SirOp::Mod { .. } => OpSupport::CpuOnly(
+                "Modulo has no ANEC converter; falls back to CPU".to_string(),
+            ),
+            SirOp::Pow { .. } => {
+                if matches!(self.family, AneFamily::A11Legacy | AneFamily::A12) {
+                    OpSupport::CpuOnly(
+                        "Pow has no ANEC converter on A11/A12; falls back to CPU".to_string(),
+                    )
+                } else {
+                    OpSupport::FamilyGated {
+                        minimum_family: AneFamily::A14,
+                        reason: "Pow elementwise requires A14+ ANEC converter".to_string(),
+                    }
+                }
+            }
+            SirOp::Equal { .. }
+            | SirOp::NotEqual { .. }
+            | SirOp::Greater { .. }
+            | SirOp::GreaterEqual { .. }
+            | SirOp::Less { .. }
+            | SirOp::LessEqual { .. } => {
+                OpSupport::AneSupported(AneEngineSupport::PE)
+            }
+
+            // ─── Elementwise unary: ANE-supported on PE ───────────
             SirOp::Relu { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Relu6 { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::LeakyRelu { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::SigmoidHard { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::ThresholdedRelu { .. } => OpSupport::CpuOnly(
+                "ThresholdedRelu has no direct ANEC converter; decompose to Relu+Where".to_string(),
+            ),
+            SirOp::ClampedRelu { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::LinearActivation { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Prelu { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Softsign { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Gelu { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Silu { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::ScaledTanh { .. } => OpSupport::CpuOnly(
+                "ScaledTanh has no direct ANEC converter; decompose to Tanh+Mul+Add".to_string(),
+            ),
+            SirOp::Elu { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Softplus { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::SoftplusParametric { .. } => OpSupport::CpuOnly(
+                "Parametric Softplus has no ANEC converter; falls back to CPU".to_string(),
+            ),
             SirOp::Sigmoid { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Tanh { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
-            SirOp::Exp { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
-            SirOp::Rsqrt { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Clip { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Square { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Threshold { .. } => OpSupport::CpuOnly(
+                "Threshold has no direct ANEC converter; decompose to Where+Const".to_string(),
+            ),
             SirOp::Sqrt { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Rsqrt { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Inverse { .. } => OpSupport::CpuOnly(
+                "Inverse has no direct ANEC converter; decompose to RealDiv(Const(1), x)".to_string(),
+            ),
+            SirOp::Exp { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Exp2 { .. } => OpSupport::CpuOnly(
+                "Exp2 has no direct ANEC converter; decompose to Exp(Mul(Const(ln2), x))".to_string(),
+            ),
+            SirOp::Log { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Ceil { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Floor { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Round { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Sign { .. } => OpSupport::CpuOnly(
+                "Sign has no direct ANEC converter; falls back to CPU".to_string(),
+            ),
             SirOp::Cos { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Sin { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Tan { .. } => OpSupport::CpuOnly(
+                "Tan has no direct ANEC converter; decompose to Sin/RealDiv/Cos".to_string(),
+            ),
+            SirOp::Acos { .. } | SirOp::Asin { .. } | SirOp::Atan { .. } => OpSupport::CpuOnly(
+                "Inverse trig ops have no ANEC converter; fall back to CPU".to_string(),
+            ),
+            SirOp::Cosh { .. } => OpSupport::CpuOnly(
+                "Cosh has no direct ANEC converter; decompose to Exp-based expression".to_string(),
+            ),
+            SirOp::Sinh { .. } => OpSupport::CpuOnly(
+                "Sinh has no direct ANEC converter; decompose to Exp-based expression".to_string(),
+            ),
+            SirOp::Atanh { .. } => OpSupport::CpuOnly(
+                "Atanh has no direct ANEC converter; falls back to CPU".to_string(),
+            ),
+            SirOp::Erf { .. } => OpSupport::CpuOnly(
+                "Erf has no ANEC converter; required for exact Gelu but Gelu has its own ANEC path".to_string(),
+            ),
             SirOp::Abs { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Neg { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::LogicalNot { .. } => OpSupport::CpuOnly(
+                "LogicalNot has no ANEC converter; falls back to CPU".to_string(),
+            ),
             SirOp::Cast { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Select { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Where { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
 
-            // ─── Reduction: PE, but ReduceMin has A14+ restriction ─
+            // ─── Reduction: PE, with family restrictions ───────────
             SirOp::ReduceMean { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::ReduceSum { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::ReduceMax { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
@@ -338,6 +424,33 @@ impl OpSupportMatrix {
                     OpSupport::AneSupported(AneEngineSupport::PE)
                 }
             }
+            SirOp::ReduceProd { .. } => OpSupport::CpuOnly(
+                "ReduceProd has no ANEC converter; falls back to CPU".to_string(),
+            ),
+            SirOp::ReduceSumSquare { .. } => {
+                // ReduceSumSquare = ReduceSum(x*x), decomposes to Square + ReduceSum
+                OpSupport::AneSupported(AneEngineSupport::PE)
+            }
+            SirOp::ReduceL2Norm { .. } => {
+                // ReduceL2Norm = Sqrt(ReduceSum(x*x)), decomposes to ANE-faithful ops
+                OpSupport::AneSupported(AneEngineSupport::PE)
+            }
+            SirOp::ReduceL1Norm { .. } => {
+                // ReduceL1Norm = ReduceSum(Abs(x)), decomposes to ANE-faithful ops
+                OpSupport::AneSupported(AneEngineSupport::PE)
+            }
+            SirOp::ReduceLogSumExp { .. } => OpSupport::CpuOnly(
+                "ReduceLogSumExp has no direct ANEC converter; decompose to ReduceMax+Exp+ReduceSum+Log".to_string(),
+            ),
+            SirOp::ReduceLogSum { .. } => OpSupport::CpuOnly(
+                "ReduceLogSum has no direct ANEC converter; decompose to ReduceSum+Log".to_string(),
+            ),
+            SirOp::ReduceArgmax { .. } => OpSupport::CpuOnly(
+                "ReduceArgmax has no ANEC converter; arg reduction is CPU-only".to_string(),
+            ),
+            SirOp::ReduceArgmin { .. } => OpSupport::CpuOnly(
+                "ReduceArgmin has no ANEC converter; arg reduction is CPU-only".to_string(),
+            ),
 
             // ─── Normalization: family-gated ───────────────────────
             SirOp::Softmax { .. } => OpSupport::AneSupported(AneEngineSupport::NE),
@@ -355,6 +468,77 @@ impl OpSupportMatrix {
             SirOp::BatchNorm { .. } => OpSupport::CpuOnly(
                 "BatchNorm decomposes to InstanceNorm + broadcast; may partially fall back"
                     .to_string(),
+            ),
+            SirOp::L2Norm { .. } => {
+                // L2Norm = x / Sqrt(ReduceSum(x*x) + epsilon), decomposes to ANE-faithful ops
+                OpSupport::AneSupported(AneEngineSupport::PE)
+            }
+            SirOp::LocalResponseNorm { .. } => OpSupport::CpuOnly(
+                "LocalResponseNorm has no ANEC converter; deprecated op falls back to CPU"
+                    .to_string(),
+            ),
+
+            // ─── Pooling: NE ───────────────────────────────────────
+            SirOp::MaxPool { .. } => OpSupport::AneSupported(AneEngineSupport::NE),
+            SirOp::AvgPool { .. } => OpSupport::AneSupported(AneEngineSupport::NE),
+            SirOp::L2Pool { .. } => OpSupport::CpuOnly(
+                "L2Pool has no direct ANEC converter; decompose to Square+AvgPool+Sqrt".to_string(),
+            ),
+
+            // ─── Image Resizing ────────────────────────────────────
+            SirOp::Resize { .. } => {
+                if matches!(self.family, AneFamily::A11Legacy | AneFamily::A12) {
+                    OpSupport::CpuOnly(
+                        "Resize has no ANEC converter on A11/A12; falls back to CPU".to_string(),
+                    )
+                } else {
+                    OpSupport::AneSupported(AneEngineSupport::NE)
+                }
+            }
+            SirOp::ResizeNearestNeighbor { .. } => {
+                if matches!(self.family, AneFamily::A11Legacy | AneFamily::A12) {
+                    OpSupport::CpuOnly(
+                        "ResizeNearestNeighbor has no ANEC converter on A11/A12".to_string(),
+                    )
+                } else {
+                    OpSupport::AneSupported(AneEngineSupport::NE)
+                }
+            }
+            SirOp::ResizeBilinear { .. } => {
+                if matches!(self.family, AneFamily::A11Legacy | AneFamily::A12) {
+                    OpSupport::CpuOnly(
+                        "ResizeBilinear has no ANEC converter on A11/A12".to_string(),
+                    )
+                } else {
+                    OpSupport::AneSupported(AneEngineSupport::NE)
+                }
+            }
+            SirOp::UpsampleNearestNeighbor { .. } => {
+                if matches!(self.family, AneFamily::A11Legacy | AneFamily::A12) {
+                    OpSupport::CpuOnly(
+                        "UpsampleNearestNeighbor has no ANEC converter on A11/A12".to_string(),
+                    )
+                } else {
+                    OpSupport::AneSupported(AneEngineSupport::NE)
+                }
+            }
+            SirOp::UpsampleBilinear { .. } => {
+                if matches!(self.family, AneFamily::A11Legacy | AneFamily::A12) {
+                    OpSupport::CpuOnly(
+                        "UpsampleBilinear has no ANEC converter on A11/A12".to_string(),
+                    )
+                } else {
+                    OpSupport::AneSupported(AneEngineSupport::NE)
+                }
+            }
+            SirOp::CropResize { .. } => OpSupport::CpuOnly(
+                "CropResize has no ANEC converter; falls back to CPU".to_string(),
+            ),
+            SirOp::Affine { .. } => OpSupport::CpuOnly(
+                "Affine transform has no ANEC converter; falls back to CPU".to_string(),
+            ),
+            SirOp::Resample { .. } => OpSupport::CpuOnly(
+                "Resample has no ANEC converter; falls back to CPU".to_string(),
             ),
 
             // ─── Attention ─────────────────────────────────────────
@@ -376,12 +560,51 @@ impl OpSupportMatrix {
 
             // ─── Tensor transforms ─────────────────────────────────
             SirOp::Reshape { .. } => OpSupport::AneSupported(AneEngineSupport::Transpose),
+            SirOp::ReshapeLike { .. } => OpSupport::AneSupported(AneEngineSupport::Transpose),
             SirOp::Transpose { .. } => OpSupport::AneSupported(AneEngineSupport::Transpose),
             SirOp::Concat { .. } => OpSupport::AneSupported(AneEngineSupport::Transpose),
             SirOp::Split { .. } => OpSupport::AneSupported(AneEngineSupport::Transpose),
             SirOp::ExpandDims { .. } => OpSupport::AneSupported(AneEngineSupport::Transpose),
             SirOp::Squeeze { .. } => OpSupport::AneSupported(AneEngineSupport::Transpose),
+            SirOp::Flatten2d { .. } => OpSupport::AneSupported(AneEngineSupport::Transpose),
             SirOp::SliceByIndex { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::SliceBySize { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Pad { .. } => OpSupport::AneSupported(AneEngineSupport::Transpose),
+            SirOp::Stack { .. } => OpSupport::AneSupported(AneEngineSupport::Transpose),
+            SirOp::Reverse { .. } => OpSupport::CpuOnly(
+                "Reverse has no ANEC converter; falls back to CPU".to_string(),
+            ),
+            SirOp::ReverseSequence { .. } => OpSupport::CpuOnly(
+                "ReverseSequence has no ANEC converter; falls back to CPU".to_string(),
+            ),
+            SirOp::SlidingWindows { .. } => OpSupport::CpuOnly(
+                "SlidingWindows has no ANEC converter; falls back to CPU".to_string(),
+            ),
+            SirOp::DepthToSpace { .. } => {
+                // DepthToSpace = Reshape + Transpose + Reshape, all ANE-faithful
+                OpSupport::AneSupported(AneEngineSupport::Transpose)
+            }
+            SirOp::SpaceToDepth { .. } => {
+                // SpaceToDepth = Reshape + Transpose + Reshape, all ANE-faithful
+                OpSupport::AneSupported(AneEngineSupport::Transpose)
+            }
+            SirOp::PixelShuffle { .. } => {
+                // PixelShuffle = DepthToSpace variant, ANE-faithful
+                OpSupport::AneSupported(AneEngineSupport::Transpose)
+            }
+            SirOp::PixelUnshuffle { .. } => {
+                // PixelUnshuffle = SpaceToDepth variant, ANE-faithful
+                OpSupport::AneSupported(AneEngineSupport::Transpose)
+            }
+            SirOp::BatchToSpace { .. } => OpSupport::CpuOnly(
+                "BatchToSpace has no direct ANEC converter; falls back to CPU".to_string(),
+            ),
+            SirOp::SpaceToBatch { .. } => OpSupport::CpuOnly(
+                "SpaceToBatch has no direct ANEC converter; falls back to CPU".to_string(),
+            ),
+            SirOp::Tile { .. } => OpSupport::CpuOnly(
+                "Tile has no direct ANEC converter; falls back to CPU".to_string(),
+            ),
 
             // ─── Gather/Scatter ────────────────────────────────────
             SirOp::Gather { axis, .. } => {
@@ -394,19 +617,41 @@ impl OpSupportMatrix {
                     )
                 }
             }
+            SirOp::GatherAlongAxis { .. } => OpSupport::CpuOnly(
+                "GatherAlongAxis has no ANEC converter; falls back to CPU".to_string(),
+            ),
             SirOp::GatherNd { .. } => {
                 OpSupport::CpuOnly("GatherNd has no ANEC converter".to_string())
             }
             SirOp::Scatter { .. } => {
                 OpSupport::CpuOnly("Scatter ops have no ANEC converter".to_string())
             }
+            SirOp::ScatterAlongAxis { .. } => OpSupport::CpuOnly(
+                "ScatterAlongAxis has no ANEC converter; falls back to CPU".to_string(),
+            ),
             SirOp::ScatterNd { .. } => {
                 OpSupport::Unsupported("ScatterNd is never ANE-compatible".to_string())
             }
+            SirOp::NonMaximumSuppression { .. } => OpSupport::CpuOnly(
+                "NMS has no ANEC converter; falls back to CPU".to_string(),
+            ),
 
             // ─── Quantization ──────────────────────────────────────
             SirOp::Quantize { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Dequantize { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+
+            // ─── Constexpr / Compression: compile-time, not runtime ─
+            SirOp::ConstexprAffineDequantize { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::ConstexprBlockwiseShiftScale { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::ConstexprLutToDense { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::ConstexprSparseToDense { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::ConstexprCast { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::ConstexprLutToSparse { .. } => OpSupport::CpuOnly(
+                "ConstexprLutToSparse has no ANEC converter; compression-only, CPU pre-processing".to_string(),
+            ),
+            SirOp::ConstexprSparseBlockwiseShiftScale { .. } => OpSupport::CpuOnly(
+                "ConstexprSparseBlockwiseShiftScale has no ANEC converter; CPU pre-processing".to_string(),
+            ),
 
             // ─── State ops ─────────────────────────────────────────
             SirOp::StateRead { .. } => OpSupport::AneSupported(AneEngineSupport::NE),
@@ -426,10 +671,49 @@ impl OpSupportMatrix {
                 OpSupport::CpuOnly("TopK sampling is CPU-only on most families".to_string())
             }
 
-            // ─── Always CPU-only ──────────────────────────────────
+            // ─── Special structural / utility ops ─────────────────
+            SirOp::Const { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Identity { .. } => OpSupport::AneSupported(AneEngineSupport::Transpose),
+            SirOp::Fill { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::FillLike { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Range1d { .. } => OpSupport::CpuOnly(
+                "Range1d has no ANEC converter; falls back to CPU".to_string(),
+            ),
+            SirOp::Shape { .. } => OpSupport::CpuOnly(
+                "Shape has no ANEC converter; shape ops are CPU-only".to_string(),
+            ),
+            SirOp::OneHot { .. } => OpSupport::CpuOnly(
+                "OneHot has no ANEC converter; falls back to CPU".to_string(),
+            ),
+            SirOp::NonZero { .. } => OpSupport::CpuOnly(
+                "NonZero has no ANEC converter; falls back to CPU".to_string(),
+            ),
+            SirOp::Argsort { .. } => OpSupport::CpuOnly(
+                "Argsort has no ANEC converter; sort ops are CPU-only".to_string(),
+            ),
+            SirOp::BandPart { .. } => OpSupport::CpuOnly(
+                "BandPart has no ANEC converter; falls back to CPU".to_string(),
+            ),
+            SirOp::Crop { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Topk { .. } => OpSupport::CpuOnly(
+                "Topk has no ANEC converter; sort/select ops are CPU-only".to_string(),
+            ),
+            SirOp::Classify { .. } => OpSupport::CpuOnly(
+                "Classify has no ANEC converter; falls back to CPU".to_string(),
+            ),
+            SirOp::Einsum { .. } => OpSupport::CpuOnly(
+                "Einsum has no direct ANEC converter; decompose to MatMul+Transpose for ANE path".to_string(),
+            ),
+            SirOp::ConvTranspose { .. } => OpSupport::CpuOnly(
+                "ConvTranspose has no direct ANEC converter; falls back to CPU".to_string(),
+            ),
+
+            // ─── Logical: CPU-only ─────────────────────────────────
             SirOp::LogicalAnd { .. } | SirOp::LogicalOr { .. } | SirOp::LogicalXor { .. } => {
                 OpSupport::CpuOnly("Logical ops have no ANEC converter".to_string())
             }
+
+            // ─── Always CPU-only ──────────────────────────────────
             SirOp::Cumsum { .. } => OpSupport::CpuOnly("Cumsum has no ANEC converter".to_string()),
             SirOp::RandomBernoulli { .. }
             | SirOp::RandomNormal { .. }
@@ -440,27 +724,31 @@ impl OpSupportMatrix {
             SirOp::Cond { .. } | SirOp::WhileLoop { .. } => {
                 OpSupport::Unsupported("Control flow has no ANEC converter".to_string())
             }
+            SirOp::MakeList { .. }
+            | SirOp::ListLength { .. }
+            | SirOp::ListWrite { .. }
+            | SirOp::ListRead { .. }
+            | SirOp::ListGather { .. }
+            | SirOp::ListScatter { .. } => {
+                OpSupport::Unsupported("List ops have no ANEC converter; control-flow dependent".to_string())
+            }
             SirOp::Rnn { .. } | SirOp::Gru { .. } | SirOp::Lstm { .. } => {
                 OpSupport::CpuOnly("RNN/LSTM/GRU have no direct ANEC converter".to_string())
             }
 
-            // ─── Const/Identity: structural, not a real compute op ─
-            SirOp::Const { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
-            SirOp::Identity { .. } => OpSupport::AneSupported(AneEngineSupport::Transpose),
-
-            // ─── Default: assume CPU fallback for unmapped ops ──────
-            _ => OpSupport::CpuOnly(format!(
-                "Op '{}' not yet mapped in versioned support matrix",
-                op_name_for_sir(op)
-            )),
+            // ─── Legacy compat ─────────────────────────────────────
+            SirOp::ElementWise { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
         }
     }
 }
 
 /// Map a SirOp to a human-readable name.
+///
+/// Uses the Debug representation to extract the variant name robustly,
+/// so that even newly-added variants get a meaningful name without
+/// having to update this function.
 fn op_name_for_sir(op: &SirOp) -> String {
-    let name = std::any::type_name::<SirOp>();
-    // Extract the variant name from the full type path
+    // Fast path: common ops with explicit short names
     match op {
         SirOp::LinearProjection { .. } => "LinearProjection",
         SirOp::MatMul { .. } => "MatMul",
@@ -482,9 +770,15 @@ fn op_name_for_sir(op: &SirOp) -> String {
         SirOp::Gather { .. } => "Gather",
         SirOp::StateRead { .. } => "StateRead",
         SirOp::StateWrite { .. } => "StateWrite",
-        _ => name.rsplit("::").next().unwrap_or("Unknown"),
-    }
-    .to_string()
+        // Fallback: extract variant name from Debug repr ("VariantName { ... }")
+        _ => {
+            let debug = format!("{:?}", op);
+            let name = debug.split('{').next().unwrap_or("Unknown").trim();
+            // Must return a String to match the outer .to_string() call;
+            // boxing the &str keeps the types aligned across all arms.
+            return name.to_string();
+        }
+    }.to_string()
 }
 
 /// Get the default revision for a family.
