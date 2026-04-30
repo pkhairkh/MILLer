@@ -100,24 +100,28 @@
 
 ---
 
-## Remaining Open Issues
+## T-21 — Resolve Remaining 12 Code Review Findings ✅
 
-The following issues from ISSUES.md remain open and are not covered by completed tasks:
+- **ISSUES ref**: W-03, W-06, W-09, W-13, W-14, S-01, S-02, S-03, S-05, S-06, S-13, S-14
+- **Resolution**:
+  - **W-03**: Added secondary indexes (`type_index`, `source_index`) to `KnowledgeStore`; `query()` uses indexed lookups; added `query_by_type()` and `query_by_source()` public methods.
+  - **W-06**: Replaced all `eprintln!` in knowledge crate with `log::warn!`; added `log = "0.4"` to workspace deps.
+  - **W-09**: Removed dead first-pass `total_size` calculation in `WeightBinBuilder::build()`.
+  - **W-13**: Added `source: Option<Box<dyn Error + Send + Sync>>` to `FfiError` variants; implemented `Error::source()`.
+  - **W-14**: Added `thiserror = "1"` to workspace deps; migrated `FfiError` to thiserror derive as reference implementation.
+  - **S-01**: Changed `KnowledgeEntry.unit` from `KnowledgeUnit` to `Arc<KnowledgeUnit>` with serde helper.
+  - **S-02**: Marked `decay_confidence` with `#[deprecated(since = "0.2.0")]`.
+  - **S-03**: Refactored `ConflictDetector::detect()` to group by type first, reducing O(n²) to O(n·k).
+  - **S-05**: Replaced hardcoded `/tmp/` paths in tests with `tempfile::tempdir()`.
+  - **S-06**: Added proper `Drop` impl for `FfiModel` with macOS vs non-macOS paths and documentation.
+  - **S-13**: Added `#[deprecated]` to `ElementWise`/`ElementWiseOp` in SIR and AIR enums.
+  - **S-14**: Extracted shared `MockKnowledge` to `crates/passes/src/test_utils.rs`.
 
-| Issue | Description | Suggested Action |
-|-------|-------------|-----------------|
-| W-03 | Knowledge Store O(n) queries | Add indexes by knowledge type/scope |
-| W-06 | `eprintln!` in library code | Replace with `log` crate |
-| W-09 | `WeightBinBuilder` dead code | Remove unused `total_size` first pass |
-| W-13 | `FfiError` missing `std::error::Error` source chain | Implement `#[source]` with thiserror |
-| W-14 | Inconsistent error types across crates | Add shared error type or conversion strategy |
-| S-01 | `KnowledgeEntry` expensive clones | Use `Arc<KnowledgeUnit>` |
-| S-02 | `decay_confidence` dead public API | Remove or deprecate |
-| S-03 | `ConflictDetector` O(n²) | Add early termination |
-| S-05 | Test writes to `/tmp/` | Use `tempfile` crate |
-| S-06 | `FfiModel::Drop` is no-op | Implement on macOS |
-| S-13 | Legacy `ElementWise` still in core enums | Add `#[deprecated]` |
-| S-14 | Duplicate `MockKnowledge` across tests | Extract to shared test-util module |
+---
+
+## All Issues Resolved ✅
+
+All 59 findings from the hostile code review have been addressed across 21 task groups (T-01 through T-21).
 
 ---
 
@@ -145,3 +149,4 @@ The following issues from ISSUES.md remain open and are not covered by completed
 | T-18 | — | ✅ |
 | T-19 | S-12 | ✅ (documented) |
 | T-20 | S-15 | ✅ |
+| T-21 | W-03, W-06, W-09, W-13, W-14, S-01, S-02, S-03, S-05, S-06, S-13, S-14 | ✅ |
