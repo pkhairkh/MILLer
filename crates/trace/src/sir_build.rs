@@ -740,6 +740,19 @@ impl<'a> SirBuildContext<'a> {
         let q_proj_dim = num_heads * head_dim; // e.g., 16 * 128 = 2048
         let kv_proj_dim = num_kv_heads * head_dim; // e.g., 8 * 128 = 1024
 
+        // Extract batch and seq_len from the traced input shape.
+        // These are needed for concrete reshape target shapes because Core ML's
+        // ios19.reshape treats 0 as a literal zero dimension, not as an "infer
+        // from input" sentinel (unlike PyTorch's -1 convention).
+        // Input shape is typically [1, 512] (batch, seq_len) for input_ids.
+        let (batch, seq_len) = self.trace.inputs.first()
+            .map(|spec| {
+                let batch = spec.shape.dims.first().copied().unwrap_or(1);
+                let seq_len = spec.shape.dims.get(1).copied().unwrap_or(0);
+                (batch, seq_len)
+            })
+            .unwrap_or((1, 0));
+
         // Resolve weight names using the module_path from the traced node.
         // For attention, the module_path is typically "model.layers.0.self_attn"
         // and the sub-modules are q_proj, k_proj, v_proj, o_proj.
@@ -834,10 +847,14 @@ impl<'a> SirBuildContext<'a> {
         // Q: [B, S, num_heads*D] → [B, S, num_heads, D]
         // K: [B, S, kv_heads*D] → [B, S, kv_heads, D]
         // V: [B, S, kv_heads*D] → [B, S, kv_heads, D]
+        //
+        // IMPORTANT: Use concrete batch/seq_len dimensions, NOT zero placeholders.
+        // Core ML's ios19.reshape treats 0 as a literal zero dimension,
+        // causing "cannot reshape tensor of size N into shape [0, 0, ...]".
         ops.push((
             SirOp::Reshape {
                 input: q_id,
-                target_shape: vec![0, 0, num_heads, head_dim], // 0 = infer from input
+                target_shape: vec![batch, seq_len, num_heads, head_dim],
             },
             "q_reshape_4d".to_string(),
         ));
@@ -846,7 +863,7 @@ impl<'a> SirBuildContext<'a> {
         ops.push((
             SirOp::Reshape {
                 input: k_id,
-                target_shape: vec![0, 0, num_kv_heads, head_dim],
+                target_shape: vec![batch, seq_len, num_kv_heads, head_dim],
             },
             "k_reshape_4d".to_string(),
         ));
@@ -855,7 +872,7 @@ impl<'a> SirBuildContext<'a> {
         ops.push((
             SirOp::Reshape {
                 input: v_id,
-                target_shape: vec![0, 0, num_kv_heads, head_dim],
+                target_shape: vec![batch, seq_len, num_kv_heads, head_dim],
             },
             "v_reshape_4d".to_string(),
         ));
@@ -980,10 +997,12 @@ impl<'a> SirBuildContext<'a> {
         // Step 10: Reshape attention output from 4D [B, heads, S, D] to
         // 3D [B, S, num_heads*D] for the output projection.
         // The output projection expects a 3D input because it's a Conv1x1AsLinear.
+        //
+        // IMPORTANT: Use concrete batch/seq_len, NOT zero placeholders.
         ops.push((
             SirOp::Reshape {
                 input: attn_result_id,
-                target_shape: vec![0, 0, q_proj_dim], // [B, S, num_heads*head_dim]
+                target_shape: vec![batch, seq_len, q_proj_dim], // [B, S, num_heads*head_dim]
             },
             "attn_reshape_3d".to_string(),
         ));

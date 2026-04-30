@@ -111,7 +111,46 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
             }
             inputs.first().and_then(|id| node_shapes.get(id).cloned()).unwrap_or_default()
         }
-        AirOp::Reshape { target_shape, .. } => target_shape.clone(),
+        AirOp::Reshape { input, target_shape } => {
+            // Resolve zero-placeholder dimensions in the target shape.
+            // Core ML's ios19.reshape treats 0 as a literal zero dimension,
+            // not as an "infer from input" sentinel (unlike PyTorch's -1).
+            // A reshape([1,512,2048], [0,0,16,128]) produces a zero-element
+            // tensor [0,0,16,128] and Core ML rejects it:
+            //   "cannot reshape tensor of size 1048576 into shape [0, 0, 16, 128]"
+            //
+            // Strategy: replace each 0 in target_shape with the corresponding
+            // dimension from the input shape, preserving the leading positions.
+            // This matches the intent of the zero placeholders: the first two
+            // dims (batch, seq) are "infer from input".
+            if let Some(input_shape) = node_shapes.get(input) {
+                let mut resolved = target_shape.clone();
+                let mut zeros_found = 0;
+                for i in 0..resolved.len() {
+                    if resolved[i] == 0 {
+                        if let Some(&dim) = input_shape.get(i) {
+                            resolved[i] = dim;
+                            zeros_found += 1;
+                        }
+                    }
+                }
+                if zeros_found > 0 {
+                    // Validate: product of resolved shape must match product of input shape
+                    let input_elems: usize = input_shape.iter().product();
+                    let resolved_elems: usize = resolved.iter().product();
+                    if input_elems != resolved_elems && input_elems != 0 {
+                        eprintln!(
+                            "[WARN] Reshape zero-resolution mismatch: {:?} → {:?} \
+                             ({} vs {} elements). The source may have incorrect dims.",
+                            input_shape, resolved, input_elems, resolved_elems
+                        );
+                    }
+                }
+                resolved
+            } else {
+                target_shape.clone()
+            }
+        }
         AirOp::Transpose { input, perm } => {
             if let Some(shape) = node_shapes.get(input) {
                 perm.iter().map(|&p| shape.get(p).copied().unwrap_or(0)).collect()
