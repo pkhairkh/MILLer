@@ -144,7 +144,39 @@ pub fn compat_output_shape(
             }
         }
         MirOp::MILSoftmax { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
-        MirOp::MILMatMul { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
+        MirOp::MILMatMul { x, y, .. } => {
+            // Sprint 63: proper batched matmul shape inference.
+            // [*, M, K] × [*, K, N] → [*, M, N] with right-aligned batch broadcast.
+            match (node_shapes.get(&x.0), node_shapes.get(&y.0)) {
+                (Some(x_shape), Some(y_shape)) => {
+                    let x_rank = x_shape.len();
+                    let y_rank = y_shape.len();
+                    if x_rank >= 2 && y_rank >= 2 {
+                        let lhs_rows = x_shape[x_rank - 2];
+                        let _lhs_cols = x_shape[x_rank - 1];
+                        let _rhs_rows = y_shape[y_rank - 2];
+                        let rhs_cols = y_shape[y_rank - 1];
+                        let batch_x = &x_shape[..x_rank - 2];
+                        let batch_y = &y_shape[..y_rank - 2];
+                        let batch = if batch_x.is_empty() && batch_y.is_empty() {
+                            vec![]
+                        } else {
+                            broadcast_shape_compat(batch_x, batch_y)
+                                .unwrap_or_else(|| batch_x.to_vec())
+                        };
+                        let mut out = batch;
+                        out.push(lhs_rows);
+                        out.push(rhs_cols);
+                        out
+                    } else {
+                        // Fallback: propagate x shape for degenerate cases
+                        x_shape.clone()
+                    }
+                }
+                (Some(x_shape), None) => x_shape.clone(),
+                _ => vec![],
+            }
+        }
         MirOp::MILReshape { shape, .. } => shape.iter().map(|&d| d as usize).collect(),
         MirOp::MILTranspose { x, perm, .. } => {
             if let Some(input_shape) = node_shapes.get(&x.0) {

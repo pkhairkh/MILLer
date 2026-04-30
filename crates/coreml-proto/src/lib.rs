@@ -2395,7 +2395,7 @@ fn mir_op_to_apple_ops(
             );
             inputs.insert(
                 "transpose_y".to_string(),
-                make_value_arg(make_immediate_bool_value(x == y)),
+                make_value_arg(make_immediate_bool_value(false)),
             );
 
             let mut attributes = HashMap::new();
@@ -4161,6 +4161,134 @@ fn validate_elementwise_broadcast_shapes(operations: &[apple_proto::mil_spec::Op
     }
 }
 
+/// Validate matmul output shapes against inferred batched matmul result.
+///
+/// For matmul ops: [*, M, K] × [*, K, N] → [*, M, N] where * are broadcast
+/// batch dims. Core ML rejects matmul ops where the declared output shape
+/// doesn't match the inferred result, or where inner dimensions are
+/// incompatible (K must match).
+fn validate_matmul_shapes(operations: &[apple_proto::mil_spec::Operation]) {
+    for op in operations {
+        if op.r#type != "matmul" {
+            continue;
+        }
+
+        let op_name = op.attributes.get("name")
+            .and_then(|v| v.value.as_ref())
+            .and_then(|iv| match iv {
+                apple_proto::mil_spec::value::Value::ImmediateValue(imv) => imv.value.as_ref(),
+                _ => None,
+            })
+            .and_then(|v| match v {
+                apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv) => {
+                    match tv.value.as_ref() {
+                        Some(apple_proto::mil_spec::tensor_value::Value::Strings(rs)) => rs.values.first().cloned(),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| format!("<unnamed matmul>"));
+
+        // Reuse the same shape extraction helper pattern
+        let extract_shape = |arg_name: &str| -> Option<Vec<u64>> {
+            op.inputs.get(arg_name)
+                .and_then(|arg| arg.arguments.first())
+                .and_then(|binding| match &binding.binding {
+                    Some(apple_proto::mil_spec::argument::binding::Binding::Value(v)) => Some(v),
+                    _ => None,
+                })
+                .and_then(|v| v.r#type.as_ref())
+                .and_then(|vt| vt.r#type.as_ref())
+                .and_then(|t| match t {
+                    apple_proto::mil_spec::value_type::Type::TensorType(tt) => {
+                        if tt.dimensions.is_empty() { None } else { Some(tt.dimensions.clone()) }
+                    }
+                    _ => None,
+                })
+                .map(|dims| {
+                    dims.iter().filter_map(|d| match &d.dimension {
+                        Some(apple_proto::mil_spec::dimension::Dimension::Constant(cd)) => Some(cd.size),
+                        _ => None,
+                    }).collect::<Vec<_>>()
+                })
+                .filter(|v: &Vec<u64>| !v.is_empty())
+        };
+
+        let shape_x = extract_shape("x");
+        let shape_y = extract_shape("y");
+
+        // Extract declared output shape
+        let output_shape: Option<Vec<u64>> = op.outputs.first()
+            .and_then(|nvt| nvt.r#type.as_ref())
+            .and_then(|vt| vt.r#type.as_ref())
+            .and_then(|t| match t {
+                apple_proto::mil_spec::value_type::Type::TensorType(tt) => {
+                    if tt.dimensions.is_empty() { None } else { Some(tt.dimensions.clone()) }
+                }
+                _ => None,
+            })
+            .map(|dims| {
+                dims.iter().filter_map(|d| match &d.dimension {
+                    Some(apple_proto::mil_spec::dimension::Dimension::Constant(cd)) => Some(cd.size),
+                    _ => None,
+                }).collect::<Vec<_>>()
+            })
+            .filter(|v| !v.is_empty());
+
+        if let (Some(sx), Some(sy), Some(os)) = (&shape_x, &shape_y, &output_shape) {
+            let x_rank = sx.len();
+            let y_rank = sy.len();
+
+            if x_rank >= 2 && y_rank >= 2 {
+                let lhs_rows = sx[x_rank - 2];
+                let lhs_cols = sx[x_rank - 1];
+                let rhs_rows = sy[y_rank - 2];
+                let rhs_cols = sy[y_rank - 1];
+
+                // Validate inner dimensions
+                if lhs_cols != rhs_rows && lhs_cols > 0 && rhs_rows > 0 {
+                    panic!(
+                        "{}: matmul inner dims incompatible: x={:?} y={:?} — \
+                         lhs_cols ({}) != rhs_rows ({}). Core ML will reject this.",
+                        op_name, sx, sy, lhs_cols, rhs_rows
+                    );
+                }
+
+                // Compute expected output: broadcast(batch_x, batch_y) + [lhs_rows, rhs_cols]
+                let batch_x = &sx[..x_rank - 2];
+                let batch_y = &sy[..y_rank - 2];
+                let max_batch_rank = batch_x.len().max(batch_y.len());
+                let mut expected = Vec::with_capacity(max_batch_rank + 2);
+                let mut batch_compatible = true;
+                for i in 0..max_batch_rank {
+                    let da = if i < max_batch_rank - batch_x.len() { 1u64 } else { batch_x[i - (max_batch_rank - batch_x.len())] };
+                    let db = if i < max_batch_rank - batch_y.len() { 1u64 } else { batch_y[i - (max_batch_rank - batch_y.len())] };
+                    if da != db && da != 1 && db != 1 {
+                        batch_compatible = false;
+                        break;
+                    }
+                    expected.push(da.max(db));
+                }
+
+                if batch_compatible {
+                    expected.push(lhs_rows);
+                    expected.push(rhs_cols);
+
+                    if expected != *os {
+                        panic!(
+                            "{}: matmul output shape is {:?} but inferred from x={:?} y={:?} \
+                             is {:?} — Core ML will reject this. The matmul shape inference \
+                             must compute broadcast_batch + [lhs_rows, rhs_cols], not reuse x's shape.",
+                            op_name, os, sx, sy, expected
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Convert a `CoreMlFunction` into an Apple-compatible `MILSpec.Function`.
 fn function_to_apple_proto(
     func: &CoreMlFunction,
@@ -4190,6 +4318,11 @@ fn function_to_apple_proto(
     // Core ML rejects mul/add/etc. ops where the declared output shape doesn't match
     // the broadcast result of the inputs.
     validate_elementwise_broadcast_shapes(&operations);
+
+    // Validate matmul output shapes before writing.
+    // Core ML rejects matmul ops where the declared output shape doesn't match
+    // the inferred batched matmul result, or where inner dimensions are incompatible.
+    validate_matmul_shapes(&operations);
 
     let block = apple_proto::mil_spec::Block {
         inputs: vec![],

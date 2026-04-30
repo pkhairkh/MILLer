@@ -51,16 +51,49 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
         // ─── Identity: propagate input shape (critical for graph I/O nodes) ───
         AirOp::Identity { input } => node_shapes.get(input).cloned().unwrap_or_default(),
 
-        // ─── MatMul: [M, K] × [K, N] → [M, N]; 1-D broadcast cases ───
+        // ─── MatMul: batched [*, M, K] × [*, K, N] → [*, M, N]; 1-D broadcast cases ───
+        // Sprint 63: extended from 2-D only to arbitrary batched matmul.
+        // Batch dims broadcast right-aligned; last two dims are the matrix dims.
+        // E.g. [1,16,512,128] × [1,16,128,512] → [1,16,512,512]
         AirOp::MatMul { a, b, .. } => {
             match (node_shapes.get(a), node_shapes.get(b)) {
                 (Some(a_shape), Some(b_shape)) => {
-                    match (a_shape.len(), b_shape.len()) {
-                        (2, 2) => vec![a_shape[0], b_shape[1]],
-                        (1, 2) => vec![b_shape[1]], // bias-like: [K] × [K,N] → [N]
-                        (2, 1) => vec![a_shape[0]], // [M,K] × [K] → [M]
-                        (1, 1) => vec![],           // scalar × scalar
-                        _ => vec![],
+                    let a_rank = a_shape.len();
+                    let b_rank = b_shape.len();
+                    if a_rank >= 2 && b_rank >= 2 {
+                        // Batched matmul: broadcast batch dims + [M, N]
+                        let lhs_rows = a_shape[a_rank - 2];
+                        let lhs_cols = a_shape[a_rank - 1];
+                        let rhs_rows = b_shape[b_rank - 2];
+                        let rhs_cols = b_shape[b_rank - 1];
+                        let batch_a = &a_shape[..a_rank - 2];
+                        let batch_b = &b_shape[..b_rank - 2];
+                        let batch = if batch_a.is_empty() && batch_b.is_empty() {
+                            vec![]
+                        } else {
+                            broadcast_shape(batch_a, batch_b)
+                                .unwrap_or_else(|| batch_a.to_vec())
+                        };
+                        let mut out = batch;
+                        // Validate inner dims when both are concrete (> 0)
+                        if lhs_cols > 0 && rhs_rows > 0 && lhs_cols != rhs_rows {
+                            eprintln!(
+                                "[WARN] MatMul inner dims mismatch: lhs_cols={} != rhs_rows={} \
+                                 for shapes {:?} × {:?}",
+                                lhs_cols, rhs_rows, a_shape, b_shape
+                            );
+                        }
+                        out.push(lhs_rows);
+                        out.push(rhs_cols);
+                        out
+                    } else {
+                        // 1-D broadcast cases
+                        match (a_rank, b_rank) {
+                            (1, 2) => vec![b_shape[1]], // bias-like: [K] × [K,N] → [N]
+                            (2, 1) => vec![a_shape[0]], // [M,K] × [K] → [M]
+                            (1, 1) => vec![],           // scalar × scalar
+                            _ => vec![],
+                        }
                     }
                 }
                 _ => vec![],
