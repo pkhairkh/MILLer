@@ -118,6 +118,7 @@ name = "ane-coreml-proto"
 version = "0.1.0"
 dependencies = [
  "ane-ir",
+ "half",
  "prost",
  "prost-build",
  "prost-types",

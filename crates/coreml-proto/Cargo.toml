@@ -6,6 +6,7 @@ description = "Core ML protobuf definitions for direct mlpackage emission (Sprin
 
 [dependencies]
 ane-ir = { workspace = true }
+half = { workspace = true }
 prost = { workspace = true }
 prost-types = { workspace = true }
 serde = { workspace = true }

@@ -2068,11 +2068,32 @@ fn make_immediate_float32_value(value: f32) -> apple_proto::mil_spec::Value {
 /// Create a float scalar immediate value whose *declared* dtype matches `apple_dtype`.
 ///
 /// Core ML requires the `fill.value` parameter dtype to match the fill output dtype.
-/// The proto `TensorValue.floats` field always stores `float` (f32) bits, but the
-/// `ValueType` tag tells Core ML the logical dtype.  For `Float16` outputs the tag
-/// must be `Float16`; Core ML will truncate the f32 representation to f16 at load
-/// time.
+/// Crucially, the storage encoding must also be compatible with the declared dtype:
+///
+/// - **Float32**: uses `TensorValue.floats` (repeated `float` = f32 bits).
+/// - **Float16**: uses `TensorValue.bytes` with raw IEEE-754 half-precision bits.
+///   Core ML's ML Program parser rejects a `FLOAT16` tensor stored via the `floats`
+///   field with: "Tensor storage and type have different number of elements".
 fn make_immediate_float_value(apple_dtype: i32, value: f32) -> apple_proto::mil_spec::Value {
+    let float16_dtype = apple_proto::mil_spec::DataType::Float16 as i32;
+
+    let tensor_value = if apple_dtype == float16_dtype {
+        // Encode as raw f16 bytes. Core ML expects FLOAT16 immediates in the
+        // `bytes` field, not the `floats` field.
+        let f16_bits = half::f16::from_f32(value).to_bits();
+        let raw_bytes = f16_bits.to_le_bytes().to_vec();
+        apple_proto::mil_spec::tensor_value::Value::Bytes(
+            apple_proto::mil_spec::tensor_value::RepeatedBytes { values: raw_bytes },
+        )
+    } else {
+        // Float32 (or any other float dtype) → standard `floats` storage.
+        apple_proto::mil_spec::tensor_value::Value::Floats(
+            apple_proto::mil_spec::tensor_value::RepeatedFloats {
+                values: vec![value],
+            },
+        )
+    };
+
     apple_proto::mil_spec::Value {
         doc_string: String::new(),
         r#type: Some(make_apple_value_type(apple_dtype, &[])),
@@ -2080,11 +2101,7 @@ fn make_immediate_float_value(apple_dtype: i32, value: f32) -> apple_proto::mil_
             apple_proto::mil_spec::value::ImmediateValue {
                 value: Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(
                     apple_proto::mil_spec::TensorValue {
-                        value: Some(apple_proto::mil_spec::tensor_value::Value::Floats(
-                            apple_proto::mil_spec::tensor_value::RepeatedFloats {
-                                values: vec![value],
-                            },
-                        )),
+                        value: Some(tensor_value),
                     },
                 )),
             },
@@ -3424,8 +3441,9 @@ fn mir_op_to_apple_ops(
             );
             // value as scalar immediate whose dtype matches the fill output dtype.
             // Core ML requires fill.value and fill.output to have the same data type.
-            // For FP16 outputs, the value's ValueType tag must be Float16; the proto
-            // `floats` field still stores f32 bits which Core ML truncates to f16.
+            // For FP16 outputs, the value is encoded as raw f16 bytes (see
+            // make_immediate_float_value), because Core ML rejects FLOAT16 tensors
+            // stored via the `floats` field.
             inputs.insert(
                 "value".to_string(),
                 make_value_arg(make_immediate_float_value(apple_dtype, *value)),
@@ -3910,7 +3928,16 @@ fn mir_op_to_apple_ops(
 /// declared dtype matches the output dtype.  Core ML's parser rejects the model
 /// otherwise with: "In 'fill' operations, tensors parameter value[0], and output at
 /// index 0 must have the same data type."
+///
+/// Also validates that immediate tensor storage is compatible with the declared dtype:
+/// - `FLOAT16` tensors must use `bytes` storage (not `floats`), because Core ML's
+///   ML Program parser rejects them with "Tensor storage and type have different
+///   number of elements".
+/// - `FLOAT32` tensors must use `floats` storage.
 fn validate_fill_dtype_consistency(operations: &[apple_proto::mil_spec::Operation]) {
+    let float16_dtype = apple_proto::mil_spec::DataType::Float16 as i32;
+    let float32_dtype = apple_proto::mil_spec::DataType::Float32 as i32;
+
     for op in operations {
         if op.r#type != "fill" && op.r#type != "fill_like" {
             continue;
@@ -3932,18 +3959,44 @@ fn validate_fill_dtype_consistency(operations: &[apple_proto::mil_spec::Operatio
             })
             .unwrap_or_else(|| format!("<unnamed {}>", op.r#type));
 
-        // Extract value parameter dtype: inputs["value"] → Argument → first Binding → Value → ValueType
-        let value_dtype = op.inputs.get("value")
+        // Extract value parameter: inputs["value"] → Argument → first Binding → Value
+        let value_entry = op.inputs.get("value")
             .and_then(|arg| arg.arguments.first())
             .and_then(|binding| match &binding.binding {
                 Some(apple_proto::mil_spec::argument::binding::Binding::Value(v)) => Some(v),
                 _ => None,
-            })
+            });
+
+        // Extract declared dtype from the value parameter's ValueType
+        let value_dtype = value_entry
+            .as_ref()
             .and_then(|v| v.r#type.as_ref())
             .and_then(|vt| vt.r#type.as_ref())
             .and_then(|t| match t {
                 apple_proto::mil_spec::value_type::Type::TensorType(tt) => Some(tt.data_type),
                 _ => None,
+            });
+
+        // Extract the storage kind (which oneof variant is set) from the immediate tensor
+        let storage_kind = value_entry
+            .as_ref()
+            .and_then(|v| v.value.as_ref())
+            .and_then(|iv| match iv {
+                apple_proto::mil_spec::value::Value::ImmediateValue(imv) => imv.value.as_ref(),
+                _ => None,
+            })
+            .and_then(|v| match v {
+                apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv) => tv.value.as_ref(),
+                _ => None,
+            })
+            .map(|tv| match tv {
+                apple_proto::mil_spec::tensor_value::Value::Floats(_) => "floats",
+                apple_proto::mil_spec::tensor_value::Value::Ints(_) => "ints",
+                apple_proto::mil_spec::tensor_value::Value::Bools(_) => "bools",
+                apple_proto::mil_spec::tensor_value::Value::Strings(_) => "strings",
+                apple_proto::mil_spec::tensor_value::Value::LongInts(_) => "longInts",
+                apple_proto::mil_spec::tensor_value::Value::Doubles(_) => "doubles",
+                apple_proto::mil_spec::tensor_value::Value::Bytes(_) => "bytes",
             });
 
         // Extract output dtype (first output)
@@ -3970,6 +4023,28 @@ fn validate_fill_dtype_consistency(operations: &[apple_proto::mil_spec::Operatio
                 // but don't panic since it might be a valid edge case we haven't seen.
             }
             _ => {} // dtypes match, all good
+        }
+
+        // Validate storage/dtype consistency.
+        // Core ML rejects FLOAT16 immediates stored via the `floats` field.
+        match (value_dtype, storage_kind) {
+            (Some(dt), Some("floats")) if dt == float16_dtype => {
+                panic!(
+                    "{}: fill value is FLOAT16 but stored via `floats` field — \
+                     Core ML rejects this with 'Tensor storage and type have different \
+                     number of elements'. Use `bytes` storage with raw f16 bits instead \
+                     (see make_immediate_float_value).",
+                    op_name
+                );
+            }
+            (Some(dt), Some("bytes")) if dt == float32_dtype => {
+                panic!(
+                    "{}: fill value is FLOAT32 but stored via `bytes` field — \
+                     FLOAT32 scalars should use `floats` storage.",
+                    op_name
+                );
+            }
+            _ => {} // storage/dtype pair is valid
         }
     }
 }
@@ -4707,8 +4782,18 @@ mod tests {
             Some(apple_proto::mil_spec::value::Value::ImmediateValue(iv)) => match &iv.value {
                 Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv)) => {
                     match &tv.value {
-                        Some(apple_proto::mil_spec::tensor_value::Value::Floats(floats)) => {
-                            assert_eq!(floats.values, vec![1.0f32]);
+                        // FLOAT16 scalars are stored as raw f16 bytes (2 bytes LE),
+                        // because Core ML rejects FLOAT16 tensors in the `floats` field.
+                        Some(apple_proto::mil_spec::tensor_value::Value::Bytes(bytes)) => {
+                            let f16_bits = half::f16::from_f32(1.0f32).to_bits();
+                            let expected = f16_bits.to_le_bytes().to_vec();
+                            assert_eq!(bytes.values, expected,
+                                "fill.value for FP16 should be raw f16 bytes");
+                        }
+                        Some(apple_proto::mil_spec::tensor_value::Value::Floats(_)) => {
+                            panic!("fill.value for FP16 must NOT use `floats` storage — \
+                                   Core ML rejects FLOAT16 tensors in the floats field with \
+                                   'Tensor storage and type have different number of elements'");
                         }
                         other => panic!("fill.value unexpected variant: {:?}", other),
                     }
@@ -4731,7 +4816,9 @@ mod tests {
 
         // Verify fill value dtype matches fill output dtype (Core ML requirement).
         // Previously fill.value was always encoded as FLOAT32 even when output was
-        // FLOAT16, causing Core ML to reject the model.
+        // FLOAT16, causing Core ML to reject the model. Even after fixing the dtype
+        // tag, using `floats` storage for FLOAT16 still caused "Tensor storage and
+        // type have different number of elements". Now FLOAT16 uses `bytes` storage.
         let value_dtype = match &value_binding.r#type {
             Some(vt) => match &vt.r#type {
                 Some(apple_proto::mil_spec::value_type::Type::TensorType(tt)) => tt.data_type,
