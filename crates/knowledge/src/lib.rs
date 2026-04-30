@@ -13,6 +13,7 @@ pub mod snapshot;
 pub mod store;
 pub mod transfer;
 pub mod update;
+pub mod util;
 
 use serde::{Deserialize, Serialize};
 

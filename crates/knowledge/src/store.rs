@@ -9,12 +9,14 @@
 //! Each observation is stored as a separate JSON file for atomicity
 //! and to avoid write contention. This can be swapped for SQLite later.
 
-use ane_ir::kir::{KnowledgeScope, KnowledgeType, KnowledgeUnit};
+use ane_ir::kir::{KnowledgeType, KnowledgeUnit};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use crate::util::{payload_ane_legal, payload_quality_impact, sanitize_id, scopes_overlap};
 
 /// Schema version for the knowledge store directory layout.
 pub const STORE_SCHEMA_VERSION: &str = "1.0.0";
@@ -342,7 +344,9 @@ impl KnowledgeStore {
         }
 
         // Persist the observation entry
-        let entry = self.index.get(&id).expect("entry must exist after insertion");
+        let entry = self.index.get(&id).ok_or_else(|| {
+            anyhow::anyhow!("internal error: entry '{}' missing after insertion", id)
+        })?;
         let obs_path = self.path.join("observations").join(format!("{}.json", sanitize_id(&id)));
         let json = serde_json::to_string_pretty(entry)
             .with_context(|| format!("Failed to serialize observation: {}", id))?;
@@ -455,18 +459,7 @@ impl KnowledgeStore {
     }
 }
 
-/// Check if two knowledge scopes overlap (share at least one device class, OS version, and opset version).
-fn scopes_overlap(a: &KnowledgeScope, b: &KnowledgeScope) -> bool {
-    let devices_overlap = a.device_classes.iter().any(|d| b.device_classes.contains(d))
-        || a.device_classes.contains(&"unknown".to_string())
-        || b.device_classes.contains(&"unknown".to_string());
-    let os_overlap = a.os_versions.iter().any(|v| b.os_versions.contains(v))
-        || a.os_versions.contains(&"unknown".to_string())
-        || b.os_versions.contains(&"unknown".to_string());
-    let opset_overlap = a.opset_versions.iter().any(|v| b.opset_versions.contains(v));
-
-    devices_overlap && os_overlap && opset_overlap
-}
+// scopes_overlap is now provided by crate::util
 
 /// Check if two knowledge units make contradictory claims.
 ///
@@ -476,18 +469,16 @@ fn scopes_overlap(a: &KnowledgeScope, b: &KnowledgeScope) -> bool {
 fn claims_contradict(a: &KnowledgeUnit, b: &KnowledgeUnit) -> bool {
     match a.knowledge_type {
         KnowledgeType::LegalityRule => {
-            // Check if ane_legal claims differ
-            let a_legal = a.payload.get("ane_legal").and_then(|v| v.as_bool());
-            let b_legal = b.payload.get("ane_legal").and_then(|v| v.as_bool());
-            match (a_legal, b_legal) {
+            // Check if ane_legal claims differ (using typed accessor)
+            match (payload_ane_legal(&a.payload), payload_ane_legal(&b.payload)) {
                 (Some(a_val), Some(b_val)) => a_val != b_val,
                 _ => false,
             }
         }
         KnowledgeType::PrecisionHazard => {
-            // Check if quality impact claims are opposite
-            let a_impact = a.payload.get("quality_impact").and_then(|v| v.as_str());
-            let b_impact = b.payload.get("quality_impact").and_then(|v| v.as_str());
+            // Check if quality impact claims are opposite (using typed accessor)
+            let a_impact = payload_quality_impact(&a.payload);
+            let b_impact = payload_quality_impact(&b.payload);
             matches!(
                 (a_impact, b_impact),
                 (Some("negligible"), Some("severe")) | (Some("severe"), Some("negligible"))
@@ -500,10 +491,7 @@ fn claims_contradict(a: &KnowledgeUnit, b: &KnowledgeUnit) -> bool {
     }
 }
 
-/// Sanitize an entry ID for use as a filename.
-fn sanitize_id(id: &str) -> String {
-    id.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_")
-}
+// sanitize_id is now provided by crate::util
 
 #[cfg(test)]
 mod tests {

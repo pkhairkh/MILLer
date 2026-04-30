@@ -390,8 +390,12 @@ impl RoleMirBuilder {
                 })
             }
 
-            ShardOpProfile::AttentionComputation { causal: _, stateful } => {
+            ShardOpProfile::AttentionComputation { causal: _, stateful, num_heads, head_dim, context_length } => {
                 // Attention: ReadState (KV cache) → ScaledDotProductAttention → UpdateState
+                // KV cache shape is derived from the shard spec dimensions:
+                //   [batch, num_heads, context_length, head_dim]
+                let kv_cache_shape = vec![1, *num_heads, *context_length, *head_dim];
+
                 let q_id = MirNodeId(format!("{}_q", spec.shard_name));
                 let k_id = MirNodeId(format!("{}_k", spec.shard_name));
                 let v_id = MirNodeId(format!("{}_v", spec.shard_name));
@@ -405,15 +409,11 @@ impl RoleMirBuilder {
                         op: MirOp::MILReadState {
                             name: read_k_name,
                             state_id: format!("{}_kv_cache_k", spec.shard_name),
-                            // TODO: Derive KV cache shape from shard spec instead of hardcoding.
-                            // This shape [1, 32, 64, 128] only works for models matching
-                            // these exact dimensions. Should use spec.num_heads, spec.head_dim,
-                            // and spec.context_length when available.
-                            shape: vec![1, 32, 64, 128],
+                            shape: kv_cache_shape.clone(),
                             dtype: self.default_dtype.clone(),
                         },
                         dtype: self.default_dtype.clone(),
-                        shape: vec![1, 32, 64, 128],
+                        shape: kv_cache_shape.clone(),
                         compute_unit_hint: Some(compute_hint.clone()),
                         air_source: None,
                     });
@@ -425,12 +425,11 @@ impl RoleMirBuilder {
                         op: MirOp::MILReadState {
                             name: read_v_name,
                             state_id: format!("{}_kv_cache_v", spec.shard_name),
-                            // TODO: Same as K cache — derive from shard spec.
-                            shape: vec![1, 32, 64, 128],
+                            shape: kv_cache_shape.clone(),
                             dtype: self.default_dtype.clone(),
                         },
                         dtype: self.default_dtype.clone(),
-                        shape: vec![1, 32, 64, 128],
+                        shape: kv_cache_shape.clone(),
                         compute_unit_hint: Some(compute_hint.clone()),
                         air_source: None,
                     });
@@ -951,7 +950,7 @@ mod tests {
                 dtype: "fp16".into(),
             }],
             compute_units: ComputeUnitHint::CPUAndNE,
-            op_profile: ShardOpProfile::AttentionComputation { causal: true, stateful: true },
+            op_profile: ShardOpProfile::AttentionComputation { causal: true, stateful: true, num_heads: 4, head_dim: 32, context_length: 64 },
         };
 
         let out_spec = ShardSpec {

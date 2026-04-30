@@ -5,15 +5,43 @@ import time
 from typing import Dict, Any, List, Optional
 import json
 
-# Lazy import to avoid ImportError on non-macOS systems
-ct = None
+from common import _ensure_coremltools, COMPUTE_MAP
 
-def _ensure_coremltools():
-    global ct
-    if ct is None:
-        import coremltools
-        ct = coremltools
-    return ct
+
+def generate_inputs(
+    mlpackage_path: str,
+    compute_units: str = "CPU_AND_NE",
+    seed: int = 42,
+) -> Dict[str, np.ndarray]:
+    """Generate random inputs for a Core ML model based on its spec.
+
+    This is the single place where profiling input generation happens
+    (W-22 fix). Previously, bridge.py's handle_profile duplicated this
+    logic inline.
+
+    Args:
+        mlpackage_path: Path to the .mlpackage directory.
+        compute_units: "CPU_AND_NE", "CPU_AND_GPU", "CPU_ONLY", "ALL".
+        seed: Random seed for reproducible input generation.
+
+    Returns:
+        Dict of input name -> numpy array (fp16).
+
+    Raises:
+        ImportError: If coremltools is not installed.
+    """
+    ct = _ensure_coremltools()
+    compute_unit = COMPUTE_MAP.get(compute_units, ct.ComputeUnit.CPU_AND_NE)
+    model = ct.models.MLModel(mlpackage_path, compute_units=compute_unit)
+
+    np.random.seed(seed)
+    spec = model.get_spec()
+    desc = spec.description
+    inputs = {}
+    for inp in desc.input:
+        shape = list(inp.type.multiArrayType.shape) if hasattr(inp.type, 'multiArrayType') else [1, 64]
+        inputs[inp.name] = np.random.randn(*shape).astype(np.float16)
+    return inputs
 
 
 def profile_model(
@@ -38,16 +66,11 @@ def profile_model(
         Dict with latency statistics and output snapshots.
     """
     ct = _ensure_coremltools()
-    compute_map = {
-        "CPU_AND_NE": ct.ComputeUnit.CPU_AND_NE,
-        "CPU_AND_GPU": ct.ComputeUnit.CPU_AND_GPU,
-        "CPU_ONLY": ct.ComputeUnit.CPU_ONLY,
-        "ALL": ct.ComputeUnit.ALL,
-    }
+    compute_unit = COMPUTE_MAP.get(compute_units, ct.ComputeUnit.CPU_AND_NE)
     
     model = ct.models.MLModel(
         mlpackage_path,
-        compute_units=compute_map.get(compute_units, ct.ComputeUnit.CPU_AND_NE),
+        compute_units=compute_unit,
     )
     
     state = None

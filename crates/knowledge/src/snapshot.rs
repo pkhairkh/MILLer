@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::store::{EntrySource, KnowledgeEntry, KnowledgeStore, STORE_SCHEMA_VERSION};
+use crate::util::sanitize_id;
 
 /// Snapshot of the knowledge store at a point in time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -196,10 +197,7 @@ pub struct ImportStats {
     pub observations_failed: usize,
 }
 
-/// Sanitize an entry ID for use as a filename.
-fn sanitize_id(id: &str) -> String {
-    id.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_")
-}
+// sanitize_id is now provided by crate::util
 
 #[cfg(test)]
 mod tests {

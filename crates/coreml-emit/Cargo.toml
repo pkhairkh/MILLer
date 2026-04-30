@@ -5,10 +5,10 @@ edition = "2021"
 description = "Direct protobuf-based mlpackage emission without Python bridge (Sprint 41)"
 
 [dependencies]
-ane-coreml-proto = { path = "../coreml-proto" }
-prost = "0.12"
+ane-coreml-proto = { workspace = true }
+prost = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 sha2 = { workspace = true }
-uuid = { version = "1", features = ["v4"] }
+uuid = { workspace = true }

@@ -46,6 +46,9 @@ import sys
 
 os.environ.setdefault("COREMLTOOLS_DISABLE_TELEMETRY", "1")
 
+# Import shared constants and helpers (W-17, W-18, W-19, W-26 fixes)
+from common import _error_result, COMPUTE_MAP
+
 # Import the real emission logic
 from mil_emitter import (
     emit_linear_projection,
@@ -277,6 +280,10 @@ def handle_host_inspect(command: dict) -> dict:
     without executing the model on a device runtime. It NEVER infers ANE
     behavior or compute unit placement from host-only evidence.
 
+    Refactored (W-21 fix): delegates structural inspection to model_structure.py
+    and compute plan checking to compute_plan.py, instead of reimplementing
+    their logic inline.
+
     Payload fields:
         mlpackage_path: str — path to the .mlpackage to inspect
         compute_units: str — compute units hint for compute plan check (default "CPU_AND_NE")
@@ -297,7 +304,6 @@ def handle_host_inspect(command: dict) -> dict:
           - warnings: list of str
     """
     from pathlib import Path
-    import hashlib
 
     mlpackage_path = command.get("mlpackage_path", "")
     compute_units = command.get("compute_units", "CPU_AND_NE")
@@ -328,7 +334,37 @@ def handle_host_inspect(command: dict) -> dict:
             "warnings": ["mlpackage directory not found"],
         }
 
-    # Step 2: Read mlpackage Manifest.json
+    # Step 2: Delegate structural inspection to model_structure.py (W-21 fix)
+    # Previously this reimplemented ~100 lines of model loading and I/O spec
+    # extraction. Now we delegate to the dedicated module.
+    structure_result = inspect_model_structure(mlpackage_path)
+
+    # Extract structural info from model_structure result
+    model_loadable = structure_result.get("available", False)
+    model_load_failure_reason = None if model_loadable else structure_result.get("reason", "unknown")
+    input_specs = []
+    output_specs = []
+    function_count = None
+
+    if model_loadable:
+        for func in structure_result.get("functions", []):
+            for inp in func.get("inputs", []):
+                input_specs.append({
+                    "name": inp.get("name", "unknown"),
+                    "shape": inp.get("shape", []),
+                    "dtype": str(inp.get("dtype", "unknown")),
+                })
+            for outp in func.get("outputs", []):
+                output_specs.append({
+                    "name": outp.get("name", "unknown"),
+                    "shape": outp.get("shape", []),
+                    "dtype": str(outp.get("dtype", "unknown")),
+                })
+        function_count = len(structure_result.get("functions", [])) or 1
+    else:
+        warnings.append(f"Structural inspection unavailable: {model_load_failure_reason}")
+
+    # Step 3: Read Manifest.json (lightweight, no delegation needed)
     manifest_path = pkg_path / "Manifest.json"
     manifest_readable = False
     manifest_contents = None
@@ -340,66 +376,7 @@ def handle_host_inspect(command: dict) -> dict:
         except Exception as e:
             warnings.append(f"Failed to read Manifest.json: {e}")
 
-    # Step 3: Try to load the model via coremltools
-    model_loadable = False
-    model_load_failure_reason = None
-    input_specs = []
-    output_specs = []
-    function_count = None
-
-    try:
-        import coremltools as ct
-        try:
-            model = ct.models.MLModel(str(pkg_path))
-            model_loadable = True
-
-            # Extract input/output specs from the loaded model
-            try:
-                spec = model.get_spec()
-                if hasattr(spec, 'description'):
-                    desc = spec.description
-                    for inp in desc.input:
-                        shape = []
-                        if hasattr(inp, 'type') and hasattr(inp.type, 'multiArrayType'):
-                            shape = list(inp.type.multiArrayType.shape)
-                        input_specs.append({
-                            "name": inp.name,
-                            "shape": shape,
-                            "dtype": "fp16",  # Best effort from spec
-                        })
-                    for outp in desc.output:
-                        shape = []
-                        if hasattr(outp, 'type') and hasattr(outp.type, 'multiArrayType'):
-                            shape = list(outp.type.multiArrayType.shape)
-                        output_specs.append({
-                            "name": outp.name,
-                            "shape": shape,
-                            "dtype": "fp16",
-                        })
-            except Exception as e:
-                warnings.append(f"Could not extract I/O specs from model: {e}")
-
-            # Count functions
-            try:
-                if hasattr(spec, 'functions'):
-                    function_count = len(spec.functions) if spec.functions else 1
-                else:
-                    function_count = 1
-            except Exception:
-                function_count = 1
-
-        except Exception as e:
-            error_str = str(e)
-            model_load_failure_reason = error_str
-            if "libcoremlpython" in error_str or "CoreML" in error_str:
-                warnings.append("Core ML runtime not available on this platform — model load failed as expected")
-            else:
-                warnings.append(f"Model load failed: {error_str}")
-    except ImportError:
-        model_load_failure_reason = "coremltools not installed"
-        warnings.append("coremltools not available — model load cannot be attempted")
-
-    # Step 4: Check compute plan availability (does not infer ANE behavior)
+    # Step 4: Delegate compute plan check to compute_plan.py
     compute_plan_available = False
     try:
         from compute_plan import inspect_compute_plan
@@ -413,16 +390,21 @@ def handle_host_inspect(command: dict) -> dict:
     except Exception as e:
         warnings.append(f"Compute plan check failed: {e}")
 
-    # Step 5: File inventory
+    # Step 5: File inventory (delegate to fallback_file_structure if available)
     file_inventory = []
     total_size_bytes = 0
-    for root, dirs, files in os.walk(pkg_path):
-        for f in files:
-            fp = os.path.join(root, f)
-            rel = os.path.relpath(fp, pkg_path)
-            sz = os.path.getsize(fp)
-            total_size_bytes += sz
-            file_inventory.append({"path": rel, "size_bytes": sz})
+    fallback = fallback_file_structure(mlpackage_path) if not model_loadable else None
+    if fallback and fallback.get("available", False):
+        file_inventory = fallback.get("file_inventory", [])
+        total_size_bytes = sum(f.get("size_bytes", 0) for f in file_inventory)
+    else:
+        for root, dirs, files in os.walk(pkg_path):
+            for f in files:
+                fp = os.path.join(root, f)
+                rel = os.path.relpath(fp, pkg_path)
+                sz = os.path.getsize(fp)
+                total_size_bytes += sz
+                file_inventory.append({"path": rel, "size_bytes": sz})
 
     # Important: do not infer ANE behavior from host-only inspection
     warnings.append("Host-side inspection only — no ANE placement or runtime behavior is implied")
@@ -451,7 +433,8 @@ def handle_profile(command: dict) -> dict:
     This requires Apple hardware with Core ML runtime for predict().
     On non-Apple platforms, it returns an honest error.
 
-    Delegates to profiler.profile_model() for the actual measurement.
+    Delegates input generation to profiler.generate_inputs() (W-22 fix)
+    and profiling to profiler.profile_model().
 
     Payload fields:
         mlpackage_path: str — path to the .mlpackage to profile
@@ -466,8 +449,7 @@ def handle_profile(command: dict) -> dict:
     """
     try:
         import coremltools as ct
-        import numpy as np
-        from profiler import profile_model
+        from profiler import profile_model, generate_inputs
     except ImportError as e:
         return _error_result(f"Required module not available for profiling: {e}")
 
@@ -481,27 +463,11 @@ def handle_profile(command: dict) -> dict:
     seed = command.get("seed", 42)
 
     try:
-        # Load the model to extract input specs and generate inputs
-        compute_map = {
-            "CPU_AND_NE": ct.ComputeUnit.CPU_AND_NE,
-            "CPU_AND_GPU": ct.ComputeUnit.CPU_AND_GPU,
-            "CPU_ONLY": ct.ComputeUnit.CPU_ONLY,
-            "ALL": ct.ComputeUnit.ALL,
-        }
-        compute_unit = compute_map.get(compute_units_str, ct.ComputeUnit.CPU_AND_NE)
+        # Delegate input generation to profiler.generate_inputs() (W-22 fix)
+        # Previously this duplicated the input-generation logic inline.
+        inputs = generate_inputs(mlpackage_path, compute_units_str, seed)
 
-        model = ct.models.MLModel(mlpackage_path, compute_units=compute_unit)
-
-        # Generate random inputs based on model spec
-        np.random.seed(seed)
-        spec = model.get_spec()
-        desc = spec.description
-        inputs = {}
-        for inp in desc.input:
-            shape = list(inp.type.multiArrayType.shape) if hasattr(inp.type, 'multiArrayType') else [1, 64]
-            inputs[inp.name] = np.random.randn(*shape).astype(np.float16)
-
-        # Delegate to profiler.profile_model() for actual measurement
+        # Delegate profiling to profiler.profile_model()
         profile_result = profile_model(
             mlpackage_path=mlpackage_path,
             inputs=inputs,
@@ -519,7 +485,6 @@ def handle_profile(command: dict) -> dict:
         min_ns = latency.get("min_ns", 0)
         max_ns = latency.get("max_ns", 0)
 
-        # Compute mean and stddev from profiler's median/p90/p99 if available
         # profile_model returns ns values; convert to ms
         timing_result = {
             "warmup_iterations": warmup_iterations,
@@ -1021,18 +986,8 @@ def _compare_mlpackages(proto_path: str, reference_path: str) -> dict:
     }
 
 
-def _error_result(message: str) -> dict:
-    return {
-        "status": "error",
-        "error_message": message,
-        "output_path": None,
-        "coremltools_version": None,
-        "content_hash": None,
-        "package_files": [],
-        "compute_plan": None,
-        "function_descriptors": [],
-        "metadata": {},
-    }
+# _error_result is now imported from common.py (W-18 fix).
+# The local definition has been removed.
 
 
 def main():
@@ -1078,11 +1033,12 @@ def main():
     elif cmd_type == "emit_lut_projection":
         result = emit_lut_projection(command)
     elif cmd_type == "emit_decode_step":
-        # Sprint 40: emit_decode_step now routes to the stateful path by default.
-        # The stateless path is available via emit_stateless_decode_step.
-        result = emit_stateful_decode_step(command)
-    elif cmd_type == "emit_stateless_decode_step":
+        # W-20 fix: emit_decode_step now routes to the stateful path by default
+        # (matching Sprint 40's intent). The function itself delegates to
+        # emit_stateful_decode_step, so we call it directly.
         result = emit_decode_step(command)
+    elif cmd_type == "emit_stateless_decode_step":
+        result = emit_stateless_decode_step(command)
     elif cmd_type == "emit_stateful_decode_step":
         result = emit_stateful_decode_step(command)
     elif cmd_type == "emit_shard_decode_step":

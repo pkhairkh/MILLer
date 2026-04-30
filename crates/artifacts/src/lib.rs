@@ -6,3 +6,6 @@
 pub mod hashing;
 pub mod manifest;
 pub mod packaging;
+
+#[cfg(test)]
+mod hashing_test;

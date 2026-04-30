@@ -5,3 +5,6 @@
 
 pub mod json_report;
 pub mod markdown;
+
+#[cfg(test)]
+mod report_test;

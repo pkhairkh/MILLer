@@ -6,17 +6,26 @@ Compatible with coremltools 9.0 (op_name_configs, CompressionGranularity).
 
 from typing import Dict, Any, List, Optional
 
-# Lazy import to avoid ImportError on non-macOS systems
-ct = None
+from common import _ensure_coremltools
+
+# Palettize-specific optimization imports (cached separately from ct)
 _OptimizationConfig = None
 _OpPalettizerConfig = None
 _palettize_weights = None
 
-def _ensure_coremltools():
-    global ct, _OptimizationConfig, _OpPalettizerConfig, _palettize_weights
-    if ct is None:
-        import coremltools
-        ct = coremltools
+
+def _ensure_palettize_deps():
+    """Ensure coremltools and palettization dependencies are loaded.
+    
+    Uses common._ensure_coremltools() for the core coremltools import,
+    then lazily imports the optimization sub-modules on first use.
+    
+    Raises:
+        ImportError: If coremltools (or its optimize sub-module) is not installed.
+    """
+    global _OptimizationConfig, _OpPalettizerConfig, _palettize_weights
+    if _OptimizationConfig is None:
+        _ensure_coremltools()  # raises ImportError if coremltools missing
         from coremltools.optimize.coreml import (
             OptimizationConfig,
             OpPalettizerConfig,
@@ -25,7 +34,6 @@ def _ensure_coremltools():
         _OptimizationConfig = OptimizationConfig
         _OpPalettizerConfig = OpPalettizerConfig
         _palettize_weights = palettize_weights
-    return ct
 
 
 def apply_palettization(
@@ -42,7 +50,7 @@ def apply_palettization(
     Returns:
         The palettized MLModel.
     """
-    _ensure_coremltools()
+    _ensure_palettize_deps()
     op_name_configs = {}
 
     for spec in palettization_specs:

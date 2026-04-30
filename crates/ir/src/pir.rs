@@ -440,6 +440,12 @@ pub enum ShardOpProfile {
         causal: bool,
         /// Whether KV cache state is used.
         stateful: bool,
+        /// Number of attention heads (determines KV cache dimension).
+        num_heads: usize,
+        /// Dimension per head (determines KV cache dimension).
+        head_dim: usize,
+        /// Maximum context / sequence length (determines KV cache dimension).
+        context_length: usize,
     },
     /// Output projection shard (decode-step Exit): Linear + optional norm.
     OutputProjection {
@@ -714,7 +720,13 @@ impl ShardPipelineSpec {
                     dtype: dtype.into(),
                 }],
                 compute_units: ShardRole::Interior.default_compute_units(),
-                op_profile: ShardOpProfile::AttentionComputation { causal: true, stateful: true },
+                op_profile: ShardOpProfile::AttentionComputation {
+                    causal: true,
+                    stateful: true,
+                    num_heads,
+                    head_dim,
+                    context_length: kv_len,
+                },
             },
             ShardSpec {
                 shard_name: shard_names[2].clone(),

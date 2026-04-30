@@ -33,3 +33,6 @@ pub mod serialize;
 pub mod sir;
 pub mod strategy;
 pub mod task_spec;
+
+#[cfg(test)]
+mod mir_engine_test;

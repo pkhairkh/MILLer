@@ -7,4 +7,4 @@ edition = "2021"
 serde = { workspace = true }
 serde_json = { workspace = true }
 rmp-serde = { workspace = true }
-toml = "0.8"
+toml = { workspace = true }

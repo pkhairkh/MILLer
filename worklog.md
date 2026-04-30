@@ -100,3 +100,33 @@ Stage Summary:
 - q_proj: [1,32,2048] (was []), k_proj: [1,32,1024] (was []), ReduceMean: [1,32,1] (was [])
 - All test suites pass: ane-passes (141), ane-trace (30), ane-ir (82)
 - One pre-existing test failure in ane-bridge (test_mir_graph_to_compat_with_resolver) — not caused by our changes
+
+---
+Task ID: T-10
+Agent: main
+Task: Fix knowledge store duplications (C-07, C-08, C-09, W-04, W-05)
+
+Work Log:
+- Created `crates/knowledge/src/util.rs` with shared `sanitize_id`, `scopes_overlap`, and typed payload accessor helpers (`payload_ane_legal`, `payload_op_pattern`, `payload_quality_impact`, `payload_ane_placed`)
+- **C-08 fix**: Removed duplicate `sanitize_id` from both `store.rs` and `snapshot.rs`; both now import from `crate::util::sanitize_id`
+- **C-09 fix**: Removed duplicate `scopes_overlap` from `conflict.rs` (took `&KnowledgeUnit`); canonical version in `util.rs` takes `&KnowledgeScope`; `conflict.rs` and `store.rs` both call `scopes_overlap(&a.unit.scope, &b.unit.scope)`
+- **C-07 fix**: Replaced `expect("entry must exist after insertion")` in `store.rs:345` with `ok_or_else(|| anyhow::anyhow!(...))?` — proper `Result`-based error handling
+- **W-04 fix**: Added typed payload accessor helpers in `util.rs`; updated `claims_contradict` (store.rs), `check_pair`/`same_claim` (conflict.rs), and `claims_agree` (transfer.rs) to use typed accessors instead of raw `.get("ane_legal").and_then(|v| v.as_bool())` patterns
+- **W-05 fix**: Removed `compute_confidence` and `update_confidence` from `confidence.rs` (which had contradictory base values like SyntheticRun=0.6, RealModelRun=0.9); kept `initial_confidence` from `update.rs` as the canonical source (SyntheticRun=0.2, RealModelRun=0.35); retained `decay_confidence` in `confidence.rs` since it's orthogonal to initial confidence computation
+- Added `pub mod util;` to `lib.rs`
+- All 590+ workspace tests passing (64 in ane-knowledge specifically)
+- `cargo check --workspace` passes cleanly
+
+Files Changed:
+1. `crates/knowledge/src/util.rs` — NEW: shared utility functions
+2. `crates/knowledge/src/lib.rs` — added `pub mod util;`
+3. `crates/knowledge/src/store.rs` — removed duplicate `sanitize_id`/`scopes_overlap`, fixed `expect()`, used typed accessors in `claims_contradict`
+4. `crates/knowledge/src/snapshot.rs` — removed duplicate `sanitize_id`, imports from `crate::util`
+5. `crates/knowledge/src/conflict.rs` — removed duplicate `scopes_overlap`, delegates to `crate::util::scopes_overlap`, used typed accessors
+6. `crates/knowledge/src/confidence.rs` — removed `compute_confidence`/`update_confidence`, kept `decay_confidence`
+7. `crates/knowledge/src/transfer.rs` — used typed accessor `payload_ane_legal` in `claims_agree`
+
+Stage Summary:
+- All 5 issues resolved: C-07 (expect→Result), C-08 (sanitize_id dedup), C-09 (scopes_overlap unification), W-04 (typed payload accessors), W-05 (confidence reconciliation)
+- `update.rs::initial_confidence` is now the sole authoritative source for confidence base values
+- Zero test failures across the entire workspace

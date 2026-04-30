@@ -309,16 +309,34 @@ class TestBuildLutProjectionProgram:
 # ---------------------------------------------------------------------------
 
 class TestImportCoremltools:
-    """Test _import_coremltools returns correct values based on availability."""
+    """Test _import_coremltools behavior with coremltools availability.
 
-    def test_returns_none_when_coremltools_unavailable(self):
-        """When coremltools is not installed, _import_coremltools returns None tuples."""
-        with mock.patch.dict("sys.modules", {"coremltools": None}):
-            # Force reimport to trigger the ImportError path
-            from mil_emitter import _import_coremltools
-            result = _import_coremltools()
-            # On Linux without coremltools, this should return (None, None, None, None)
-            assert result == (None, None, None, None) or result[0] is None
+    W-26 fix: _import_coremltools now raises ImportError instead of
+    silently returning (None, None, None, None). This test verifies
+    the new behavior.
+    """
+
+    def test_raises_importerror_when_coremltools_unavailable(self):
+        """When coremltools is not installed, _import_coremltools raises ImportError.
+
+        Previously (before W-26 fix), it silently returned (None, None, None, None).
+        Now it raises ImportError explicitly so callers don't silently proceed
+        with None values.
+        """
+        from common import _ensure_coremltools
+        # Reset the cached coremltools so the ImportError path is triggered
+        import common
+        old_ct = common._ct
+        old_map = common.COMPUTE_MAP
+        common._ct = None
+        common.COMPUTE_MAP = None
+        try:
+            with mock.patch.dict("sys.modules", {"coremltools": None}):
+                with pytest.raises(ImportError):
+                    _ensure_coremltools()
+        finally:
+            common._ct = old_ct
+            common.COMPUTE_MAP = old_map
 
 
 # ---------------------------------------------------------------------------

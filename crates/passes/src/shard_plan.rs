@@ -33,7 +33,7 @@ use crate::knowledge_query::PassKnowledgeQuery;
 use ane_ir::mir::ComputeUnitHint;
 use ane_ir::pir::{
     FunctionEntry, Handoff, HandoffKind, KvCacheLayout, Package, PackageRole, PirGraph,
-    ShardPipelineSpec, ShardRole, ShardTemplate, StateDeclaration, TensorSpec,
+    ShardOpProfile, ShardPipelineSpec, ShardRole, ShardTemplate, StateDeclaration, TensorSpec,
 };
 use ane_ir::sir::SirGraph;
 use anyhow::Result;
@@ -159,12 +159,13 @@ impl ShardPlanPass {
         use ane_ir::sir::SirOp;
         // Find the most significant op in the SIR graph.
         // For linear projection, the primary op is LinearProjection → "mb.matmul".
+        // For attention blocks, the primary op is SDPA → "mb.scaled_dot_product_attention".
         for node in &input.nodes {
+            if matches!(node.op, SirOp::AttentionBlock { .. }) {
+                return "mb.scaled_dot_product_attention";
+            }
             if matches!(node.op, SirOp::LinearProjection { .. }) {
                 return "mb.matmul";
-            }
-            if matches!(node.op, SirOp::AttentionBlock { .. }) {
-                return "mb.matmul"; // attention is also matmul-dominant
             }
         }
         // Default: if no specific op found, use the generic matmul pattern
@@ -246,6 +247,11 @@ impl ShardPlanPass {
         let mut gather_indices: Vec<usize> = Vec::new();
         let mut sampler_indices: Vec<usize> = Vec::new();
         let mut kv_cache_state_ids: Vec<String> = Vec::new();
+        // Track the shape of each KV cache state from StateRead ops,
+        // so that state declarations and handoffs use the real shape
+        // instead of hardcoded placeholders.
+        let mut kv_cache_shapes: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
         let mut decoder_indices: Vec<usize> = Vec::new();
 
         for (idx, node) in input.nodes.iter().enumerate() {
@@ -256,11 +262,21 @@ impl ShardPlanPass {
                 SirOp::Sampler { .. } => {
                     sampler_indices.push(idx);
                 }
-                SirOp::StateRead { state_id, .. } | SirOp::StateWrite { state_id, .. } => {
+                SirOp::StateRead { state_id, shape, .. } => {
+                    if state_id.contains("kv_cache") {
+                        if !kv_cache_state_ids.contains(state_id) {
+                            kv_cache_state_ids.push(state_id.clone());
+                        }
+                        // Record the first shape we see for each state_id.
+                        kv_cache_shapes.entry(state_id.clone()).or_insert_with(|| shape.clone());
+                    }
+                    // State ops are part of the decoder shard that owns them
+                    decoder_indices.push(idx);
+                }
+                SirOp::StateWrite { state_id, .. } => {
                     if state_id.contains("kv_cache") && !kv_cache_state_ids.contains(state_id) {
                         kv_cache_state_ids.push(state_id.clone());
                     }
-                    // State ops are part of the decoder shard that owns them
                     decoder_indices.push(idx);
                 }
                 _ => {
@@ -383,12 +399,17 @@ impl ShardPlanPass {
                 self.adaptations.push(a);
             }
 
-            // Discover KV cache state from the graph
+            // Discover KV cache state from the graph, using real shapes
+            // from StateRead ops instead of hardcoded placeholders.
             let mut kv_state_decls = Vec::new();
             for state_id in &kv_cache_state_ids {
+                let shape = kv_cache_shapes
+                    .get(state_id)
+                    .cloned()
+                    .unwrap_or_else(|| vec![2, 1, 1, 1, 1]);
                 kv_state_decls.push(StateDeclaration {
                     state_id: state_id.clone(),
-                    shape: vec![2, 1, 1, 1, 1], // [2, batch, heads, kv_len, head_dim] — derived from graph
+                    shape,
                     dtype: "fp16".into(),
                     owner_package: decoder_name.clone(),
                 });
@@ -506,11 +527,15 @@ impl ShardPlanPass {
             let decoder_pkg = packages.iter().find(|p| matches!(p.role, PackageRole::DecoderShard(_)));
             if let Some(dec) = decoder_pkg {
                 for state_id in &kv_cache_state_ids {
+                    let shape = kv_cache_shapes
+                        .get(state_id)
+                        .cloned()
+                        .unwrap_or_else(|| vec![2, 1, 1, 1, 1]);
                     handoffs.push(Handoff {
                         from_package: dec.name.clone(),
                         to_package: dec.name.clone(), // self-referential: same shard reads its own state
                         tensor_name: state_id.clone(),
-                        shape: vec![2, 1, 1, 1, 1],
+                        shape,
                         dtype: "fp16".into(),
                         handoff_kind: HandoffKind::StateWriteRead,
                         execution_order: order,
@@ -700,7 +725,7 @@ impl ShardPlanPass {
         // For each shard, determine the primary op pattern and query the knowledge
         // store for fallback risk. If risk exceeds the threshold, override to CPU_AND_GPU.
         for shard in effective_spec.shards.iter_mut() {
-            let op_pattern = Self::primary_op_pattern_for_shard(&shard.role);
+            let op_pattern = Self::primary_op_pattern_for_shard(&shard.role, &shard.op_profile);
 
             let (new_compute, adaptation) =
                 self.determine_compute_units(&shard.shard_name, op_pattern, knowledge_query);
@@ -716,18 +741,24 @@ impl ShardPlanPass {
         (plan, pir, self.adaptations.clone())
     }
 
-    /// Derive the primary op pattern for a shard based on its role.
+    /// Derive the primary op pattern for a shard based on its role and op profile.
     ///
-    /// This is a simplified heuristic: Entry/Interior/Exit decoder shards
-    /// are matmul-dominant, Io and Sampler shards have different patterns.
-    /// In a full implementation, this would inspect the actual SIR graph
-    /// of the shard, but at the plan-construction level we don't have
-    /// the SIR yet — we only have the shard spec.
-    fn primary_op_pattern_for_shard(role: &ShardRole) -> &str {
-        match role {
-            ShardRole::Entry | ShardRole::Interior | ShardRole::Exit => "mb.matmul",
-            ShardRole::Io => "mb.embedding", // IO model: embedding + LM head
-            ShardRole::Sampler => "mb.topk", // Sampler: top-k + softmax + gather
+    /// The op profile provides the key differentiation: attention shards use
+    /// "mb.scaled_dot_product_attention", while linear-dominant shards use
+    /// "mb.matmul". This is critical for knowledge-driven compute unit
+    /// adaptation, because attention ops have different ANE fallback
+    /// characteristics than linear projections.
+    fn primary_op_pattern_for_shard(role: &ShardRole, op_profile: &ShardOpProfile) -> &'static str {
+        match op_profile {
+            ShardOpProfile::AttentionComputation { .. } => "mb.scaled_dot_product_attention",
+            ShardOpProfile::QkvProjection { .. } => "mb.matmul",
+            ShardOpProfile::IoEmbedding { .. } => "mb.embedding",
+            ShardOpProfile::SamplerTopk { .. } => "mb.topk",
+            _ => match role {
+                ShardRole::Io => "mb.embedding",
+                ShardRole::Sampler => "mb.topk",
+                _ => "mb.matmul",
+            },
         }
     }
 

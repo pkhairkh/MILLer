@@ -11,6 +11,7 @@ use ane_ir::kir::{KnowledgeType, KnowledgeUnit};
 use anyhow::Result;
 
 use crate::store::KnowledgeEntry;
+use crate::util::{payload_ane_legal, payload_op_pattern, scopes_overlap};
 
 /// A detected conflict between knowledge entries.
 #[derive(Debug, Clone)]
@@ -88,7 +89,7 @@ impl ConflictDetector {
                 }
 
                 // Check for scope overlap
-                if !scopes_overlap(&a.unit, &b.unit) {
+                if !scopes_overlap(&a.unit.scope, &b.unit.scope) {
                     continue;
                 }
 
@@ -106,8 +107,8 @@ impl ConflictDetector {
     fn check_pair(&self, a: &KnowledgeEntry, b: &KnowledgeEntry) -> Option<Conflict> {
         // Check for contradictory legality claims
         if a.unit.knowledge_type == KnowledgeType::LegalityRule {
-            let a_legal = a.unit.payload.get("ane_legal").and_then(|v| v.as_bool());
-            let b_legal = b.unit.payload.get("ane_legal").and_then(|v| v.as_bool());
+            let a_legal = payload_ane_legal(&a.unit.payload);
+            let b_legal = payload_ane_legal(&b.unit.payload);
 
             if let (Some(a_val), Some(b_val)) = (a_legal, b_legal) {
                 if a_val != b_val {
@@ -141,11 +142,11 @@ impl ConflictDetector {
     /// Check if two units are making the same core claim
     /// (even if confidence differs).
     fn same_claim(&self, a: &KnowledgeUnit, b: &KnowledgeUnit) -> bool {
-        // Same op pattern and same ane_legal value
-        let a_pattern = a.payload.get("op_pattern").and_then(|v| v.as_str());
-        let b_pattern = b.payload.get("op_pattern").and_then(|v| v.as_str());
-        let a_legal = a.payload.get("ane_legal").and_then(|v| v.as_bool());
-        let b_legal = b.payload.get("ane_legal").and_then(|v| v.as_bool());
+        // Same op pattern and same ane_legal value (using typed accessors)
+        let a_pattern = payload_op_pattern(&a.payload);
+        let b_pattern = payload_op_pattern(&b.payload);
+        let a_legal = payload_ane_legal(&a.payload);
+        let b_legal = payload_ane_legal(&b.payload);
 
         match (a_pattern, b_pattern, a_legal, b_legal) {
             (Some(ap), Some(bp), Some(al), Some(bl)) => ap == bp && al == bl,
@@ -176,18 +177,7 @@ impl ConflictDetector {
     }
 }
 
-/// Check if two knowledge units have overlapping scopes.
-fn scopes_overlap(a: &KnowledgeUnit, b: &KnowledgeUnit) -> bool {
-    let devices_overlap = a.scope.device_classes.iter().any(|d| b.scope.device_classes.contains(d))
-        || a.scope.device_classes.contains(&"unknown".to_string())
-        || b.scope.device_classes.contains(&"unknown".to_string());
-    let os_overlap = a.scope.os_versions.iter().any(|v| b.scope.os_versions.contains(v))
-        || a.scope.os_versions.contains(&"unknown".to_string())
-        || b.scope.os_versions.contains(&"unknown".to_string());
-    let opset_overlap = a.scope.opset_versions.iter().any(|v| b.scope.opset_versions.contains(v));
-
-    devices_overlap && os_overlap && opset_overlap
-}
+// scopes_overlap is now provided by crate::util (takes &KnowledgeScope)
 
 #[cfg(test)]
 mod tests {

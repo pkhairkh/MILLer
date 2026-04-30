@@ -1,5 +1,9 @@
 //! Core ML Protobuf Definitions (Sprint 41)
 //!
+//! **Note**: This crate defines the `proto` module as deprecated for external use.
+//! Internal usage within this crate is allowed during the migration period.
+#![allow(deprecated)]
+//!
 //! This crate provides Rust type definitions for the Core ML model
 //! protobuf format, enabling direct Rust-to-mlpackage emission without
 //! the Python bridge subprocess.
@@ -48,7 +52,16 @@
 //! are re-exported from this module via `include!` of the generated code.
 
 /// Prost-generated Core ML protobuf types (legacy custom format).
-/// These use the custom `coreml` package — kept for backward compatibility with existing tests.
+///
+/// **Deprecated**: This module uses a custom `coreml` protobuf package that does
+/// not match Apple's actual wire format. Use [`apple_proto`] instead, which
+/// produces protobuf that Core ML's runtime can decode. This module is kept only
+/// for backward compatibility with existing tests and will be removed after
+/// Sprint 60. No new code should import from this module.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use `apple_proto` instead. Legacy proto format does not match Apple's wire format. Removal planned after Sprint 60."
+)]
 pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/coreml.rs"));
 }
@@ -322,6 +335,12 @@ pub mod mir_compat {
     }
 
     /// A single operation in the MIR graph (compatibility representation).
+    ///
+    /// **Note**: This type should eventually be replaced by direct `MirOp` usage
+    /// with a `ToProto` trait, eliminating the manual compat-layer duplication.
+    /// See T-17 (W-12, W-16) for the unification roadmap. Every variant here
+    /// should map 1:1 to a `MirOp` variant; ops without a specialized compat
+    /// representation fall into `Unsupported` as a transitional measure.
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub enum MirOpCompat {
         Const {
@@ -826,6 +845,286 @@ pub mod mir_compat {
     }
 }
 
+// ─── From<ane_ir::mir::MirOp> for MirOpCompat (T-17: lightweight unification) ──
+// Converts from the canonical MirOp type to the compat layer used for
+// protobuf emission. Ops without a specialized MirOpCompat variant map
+// to `Unsupported` as a transitional measure until full unification.
+
+impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
+    fn from(op: ane_ir::mir::MirOp) -> mir_compat::MirOpCompat {
+        use ane_ir::mir::MirOp;
+        use mir_compat::MilDtypeCompat;
+
+        /// Convert ane-ir MilDtype to compat MilDtypeCompat.
+        /// Types without a compat representation map to Fp32 (conservative default).
+        fn convert_dtype(d: ane_ir::mir::MilDtype) -> MilDtypeCompat {
+            match d {
+                ane_ir::mir::MilDtype::Fp16 => MilDtypeCompat::Fp16,
+                ane_ir::mir::MilDtype::Fp32 => MilDtypeCompat::Fp32,
+                ane_ir::mir::MilDtype::Int32 => MilDtypeCompat::Int32,
+                ane_ir::mir::MilDtype::UInt8 => MilDtypeCompat::UInt8,
+                // No compat representation; Fp32 is the safest default
+                ane_ir::mir::MilDtype::Bool
+                | ane_ir::mir::MilDtype::Fp64
+                | ane_ir::mir::MilDtype::Int8
+                | ane_ir::mir::MilDtype::Int16 => MilDtypeCompat::Fp32,
+            }
+        }
+
+        /// Extract the String from a MirNodeId (consumes it).
+        fn nid(id: ane_ir::mir::MirNodeId) -> String {
+            use ane_ir::common::IrNodeId;
+            id.as_str().to_string()
+        }
+
+        /// Create an Unsupported variant. Serializes the op for the params_json field.
+        fn unsupported(op_kind: &str, name: &str, op_json: &str) -> mir_compat::MirOpCompat {
+            mir_compat::MirOpCompat::Unsupported {
+                op_kind: op_kind.to_string(),
+                name: name.to_string(),
+                params_json: op_json.to_string(),
+            }
+        }
+
+        // Pre-serialize the op for use in Unsupported variants (avoids partial-move issues).
+        let op_json = serde_json::to_string(&op).unwrap_or_default();
+        match op {
+            // ─── Constants ───────────────────────────────────────────
+            MirOp::MILConst { name, dtype, .. } => mir_compat::MirOpCompat::Const {
+                name,
+                data: Vec::new(), // weight data loaded separately via WeightBinBuilder
+                dtype: convert_dtype(dtype),
+                shape: vec![],    // shape filled from MIR node metadata
+            },
+
+            // ─── Linear / FC ─────────────────────────────────────────
+            MirOp::MILLinear { name, x, weight, bias } => mir_compat::MirOpCompat::Linear {
+                name,
+                x: nid(x),
+                weight_name: weight,
+                bias_name: bias,
+            },
+            MirOp::MILMatMul { name, x, y } => mir_compat::MirOpCompat::MatMul {
+                name,
+                x: nid(x),
+                y: nid(y),
+            },
+            MirOp::MILEinsum { name, .. } => unsupported("einsum", &name, &op_json),
+
+            // ─── Convolution ─────────────────────────────────────────
+            MirOp::MILConv { name, x, weight, pad_type, groups, .. } => mir_compat::MirOpCompat::Conv {
+                name,
+                x: nid(x),
+                weight: nid(weight),
+                pad_type,
+                groups: groups as i64,
+            },
+            MirOp::MILConvTranspose { name, .. } => unsupported("conv_transpose", &name, &op_json),
+
+            // ─── Elementwise Binary ──────────────────────────────────
+            MirOp::MILAdd { name, x, y } => mir_compat::MirOpCompat::Add { name, x: nid(x), y: nid(y) },
+            MirOp::MILMul { name, x, y } => mir_compat::MirOpCompat::Mul { name, x: nid(x), y: nid(y) },
+            MirOp::MILSub { name, x, y } => mir_compat::MirOpCompat::Sub { name, x: nid(x), y: nid(y) },
+            MirOp::MILMaximum { name, x, y } => mir_compat::MirOpCompat::Maximum { name, x: nid(x), y: nid(y) },
+            MirOp::MILMinimum { name, x, y } => mir_compat::MirOpCompat::Minimum { name, x: nid(x), y: nid(y) },
+            MirOp::MILRealDiv { name, x, y } => mir_compat::MirOpCompat::RealDiv { name, x: nid(x), y: nid(y) },
+            MirOp::MILFloorDiv { name, x, y } => mir_compat::MirOpCompat::FloorDiv { name, x: nid(x), y: nid(y) },
+            MirOp::MILMod { name, x, y } => mir_compat::MirOpCompat::Mod { name, x: nid(x), y: nid(y) },
+            MirOp::MILPow { name, x, y } => mir_compat::MirOpCompat::Pow { name, x: nid(x), y: nid(y) },
+            MirOp::MILEqual { name, x, y } => mir_compat::MirOpCompat::Equal { name, x: nid(x), y: nid(y) },
+            MirOp::MILNotEqual { name, x, y } => mir_compat::MirOpCompat::NotEqual { name, x: nid(x), y: nid(y) },
+            MirOp::MILGreater { name, x, y } => mir_compat::MirOpCompat::Greater { name, x: nid(x), y: nid(y) },
+            MirOp::MILGreaterEqual { name, x, y } => mir_compat::MirOpCompat::GreaterEqual { name, x: nid(x), y: nid(y) },
+            MirOp::MILLess { name, x, y } => mir_compat::MirOpCompat::Less { name, x: nid(x), y: nid(y) },
+            MirOp::MILLessEqual { name, x, y } => mir_compat::MirOpCompat::LessEqual { name, x: nid(x), y: nid(y) },
+            MirOp::MILLogicalAnd { name, x, y } => mir_compat::MirOpCompat::LogicalAnd { name, x: nid(x), y: nid(y) },
+            MirOp::MILLogicalOr { name, x, y } => mir_compat::MirOpCompat::LogicalOr { name, x: nid(x), y: nid(y) },
+            MirOp::MILLogicalXor { name, .. } => unsupported("logical_xor", &name, &op_json),
+
+            // ─── Elementwise Unary ───────────────────────────────────
+            MirOp::MILAbs { name, x } => mir_compat::MirOpCompat::Abs { name, x: nid(x) },
+            MirOp::MILNeg { name, x } => mir_compat::MirOpCompat::Neg { name, x: nid(x) },
+            MirOp::MILSigmoid { name, x } => mir_compat::MirOpCompat::Sigmoid { name, x: nid(x) },
+            MirOp::MILTanh { name, x } => mir_compat::MirOpCompat::Tanh { name, x: nid(x) },
+            MirOp::MILRelu { name, x } => mir_compat::MirOpCompat::Relu { name, x: nid(x) },
+            MirOp::MILRelu6 { name, .. } => unsupported("relu6", &name, &op_json),
+            MirOp::MILLeakyRelu { name, x, alpha } => mir_compat::MirOpCompat::LeakyRelu { name, x: nid(x), alpha },
+            MirOp::MILSigmoidHard { name, .. } => unsupported("sigmoid_hard", &name, &op_json),
+            MirOp::MILThresholdedRelu { name, .. } => unsupported("thresholded_relu", &name, &op_json),
+            MirOp::MILClampedRelu { name, .. } => unsupported("clamped_relu", &name, &op_json),
+            MirOp::MILLinearActivation { name, .. } => unsupported("linear_activation", &name, &op_json),
+            MirOp::MILPrelu { name, .. } => unsupported("prelu", &name, &op_json),
+            MirOp::MILSoftsign { name, .. } => unsupported("softsign", &name, &op_json),
+            MirOp::MILSilu { name, x } => mir_compat::MirOpCompat::Silu { name, x: nid(x) },
+            MirOp::MILScaledTanh { name, .. } => unsupported("scaled_tanh", &name, &op_json),
+            MirOp::MILElu { name, .. } => unsupported("elu", &name, &op_json),
+            MirOp::MILSoftplus { name, .. } => unsupported("softplus", &name, &op_json),
+            MirOp::MILSoftplusParametric { name, .. } => unsupported("softplus_parametric", &name, &op_json),
+            MirOp::MILGelu { name, x, mode } => mir_compat::MirOpCompat::Gelu { name, x: nid(x), mode },
+            MirOp::MILClip { name, x, min_val, max_val } => mir_compat::MirOpCompat::Clip { name, x: nid(x), min_val, max_val },
+            MirOp::MILSquare { name, .. } => unsupported("square", &name, &op_json),
+            MirOp::MILThreshold { name, .. } => unsupported("threshold", &name, &op_json),
+            MirOp::MILSqrt { name, x } => mir_compat::MirOpCompat::Sqrt { name, x: nid(x) },
+            MirOp::MILRsqrt { name, x } => mir_compat::MirOpCompat::Rsqrt { name, x: nid(x) },
+            MirOp::MILInverse { name, .. } => unsupported("inverse", &name, &op_json),
+            MirOp::MILCeil { name, x } => mir_compat::MirOpCompat::Ceil { name, x: nid(x) },
+            MirOp::MILFloor { name, x } => mir_compat::MirOpCompat::Floor { name, x: nid(x) },
+            MirOp::MILRound { name, x } => mir_compat::MirOpCompat::Round { name, x: nid(x) },
+            MirOp::MILExp { name, x } => mir_compat::MirOpCompat::Exp { name, x: nid(x) },
+            MirOp::MILExp2 { name, .. } => unsupported("exp2", &name, &op_json),
+            MirOp::MILLog { name, x, .. } => mir_compat::MirOpCompat::Log { name, x: nid(x) },
+            MirOp::MILSign { name, x } => mir_compat::MirOpCompat::Sign { name, x: nid(x) },
+            MirOp::MILCos { name, x } => mir_compat::MirOpCompat::Cos { name, x: nid(x) },
+            MirOp::MILSin { name, x } => mir_compat::MirOpCompat::Sin { name, x: nid(x) },
+            MirOp::MILTan { name, .. } => unsupported("tan", &name, &op_json),
+            MirOp::MILAcos { name, .. } => unsupported("acos", &name, &op_json),
+            MirOp::MILAsin { name, .. } => unsupported("asin", &name, &op_json),
+            MirOp::MILAtan { name, .. } => unsupported("atan", &name, &op_json),
+            MirOp::MILCosh { name, .. } => unsupported("cosh", &name, &op_json),
+            MirOp::MILSinh { name, .. } => unsupported("sinh", &name, &op_json),
+            MirOp::MILAtanh { name, .. } => unsupported("atanh", &name, &op_json),
+            MirOp::MILErf { name, .. } => unsupported("erf", &name, &op_json),
+            MirOp::MILLogicalNot { name, x } => mir_compat::MirOpCompat::LogicalNot { name, x: nid(x) },
+            MirOp::MILCast { name, x, dtype } => mir_compat::MirOpCompat::Cast { name, x: nid(x), dtype: convert_dtype(dtype) },
+            MirOp::MILSelect { name, condition, x, y } => mir_compat::MirOpCompat::Select { name, condition: nid(condition), x: nid(x), y: nid(y) },
+            MirOp::MILWhere { name, condition, x, y } => mir_compat::MirOpCompat::Where { name, condition: nid(condition), x: nid(x), y: nid(y) },
+            MirOp::MILSoftmax { name, x, axis } => mir_compat::MirOpCompat::Softmax { name, x: nid(x), axis: axis as i64 },
+
+            // ─── Reduction ───────────────────────────────────────────
+            MirOp::MILReduceSum { name, x, axes, keep_dims } => mir_compat::MirOpCompat::ReduceSum { name, x: nid(x), axes: axes.into_iter().map(|a| a as i64).collect(), keep_dims },
+            MirOp::MILReduceMean { name, x, axes, keep_dims } => mir_compat::MirOpCompat::ReduceMean { name, x: nid(x), axes: axes.into_iter().map(|a| a as i64).collect(), keep_dims },
+            MirOp::MILReduceMax { name, x, axes, keep_dims } => mir_compat::MirOpCompat::ReduceMax { name, x: nid(x), axes: axes.into_iter().map(|a| a as i64).collect(), keep_dims },
+            MirOp::MILReduceMin { name, x, axes, keep_dims } => mir_compat::MirOpCompat::ReduceMin { name, x: nid(x), axes: axes.into_iter().map(|a| a as i64).collect(), keep_dims },
+            MirOp::MILReduceProd { name, x, axes, keep_dims } => mir_compat::MirOpCompat::ReduceProd { name, x: nid(x), axes: axes.into_iter().map(|a| a as i64).collect(), keep_dims },
+            MirOp::MILReduceSumSquare { name, .. } => unsupported("reduce_sum_square", &name, &op_json),
+            MirOp::MILReduceL2Norm { name, .. } => unsupported("reduce_l2_norm", &name, &op_json),
+            MirOp::MILReduceL1Norm { name, .. } => unsupported("reduce_l1_norm", &name, &op_json),
+            MirOp::MILReduceLogSumExp { name, .. } => unsupported("reduce_log_sum_exp", &name, &op_json),
+            MirOp::MILReduceLogSum { name, .. } => unsupported("reduce_log_sum", &name, &op_json),
+            MirOp::MILReduceArgmax { name, .. } => unsupported("reduce_argmax", &name, &op_json),
+            MirOp::MILReduceArgmin { name, .. } => unsupported("reduce_argmin", &name, &op_json),
+
+            // ─── Normalization ───────────────────────────────────────
+            MirOp::MILBatchNorm { name, .. } => unsupported("batch_norm", &name, &op_json),
+            MirOp::MILInstanceNorm { name, .. } => unsupported("instance_norm", &name, &op_json),
+            MirOp::MILLayerNorm { name, x, weight, bias, epsilon, axes } => mir_compat::MirOpCompat::LayerNorm {
+                name, x: nid(x), weight_name: weight, bias_name: bias, epsilon,
+                axes: axes.into_iter().map(|a| a as i64).collect(),
+            },
+            MirOp::MILL2Norm { name, .. } => unsupported("l2_norm", &name, &op_json),
+            MirOp::MILLocalResponseNorm { name, .. } => unsupported("local_response_norm", &name, &op_json),
+
+            // ─── Pooling ─────────────────────────────────────────────
+            MirOp::MILMaxPool { name, .. } => unsupported("max_pool", &name, &op_json),
+            MirOp::MILAvgPool { name, .. } => unsupported("avg_pool", &name, &op_json),
+            MirOp::MILL2Pool { name, .. } => unsupported("l2_pool", &name, &op_json),
+
+            // ─── Image Resizing ──────────────────────────────────────
+            MirOp::MILResize { name, .. } => unsupported("resize", &name, &op_json),
+            MirOp::MILResizeNearestNeighbor { name, .. } => unsupported("resize_nearest_neighbor", &name, &op_json),
+            MirOp::MILResizeBilinear { name, .. } => unsupported("resize_bilinear", &name, &op_json),
+            MirOp::MILUpsampleNearestNeighbor { name, .. } => unsupported("upsample_nearest_neighbor", &name, &op_json),
+            MirOp::MILUpsampleBilinear { name, .. } => unsupported("upsample_bilinear", &name, &op_json),
+            MirOp::MILCropResize { name, .. } => unsupported("crop_resize", &name, &op_json),
+            MirOp::MILAffine { name, .. } => unsupported("affine", &name, &op_json),
+            MirOp::MILResample { name, .. } => unsupported("resample", &name, &op_json),
+
+            // ─── Tensor Transform ────────────────────────────────────
+            MirOp::MILReshape { name, x, shape } => mir_compat::MirOpCompat::Reshape { name, x: nid(x), shape: shape.into_iter().map(|d| d as i32).collect() },
+            MirOp::MILReshapeLike { name, .. } => unsupported("reshape_like", &name, &op_json),
+            MirOp::MILTranspose { name, x, perm } => mir_compat::MirOpCompat::Transpose { name, x: nid(x), perm: perm.into_iter().map(|d| d as i32).collect() },
+            MirOp::MILSplit { name, x, axis, num_splits } => mir_compat::MirOpCompat::Split { name, x: nid(x), axis: axis as i64, num_splits: num_splits as i64 },
+            MirOp::MILConcat { name, values, axis } => mir_compat::MirOpCompat::Concat { name, values: values.into_iter().map(nid).collect(), axis: axis as i64 },
+            MirOp::MILExpandDims { name, x, axis } => mir_compat::MirOpCompat::ExpandDims { name, x: nid(x), axis: axis.into_iter().map(|a| a as i32).collect() },
+            MirOp::MILSqueeze { name, x, axis } => mir_compat::MirOpCompat::Squeeze { name, x: nid(x), axis: axis.into_iter().map(|a| a as i32).collect() },
+            MirOp::MILFlatten2d { name, .. } => unsupported("flatten2d", &name, &op_json),
+            MirOp::MILReverse { name, .. } => unsupported("reverse", &name, &op_json),
+            MirOp::MILReverseSequence { name, .. } => unsupported("reverse_sequence", &name, &op_json),
+            MirOp::MILSliceByIndex { name, x, begin, end, .. } => mir_compat::MirOpCompat::SliceByIndex { name, x: nid(x), begin: begin.into_iter().map(|v| v as i32).collect(), end: end.into_iter().map(|v| v as i32).collect() },
+            MirOp::MILSliceBySize { name, .. } => unsupported("slice_by_size", &name, &op_json),
+            MirOp::MILSliceUpdate { name, x, update, begin, end } => mir_compat::MirOpCompat::SliceUpdate { name, x: nid(x), update: nid(update), begin: begin.into_iter().map(|v| v as i32).collect(), end: end.into_iter().map(|v| v as i32).collect() },
+            MirOp::MILSlidingWindows { name, .. } => unsupported("sliding_windows", &name, &op_json),
+            MirOp::MILDepthToSpace { name, .. } => unsupported("depth_to_space", &name, &op_json),
+            MirOp::MILSpaceToDepth { name, .. } => unsupported("space_to_depth", &name, &op_json),
+            MirOp::MILPixelShuffle { name, .. } => unsupported("pixel_shuffle", &name, &op_json),
+            MirOp::MILPixelUnshuffle { name, .. } => unsupported("pixel_unshuffle", &name, &op_json),
+            MirOp::MILBatchToSpace { name, .. } => unsupported("batch_to_space", &name, &op_json),
+            MirOp::MILSpaceToBatch { name, .. } => unsupported("space_to_batch", &name, &op_json),
+            MirOp::MILPad { name, x, pad_amounts, mode, constant_value } => mir_compat::MirOpCompat::Pad { name, x: nid(x), pad_amounts: pad_amounts.into_iter().map(|v| v as i32).collect(), mode, constant_value },
+            MirOp::MILStack { name, .. } => unsupported("stack", &name, &op_json),
+            MirOp::MILTile { name, x, reps } => mir_compat::MirOpCompat::Tile { name, x: nid(x), reps: reps.into_iter().map(|r| r as i32).collect() },
+            MirOp::MILCumsum { name, .. } => unsupported("cumsum", &name, &op_json),
+            MirOp::MILFill { name, shape, value, dtype } => mir_compat::MirOpCompat::Fill { name, shape: shape.into_iter().map(|d| d as i32).collect(), value, dtype: convert_dtype(dtype) },
+            MirOp::MILFillLike { name, ref_tensor, value, dtype } => mir_compat::MirOpCompat::FillLike { name, ref_tensor: nid(ref_tensor), value, dtype: convert_dtype(dtype) },
+            MirOp::MILIdentity { name, x } => mir_compat::MirOpCompat::Identity { name, x: nid(x), dtype: MilDtypeCompat::Fp16 },
+            MirOp::MILOneHot { name, .. } => unsupported("one_hot", &name, &op_json),
+            MirOp::MILNonZero { name, .. } => unsupported("non_zero", &name, &op_json),
+            MirOp::MILArgsort { name, .. } => unsupported("argsort", &name, &op_json),
+            MirOp::MILBandPart { name, .. } => unsupported("band_part", &name, &op_json),
+            MirOp::MILRange1d { name, .. } => unsupported("range1d", &name, &op_json),
+            MirOp::MILShape { name, .. } => unsupported("shape", &name, &op_json),
+            MirOp::MILCrop { name, .. } => unsupported("crop", &name, &op_json),
+
+            // ─── Scatter / Gather ────────────────────────────────────
+            MirOp::MILGather { name, x, indices, axis } => mir_compat::MirOpCompat::Gather { name, x: nid(x), indices: nid(indices), axis: axis as i64 },
+            MirOp::MILGatherAlongAxis { name, .. } => unsupported("gather_along_axis", &name, &op_json),
+            MirOp::MILGatherNd { name, .. } => unsupported("gather_nd", &name, &op_json),
+            MirOp::MILScatter { name, .. } => unsupported("scatter", &name, &op_json),
+            MirOp::MILScatterAlongAxis { name, .. } => unsupported("scatter_along_axis", &name, &op_json),
+            MirOp::MILScatterNd { name, .. } => unsupported("scatter_nd", &name, &op_json),
+            MirOp::MILNonMaximumSuppression { name, .. } => unsupported("non_maximum_suppression", &name, &op_json),
+
+            // ─── Attention ───────────────────────────────────────────
+            MirOp::MILScaledDotProductAttention { name, query, key, value, .. } => {
+                mir_compat::MirOpCompat::ScaledDotProductAttention { name, query: nid(query), key: nid(key), value: nid(value) }
+            }
+
+            // ─── Quantization ────────────────────────────────────────
+            MirOp::MILQuantize { name, .. } => unsupported("quantize", &name, &op_json),
+            MirOp::MILDequantize { name, .. } => unsupported("dequantize", &name, &op_json),
+
+            // ─── Constexpr / Compression ─────────────────────────────
+            MirOp::MILConstexprAffineDequantize { name, .. } => unsupported("constexpr_affine_dequantize", &name, &op_json),
+            MirOp::MILConstexprBlockwiseShiftScale { name, .. } => unsupported("constexpr_blockwise_shift_scale", &name, &op_json),
+            MirOp::MILConstexprLutToDense { name, .. } => unsupported("constexpr_lut_to_dense", &name, &op_json),
+            MirOp::MILConstexprSparseToDense { name, .. } => unsupported("constexpr_sparse_to_dense", &name, &op_json),
+            MirOp::MILConstexprCast { name, .. } => unsupported("constexpr_cast", &name, &op_json),
+            MirOp::MILConstexprLutToSparse { name, .. } => unsupported("constexpr_lut_to_sparse", &name, &op_json),
+            MirOp::MILConstexprSparseBlockwiseShiftScale { name, .. } => unsupported("constexpr_sparse_blockwise_shift_scale", &name, &op_json),
+
+            // ─── Recurrent ───────────────────────────────────────────
+            MirOp::MILRnn { name, .. } => unsupported("rnn", &name, &op_json),
+            MirOp::MILGru { name, .. } => unsupported("gru", &name, &op_json),
+            MirOp::MILLstm { name, .. } => unsupported("lstm", &name, &op_json),
+
+            // ─── Control Flow ────────────────────────────────────────
+            MirOp::MILCond { name, .. } => unsupported("cond", &name, &op_json),
+            MirOp::MILWhileLoop { name, .. } => unsupported("while_loop", &name, &op_json),
+            MirOp::MILMakeList { name, .. } => unsupported("make_list", &name, &op_json),
+            MirOp::MILListLength { name, .. } => unsupported("list_length", &name, &op_json),
+            MirOp::MILListWrite { name, .. } => unsupported("list_write", &name, &op_json),
+            MirOp::MILListRead { name, .. } => unsupported("list_read", &name, &op_json),
+            MirOp::MILListGather { name, .. } => unsupported("list_gather", &name, &op_json),
+            MirOp::MILListScatter { name, .. } => unsupported("list_scatter", &name, &op_json),
+
+            // ─── Random ──────────────────────────────────────────────
+            MirOp::MILRandomBernoulli { name, .. } => unsupported("random_bernoulli", &name, &op_json),
+            MirOp::MILRandomNormal { name, .. } => unsupported("random_normal", &name, &op_json),
+            MirOp::MILRandomUniform { name, .. } => unsupported("random_uniform", &name, &op_json),
+            MirOp::MILRandomCategorical { name, .. } => unsupported("random_categorical", &name, &op_json),
+
+            // ─── State ───────────────────────────────────────────────
+            MirOp::MILReadState { name, state_id, shape, dtype } => mir_compat::MirOpCompat::ReadState { name, state_id, shape, dtype: convert_dtype(dtype) },
+            MirOp::MILCoremlUpdateState { name, state_id, value } => mir_compat::MirOpCompat::CoremlUpdateState { name, state_id, value: nid(value) },
+            MirOp::MILStateWrite { name, state_ref, value } => mir_compat::MirOpCompat::StateWrite { name, state_ref, value: nid(value) },
+
+            // ─── Metadata / Misc ─────────────────────────────────────
+            MirOp::MILTopk { name, x, k, axis } => mir_compat::MirOpCompat::Topk { name, x: nid(x), k: k as i64, axis: axis as i64 },
+            MirOp::MILClassify { name, .. } => unsupported("classify", &name, &op_json),
+        }
+    }
+}
+
 /// A Core ML function definition with its operations and I/O.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoreMlFunction {
@@ -891,6 +1190,8 @@ pub struct ModelDescriptionCompat {
 }
 
 // ─── Conversion Functions: hand-written compat → prost-generated proto types ──
+// Legacy proto module usage is allowed within this crate during the deprecation period.
+// External consumers should use apple_proto instead.
 // These functions bridge between the hand-written domain types (used throughout
 // the compiler) and the prost-generated protobuf message types (used for
 // serialization). This is the critical bridge layer for real proto emission.

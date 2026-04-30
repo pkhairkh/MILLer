@@ -61,10 +61,21 @@ impl AneHwLimits {
         }
     }
 
-    // TODO: A12 (M2) ANE limits should be verified independently.
-    // Current values are copied from A11 legacy and may not reflect
-    // actual M2 ANE capabilities (different NE count, bandwidth, etc.).
+    /// A12 (M2) ANE hardware limits.
+    ///
+    /// **WARNING**: These limits are estimated/approximate. They are copied from
+    /// the A11 legacy values and have NOT been independently verified on actual
+    /// Apple M2 hardware. The A12 ANE may differ from A11 in NE count, bandwidth,
+    /// tensor dimension limits, and other parameters. Use these values with caution
+    /// and verify against real hardware when possible.
+    ///
+    /// A runtime warning is emitted when A12 limits are selected to remind
+    /// users that these are approximate.
     fn a12() -> Self {
+        eprintln!(
+            "WARNING: A12 (ANE V5) hardware limits are approximate — copied from A11 values \
+             and not yet verified on real M2 hardware. Results may be inaccurate."
+        );
         Self { revision: AneRevision::V5, ..Self::a11_legacy() }
     }
 

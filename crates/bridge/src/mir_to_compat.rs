@@ -40,6 +40,8 @@ use ane_ir::mir::{ComputeUnitHint, MilDtype, MirGraph, MirNode, MirOp};
 use anyhow::Result;
 use std::collections::HashMap;
 
+use crate::shape_inference::{compat_input_dtype, compat_input_shape, compat_output_shape};
+
 /// Resolver for weight data referenced by `MILConst.value_path`.
 ///
 /// When converting `MILConst { value_path, .. }` to `MirOpCompat::Const { data, .. }`,
@@ -435,255 +437,23 @@ fn compat_input_names(op: &MirOpCompat) -> Vec<String> {
     }
 }
 
-fn compat_input_dtype(name: &str, dtype: &MilDtype) -> MilDtypeCompat {
-    if name.contains("input_ids") {
-        MilDtypeCompat::Int32
-    } else {
-        mil_dtype_to_compat(dtype)
-    }
-}
+// Shape inference functions have been moved to crate::shape_inference.
+// Use `crate::shape_inference::compat_output_shape`,
+// `crate::shape_inference::compat_input_shape`, and
+// `crate::shape_inference::compat_input_dtype` instead.
 
-fn compat_input_shape(name: &str, shape: &[usize]) -> Vec<usize> {
-    if !shape.is_empty() {
-        return shape.to_vec();
-    }
-    // Fallback: when MirNode.shape is empty for graph inputs, use a default.
-    // Note: this fallback shape [1, 512] is only for the model's I/O description
-    // in the proto, NOT for shape inference. Shape inference uses the
-    // input_shapes seed from mil_lower.rs which is populated from the traced
-    // graph's actual input dimensions.
-    if name.contains("input_ids") {
-        vec![1, 512]
-    } else {
-        vec![1]
-    }
-}
-
-fn compat_output_shape(
-    name: &str,
-    op: &MirOp,
-    shape: &[usize],
-    node_shapes: &std::collections::HashMap<String, Vec<usize>>,
-) -> Vec<usize> {
-    if !shape.is_empty() {
-        return shape.to_vec();
-    }
-    if name.contains("input_ids") {
-        return vec![1, 512];
-    }
-    match op {
-        // ─── Shape-propagating ops: derive from input shapes in node_shapes ───
-        // These fallbacks are only hit when MIR node.shape is empty (i.e., when
-        // infer_shape in mil_lower failed to compute a shape). When shape inference
-        // works correctly, these branches are never reached.
-        MirOp::MILReduceMean { x, axes, keep_dims, .. } => {
-            if let Some(input_shape) = node_shapes.get(&x.0) {
-                let mut out = input_shape.clone();
-                if *keep_dims {
-                    for &ax in axes {
-                        if (ax as usize) < out.len() {
-                            out[ax as usize] = 1;
-                        }
-                    }
-                } else {
-                    let mut sorted_axes: Vec<usize> =
-                        axes.iter().map(|&a| a as usize).collect();
-                    sorted_axes.sort_unstable_by(|a, b| b.cmp(a));
-                    for &ax in &sorted_axes {
-                        if ax < out.len() {
-                            out.remove(ax);
-                        }
-                    }
-                }
-                out
-            } else {
-                // Input shape unknown: return empty rather than a wrong hardcoded shape
-                vec![]
-            }
-        }
-        MirOp::MILRsqrt { x, .. } => {
-            node_shapes.get(&x.0).cloned().unwrap_or_default()
-        }
-        MirOp::MILGather { x, indices, axis, .. } => {
-            // Embedding: output replaces axis dim of x with indices shape
-            match (node_shapes.get(&x.0), node_shapes.get(&indices.0)) {
-                (Some(input_shape), Some(indices_shape)) => {
-                    let ax = *axis as usize;
-                    let mut out = Vec::new();
-                    for (i, &dim) in input_shape.iter().enumerate() {
-                        if i == ax {
-                            out.extend_from_slice(indices_shape);
-                        } else {
-                            out.push(dim);
-                        }
-                    }
-                    out
-                }
-                (Some(input_shape), None) => input_shape.clone(),
-                _ => vec![],
-            }
-        }
-        // Linear: propagate input shape
-        MirOp::MILLinear { x, .. } => {
-            if let Some(input_shape) = node_shapes.get(&x.0) {
-                input_shape.clone()
-            } else {
-                vec![]
-            }
-        }
-        // Unary ops: propagate input shape
-        MirOp::MILSilu { x, .. }
-        | MirOp::MILAbs { x, .. }
-        | MirOp::MILRelu { x, .. }
-        | MirOp::MILSigmoid { x, .. }
-        | MirOp::MILTanh { x, .. }
-        | MirOp::MILGelu { x, .. }
-        | MirOp::MILExp { x, .. }
-        | MirOp::MILCos { x, .. }
-        | MirOp::MILSin { x, .. }
-        | MirOp::MILCast { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
-        // Binary ops: propagate first operand shape
-        MirOp::MILAdd { x, .. }
-        | MirOp::MILMul { x, .. }
-        | MirOp::MILSub { x, .. }
-        | MirOp::MILMaximum { x, .. }
-        | MirOp::MILMinimum { x, .. }
-        | MirOp::MILRealDiv { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
-        MirOp::MILSoftmax { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
-        MirOp::MILMatMul { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
-        MirOp::MILReshape { shape, .. } => shape.iter().map(|&d| d as usize).collect(),
-        MirOp::MILTranspose { x, perm, .. } => {
-            if let Some(input_shape) = node_shapes.get(&x.0) {
-                perm.iter().map(|&p| input_shape.get(p as usize).copied().unwrap_or(0)).collect()
-            } else {
-                vec![]
-            }
-        }
-        MirOp::MILTile { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
-        MirOp::MILFill { shape, .. } => shape.iter().map(|&d| d as usize).collect(),
-        MirOp::MILFillLike { ref_tensor, .. } => {
-            node_shapes.get(&ref_tensor.0).cloned().unwrap_or_default()
-        }
-        MirOp::MILNeg { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
-        // New unary ops: propagate input shape
-        MirOp::MILSqrt { x, .. }
-        | MirOp::MILLogicalNot { x, .. }
-        | MirOp::MILCeil { x, .. }
-        | MirOp::MILFloor { x, .. }
-        | MirOp::MILRound { x, .. }
-        | MirOp::MILSign { x, .. }
-        | MirOp::MILLog { x, .. }
-        | MirOp::MILLeakyRelu { x, .. }
-        | MirOp::MILClip { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
-        // New binary ops: propagate first operand shape
-        MirOp::MILPow { x, .. }
-        | MirOp::MILFloorDiv { x, .. }
-        | MirOp::MILMod { x, .. }
-        | MirOp::MILEqual { x, .. }
-        | MirOp::MILNotEqual { x, .. }
-        | MirOp::MILGreater { x, .. }
-        | MirOp::MILGreaterEqual { x, .. }
-        | MirOp::MILLess { x, .. }
-        | MirOp::MILLessEqual { x, .. }
-        | MirOp::MILLogicalAnd { x, .. }
-        | MirOp::MILLogicalOr { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
-        // ExpandDims: insert 1-sized dims at specified axes
-        MirOp::MILExpandDims { x, axis, .. } => {
-            if let Some(input_shape) = node_shapes.get(&x.0) {
-                let mut out = input_shape.clone();
-                let mut sorted_axes: Vec<usize> = axis.iter().map(|&a| a as usize).collect();
-                sorted_axes.sort_unstable();
-                for (i, &ax) in sorted_axes.iter().enumerate() {
-                    let insert_pos = if ax >= out.len() { out.len() } else { ax + i };
-                    out.insert(insert_pos, 1);
-                }
-                out
-            } else {
-                vec![]
-            }
-        }
-        // Squeeze: remove dims at specified axes
-        MirOp::MILSqueeze { x, axis, .. } => {
-            if let Some(input_shape) = node_shapes.get(&x.0) {
-                let mut out = input_shape.clone();
-                let mut sorted_axes: Vec<usize> = axis.iter().map(|&a| a as usize).collect();
-                sorted_axes.sort_unstable_by(|a, b| b.cmp(a)); // Remove from back to front
-                for &ax in &sorted_axes {
-                    if ax < out.len() {
-                        out.remove(ax);
-                    }
-                }
-                out
-            } else {
-                vec![]
-            }
-        }
-        // Pad: output shape = input shape + pad amounts
-        MirOp::MILPad { x, pad_amounts, .. } => {
-            if let Some(input_shape) = node_shapes.get(&x.0) {
-                let rank = input_shape.len();
-                let mut out = input_shape.clone();
-                for i in 0..rank {
-                    let before = pad_amounts.get(i).copied().unwrap_or(0) as usize;
-                    let after = pad_amounts.get(i + rank).copied().unwrap_or(0) as usize;
-                    out[i] += before + after;
-                }
-                out
-            } else {
-                vec![]
-            }
-        }
-        // ReduceMax/Min/Prod: same as ReduceMean shape propagation
-        MirOp::MILReduceMax { x, axes, keep_dims, .. }
-        | MirOp::MILReduceMin { x, axes, keep_dims, .. }
-        | MirOp::MILReduceProd { x, axes, keep_dims, .. } => {
-            if let Some(input_shape) = node_shapes.get(&x.0) {
-                let mut out = input_shape.clone();
-                if *keep_dims {
-                    for &ax in axes {
-                        if (ax as usize) < out.len() {
-                            out[ax as usize] = 1;
-                        }
-                    }
-                } else {
-                    let mut sorted_axes: Vec<usize> =
-                        axes.iter().map(|&a| a as usize).collect();
-                    sorted_axes.sort_unstable_by(|a, b| b.cmp(a));
-                    for &ax in &sorted_axes {
-                        if ax < out.len() {
-                            out.remove(ax);
-                        }
-                    }
-                }
-                out
-            } else {
-                vec![]
-            }
-        }
-        // Select: propagate first operand shape (like Where)
-        MirOp::MILSelect { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
-        MirOp::MILSplit { x, axis, num_splits, .. } => {
-            if let Some(input_shape) = node_shapes.get(&x.0) {
-                let mut out = input_shape.clone();
-                if let Some(dim) = out.get_mut(*axis) {
-                    *dim /= num_splits;
-                }
-                out
-            } else {
-                vec![]
-            }
-        }
-        // Identity for graph inputs (placeholder): use known input shape
-        MirOp::MILIdentity { x, .. } if x.0 == "__placeholder__" => vec![1, 512],
-        // Identity: propagate input shape
-        MirOp::MILIdentity { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
-        // Catch-all: return empty shape rather than a wrong hardcoded value.
-        // An empty shape means "unknown" which Core ML will try to infer from
-        // the graph — better than a wrong shape that causes type inference failure.
-        _ => vec![],
-    }
-}
-
+/// Build a map of SIR alias names to their resolved MIR node IDs.
+///
+/// **Qwen3-specific**: This function hardcodes aliases that match the Qwen3
+/// transformer architecture (e.g., `.self_attn.q_proj.weight`,
+/// `.mlp.up_proj.weight`, `"mlp_silu"`, `"attn_qk"`). When adding support
+/// for other model architectures, this function should be generalized —
+/// either by accepting a model-configuration callback/struct, or by moving
+/// the alias rules into a per-model configuration section.
+///
+/// The alias map is used by [`remap_compat_inputs`] to redirect SIR-level
+/// input references (which use synthetic names from the SIR decomposition)
+/// to the actual MIR node IDs that produce those values.
 fn build_input_alias_map(graph: &MirGraph) -> std::collections::HashMap<String, String> {
     let mut aliases = std::collections::HashMap::new();
     aliases
@@ -758,6 +528,14 @@ fn remap_name(name: String, aliases: &std::collections::HashMap<String, String>)
     aliases.get(&name).cloned().unwrap_or(name)
 }
 
+/// Remap all tensor input names in a `MirOpCompat` using the alias map.
+///
+/// **Boilerplate warning**: This function is a per-variant match that must
+/// be updated every time a new `MirOpCompat` variant is added. Each arm
+/// simply applies [`remap_name`] to every `String` field that references
+/// another node. Ideally this would be replaced by a derive macro or a
+/// visitor pattern that auto-generates the remapping logic from the enum
+/// definition, eliminating the O(N) boilerplate where N = number of variants.
 fn remap_compat_inputs(
     op: MirOpCompat,
     aliases: &std::collections::HashMap<String, String>,

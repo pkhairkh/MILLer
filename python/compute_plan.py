@@ -11,15 +11,7 @@ Sprint 35 additions:
 
 from typing import Dict, Any, Optional, List
 
-# Lazy import to avoid ImportError on non-macOS systems
-ct = None
-
-def _ensure_coremltools():
-    global ct
-    if ct is None:
-        import coremltools
-        ct = coremltools
-    return ct
+from common import _ensure_coremltools, COMPUTE_MAP
 
 
 def inspect_compute_plan(
@@ -57,13 +49,7 @@ def inspect_compute_plan(
         }
 
     ct = _ensure_coremltools()
-    compute_map = {
-        "CPU_AND_NE": ct.ComputeUnit.CPU_AND_NE,
-        "CPU_AND_GPU": ct.ComputeUnit.CPU_AND_GPU,
-        "CPU_ONLY": ct.ComputeUnit.CPU_ONLY,
-        "ALL": ct.ComputeUnit.ALL,
-    }
-    compute_unit = compute_map.get(compute_units, ct.ComputeUnit.CPU_AND_NE)
+    compute_unit = COMPUTE_MAP.get(compute_units, ct.ComputeUnit.CPU_AND_NE)
 
     try:
         plan = MLComputePlan.load_from_path(str(mlpackage_path), compute_unit)
@@ -145,13 +131,7 @@ def harvest_compute_plan(
         }
 
     ct = _ensure_coremltools()
-    compute_map = {
-        "CPU_AND_NE": ct.ComputeUnit.CPU_AND_NE,
-        "CPU_AND_GPU": ct.ComputeUnit.CPU_AND_GPU,
-        "CPU_ONLY": ct.ComputeUnit.CPU_ONLY,
-        "ALL": ct.ComputeUnit.ALL,
-    }
-    compute_unit = compute_map.get(compute_units, ct.ComputeUnit.CPU_AND_NE)
+    compute_unit = COMPUTE_MAP.get(compute_units, ct.ComputeUnit.CPU_AND_NE)
 
     try:
         plan = MLComputePlan.load_from_path(str(mlpackage_path), compute_unit)

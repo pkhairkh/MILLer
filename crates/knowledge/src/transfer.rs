@@ -11,6 +11,7 @@ use ane_ir::kir::{EvidenceSource, KnowledgeType, KnowledgeUnit};
 use anyhow::{bail, Result};
 
 use crate::store::KnowledgeEntry;
+use crate::util::payload_ane_legal;
 
 /// Synthetic transfer annotation and validation.
 pub struct SyntheticTransfer {
@@ -139,13 +140,11 @@ impl SyntheticTransfer {
         Ok(TransferValidation { is_consistent, confidence_delta, recommendation })
     }
 
-    /// Check if two knowledge units make agreeing claims.
+    /// Check if two knowledge units make agreeing claims (using typed accessors).
     fn claims_agree(&self, a: &KnowledgeUnit, b: &KnowledgeUnit) -> bool {
         match a.knowledge_type {
             KnowledgeType::LegalityRule => {
-                let a_legal = a.payload.get("ane_legal").and_then(|v| v.as_bool());
-                let b_legal = b.payload.get("ane_legal").and_then(|v| v.as_bool());
-                match (a_legal, b_legal) {
+                match (payload_ane_legal(&a.payload), payload_ane_legal(&b.payload)) {
                     (Some(av), Some(bv)) => av == bv,
                     _ => true, // Can't determine disagreement
                 }

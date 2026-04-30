@@ -18,15 +18,7 @@ Multifunction support (Sprint 39):
 
 from typing import Dict, Any, Optional, List
 
-# Lazy import to avoid ImportError on non-macOS systems
-ct = None
-
-def _ensure_coremltools():
-    global ct
-    if ct is None:
-        import coremltools
-        ct = coremltools
-    return ct
+from common import _ensure_coremltools, COMPUTE_MAP
 
 
 def convert_milprogram(
@@ -36,6 +28,7 @@ def convert_milprogram(
     compute_units: str = "CPU_AND_NE",
     optimization_hints: Optional[Dict] = None,
     inputs: Optional[list] = None,
+    pass_pipeline: Optional[Any] = None,
 ) -> Any:
     """Convert a MIL program to an MLModel mlprogram.
     
@@ -46,6 +39,13 @@ def convert_milprogram(
         compute_units: "CPU_AND_NE", "CPU_AND_GPU", "CPU_ONLY", "ALL".
         optimization_hints: Dict of optimization hints.
         inputs: List of ct.TensorType/ct.StateType input specs.
+        pass_pipeline: Optional ct.PassPipeline to use instead of the default.
+            When provided, this pipeline is passed to ct.convert() via the
+            pass_pipeline keyword argument. This replaces the former
+            convert_stateful_milprogram() function (W-25 fix): callers that
+            need the stateful-aware pipeline (which removes
+            canonicalize_inplace_pattern) should pass the result of
+            make_stateful_pass_pipeline() here.
     
     Returns:
         An MLModel object.
@@ -60,12 +60,6 @@ def convert_milprogram(
         "FLOAT16": ct.precision.FLOAT16,
         "FLOAT32": ct.precision.FLOAT32,
     }
-    compute_map = {
-        "CPU_AND_NE": ct.ComputeUnit.CPU_AND_NE,
-        "CPU_AND_GPU": ct.ComputeUnit.CPU_AND_GPU,
-        "CPU_ONLY": ct.ComputeUnit.CPU_ONLY,
-        "ALL": ct.ComputeUnit.ALL,
-    }
     
     kwargs = {
         "convert_to": "mlprogram",
@@ -73,6 +67,9 @@ def convert_milprogram(
         "compute_precision": precision_map.get(compute_precision, ct.precision.FLOAT16),
         "debug": True,
     }
+    
+    if pass_pipeline is not None:
+        kwargs["pass_pipeline"] = pass_pipeline
     
     if inputs is not None:
         kwargs["inputs"] = inputs
@@ -134,53 +131,26 @@ def convert_multifunction_milprogram(
     return mlmodel
 
 
-def convert_stateful_milprogram(
-    program,
-    opset_version: str = "iOS18",
-    compute_precision: str = "FLOAT16",
-    compute_units: str = "CPU_AND_NE",
-    optimization_hints: Optional[Dict] = None,
-    inputs: Optional[list] = None,
-) -> Any:
-    """Convert a stateful MIL program to an MLModel mlprogram.
+def make_stateful_pass_pipeline():
+    """Build a ct.PassPipeline suitable for stateful MIL programs.
 
-    This is the same as convert_milprogram but removes the
-    `common::canonicalize_inplace_pattern` pass from the default
-    pipeline, which does not handle `coreml_update_state` ops
-    correctly in coremltools 9.0. The pass attempts to rewrite
-    inplace patterns but fails on state update ops, producing
-    a spurious error. Removing it is safe because:
-    (1) the pass is a canonicalization optimization, not a
-        correctness requirement;
-    (2) stateful programs use coreml_update_state for its side
-        effects, not as an inplace mutation pattern;
+    Removes the `common::canonicalize_inplace_pattern` pass from the default
+    pipeline, which does not handle `coreml_update_state` ops correctly in
+    coremltools 9.0. The pass attempts to rewrite inplace patterns but fails
+    on state update ops, producing a spurious error. Removing it is safe
+    because:
+    (1) the pass is a canonicalization optimization, not a correctness
+        requirement;
+    (2) stateful programs use coreml_update_state for its side effects,
+        not as an inplace mutation pattern;
     (3) all other passes in the default pipeline remain active.
 
-    Args:
-        program: The MIL Program object (containing state ops).
-        opset_version: Target opset (e.g., "iOS18").
-        compute_precision: "FLOAT16" or "FLOAT32".
-        compute_units: "CPU_AND_NE", "CPU_AND_GPU", "CPU_ONLY", "ALL".
-        optimization_hints: Dict of optimization hints.
-        inputs: List of ct.TensorType/ct.StateType input specs.
+    This replaces the former convert_stateful_milprogram() function (W-25).
 
     Returns:
-        An MLModel object with state declarations.
+        A ct.PassPipeline with canonicalize_inplace_pattern removed.
     """
     ct = _ensure_coremltools()
-    target_map = {
-        "iOS16": ct.target.iOS16,
-        "iOS17": ct.target.iOS17,
-        "iOS18": ct.target.iOS18,
-    }
-    precision_map = {
-        "FLOAT16": ct.precision.FLOAT16,
-        "FLOAT32": ct.precision.FLOAT32,
-    }
-
-    # Build a custom pass pipeline that removes the problematic
-    # canonicalize_inplace_pattern pass. This pass doesn't handle
-    # coreml_update_state correctly, causing conversion to fail.
     pipeline = ct.PassPipeline.DEFAULT
     # Find and remove the problematic pass by index
     inplace_idx = None
@@ -190,20 +160,4 @@ def convert_stateful_milprogram(
             break
     if inplace_idx is not None:
         pipeline.remove_pass(inplace_idx)
-
-    kwargs = {
-        "convert_to": "mlprogram",
-        "minimum_deployment_target": target_map.get(opset_version, ct.target.iOS18),
-        "compute_precision": precision_map.get(compute_precision, ct.precision.FLOAT16),
-        "debug": True,
-        "pass_pipeline": pipeline,
-    }
-
-    if inputs is not None:
-        kwargs["inputs"] = inputs
-
-    if optimization_hints:
-        kwargs["optimization_hints"] = optimization_hints
-
-    mlmodel = ct.convert(program, **kwargs)
-    return mlmodel
+    return pipeline

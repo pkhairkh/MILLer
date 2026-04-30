@@ -276,7 +276,7 @@ impl WeightResolver for SafetensorsWeightResolver {
 ///
 /// BF16 has the same structure as FP32 but with the lower 16 bits truncated.
 /// FP16 has 5 exponent bits and 10 mantissa bits.
-/// Conversion: BF16 bits → F32 → F16 bits
+/// Conversion: BF16 bits → F32 → F16 bits (via the `half` crate).
 fn convert_bf16_to_fp16(bf16_data: &[u8]) -> Vec<u8> {
     // BF16 is 2 bytes per element, little-endian
     let num_elements = bf16_data.len() / 2;
@@ -287,59 +287,17 @@ fn convert_bf16_to_fp16(bf16_data: &[u8]) -> Vec<u8> {
         // BF16 → F32: shift left 16 bits
         let f32_bits = (bf16_bits as u32) << 16;
         let f32_val = f32::from_bits(f32_bits);
-        // F32 → F16 via half crate or manual conversion
-        let fp16_val = f32_to_f16(f32_val);
-        fp16_data.extend_from_slice(&fp16_val.to_le_bytes());
+        // F32 → F16 via the `half` crate — correctly handles subnormals and NaN payloads.
+        let fp16_val = half::f16::from_f32(f32_val);
+        fp16_data.extend_from_slice(&fp16_val.to_bits().to_le_bytes());
     }
 
     fp16_data
 }
 
-/// Convert f32 to f16 (IEEE 754 half-precision).
-///
-/// This is a software implementation since Rust's standard library
-/// doesn't include f16. We implement the conversion using bit manipulation.
-fn f32_to_f16(val: f32) -> u16 {
-    const EXPONENT_BIAS_F32: i32 = 127;
-    const EXPONENT_BIAS_F16: i32 = 15;
-    const MANTISSA_BITS_F32: u32 = 23;
-    const MANTISSA_BITS_F16: u32 = 10;
-
-    let bits = val.to_bits();
-    let sign = (bits >> 31) & 1;
-    let exponent = ((bits >> MANTISSA_BITS_F32) & 0xFF) as i32;
-    let mantissa = bits & ((1 << MANTISSA_BITS_F32) - 1);
-
-    if exponent == 0 {
-        // Zero or subnormal f32 → zero f16
-        return (sign as u16) << 15;
-    }
-
-    if exponent == 255 {
-        // Inf or NaN
-        let fp16_mantissa = if mantissa != 0 { 0x200 } else { 0 };
-        return ((sign as u16) << 15) | (0x1F << MANTISSA_BITS_F16) | (fp16_mantissa as u16);
-    }
-
-    let new_exp = exponent - EXPONENT_BIAS_F32 + EXPONENT_BIAS_F16;
-
-    if new_exp <= 0 {
-        // Underflow to zero
-        return (sign as u16) << 15;
-    }
-
-    if new_exp >= 0x1F {
-        // Overflow to infinity
-        return ((sign as u16) << 15) | (0x1F << MANTISSA_BITS_F16);
-    }
-
-    // Round mantissa: shift right and apply round-to-nearest-even
-    let shift = MANTISSA_BITS_F32 - MANTISSA_BITS_F16;
-    let round_bit = 1u32 << (shift - 1);
-    let truncated_mantissa = (mantissa + round_bit) >> shift;
-
-    ((sign as u16) << 15) | ((new_exp as u16) << MANTISSA_BITS_F16) | (truncated_mantissa as u16)
-}
+// The hand-rolled f32_to_f16 has been replaced by the `half` crate's
+// `half::f16::from_f32()`, which correctly handles subnormals and NaN
+// payloads. See `convert_bf16_to_fp16` above for usage.
 
 /// Discover safetensors files in the HuggingFace cache from a model ID.
 ///
@@ -471,7 +429,7 @@ mod tests {
 
     #[test]
     fn test_f32_to_f16_roundtrip() {
-        // Test some known values
+        // Test some known values using the `half` crate
         let test_cases = vec![
             (0.0f32, 0x0000u16),
             (1.0f32, 0x3C00u16),
@@ -482,10 +440,10 @@ mod tests {
         ];
 
         for (f32_val, expected) in test_cases {
-            let f16 = f32_to_f16(f32_val);
+            let f16 = half::f16::from_f32(f32_val).to_bits();
             assert_eq!(
                 f16, expected,
-                "f32_to_f16({}) = 0x{:04X}, expected 0x{:04X}",
+                "half::f16::from_f32({}) = 0x{:04X}, expected 0x{:04X}",
                 f32_val, f16, expected
             );
         }
