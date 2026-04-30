@@ -405,6 +405,10 @@ impl RoleMirBuilder {
                         op: MirOp::MILReadState {
                             name: read_k_name,
                             state_id: format!("{}_kv_cache_k", spec.shard_name),
+                            // TODO: Derive KV cache shape from shard spec instead of hardcoding.
+                            // This shape [1, 32, 64, 128] only works for models matching
+                            // these exact dimensions. Should use spec.num_heads, spec.head_dim,
+                            // and spec.context_length when available.
                             shape: vec![1, 32, 64, 128],
                             dtype: self.default_dtype.clone(),
                         },
@@ -421,6 +425,7 @@ impl RoleMirBuilder {
                         op: MirOp::MILReadState {
                             name: read_v_name,
                             state_id: format!("{}_kv_cache_v", spec.shard_name),
+                            // TODO: Same as K cache — derive from shard spec.
                             shape: vec![1, 32, 64, 128],
                             dtype: self.default_dtype.clone(),
                         },

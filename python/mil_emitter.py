@@ -37,6 +37,19 @@ import os
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+import numpy as np
+
+# Shared constants (deduplicated from build_*_program functions)
+_DEFAULT_OPSET_MAP = {
+    "coreml_opset": "iOS18",
+    "mil_opset": "coreml3",
+}
+
+def _resolve_dtype(dtype_str):
+    """Resolve dtype string to numpy dtype and MIL dtype string."""
+    if dtype_str == "fp16":
+        return np.float16, "fp16"
+    return np.float32, "fp32"
 
 # Lazy imports for coremltools — not all paths need them
 def _import_coremltools():
@@ -75,9 +88,10 @@ def build_linear_projection_program(command: dict):
     opset_version = command.get("opset_version", "iOS18")
     seed = command.get("seed", 42)
 
+    rng_state = np.random.get_state()
     np.random.seed(seed)
 
-    np_dtype = np.float16 if dtype_str == "fp16" else np.float32
+    np_dtype, _ = _resolve_dtype(dtype_str)
     mil_dtype = types.fp16 if dtype_str == "fp16" else types.fp32
 
     opset_map = {
@@ -114,6 +128,7 @@ def build_linear_projection_program(command: dict):
         "emission_path": "linear_projection",
     }
 
+    np.random.set_state(rng_state)
     return prog, metadata
 
 
@@ -276,9 +291,10 @@ def build_lut_projection_program(command: dict):
     opset_version = command.get("opset_version", "iOS18")
     seed = command.get("seed", 42)
 
+    rng_state = np.random.get_state()
     np.random.seed(seed)
 
-    np_dtype = np.float16 if dtype_str == "fp16" else np.float32
+    np_dtype, _ = _resolve_dtype(dtype_str)
     mil_dtype = types.fp16 if dtype_str == "fp16" else types.fp32
 
     opset_map = {
@@ -343,6 +359,7 @@ def build_lut_projection_program(command: dict):
         "emission_path": "lut_projection",
     }
 
+    np.random.set_state(rng_state)
     return prog, metadata
 
 
@@ -463,9 +480,10 @@ def build_decode_step_program(command: dict):
     opset_version = command.get("opset_version", "iOS18")
     seed = command.get("seed", 42)
 
+    rng_state = np.random.get_state()
     np.random.seed(seed)
 
-    np_dtype = np.float16 if dtype_str == "fp16" else np.float32
+    np_dtype, _ = _resolve_dtype(dtype_str)
     mil_dtype = types.fp16 if dtype_str == "fp16" else types.fp32
 
     opset_map = {
@@ -544,22 +562,27 @@ def build_decode_step_program(command: dict):
         "emission_path": "decode_step",
     }
 
+    np.random.set_state(rng_state)
     return prog, metadata
 
 
 def emit_decode_step(command: dict) -> dict:
     """Build a stateless decode-step MIL program and save as mlpackage.
 
-    This is the STATELESS emission path for decode-step tasks, suitable for
+    Currently this routes to the STATELESS path (build_decode_step_program)
+    using deterministic `mb.const` KV cache values. This is suitable for
     single-step inference testing where state persistence across calls is
-    not required. K and V cache values are deterministic `mb.const` tensors.
+    not required.
 
-    Sprint 40: This function is now the stateless variant. The DEFAULT
-    decode-step emission path (used by `compile-full` for DecodeStep tasks)
-    is `emit_stateful_decode_step`, which uses real `mb.read_state` /
-    `mb.coreml_update_state` for KV-cache state semantics (iOS 18+).
-    The bridge command `emit_decode_step` now routes to the stateful path;
-    use `emit_stateless_decode_step` to reach this stateless variant.
+    # TODO: Route emit_decode_step to stateful path as documented.
+    # Currently both emit_decode_step and emit_stateless_decode_step
+    # route to the stateless build_decode_step_program.
+
+    Sprint 40 intended that this function would route to the stateful path
+    (`emit_stateful_decode_step`), but the routing has not yet been changed.
+    Use `emit_stateful_decode_step` explicitly for real KV-cache state
+    semantics, or `emit_stateless_decode_step` for the deterministic
+    const-based variant.
 
     The emission uses mb.linear for FC projections and mb.scaled_dot_product_attention
     for the attention computation (iOS 18+).
@@ -636,14 +659,15 @@ def emit_stateless_decode_step(command: dict) -> dict:
     """Build a stateless decode-step MIL program — explicit stateless path.
 
     This is an explicit alias for the stateless decode-step emission path
-    (Sprint 40). It calls `emit_decode_step` which uses deterministic
-    `mb.const` KV cache values rather than `mb.read_state` /
-    `mb.coreml_update_state`. Use this for single-step inference testing
-    where state persistence across calls is not required.
+    (Sprint 40). It calls `emit_decode_step` which currently also uses
+    deterministic `mb.const` KV cache values (stateless path).
 
-    For real autoregressive inference, use `emit_stateful_decode_step` or
-    the default `emit_decode_step` bridge command (which now routes to the
-    stateful path as of Sprint 40).
+    # TODO: Route emit_decode_step to stateful path as documented.
+    # Currently both emit_decode_step and emit_stateless_decode_step
+    # route to the stateless build_decode_step_program.
+
+    For real autoregressive inference, use `emit_stateful_decode_step`
+    explicitly.
 
     Payload fields consumed: Same as emit_decode_step.
     """
@@ -694,6 +718,7 @@ def build_stateful_decode_step_program(command: dict):
     opset_version = command.get("opset_version", "iOS18")
     seed = command.get("seed", 42)
 
+    rng_state = np.random.get_state()
     np.random.seed(seed)
 
     np_dtype = np.float16 if dtype_str == "fp16" else np.float32
@@ -808,6 +833,7 @@ def build_stateful_decode_step_program(command: dict):
         ],
     }
 
+    np.random.set_state(rng_state)
     return prog, metadata
 
 
@@ -990,6 +1016,7 @@ def build_shard_decode_step_program(command: dict):
     if shard_role != "Exit":
         output_dim = hidden_dim  # Entry/Interior output hidden_dim
 
+    rng_state = np.random.get_state()
     np.random.seed(seed)
 
     np_dtype = np.float16 if dtype_str == "fp16" else np.float32
@@ -1154,6 +1181,7 @@ def build_shard_decode_step_program(command: dict):
         ],
     }
 
+    np.random.set_state(rng_state)
     return prog, metadata
 
 
@@ -1444,6 +1472,7 @@ def build_mlp_block_program(command: dict):
     opset_version = command.get("opset_version", "iOS18")
     seed = command.get("seed", 42)
 
+    rng_state = np.random.get_state()
     np.random.seed(seed)
 
     np_dtype = np.float16 if dtype_str == "fp16" else np.float32
@@ -1500,6 +1529,7 @@ def build_mlp_block_program(command: dict):
         "emission_path": "mlp_block",
     }
 
+    np.random.set_state(rng_state)
     return prog, metadata
 
 
@@ -1624,6 +1654,7 @@ def build_attention_program(command: dict):
     seed = command.get("seed", 42)
     causal = command.get("causal", True)  # Default: causal masking on
 
+    rng_state = np.random.get_state()
     np.random.seed(seed)
 
     np_dtype = np.float16 if dtype_str == "fp16" else np.float32
@@ -1718,6 +1749,7 @@ def build_attention_program(command: dict):
         "emission_path": "attention",
     }
 
+    np.random.set_state(rng_state)
     return prog, metadata
 
 
@@ -2134,6 +2166,7 @@ def build_multifunction_program(command: dict):
     opset_version = command.get("opset_version", "iOS18")
     seed = command.get("seed", 42)
 
+    rng_state = np.random.get_state()
     np.random.seed(seed)
 
     np_dtype = np.float16 if dtype_str == "fp16" else np.float32
@@ -2250,6 +2283,7 @@ def build_multifunction_program(command: dict):
         "stateful_decode_step": True,
     }
 
+    np.random.set_state(rng_state)
     return embedding_prog, metadata
 
 
@@ -2553,6 +2587,7 @@ def build_multifunction_program_with_shared_weights(command: dict):
     seed = command.get("seed", 42)
     share_weights = command.get("share_weights", True)
 
+    rng_state = np.random.get_state()
     np.random.seed(seed)
 
     np_dtype = np.float16 if dtype_str == "fp16" else np.float32
@@ -2696,6 +2731,7 @@ def build_multifunction_program_with_shared_weights(command: dict):
         "shared_weight_shape": [embed_dim, embed_dim] if share_weights else None,
     }
 
+    np.random.set_state(rng_state)
     return embedding_prog, metadata
 
 

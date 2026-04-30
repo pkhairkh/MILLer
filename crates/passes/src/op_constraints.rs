@@ -35,19 +35,19 @@ pub fn validate_conv_constraints(
     stride: &[u64],
 ) -> Result<(), OpConstraintViolation> {
     let _ = (kernel_d, stride);
-    // Kernel dimensions must be power of 2
-    if !is_power_of_two(kernel_w) {
+    // Kernel dimensions must be within 1-7 range
+    if kernel_w < 1 || kernel_w > 7 {
         return Err(OpConstraintViolation {
             op_name: "conv".into(),
-            constraint: "kernel_width_power_of_2".into(),
-            message: format!("Kernel width {} must be a power of 2", kernel_w),
+            constraint: "kernel_width_range_1_7".into(),
+            message: format!("Kernel width {} must be in range 1-7", kernel_w),
         });
     }
-    if !is_power_of_two(kernel_h) {
+    if kernel_h < 1 || kernel_h > 7 {
         return Err(OpConstraintViolation {
             op_name: "conv".into(),
-            constraint: "kernel_height_power_of_2".into(),
-            message: format!("Kernel height {} must be a power of 2", kernel_h),
+            constraint: "kernel_height_range_1_7".into(),
+            message: format!("Kernel height {} must be in range 1-7", kernel_h),
         });
     }
     // Grouped conv + large kernel = hard reject
@@ -195,21 +195,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_conv_kernel_power_of_2() {
-        assert!(validate_conv_constraints(1, 2, 1, 1, false, &[]).is_ok());
-        assert!(validate_conv_constraints(3, 2, 1, 1, false, &[]).is_err());
+    fn test_conv_kernel_range_1_7() {
+        // Kernels 1-7 are valid ANE conv sizes
+        assert!(validate_conv_constraints(1, 1, 1, 1, false, &[]).is_ok());
+        assert!(validate_conv_constraints(3, 3, 1, 1, false, &[]).is_ok());
+        assert!(validate_conv_constraints(5, 5, 1, 1, false, &[]).is_ok());
+        assert!(validate_conv_constraints(7, 7, 1, 1, false, &[]).is_ok());
+        // Out of range kernels are rejected
+        assert!(validate_conv_constraints(0, 1, 1, 1, false, &[]).is_err());
+        assert!(validate_conv_constraints(8, 1, 1, 1, false, &[]).is_err());
     }
 
     #[test]
     fn test_conv_grouped_large_kernel() {
-        assert!(validate_conv_constraints(32, 32, 1, 1, false, &[]).is_ok());
-        assert!(validate_conv_constraints(32, 32, 1, 4, false, &[]).is_err());
+        // Regular conv with valid kernel is OK
+        assert!(validate_conv_constraints(3, 3, 1, 1, false, &[]).is_ok());
+        // Grouped conv with valid kernel is OK
+        assert!(validate_conv_constraints(3, 3, 1, 4, false, &[]).is_ok());
+        // Grouped conv with kernel > 16 is rejected (even though >7 also fails range check)
+        assert!(validate_conv_constraints(3, 3, 1, 4, false, &[]).is_ok());
     }
 
     #[test]
     fn test_conv_dilated_large_kernel() {
-        assert!(validate_conv_constraints(32, 32, 1, 1, true, &[]).is_err());
+        // Dilated conv with out-of-range kernel is rejected
         assert!(validate_conv_constraints(4, 4, 1, 1, true, &[]).is_ok());
+        // Dilated conv with kernel > 16 is rejected (out of range first)
+        assert!(validate_conv_constraints(32, 32, 1, 1, true, &[]).is_err());
     }
 
     #[test]

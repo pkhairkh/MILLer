@@ -9,6 +9,13 @@
 //! - KIR: Backend-Knowledge Representation IR
 //! - TaskSpec: Concrete task specification types
 
+/// Default Core ML opset version used for emission.
+///
+/// This constant centralizes the opset version string that was previously
+/// hardcoded across multiple files. Update this when targeting newer
+/// Core ML runtime versions.
+pub const DEFAULT_OPSET_VERSION: &str = "iOS18";
+
 pub mod air;
 pub mod ane_engine;
 pub mod ane_hw_limits;

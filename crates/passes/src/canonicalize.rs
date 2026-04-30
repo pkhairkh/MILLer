@@ -29,9 +29,13 @@ impl CanonicalizePass {
 
     /// Run the canonicalize pass.
     ///
-    /// For the current linear projection vertical slice, the SIR is already
-    /// canonical (single linear projection op), so this is a pass-through.
-    /// When more complex SIR graphs are supported, this pass will:
+    /// Currently a no-op placeholder. The pass-through behavior is intentional
+    /// for the current vertical slice where SIR is already canonical.
+    ///
+    /// Future work will include:
+    /// - Common subexpression elimination
+    /// - Op reordering for ANE-optimal execution
+    /// - Dead code elimination
     /// - Fuse linear + bias into a single LinearProjection op
     /// - Eliminate identity operations
     /// - Standardize node naming conventions

@@ -151,9 +151,7 @@ impl DecompositionContext {
         let kv_heads = if self.kv_heads > 0 { self.kv_heads } else { self.num_heads };
         if weight.contains(".self_attn.q_proj.weight") {
             self.num_heads * self.head_dim
-        } else if weight.contains(".self_attn.k_proj.weight")
-            || weight.contains(".self_attn.k_proj.weight")
-        {
+        } else if weight.contains(".self_attn.k_proj.weight") {
             kv_heads * self.head_dim
         } else if weight.contains(".self_attn.v_proj.weight") {
             kv_heads * self.head_dim

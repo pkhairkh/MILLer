@@ -282,7 +282,7 @@ impl ShardPlanPass {
         let has_io = !gather_indices.is_empty();
         let has_sampler = !sampler_indices.is_empty();
 
-        let io_shard_idx: usize = if has_io { 0 } else { 0 }; // will shift decoder later
+        let io_shard_idx: usize = 0; // TODO: currently always 0; will shift decoder later when IO shard placement changes
         let (decoder_shard_start, decoder_shard_count) = if has_io {
             (1, 1) // at least one decoder shard
         } else {
@@ -347,7 +347,7 @@ impl ShardPlanPass {
             }
 
             // Check if the Gather ops look like tied embedding+LM head
-            let _has_lm_head = gather_indices.len() >= 2;
+            let _has_lm_head = gather_indices.len() >= 2; // TODO: computed but unused; will be needed for separate LM head shard
 
             packages.push(Package {
                 name: name.clone(),

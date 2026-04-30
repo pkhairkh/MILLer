@@ -1,10 +1,19 @@
 """Profiler - Runs Core ML models and captures timing/metrics."""
 
-import coremltools as ct
 import numpy as np
 import time
 from typing import Dict, Any, List, Optional
 import json
+
+# Lazy import to avoid ImportError on non-macOS systems
+ct = None
+
+def _ensure_coremltools():
+    global ct
+    if ct is None:
+        import coremltools
+        ct = coremltools
+    return ct
 
 
 def profile_model(
@@ -28,6 +37,7 @@ def profile_model(
     Returns:
         Dict with latency statistics and output snapshots.
     """
+    ct = _ensure_coremltools()
     compute_map = {
         "CPU_AND_NE": ct.ComputeUnit.CPU_AND_NE,
         "CPU_AND_GPU": ct.ComputeUnit.CPU_AND_GPU,

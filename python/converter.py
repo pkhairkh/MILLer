@@ -16,8 +16,17 @@ Multifunction support (Sprint 39):
     naturally; the converter ensures default_function_name is set correctly.
 """
 
-import coremltools as ct
 from typing import Dict, Any, Optional, List
+
+# Lazy import to avoid ImportError on non-macOS systems
+ct = None
+
+def _ensure_coremltools():
+    global ct
+    if ct is None:
+        import coremltools
+        ct = coremltools
+    return ct
 
 
 def convert_milprogram(
@@ -27,7 +36,7 @@ def convert_milprogram(
     compute_units: str = "CPU_AND_NE",
     optimization_hints: Optional[Dict] = None,
     inputs: Optional[list] = None,
-) -> ct.models.MLModel:
+) -> Any:
     """Convert a MIL program to an MLModel mlprogram.
     
     Args:
@@ -41,6 +50,7 @@ def convert_milprogram(
     Returns:
         An MLModel object.
     """
+    ct = _ensure_coremltools()
     target_map = {
         "iOS16": ct.target.iOS16,
         "iOS17": ct.target.iOS17,
@@ -82,7 +92,7 @@ def convert_multifunction_milprogram(
     default_function_name: Optional[str] = None,
     optimization_hints: Optional[Dict] = None,
     inputs: Optional[list] = None,
-) -> ct.models.MLModel:
+) -> Any:
     """Convert a multi-function MIL program to an MLModel mlprogram.
 
     This is the same as convert_milprogram but additionally supports
@@ -118,6 +128,9 @@ def convert_multifunction_milprogram(
         inputs=inputs,
     )
 
+    if default_function_name:
+        mlmodel.spec.defaultFunctionName = default_function_name
+
     return mlmodel
 
 
@@ -128,7 +141,7 @@ def convert_stateful_milprogram(
     compute_units: str = "CPU_AND_NE",
     optimization_hints: Optional[Dict] = None,
     inputs: Optional[list] = None,
-) -> ct.models.MLModel:
+) -> Any:
     """Convert a stateful MIL program to an MLModel mlprogram.
 
     This is the same as convert_milprogram but removes the
@@ -154,6 +167,7 @@ def convert_stateful_milprogram(
     Returns:
         An MLModel object with state declarations.
     """
+    ct = _ensure_coremltools()
     target_map = {
         "iOS16": ct.target.iOS16,
         "iOS17": ct.target.iOS17,

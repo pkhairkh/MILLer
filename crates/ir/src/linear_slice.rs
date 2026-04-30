@@ -387,16 +387,13 @@ impl DecodeStepPayload {
                     shape: vec![batch_size, embed_dim],
                     dtype: effective_dtype,
                 }],
-                stateful: false,
+                stateful: true, // DecodeStep manages KV cache state
             }],
         })
     }
 }
 
-/// Bridge payload: the JSON structure sent to the Python bridge
-/// for a dedicated MLP block emission.
-///
-/// This is structurally distinct from `LinearProjectionPayload`:
+/// MLP block payload for the Python bridge.
 /// it carries MLP-block-specific fields (`input_dim`, `hidden_dim`,
 /// `output_dim`, `activation`) and uses `command: "emit_mlp_block"` so
 /// the Python bridge dispatches to the dedicated MLP block emission
@@ -1891,7 +1888,7 @@ mod tests {
         assert_eq!(func.outputs.len(), 1);
         assert_eq!(func.outputs[0].name, "output");
         assert_eq!(func.outputs[0].shape, vec![1, 128]);
-        assert!(!func.stateful);
+        assert!(func.stateful); // DecodeStep is stateful (manages KV cache)
     }
 
     // ─── MLP Block Payload Divergence Tests (Sprint 28) ──────────────────

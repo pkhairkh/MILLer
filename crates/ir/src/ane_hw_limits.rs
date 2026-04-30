@@ -61,6 +61,9 @@ impl AneHwLimits {
         }
     }
 
+    // TODO: A12 (M2) ANE limits should be verified independently.
+    // Current values are copied from A11 legacy and may not reflect
+    // actual M2 ANE capabilities (different NE count, bandwidth, etc.).
     fn a12() -> Self {
         Self { revision: AneRevision::V5, ..Self::a11_legacy() }
     }

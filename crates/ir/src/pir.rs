@@ -649,7 +649,7 @@ impl ShardPipelineSpec {
             handoffs,
             state_declarations: vec![],
             shard_template: Some(shard_template),
-            opset_version: "iOS18".into(),
+            opset_version: crate::DEFAULT_OPSET_VERSION.into(),
         }
     }
 
@@ -819,7 +819,7 @@ impl ShardPipelineSpec {
             handoffs,
             state_declarations,
             shard_template: Some(shard_template),
-            opset_version: "iOS18".into(),
+            opset_version: crate::DEFAULT_OPSET_VERSION.into(),
         }
     }
 

@@ -108,6 +108,9 @@ impl PrecisionPolicyPass {
             ane_ir::sir::SirOp::DecodeStep { .. } => "DecodeStep",
             ane_ir::sir::SirOp::Sampler { .. } => "Sampler",
             _ => "Other",
+            // TODO: Expand precision hazard pattern coverage beyond 14/167 ops.
+            // Currently only attention, linear, and normalization ops have patterns.
+            // Remaining ops fall into "Other" and never query precision hazards.
         }
     }
 

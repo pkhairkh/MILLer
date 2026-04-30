@@ -76,8 +76,8 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 (Some(input_shape), od) if *od > 0 => {
                     // Replace the last dimension with the output_dim
                     let mut out = input_shape.clone();
-                    if !out.is_empty() {
-                        *out.last_mut().unwrap() = *od;
+                    if let Some(last) = out.last_mut() {
+                        *last = *od;
                     }
                     out
                 }

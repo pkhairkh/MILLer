@@ -9,8 +9,17 @@ Sprint 35 additions:
   - harvest_to_observations(): converts placement data into knowledge store observations
 """
 
-import coremltools as ct
 from typing import Dict, Any, Optional, List
+
+# Lazy import to avoid ImportError on non-macOS systems
+ct = None
+
+def _ensure_coremltools():
+    global ct
+    if ct is None:
+        import coremltools
+        ct = coremltools
+    return ct
 
 
 def inspect_compute_plan(
@@ -47,6 +56,7 @@ def inspect_compute_plan(
             "total_operations": 0,
         }
 
+    ct = _ensure_coremltools()
     compute_map = {
         "CPU_AND_NE": ct.ComputeUnit.CPU_AND_NE,
         "CPU_AND_GPU": ct.ComputeUnit.CPU_AND_GPU,
@@ -134,6 +144,7 @@ def harvest_compute_plan(
             "source": "unavailable",
         }
 
+    ct = _ensure_coremltools()
     compute_map = {
         "CPU_AND_NE": ct.ComputeUnit.CPU_AND_NE,
         "CPU_AND_GPU": ct.ComputeUnit.CPU_AND_GPU,

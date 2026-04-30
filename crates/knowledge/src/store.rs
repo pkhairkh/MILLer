@@ -342,7 +342,7 @@ impl KnowledgeStore {
         }
 
         // Persist the observation entry
-        let entry = self.index.get(&id).unwrap();
+        let entry = self.index.get(&id).expect("entry must exist after insertion");
         let obs_path = self.path.join("observations").join(format!("{}.json", sanitize_id(&id)));
         let json = serde_json::to_string_pretty(entry)
             .with_context(|| format!("Failed to serialize observation: {}", id))?;

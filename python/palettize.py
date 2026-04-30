@@ -4,19 +4,34 @@ Uses coremltools.optimize.coreml palettization APIs.
 Compatible with coremltools 9.0 (op_name_configs, CompressionGranularity).
 """
 
-import coremltools as ct
-from coremltools.optimize.coreml import (
-    OptimizationConfig,
-    OpPalettizerConfig,
-    palettize_weights,
-)
 from typing import Dict, Any, List, Optional
+
+# Lazy import to avoid ImportError on non-macOS systems
+ct = None
+_OptimizationConfig = None
+_OpPalettizerConfig = None
+_palettize_weights = None
+
+def _ensure_coremltools():
+    global ct, _OptimizationConfig, _OpPalettizerConfig, _palettize_weights
+    if ct is None:
+        import coremltools
+        ct = coremltools
+        from coremltools.optimize.coreml import (
+            OptimizationConfig,
+            OpPalettizerConfig,
+            palettize_weights,
+        )
+        _OptimizationConfig = OptimizationConfig
+        _OpPalettizerConfig = OpPalettizerConfig
+        _palettize_weights = palettize_weights
+    return ct
 
 
 def apply_palettization(
-    mlmodel: ct.models.MLModel,
+    mlmodel: Any,
     palettization_specs: List[Dict[str, Any]],
-) -> ct.models.MLModel:
+) -> Any:
     """Apply palettization to an MLModel per the given specifications.
 
     Args:
@@ -27,11 +42,12 @@ def apply_palettization(
     Returns:
         The palettized MLModel.
     """
+    _ensure_coremltools()
     op_name_configs = {}
 
     for spec in palettization_specs:
         weight_name = spec["weight_name"]
-        op_config = OpPalettizerConfig(
+        op_config = _OpPalettizerConfig(
             mode=spec.get("mode", "kmeans"),
             nbits=spec.get("nbits", 4),
             granularity=spec.get("granularity", "per_grouped_channel"),
@@ -41,10 +57,10 @@ def apply_palettization(
         op_name_configs[weight_name] = op_config
 
     # coremltools 9.0 uses op_name_configs (not op_configs)
-    config = OptimizationConfig(
+    config = _OptimizationConfig(
         global_config=None,
         op_type_configs=None,
         op_name_configs=op_name_configs,
     )
 
-    return palettize_weights(mlmodel, config)
+    return _palettize_weights(mlmodel, config)

@@ -246,7 +246,7 @@ impl WeightBinBuilder {
         }
 
         self.entries.push(entry);
-        self.current_offset = aligned_offset + self.entries.last().unwrap().size;
+        self.current_offset = aligned_offset + self.entries.last().expect("entry just pushed must exist").size;
 
         Ok(aligned_offset)
     }
