@@ -197,9 +197,14 @@ pub struct AnceFaithfulnessReport {
 
 impl AnceFaithfulnessReport {
     /// Percentage of ops that will run on ANE.
+    ///
+    /// Returns 0.0 for empty graphs (no ops) rather than the misleading
+    /// 100.0 that was previously returned — an empty graph has zero ANE
+    /// utilization by definition, and claiming 100% masks the fact that
+    /// the SIR may not have been populated correctly.
     pub fn ane_utilization(&self) -> f64 {
         if self.total_ops == 0 {
-            return 100.0;
+            return 0.0;
         }
         (self.ane_supported as f64 / self.total_ops as f64) * 100.0
     }

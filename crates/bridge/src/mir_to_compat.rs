@@ -384,6 +384,41 @@ fn compat_input_names(op: &MirOpCompat) -> Vec<String> {
             names
         }
         MirOpCompat::Where { condition, x, y, .. } => vec![condition.clone(), x.clone(), y.clone()],
+        // New variants: unary ops
+        MirOpCompat::Sqrt { x, .. }
+        | MirOpCompat::LogicalNot { x, .. }
+        | MirOpCompat::Ceil { x, .. }
+        | MirOpCompat::Floor { x, .. }
+        | MirOpCompat::Round { x, .. }
+        | MirOpCompat::Sign { x, .. }
+        | MirOpCompat::Log { x, .. } => vec![x.clone()],
+        // New variants: binary ops
+        MirOpCompat::Pow { x, y, .. }
+        | MirOpCompat::Equal { x, y, .. }
+        | MirOpCompat::NotEqual { x, y, .. }
+        | MirOpCompat::Greater { x, y, .. }
+        | MirOpCompat::GreaterEqual { x, y, .. }
+        | MirOpCompat::Less { x, y, .. }
+        | MirOpCompat::LessEqual { x, y, .. }
+        | MirOpCompat::LogicalAnd { x, y, .. }
+        | MirOpCompat::LogicalOr { x, y, .. }
+        | MirOpCompat::FloorDiv { x, y, .. }
+        | MirOpCompat::Mod { x, y, .. } => vec![x.clone(), y.clone()],
+        // New variants: axis-based ops
+        MirOpCompat::ExpandDims { x, .. }
+        | MirOpCompat::Squeeze { x, .. } => vec![x.clone()],
+        // Clip: unary with scalar params
+        MirOpCompat::Clip { x, .. } => vec![x.clone()],
+        // Pad: unary with scalar/vector params
+        MirOpCompat::Pad { x, .. } => vec![x.clone()],
+        // Reduce ops: unary with axes
+        MirOpCompat::ReduceMax { x, .. }
+        | MirOpCompat::ReduceMin { x, .. }
+        | MirOpCompat::ReduceProd { x, .. } => vec![x.clone()],
+        // Select: ternary (like Where)
+        MirOpCompat::Select { condition, x, y, .. } => vec![condition.clone(), x.clone(), y.clone()],
+        // LeakyRelu: unary with alpha param
+        MirOpCompat::LeakyRelu { x, .. } => vec![x.clone()],
         MirOpCompat::Unsupported { .. } => vec![],
     }
 }
@@ -513,6 +548,103 @@ fn compat_output_shape(
             node_shapes.get(&ref_tensor.0).cloned().unwrap_or_default()
         }
         MirOp::MILNeg { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
+        // New unary ops: propagate input shape
+        MirOp::MILSqrt { x, .. }
+        | MirOp::MILLogicalNot { x, .. }
+        | MirOp::MILCeil { x, .. }
+        | MirOp::MILFloor { x, .. }
+        | MirOp::MILRound { x, .. }
+        | MirOp::MILSign { x, .. }
+        | MirOp::MILLog { x, .. }
+        | MirOp::MILLeakyRelu { x, .. }
+        | MirOp::MILClip { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
+        // New binary ops: propagate first operand shape
+        MirOp::MILPow { x, .. }
+        | MirOp::MILFloorDiv { x, .. }
+        | MirOp::MILMod { x, .. }
+        | MirOp::MILEqual { x, .. }
+        | MirOp::MILNotEqual { x, .. }
+        | MirOp::MILGreater { x, .. }
+        | MirOp::MILGreaterEqual { x, .. }
+        | MirOp::MILLess { x, .. }
+        | MirOp::MILLessEqual { x, .. }
+        | MirOp::MILLogicalAnd { x, .. }
+        | MirOp::MILLogicalOr { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
+        // ExpandDims: insert 1-sized dims at specified axes
+        MirOp::MILExpandDims { x, axis, .. } => {
+            if let Some(input_shape) = node_shapes.get(&x.0) {
+                let mut out = input_shape.clone();
+                let mut sorted_axes: Vec<usize> = axis.iter().map(|&a| a as usize).collect();
+                sorted_axes.sort_unstable();
+                for (i, &ax) in sorted_axes.iter().enumerate() {
+                    let insert_pos = if ax >= out.len() { out.len() } else { ax + i };
+                    out.insert(insert_pos, 1);
+                }
+                out
+            } else {
+                vec![]
+            }
+        }
+        // Squeeze: remove dims at specified axes
+        MirOp::MILSqueeze { x, axis, .. } => {
+            if let Some(input_shape) = node_shapes.get(&x.0) {
+                let mut out = input_shape.clone();
+                let mut sorted_axes: Vec<usize> = axis.iter().map(|&a| a as usize).collect();
+                sorted_axes.sort_unstable_by(|a, b| b.cmp(a)); // Remove from back to front
+                for &ax in &sorted_axes {
+                    if ax < out.len() {
+                        out.remove(ax);
+                    }
+                }
+                out
+            } else {
+                vec![]
+            }
+        }
+        // Pad: output shape = input shape + pad amounts
+        MirOp::MILPad { x, pad_amounts, .. } => {
+            if let Some(input_shape) = node_shapes.get(&x.0) {
+                let rank = input_shape.len();
+                let mut out = input_shape.clone();
+                for i in 0..rank {
+                    let before = pad_amounts.get(i).copied().unwrap_or(0) as usize;
+                    let after = pad_amounts.get(i + rank).copied().unwrap_or(0) as usize;
+                    out[i] += before + after;
+                }
+                out
+            } else {
+                vec![]
+            }
+        }
+        // ReduceMax/Min/Prod: same as ReduceMean shape propagation
+        MirOp::MILReduceMax { x, axes, keep_dims, .. }
+        | MirOp::MILReduceMin { x, axes, keep_dims, .. }
+        | MirOp::MILReduceProd { x, axes, keep_dims, .. } => {
+            if let Some(input_shape) = node_shapes.get(&x.0) {
+                let mut out = input_shape.clone();
+                if *keep_dims {
+                    for &ax in axes {
+                        if (ax as usize) < out.len() {
+                            out[ax as usize] = 1;
+                        }
+                    }
+                } else {
+                    let mut sorted_axes: Vec<usize> =
+                        axes.iter().map(|&a| a as usize).collect();
+                    sorted_axes.sort_unstable_by(|a, b| b.cmp(a));
+                    for &ax in &sorted_axes {
+                        if ax < out.len() {
+                            out.remove(ax);
+                        }
+                    }
+                }
+                out
+            } else {
+                vec![]
+            }
+        }
+        // Select: propagate first operand shape (like Where)
+        MirOp::MILSelect { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
         MirOp::MILSplit { x, axis, num_splits, .. } => {
             if let Some(input_shape) = node_shapes.get(&x.0) {
                 let mut out = input_shape.clone();
@@ -764,6 +896,98 @@ fn remap_compat_inputs(
         MirOpCompat::Neg { name, x } => {
             MirOpCompat::Neg { name, x: remap_name(x, aliases) }
         }
+        // New variants: unary ops
+        MirOpCompat::Sqrt { name, x } => {
+            MirOpCompat::Sqrt { name, x: remap_name(x, aliases) }
+        }
+        MirOpCompat::LogicalNot { name, x } => {
+            MirOpCompat::LogicalNot { name, x: remap_name(x, aliases) }
+        }
+        MirOpCompat::Ceil { name, x } => {
+            MirOpCompat::Ceil { name, x: remap_name(x, aliases) }
+        }
+        MirOpCompat::Floor { name, x } => {
+            MirOpCompat::Floor { name, x: remap_name(x, aliases) }
+        }
+        MirOpCompat::Round { name, x } => {
+            MirOpCompat::Round { name, x: remap_name(x, aliases) }
+        }
+        MirOpCompat::Sign { name, x } => {
+            MirOpCompat::Sign { name, x: remap_name(x, aliases) }
+        }
+        MirOpCompat::Log { name, x } => {
+            MirOpCompat::Log { name, x: remap_name(x, aliases) }
+        }
+        // New variants: binary ops
+        MirOpCompat::Pow { name, x, y } => {
+            MirOpCompat::Pow { name, x: remap_name(x, aliases), y: remap_name(y, aliases) }
+        }
+        MirOpCompat::Equal { name, x, y } => {
+            MirOpCompat::Equal { name, x: remap_name(x, aliases), y: remap_name(y, aliases) }
+        }
+        MirOpCompat::NotEqual { name, x, y } => {
+            MirOpCompat::NotEqual { name, x: remap_name(x, aliases), y: remap_name(y, aliases) }
+        }
+        MirOpCompat::Greater { name, x, y } => {
+            MirOpCompat::Greater { name, x: remap_name(x, aliases), y: remap_name(y, aliases) }
+        }
+        MirOpCompat::GreaterEqual { name, x, y } => {
+            MirOpCompat::GreaterEqual { name, x: remap_name(x, aliases), y: remap_name(y, aliases) }
+        }
+        MirOpCompat::Less { name, x, y } => {
+            MirOpCompat::Less { name, x: remap_name(x, aliases), y: remap_name(y, aliases) }
+        }
+        MirOpCompat::LessEqual { name, x, y } => {
+            MirOpCompat::LessEqual { name, x: remap_name(x, aliases), y: remap_name(y, aliases) }
+        }
+        MirOpCompat::LogicalAnd { name, x, y } => {
+            MirOpCompat::LogicalAnd { name, x: remap_name(x, aliases), y: remap_name(y, aliases) }
+        }
+        MirOpCompat::LogicalOr { name, x, y } => {
+            MirOpCompat::LogicalOr { name, x: remap_name(x, aliases), y: remap_name(y, aliases) }
+        }
+        MirOpCompat::FloorDiv { name, x, y } => {
+            MirOpCompat::FloorDiv { name, x: remap_name(x, aliases), y: remap_name(y, aliases) }
+        }
+        MirOpCompat::Mod { name, x, y } => {
+            MirOpCompat::Mod { name, x: remap_name(x, aliases), y: remap_name(y, aliases) }
+        }
+        // New variants: axis-based ops
+        MirOpCompat::ExpandDims { name, x, axis } => {
+            MirOpCompat::ExpandDims { name, x: remap_name(x, aliases), axis }
+        }
+        MirOpCompat::Squeeze { name, x, axis } => {
+            MirOpCompat::Squeeze { name, x: remap_name(x, aliases), axis }
+        }
+        // Clip
+        MirOpCompat::Clip { name, x, min_val, max_val } => {
+            MirOpCompat::Clip { name, x: remap_name(x, aliases), min_val, max_val }
+        }
+        // Pad
+        MirOpCompat::Pad { name, x, pad_amounts, mode, constant_value } => {
+            MirOpCompat::Pad { name, x: remap_name(x, aliases), pad_amounts, mode, constant_value }
+        }
+        // Reduce ops
+        MirOpCompat::ReduceMax { name, x, axes, keep_dims } => {
+            MirOpCompat::ReduceMax { name, x: remap_name(x, aliases), axes, keep_dims }
+        }
+        MirOpCompat::ReduceMin { name, x, axes, keep_dims } => {
+            MirOpCompat::ReduceMin { name, x: remap_name(x, aliases), axes, keep_dims }
+        }
+        MirOpCompat::ReduceProd { name, x, axes, keep_dims } => {
+            MirOpCompat::ReduceProd { name, x: remap_name(x, aliases), axes, keep_dims }
+        }
+        // Select
+        MirOpCompat::Select { name, condition, x, y } => MirOpCompat::Select {
+            name,
+            condition: remap_name(condition, aliases),
+            x: remap_name(x, aliases),
+            y: remap_name(y, aliases),
+        },
+        // LeakyRelu
+        MirOpCompat::LeakyRelu { name, x, alpha } => {
+            MirOpCompat::LeakyRelu { name, x: remap_name(x, aliases), alpha }
+        }
         other => other,
     }
 }
@@ -871,6 +1095,59 @@ fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
         }
         MirOpCompat::Neg { name: _, x } => {
             MirOpCompat::Neg { name: new_name, x }
+        }
+        // New variants: unary ops
+        MirOpCompat::Sqrt { name: _, x } => MirOpCompat::Sqrt { name: new_name, x },
+        MirOpCompat::LogicalNot { name: _, x } => MirOpCompat::LogicalNot { name: new_name, x },
+        MirOpCompat::Ceil { name: _, x } => MirOpCompat::Ceil { name: new_name, x },
+        MirOpCompat::Floor { name: _, x } => MirOpCompat::Floor { name: new_name, x },
+        MirOpCompat::Round { name: _, x } => MirOpCompat::Round { name: new_name, x },
+        MirOpCompat::Sign { name: _, x } => MirOpCompat::Sign { name: new_name, x },
+        MirOpCompat::Log { name: _, x } => MirOpCompat::Log { name: new_name, x },
+        // New variants: binary ops
+        MirOpCompat::Pow { name: _, x, y } => MirOpCompat::Pow { name: new_name, x, y },
+        MirOpCompat::Equal { name: _, x, y } => MirOpCompat::Equal { name: new_name, x, y },
+        MirOpCompat::NotEqual { name: _, x, y } => MirOpCompat::NotEqual { name: new_name, x, y },
+        MirOpCompat::Greater { name: _, x, y } => MirOpCompat::Greater { name: new_name, x, y },
+        MirOpCompat::GreaterEqual { name: _, x, y } => MirOpCompat::GreaterEqual { name: new_name, x, y },
+        MirOpCompat::Less { name: _, x, y } => MirOpCompat::Less { name: new_name, x, y },
+        MirOpCompat::LessEqual { name: _, x, y } => MirOpCompat::LessEqual { name: new_name, x, y },
+        MirOpCompat::LogicalAnd { name: _, x, y } => MirOpCompat::LogicalAnd { name: new_name, x, y },
+        MirOpCompat::LogicalOr { name: _, x, y } => MirOpCompat::LogicalOr { name: new_name, x, y },
+        MirOpCompat::FloorDiv { name: _, x, y } => MirOpCompat::FloorDiv { name: new_name, x, y },
+        MirOpCompat::Mod { name: _, x, y } => MirOpCompat::Mod { name: new_name, x, y },
+        // New variants: axis-based ops
+        MirOpCompat::ExpandDims { name: _, x, axis } => {
+            MirOpCompat::ExpandDims { name: new_name, x, axis }
+        }
+        MirOpCompat::Squeeze { name: _, x, axis } => {
+            MirOpCompat::Squeeze { name: new_name, x, axis }
+        }
+        // Clip
+        MirOpCompat::Clip { name: _, x, min_val, max_val } => {
+            MirOpCompat::Clip { name: new_name, x, min_val, max_val }
+        }
+        // Pad
+        MirOpCompat::Pad { name: _, x, pad_amounts, mode, constant_value } => {
+            MirOpCompat::Pad { name: new_name, x, pad_amounts, mode, constant_value }
+        }
+        // Reduce ops
+        MirOpCompat::ReduceMax { name: _, x, axes, keep_dims } => {
+            MirOpCompat::ReduceMax { name: new_name, x, axes, keep_dims }
+        }
+        MirOpCompat::ReduceMin { name: _, x, axes, keep_dims } => {
+            MirOpCompat::ReduceMin { name: new_name, x, axes, keep_dims }
+        }
+        MirOpCompat::ReduceProd { name: _, x, axes, keep_dims } => {
+            MirOpCompat::ReduceProd { name: new_name, x, axes, keep_dims }
+        }
+        // Select
+        MirOpCompat::Select { name: _, condition, x, y } => {
+            MirOpCompat::Select { name: new_name, condition, x, y }
+        }
+        // LeakyRelu
+        MirOpCompat::LeakyRelu { name: _, x, alpha } => {
+            MirOpCompat::LeakyRelu { name: new_name, x, alpha }
         }
         MirOpCompat::Placeholder { name: _, dtype } => {
             MirOpCompat::Placeholder { name: new_name, dtype }
@@ -1209,6 +1486,60 @@ pub fn mir_op_to_compat(
             x: x.0.clone(),
         }),
 
+        MirOp::MILExpandDims { name, x, axis } => Ok(MirOpCompat::ExpandDims {
+            name: name.clone(),
+            x: x.0.clone(),
+            axis: axis.iter().map(|&a| a as i64).collect(),
+        }),
+        MirOp::MILSqueeze { name, x, axis } => Ok(MirOpCompat::Squeeze {
+            name: name.clone(),
+            x: x.0.clone(),
+            axis: axis.iter().map(|&a| a as i64).collect(),
+        }),
+        MirOp::MILSqrt { name, x } => Ok(MirOpCompat::Sqrt { name: name.clone(), x: x.0.clone() }),
+        MirOp::MILPow { name, x, y } => Ok(MirOpCompat::Pow { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
+        MirOp::MILClip { name, x, min_val, max_val } => Ok(MirOpCompat::Clip {
+            name: name.clone(), x: x.0.clone(), min_val: *min_val, max_val: *max_val,
+        }),
+        MirOp::MILEqual { name, x, y } => Ok(MirOpCompat::Equal { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
+        MirOp::MILNotEqual { name, x, y } => Ok(MirOpCompat::NotEqual { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
+        MirOp::MILGreater { name, x, y } => Ok(MirOpCompat::Greater { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
+        MirOp::MILGreaterEqual { name, x, y } => Ok(MirOpCompat::GreaterEqual { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
+        MirOp::MILLess { name, x, y } => Ok(MirOpCompat::Less { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
+        MirOp::MILLessEqual { name, x, y } => Ok(MirOpCompat::LessEqual { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
+        MirOp::MILLogicalNot { name, x } => Ok(MirOpCompat::LogicalNot { name: name.clone(), x: x.0.clone() }),
+        MirOp::MILLogicalAnd { name, x, y } => Ok(MirOpCompat::LogicalAnd { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
+        MirOp::MILLogicalOr { name, x, y } => Ok(MirOpCompat::LogicalOr { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
+        MirOp::MILPad { name, x, pad_amounts, mode, constant_value } => Ok(MirOpCompat::Pad {
+            name: name.clone(), x: x.0.clone(),
+            pad_amounts: pad_amounts.clone(), mode: mode.clone(), constant_value: *constant_value,
+        }),
+        MirOp::MILReduceMax { name, x, axes, keep_dims } => Ok(MirOpCompat::ReduceMax {
+            name: name.clone(), x: x.0.clone(),
+            axes: axes.iter().map(|&a| a as i64).collect(), keep_dims: *keep_dims,
+        }),
+        MirOp::MILReduceMin { name, x, axes, keep_dims } => Ok(MirOpCompat::ReduceMin {
+            name: name.clone(), x: x.0.clone(),
+            axes: axes.iter().map(|&a| a as i64).collect(), keep_dims: *keep_dims,
+        }),
+        MirOp::MILReduceProd { name, x, axes, keep_dims } => Ok(MirOpCompat::ReduceProd {
+            name: name.clone(), x: x.0.clone(),
+            axes: axes.iter().map(|&a| a as i64).collect(), keep_dims: *keep_dims,
+        }),
+        MirOp::MILSelect { name, condition, x, y } => Ok(MirOpCompat::Select {
+            name: name.clone(), condition: condition.0.clone(), x: x.0.clone(), y: y.0.clone(),
+        }),
+        MirOp::MILLeakyRelu { name, x, alpha } => Ok(MirOpCompat::LeakyRelu {
+            name: name.clone(), x: x.0.clone(), alpha: *alpha,
+        }),
+        MirOp::MILFloorDiv { name, x, y } => Ok(MirOpCompat::FloorDiv { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
+        MirOp::MILMod { name, x, y } => Ok(MirOpCompat::Mod { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
+        MirOp::MILCeil { name, x } => Ok(MirOpCompat::Ceil { name: name.clone(), x: x.0.clone() }),
+        MirOp::MILFloor { name, x } => Ok(MirOpCompat::Floor { name: name.clone(), x: x.0.clone() }),
+        MirOp::MILRound { name, x } => Ok(MirOpCompat::Round { name: name.clone(), x: x.0.clone() }),
+        MirOp::MILSign { name, x } => Ok(MirOpCompat::Sign { name: name.clone(), x: x.0.clone() }),
+        MirOp::MILLog { name, x, .. } => Ok(MirOpCompat::Log { name: name.clone(), x: x.0.clone() }),
+
         // ─── Full-coverage wildcard for all remaining MirOp variants ───
         // These map to MirOpCompat::Unsupported which carries the op kind
         // and serialized parameters for flexible proto emission.
@@ -1229,25 +1560,23 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILConvTranspose { name, .. } => {
             ("conv_transpose".into(), name.clone(), "{}".into())
         }
-        MirOp::MILFloorDiv { name, .. } => ("floor_div".into(), name.clone(), "{}".into()),
-        MirOp::MILMod { name, .. } => ("mod".into(), name.clone(), "{}".into()),
-        MirOp::MILPow { name, .. } => ("pow".into(), name.clone(), "{}".into()),
-        MirOp::MILEqual { name, .. } => ("equal".into(), name.clone(), "{}".into()),
-        MirOp::MILNotEqual { name, .. } => ("not_equal".into(), name.clone(), "{}".into()),
-        MirOp::MILGreater { name, .. } => ("greater".into(), name.clone(), "{}".into()),
-        MirOp::MILGreaterEqual { name, .. } => ("greater_equal".into(), name.clone(), "{}".into()),
-        MirOp::MILLess { name, .. } => ("less".into(), name.clone(), "{}".into()),
-        MirOp::MILLessEqual { name, .. } => ("less_equal".into(), name.clone(), "{}".into()),
-        MirOp::MILLogicalAnd { name, .. } => ("logical_and".into(), name.clone(), "{}".into()),
-        MirOp::MILLogicalOr { name, .. } => ("logical_or".into(), name.clone(), "{}".into()),
+        MirOp::MILFloorDiv { .. } => unreachable!("MILFloorDiv is handled by mir_op_to_compat"),
+        MirOp::MILMod { .. } => unreachable!("MILMod is handled by mir_op_to_compat"),
+        MirOp::MILPow { .. } => unreachable!("MILPow is handled by mir_op_to_compat"),
+        MirOp::MILEqual { .. } => unreachable!("MILEqual is handled by mir_op_to_compat"),
+        MirOp::MILNotEqual { .. } => unreachable!("MILNotEqual is handled by mir_op_to_compat"),
+        MirOp::MILGreater { .. } => unreachable!("MILGreater is handled by mir_op_to_compat"),
+        MirOp::MILGreaterEqual { .. } => unreachable!("MILGreaterEqual is handled by mir_op_to_compat"),
+        MirOp::MILLess { .. } => unreachable!("MILLess is handled by mir_op_to_compat"),
+        MirOp::MILLessEqual { .. } => unreachable!("MILLessEqual is handled by mir_op_to_compat"),
+        MirOp::MILLogicalAnd { .. } => unreachable!("MILLogicalAnd is handled by mir_op_to_compat"),
+        MirOp::MILLogicalOr { .. } => unreachable!("MILLogicalOr is handled by mir_op_to_compat"),
         MirOp::MILLogicalXor { name, .. } => ("logical_xor".into(), name.clone(), "{}".into()),
         MirOp::MILNeg { .. } => unreachable!("MILNeg is handled by mir_op_to_compat"),
-        MirOp::MILSigmoid { name, .. } => ("sigmoid".into(), name.clone(), "{}".into()),
-        MirOp::MILTanh { name, .. } => ("tanh".into(), name.clone(), "{}".into()),
+        MirOp::MILSigmoid { .. } => unreachable!("MILSigmoid is handled by mir_op_to_compat"),
+        MirOp::MILTanh { .. } => unreachable!("MILTanh is handled by mir_op_to_compat"),
         MirOp::MILRelu6 { name, .. } => ("relu6".into(), name.clone(), "{}".into()),
-        MirOp::MILLeakyRelu { name, alpha, .. } => {
-            ("leaky_relu".into(), name.clone(), format!("{{\"alpha\":{alpha}}}"))
-        }
+        MirOp::MILLeakyRelu { .. } => unreachable!("MILLeakyRelu is handled by mir_op_to_compat"),
         MirOp::MILSigmoidHard { name, alpha, beta, .. } => {
             ("sigmoid_hard".into(), name.clone(), format!("{{\"alpha\":{alpha},\"beta\":{beta}}}"))
         }
@@ -1266,7 +1595,7 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
             ("prelu".into(), name.clone(), format!("{{\"alpha\":\"{alpha}\"}}"))
         }
         MirOp::MILSoftsign { name, .. } => ("softsign".into(), name.clone(), "{}".into()),
-        MirOp::MILSilu { name, .. } => ("silu".into(), name.clone(), "{}".into()),
+        MirOp::MILSilu { .. } => unreachable!("MILSilu is handled by mir_op_to_compat"),
         MirOp::MILScaledTanh { name, alpha, beta, .. } => {
             ("scaled_tanh".into(), name.clone(), format!("{{\"alpha\":{alpha},\"beta\":{beta}}}"))
         }
@@ -1279,27 +1608,21 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
             name.clone(),
             format!("{{\"alpha\":\"{alpha}\",\"beta\":\"{beta}\"}}"),
         ),
-        MirOp::MILClip { name, min_val, max_val, .. } => (
-            "clip".into(),
-            name.clone(),
-            format!("{{\"min_val\":{min_val},\"max_val\":{max_val}}}"),
-        ),
+        MirOp::MILClip { .. } => unreachable!("MILClip is handled by mir_op_to_compat"),
         MirOp::MILSquare { name, .. } => ("square".into(), name.clone(), "{}".into()),
         MirOp::MILThreshold { name, alpha, .. } => {
             ("threshold".into(), name.clone(), format!("{{\"alpha\":{alpha}}}"))
         }
-        MirOp::MILSqrt { name, .. } => ("sqrt".into(), name.clone(), "{}".into()),
+        MirOp::MILSqrt { .. } => unreachable!("MILSqrt is handled by mir_op_to_compat"),
         MirOp::MILInverse { name, epsilon, .. } => {
             ("inverse".into(), name.clone(), format!("{{\"epsilon\":{epsilon}}}"))
         }
-        MirOp::MILCeil { name, .. } => ("ceil".into(), name.clone(), "{}".into()),
-        MirOp::MILFloor { name, .. } => ("floor".into(), name.clone(), "{}".into()),
-        MirOp::MILRound { name, .. } => ("round".into(), name.clone(), "{}".into()),
+        MirOp::MILCeil { .. } => unreachable!("MILCeil is handled by mir_op_to_compat"),
+        MirOp::MILFloor { .. } => unreachable!("MILFloor is handled by mir_op_to_compat"),
+        MirOp::MILRound { .. } => unreachable!("MILRound is handled by mir_op_to_compat"),
         MirOp::MILExp2 { name, .. } => ("exp2".into(), name.clone(), "{}".into()),
-        MirOp::MILLog { name, epsilon, .. } => {
-            ("log".into(), name.clone(), format!("{{\"epsilon\":{epsilon}}}"))
-        }
-        MirOp::MILSign { name, .. } => ("sign".into(), name.clone(), "{}".into()),
+        MirOp::MILLog { .. } => unreachable!("MILLog is handled by mir_op_to_compat"),
+        MirOp::MILSign { .. } => unreachable!("MILSign is handled by mir_op_to_compat"),
         MirOp::MILTan { name, .. } => ("tan".into(), name.clone(), "{}".into()),
         MirOp::MILAcos { name, .. } => ("acos".into(), name.clone(), "{}".into()),
         MirOp::MILAsin { name, .. } => ("asin".into(), name.clone(), "{}".into()),
@@ -1308,11 +1631,11 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILSinh { name, .. } => ("sinh".into(), name.clone(), "{}".into()),
         MirOp::MILAtanh { name, .. } => ("atanh".into(), name.clone(), "{}".into()),
         MirOp::MILErf { name, .. } => ("erf".into(), name.clone(), "{}".into()),
-        MirOp::MILLogicalNot { name, .. } => ("logical_not".into(), name.clone(), "{}".into()),
-        MirOp::MILSelect { name, .. } => ("select".into(), name.clone(), "{}".into()),
-        MirOp::MILReduceMax { name, .. } => ("reduce_max".into(), name.clone(), "{}".into()),
-        MirOp::MILReduceMin { name, .. } => ("reduce_min".into(), name.clone(), "{}".into()),
-        MirOp::MILReduceProd { name, .. } => ("reduce_prod".into(), name.clone(), "{}".into()),
+        MirOp::MILLogicalNot { .. } => unreachable!("MILLogicalNot is handled by mir_op_to_compat"),
+        MirOp::MILSelect { .. } => unreachable!("MILSelect is handled by mir_op_to_compat"),
+        MirOp::MILReduceMax { .. } => unreachable!("MILReduceMax is handled by mir_op_to_compat"),
+        MirOp::MILReduceMin { .. } => unreachable!("MILReduceMin is handled by mir_op_to_compat"),
+        MirOp::MILReduceProd { .. } => unreachable!("MILReduceProd is handled by mir_op_to_compat"),
         MirOp::MILReduceSumSquare { name, .. } => {
             ("reduce_sum_square".into(), name.clone(), "{}".into())
         }
@@ -1350,8 +1673,8 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILAffine { name, .. } => ("affine".into(), name.clone(), "{}".into()),
         MirOp::MILResample { name, .. } => ("resample".into(), name.clone(), "{}".into()),
         MirOp::MILReshapeLike { name, .. } => ("reshape_like".into(), name.clone(), "{}".into()),
-        MirOp::MILExpandDims { name, .. } => ("expand_dims".into(), name.clone(), "{}".into()),
-        MirOp::MILSqueeze { name, .. } => ("squeeze".into(), name.clone(), "{}".into()),
+        MirOp::MILExpandDims { .. } => unreachable!("MILExpandDims is handled by mir_op_to_compat"),
+        MirOp::MILSqueeze { .. } => unreachable!("MILSqueeze is handled by mir_op_to_compat"),
         MirOp::MILFlatten2d { name, .. } => ("flatten2d".into(), name.clone(), "{}".into()),
         MirOp::MILReverse { name, .. } => ("reverse".into(), name.clone(), "{}".into()),
         MirOp::MILReverseSequence { name, .. } => {
@@ -1369,13 +1692,13 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         }
         MirOp::MILBatchToSpace { name, .. } => ("batch_to_space".into(), name.clone(), "{}".into()),
         MirOp::MILSpaceToBatch { name, .. } => ("space_to_batch".into(), name.clone(), "{}".into()),
-        MirOp::MILPad { name, .. } => ("pad".into(), name.clone(), "{}".into()),
+        MirOp::MILPad { .. } => unreachable!("MILPad is handled by mir_op_to_compat"),
         MirOp::MILStack { name, .. } => ("stack".into(), name.clone(), "{}".into()),
         MirOp::MILTile { .. } => unreachable!("MILTile is handled by mir_op_to_compat"),
         MirOp::MILCumsum { name, .. } => ("cumsum".into(), name.clone(), "{}".into()),
         MirOp::MILFill { .. } => unreachable!("MILFill is handled by mir_op_to_compat"),
         MirOp::MILFillLike { .. } => unreachable!("MILFillLike is handled by mir_op_to_compat"),
-        MirOp::MILIdentity { name, .. } => ("identity".into(), name.clone(), "{}".into()),
+        MirOp::MILIdentity { .. } => unreachable!("MILIdentity is handled by mir_op_to_compat"),
         MirOp::MILOneHot { name, .. } => ("one_hot".into(), name.clone(), "{}".into()),
         MirOp::MILNonZero { name, .. } => ("non_zero".into(), name.clone(), "{}".into()),
         MirOp::MILArgsort { name, .. } => ("argsort".into(), name.clone(), "{}".into()),
