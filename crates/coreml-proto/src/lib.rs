@@ -557,6 +557,30 @@ pub mod mir_compat {
             x: String,
             reps: Vec<i64>,
         },
+        /// Fill: creates a tensor of the given shape filled with a scalar value.
+        /// Core ML MIL program op type: "fill".
+        /// This is the primary op for generating constant tensors during
+        /// Tile decomposition (e.g., ones tensors for broadcast Mul in GQA).
+        Fill {
+            name: String,
+            shape: Vec<i64>,
+            value: f32,
+            dtype: MilDtypeCompat,
+        },
+        /// FillLike: creates a tensor with the same shape as a reference tensor,
+        /// filled with a scalar value. Core ML MIL program op type: "fill_like".
+        FillLike {
+            name: String,
+            ref_tensor: String,
+            value: f32,
+            dtype: MilDtypeCompat,
+        },
+        /// Neg: arithmetic negation. Core ML MIL program op type: "neg".
+        /// Needed for RoPE rotate_half: -x[..., d//2:].
+        Neg {
+            name: String,
+            x: String,
+        },
         /// Catch-all for MIL ops that don't have specialized compat representations.
         /// The proto emission layer handles these by emitting the appropriate
         /// MIL builder call based on the op_kind string.
@@ -1165,6 +1189,39 @@ pub fn mir_op_to_proto_op(
             // Legacy proto has no MilTileOp variant; emit as identity.
             // The Apple wire-format emitter (mir_op_to_apple_ops) handles
             // the real "tile" MIL operation encoding for production use.
+            (
+                name.clone(),
+                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                    x: Some(proto::OperandRef { name: x.clone() }),
+                }),
+            )
+        }
+        mir_compat::MirOpCompat::Fill { name, .. } => {
+            // Legacy proto has no MilFillOp variant; emit as identity.
+            // The Apple wire-format emitter (mir_op_to_apple_ops) handles
+            // the real "fill" MIL operation encoding for production use.
+            (
+                name.clone(),
+                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                    x: Some(proto::OperandRef { name: name.clone() }),
+                }),
+            )
+        }
+        mir_compat::MirOpCompat::FillLike { name, ref_tensor, .. } => {
+            // Legacy proto has no MilFillLikeOp variant; emit as identity.
+            // The Apple wire-format emitter (mir_op_to_apple_ops) handles
+            // the real "fill_like" MIL operation encoding for production use.
+            (
+                name.clone(),
+                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                    x: Some(proto::OperandRef { name: ref_tensor.clone() }),
+                }),
+            )
+        }
+        mir_compat::MirOpCompat::Neg { name, x } => {
+            // Legacy proto has no MilNegOp variant; emit as identity.
+            // The Apple wire-format emitter (mir_op_to_apple_ops) handles
+            // the real "neg" MIL operation encoding for production use.
             (
                 name.clone(),
                 proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
@@ -2777,6 +2834,94 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
+        mir_compat::MirOpCompat::Fill { name, shape, value, dtype } => {
+            // Core ML MIL "fill" op: fill(shape, value) → tensor of given shape.
+            // In Apple's wire format:
+            //   inputs["shape"] = INT64 immediate vector
+            //   inputs["value"] = scalar immediate of the fill dtype
+            // (Optionally, inputs["dtype"] = name ref to a string const, but
+            //  Core ML infers dtype from the value, so we omit it for brevity.)
+            let apple_dtype = mil_dtype_to_apple(dtype);
+
+            let mut inputs = HashMap::new();
+            // shape as INT64 immediate value
+            inputs.insert(
+                "shape".to_string(),
+                make_value_arg(make_immediate_int64_value(
+                    shape.clone(),
+                    &[shape.len() as u64],
+                )),
+            );
+            // value as FLOAT32 scalar immediate (Core ML accepts this for all
+            // float dtypes; for integer dtypes it would need a different path,
+            // but fill in MILLer is only used for FP16 constants currently).
+            inputs.insert(
+                "value".to_string(),
+                make_value_arg(make_immediate_float32_value(*value)),
+            );
+
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "fill".to_string(),
+                inputs,
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_dtype,
+                    &shape.iter().map(|&d| d as u64).collect::<Vec<_>>(),
+                )],
+                blocks: vec![],
+                attributes,
+            }]
+        }
+        mir_compat::MirOpCompat::FillLike { name, ref_tensor, value, dtype } => {
+            // Core ML MIL "fill_like" op: fill_like(ref_tensor, value) → tensor
+            // with same shape as ref_tensor, filled with the given scalar.
+            let apple_dtype = mil_dtype_to_apple(dtype);
+
+            let mut inputs = HashMap::new();
+            inputs.insert("x".to_string(), make_name_arg(ref_tensor));
+            inputs.insert(
+                "value".to_string(),
+                make_value_arg(make_immediate_float32_value(*value)),
+            );
+
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "fill_like".to_string(),
+                inputs,
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_dtype,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
+                blocks: vec![],
+                attributes,
+            }]
+        }
+        mir_compat::MirOpCompat::Neg { name, x } => {
+            // Core ML MIL "neg" op: neg(x) → -x (arithmetic negation).
+            let mut inputs = HashMap::new();
+            inputs.insert("x".to_string(), make_name_arg(x));
+
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "neg".to_string(),
+                inputs,
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
+                blocks: vec![],
+                attributes,
+            }]
+        }
         mir_compat::MirOpCompat::Unsupported { op_kind, name, params_json: _ } => {
             // Emit as identity to preserve graph structure
             let mut inputs = HashMap::new();
@@ -3316,6 +3461,22 @@ mod tests {
                 x: "x".to_string(),
                 reps: vec![1, 2, 1, 1],
             },
+            mir_compat::MirOpCompat::Fill {
+                name: "fill".to_string(),
+                shape: vec![1, 1, 2, 1, 1],
+                value: 1.0,
+                dtype: mir_compat::MilDtypeCompat::Fp16,
+            },
+            mir_compat::MirOpCompat::FillLike {
+                name: "fill_like".to_string(),
+                ref_tensor: "x".to_string(),
+                value: 0.0,
+                dtype: mir_compat::MilDtypeCompat::Fp16,
+            },
+            mir_compat::MirOpCompat::Neg {
+                name: "neg".to_string(),
+                x: "x".to_string(),
+            },
         ];
 
         for op in &ops {
@@ -3486,6 +3647,69 @@ mod tests {
                 panic!("tile.reps unexpected variant: {:?}", other);
             }
         }
+
+        // Verify fill op emission: shape as LongInts, value as Floats
+        let fill_op = mir_compat::MirOpCompat::Fill {
+            name: "fill_out".to_string(),
+            shape: vec![1, 1, 2, 1, 1],
+            value: 1.0,
+            dtype: mir_compat::MilDtypeCompat::Fp16,
+        };
+        let ops = mir_op_to_apple_ops(&fill_op, &[], &std::collections::HashMap::new());
+        let fill_mil = ops.iter().find(|op| op.r#type == "fill").expect("fill op");
+
+        // Verify shape is INT64 immediate
+        let shape_arg = fill_mil.inputs.get("shape").expect("shape input");
+        let shape_binding = match &shape_arg.arguments.first().unwrap().binding {
+            Some(apple_proto::mil_spec::argument::binding::Binding::Value(v)) => v,
+            _ => panic!("shape should be a Value binding"),
+        };
+        match &shape_binding.value {
+            Some(apple_proto::mil_spec::value::Value::ImmediateValue(iv)) => match &iv.value {
+                Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv)) => {
+                    match &tv.value {
+                        Some(apple_proto::mil_spec::tensor_value::Value::LongInts(long_ints)) => {
+                            assert_eq!(long_ints.values, vec![1i64, 1, 2, 1, 1]);
+                        }
+                        other => panic!("fill.shape unexpected variant: {:?}", other),
+                    }
+                }
+                other => panic!("fill.shape should be Tensor: {:?}", other),
+            },
+            other => panic!("fill.shape should be ImmediateValue: {:?}", other),
+        }
+
+        // Verify value is float immediate
+        let value_arg = fill_mil.inputs.get("value").expect("value input");
+        let value_binding = match &value_arg.arguments.first().unwrap().binding {
+            Some(apple_proto::mil_spec::argument::binding::Binding::Value(v)) => v,
+            _ => panic!("value should be a Value binding"),
+        };
+        match &value_binding.value {
+            Some(apple_proto::mil_spec::value::Value::ImmediateValue(iv)) => match &iv.value {
+                Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv)) => {
+                    match &tv.value {
+                        Some(apple_proto::mil_spec::tensor_value::Value::Floats(floats)) => {
+                            assert_eq!(floats.values, vec![1.0f32]);
+                        }
+                        other => panic!("fill.value unexpected variant: {:?}", other),
+                    }
+                }
+                other => panic!("fill.value should be Tensor: {:?}", other),
+            },
+            other => panic!("fill.value should be ImmediateValue: {:?}", other),
+        }
+
+        // Verify output dtype is Float16
+        let output = &fill_mil.outputs[0];
+        let output_dtype = match &output.r#type {
+            Some(vt) => match &vt.r#type {
+                Some(apple_proto::mil_spec::value_type::Type::TensorType(tt)) => tt.data_type,
+                other => panic!("fill output should be TensorType, got: {:?}", other),
+            },
+            None => panic!("fill output should have a type"),
+        };
+        assert_eq!(output_dtype, apple_proto::mil_spec::DataType::Float16 as i32);
 
         // Also verify transpose.perm uses LongInts
         let transpose_op = mir_compat::MirOpCompat::Transpose {

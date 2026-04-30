@@ -235,6 +235,11 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
         }
         AirOp::Where { x, .. } => node_shapes.get(x).cloned().unwrap_or_default(),
         AirOp::StaticLUTProjection { .. } => vec![],
+        // ─── Fill: shape is explicitly given; FillLike: derives from ref_tensor ───
+        AirOp::Fill { shape, .. } => shape.clone(),
+        AirOp::FillLike { ref_tensor, .. } => {
+            node_shapes.get(ref_tensor).cloned().unwrap_or_default()
+        }
         // ─── Unary ops that pass through input shape ───
         AirOp::Silu { input }
         | AirOp::Abs { input }

@@ -360,6 +360,9 @@ fn compat_input_names(op: &MirOpCompat) -> Vec<String> {
         | MirOpCompat::Silu { x, .. }
         | MirOpCompat::Identity { x, .. }
         | MirOpCompat::Tile { x, .. } => vec![x.clone()],
+        MirOpCompat::Fill { .. } => vec![],
+        MirOpCompat::FillLike { ref_tensor, .. } => vec![ref_tensor.clone()],
+        MirOpCompat::Neg { x, .. } => vec![x.clone()],
         MirOpCompat::Gather { x, indices, .. } => vec![x.clone(), indices.clone()],
         MirOpCompat::SliceByIndex { x, .. } => vec![x.clone()],
         MirOpCompat::SliceUpdate { x, update, .. } => vec![x.clone(), update.clone()],
@@ -505,6 +508,11 @@ fn compat_output_shape(
             }
         }
         MirOp::MILTile { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
+        MirOp::MILFill { shape, .. } => shape.iter().map(|&d| d as usize).collect(),
+        MirOp::MILFillLike { ref_tensor, .. } => {
+            node_shapes.get(&ref_tensor.0).cloned().unwrap_or_default()
+        }
+        MirOp::MILNeg { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
         MirOp::MILSplit { x, axis, num_splits, .. } => {
             if let Some(input_shape) = node_shapes.get(&x.0) {
                 let mut out = input_shape.clone();
@@ -741,6 +749,21 @@ fn remap_compat_inputs(
         MirOpCompat::Tile { name, x, reps } => {
             MirOpCompat::Tile { name, x: remap_name(x, aliases), reps }
         }
+        MirOpCompat::Fill { name, shape, value, dtype } => {
+            // Fill has no tensor inputs — nothing to remap
+            MirOpCompat::Fill { name, shape, value, dtype }
+        }
+        MirOpCompat::FillLike { name, ref_tensor, value, dtype } => {
+            MirOpCompat::FillLike {
+                name,
+                ref_tensor: remap_name(ref_tensor, aliases),
+                value,
+                dtype,
+            }
+        }
+        MirOpCompat::Neg { name, x } => {
+            MirOpCompat::Neg { name, x: remap_name(x, aliases) }
+        }
         other => other,
     }
 }
@@ -839,6 +862,15 @@ fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
         }
         MirOpCompat::Tile { name: _, x, reps } => {
             MirOpCompat::Tile { name: new_name, x, reps }
+        }
+        MirOpCompat::Fill { name: _, shape, value, dtype } => {
+            MirOpCompat::Fill { name: new_name, shape, value, dtype }
+        }
+        MirOpCompat::FillLike { name: _, ref_tensor, value, dtype } => {
+            MirOpCompat::FillLike { name: new_name, ref_tensor, value, dtype }
+        }
+        MirOpCompat::Neg { name: _, x } => {
+            MirOpCompat::Neg { name: new_name, x }
         }
         MirOpCompat::Placeholder { name: _, dtype } => {
             MirOpCompat::Placeholder { name: new_name, dtype }
@@ -1157,6 +1189,26 @@ pub fn mir_op_to_compat(
             reps: reps.iter().map(|&r| r as i64).collect(),
         }),
 
+        // ─── Fill / FillLike: tensor constant generators for Tile decomposition ───
+        MirOp::MILFill { name, shape, value, dtype } => Ok(MirOpCompat::Fill {
+            name: name.clone(),
+            shape: shape.iter().map(|&d| d as i64).collect(),
+            value: *value,
+            dtype: mil_dtype_to_compat(dtype),
+        }),
+        MirOp::MILFillLike { name, ref_tensor, value, dtype } => Ok(MirOpCompat::FillLike {
+            name: name.clone(),
+            ref_tensor: ref_tensor.0.clone(),
+            value: *value,
+            dtype: mil_dtype_to_compat(dtype),
+        }),
+
+        // ─── Neg: arithmetic negation (needed for RoPE rotate_half) ───
+        MirOp::MILNeg { name, x } => Ok(MirOpCompat::Neg {
+            name: name.clone(),
+            x: x.0.clone(),
+        }),
+
         // ─── Full-coverage wildcard for all remaining MirOp variants ───
         // These map to MirOpCompat::Unsupported which carries the op kind
         // and serialized parameters for flexible proto emission.
@@ -1189,7 +1241,7 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILLogicalAnd { name, .. } => ("logical_and".into(), name.clone(), "{}".into()),
         MirOp::MILLogicalOr { name, .. } => ("logical_or".into(), name.clone(), "{}".into()),
         MirOp::MILLogicalXor { name, .. } => ("logical_xor".into(), name.clone(), "{}".into()),
-        MirOp::MILNeg { name, .. } => ("neg".into(), name.clone(), "{}".into()),
+        MirOp::MILNeg { .. } => unreachable!("MILNeg is handled by mir_op_to_compat"),
         MirOp::MILSigmoid { name, .. } => ("sigmoid".into(), name.clone(), "{}".into()),
         MirOp::MILTanh { name, .. } => ("tanh".into(), name.clone(), "{}".into()),
         MirOp::MILRelu6 { name, .. } => ("relu6".into(), name.clone(), "{}".into()),
@@ -1321,8 +1373,8 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILStack { name, .. } => ("stack".into(), name.clone(), "{}".into()),
         MirOp::MILTile { .. } => unreachable!("MILTile is handled by mir_op_to_compat"),
         MirOp::MILCumsum { name, .. } => ("cumsum".into(), name.clone(), "{}".into()),
-        MirOp::MILFill { name, .. } => ("fill".into(), name.clone(), "{}".into()),
-        MirOp::MILFillLike { name, .. } => ("fill_like".into(), name.clone(), "{}".into()),
+        MirOp::MILFill { .. } => unreachable!("MILFill is handled by mir_op_to_compat"),
+        MirOp::MILFillLike { .. } => unreachable!("MILFillLike is handled by mir_op_to_compat"),
         MirOp::MILIdentity { name, .. } => ("identity".into(), name.clone(), "{}".into()),
         MirOp::MILOneHot { name, .. } => ("one_hot".into(), name.clone(), "{}".into()),
         MirOp::MILNonZero { name, .. } => ("non_zero".into(), name.clone(), "{}".into()),
