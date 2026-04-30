@@ -373,25 +373,33 @@ pub mod mir_compat {
         Reshape {
             name: String,
             x: String,
-            shape: Vec<i64>,
+            /// INT32 shape vector. Core ML's ios19.reshape rejects INT64 shape
+            /// tensors ("Expected { tensor<int32, [?]>, tensor<int16, [?]>,
+            /// tensor<int8, [?]> }; got tensor<int64, [N]>").
+            shape: Vec<i32>,
         },
         Transpose {
             name: String,
             x: String,
-            perm: Vec<i64>,
+            /// INT32 permutation vector. Core ML's ios19.transpose rejects
+            /// INT64 perm tensors, same dtype restriction as reshape.shape.
+            perm: Vec<i32>,
         },
         SliceByIndex {
             name: String,
             x: String,
-            begin: Vec<i64>,
-            end: Vec<i64>,
+            /// INT32 begin indices. Core ML's ios19.slice_by_index rejects
+            /// INT64 for begin/end, same dtype restriction as reshape.shape.
+            begin: Vec<i32>,
+            end: Vec<i32>,
         },
         SliceUpdate {
             name: String,
             x: String,
             update: String,
-            begin: Vec<i64>,
-            end: Vec<i64>,
+            /// INT32 begin/end indices. Same INT64 rejection as slice_by_index.
+            begin: Vec<i32>,
+            end: Vec<i32>,
         },
         Concat {
             name: String,
@@ -555,7 +563,9 @@ pub mod mir_compat {
         Tile {
             name: String,
             x: String,
-            reps: Vec<i64>,
+            /// INT32 repetition counts. Core ML's ios19.tile rejects INT64
+            /// reps tensors, same dtype restriction as reshape.shape.
+            reps: Vec<i32>,
         },
         /// Fill: creates a tensor of the given shape filled with a scalar value.
         /// Core ML MIL program op type: "fill".
@@ -563,7 +573,9 @@ pub mod mir_compat {
         /// Tile decomposition (e.g., ones tensors for broadcast Mul in GQA).
         Fill {
             name: String,
-            shape: Vec<i64>,
+            /// INT32 shape vector. Core ML's ios19.fill rejects INT64 shape
+            /// tensors, same dtype restriction as reshape.shape.
+            shape: Vec<i32>,
             value: f32,
             dtype: MilDtypeCompat,
         },
@@ -586,14 +598,18 @@ pub mod mir_compat {
         ExpandDims {
             name: String,
             x: String,
-            axis: Vec<i64>,
+            /// INT32 axis vector. Core ML's ios19.expand_dims rejects INT64
+            /// axis tensors, same dtype restriction as reshape.shape.
+            axis: Vec<i32>,
         },
         /// Squeeze: remove singleton dimensions. Core ML MIL op type: "squeeze".
         /// Used for collapsing dimensions after reduction ops in attention output.
         Squeeze {
             name: String,
             x: String,
-            axis: Vec<i64>,
+            /// INT32 axis vector. Core ML's ios19.squeeze rejects INT64 axis
+            /// tensors, same dtype restriction as reshape.shape.
+            axis: Vec<i32>,
         },
         /// Sqrt: element-wise square root. Core ML MIL op type: "sqrt".
         /// Used in RMSNorm (alternative to Rsqrt) and scaling computations.
@@ -678,7 +694,9 @@ pub mod mir_compat {
         Pad {
             name: String,
             x: String,
-            pad_amounts: Vec<i64>,
+            /// INT32 padding amounts. Core ML's ios19.pad rejects INT64 pad
+            /// tensors, same dtype restriction as reshape.shape.
+            pad_amounts: Vec<i32>,
             mode: String,
             constant_value: f32,
         },
@@ -1102,22 +1120,22 @@ pub fn mir_op_to_proto_op(
             name.clone(),
             proto::mil_operation::Operation::ReshapeOp(proto::MilReshapeOp {
                 x: Some(proto::OperandRef { name: x.clone() }),
-                shape: shape.clone(),
+                shape: shape.iter().map(|&d| d as i64).collect(),
             }),
         ),
         mir_compat::MirOpCompat::Transpose { name, x, perm } => (
             name.clone(),
             proto::mil_operation::Operation::TransposeOp(proto::MilTransposeOp {
                 x: Some(proto::OperandRef { name: x.clone() }),
-                perm: perm.clone(),
+                perm: perm.iter().map(|&d| d as i64).collect(),
             }),
         ),
         mir_compat::MirOpCompat::SliceByIndex { name, x, begin, end } => (
             name.clone(),
             proto::mil_operation::Operation::SliceByIndexOp(proto::MilSliceByIndexOp {
                 x: Some(proto::OperandRef { name: x.clone() }),
-                begin: begin.clone(),
-                end: end.clone(),
+                begin: begin.iter().map(|&d| d as i64).collect(),
+                end: end.iter().map(|&d| d as i64).collect(),
                 stride: vec![],
                 begin_mask: 0,
                 end_mask: 0,
@@ -1128,8 +1146,8 @@ pub fn mir_op_to_proto_op(
             proto::mil_operation::Operation::SliceUpdateOp(proto::MilSliceUpdateOp {
                 x: Some(proto::OperandRef { name: x.clone() }),
                 update: Some(proto::OperandRef { name: update.clone() }),
-                begin: begin.clone(),
-                end: end.clone(),
+                begin: begin.iter().map(|&d| d as i64).collect(),
+                end: end.iter().map(|&d| d as i64).collect(),
             }),
         ),
         mir_compat::MirOpCompat::Concat { name, values, axis } => (
@@ -1701,11 +1719,18 @@ fn make_immediate_int32_value(values: Vec<i32>, shape: &[u64]) -> apple_proto::m
 
 /// Create an immediate INT64 vector value using typed `RepeatedLongInts` storage.
 ///
-/// Core ML requires the stored element count to match the tensor type element
-/// count. Using raw `bytes` storage for INT64 vectors causes a mismatch: 4
-/// packed i64 values become 32 raw bytes, and Core ML counts 32 storage entries
-/// vs the declared 4-element tensor shape. The `RepeatedLongInts` proto field
-/// stores each value as a proper `int64`, so the element count is correct.
+/// **CAUTION**: This function should NOT be used for Core ML ios19+ MIL
+/// operations. Shape/index parameters (reshape.shape, transpose.perm,
+/// tile.reps, fill.shape, expand_dims.axis, squeeze.axis, pad.pad,
+/// slice_by_index.begin/end, slice_update.begin/end) must use INT32
+/// (`make_immediate_int32_value`), because ios19 ops reject INT64:
+///
+///   ios19.reshape: "Expected { tensor<int32, [?]>, tensor<int16, [?]>,
+///     tensor<int8, [?]> }; got tensor<int64, [N]>"
+///
+/// This function is kept only for potential future use cases where INT64
+/// immediate values are genuinely required by a Core ML operation.
+#[allow(dead_code)]
 fn make_immediate_int64_value(values: Vec<i64>, shape: &[u64]) -> apple_proto::mil_spec::Value {
     apple_proto::mil_spec::Value {
         doc_string: String::new(),
@@ -2190,10 +2215,12 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::Reshape { name, x, shape } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            // shape as a typed INT64 immediate value (not raw bytes)
+            // shape as INT32 immediate — Core ML ios19.reshape rejects INT64
+            // ("Expected { tensor<int32, [?]>, tensor<int16, [?]>,
+            //   tensor<int8, [?]> }; got tensor<int64, [N]>")
             inputs.insert(
                 "shape".to_string(),
-                make_value_arg(make_immediate_int64_value(
+                make_value_arg(make_immediate_int32_value(
                     shape.clone(),
                     &[shape.len() as u64],
                 )),
@@ -2217,10 +2244,10 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::Transpose { name, x, perm } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            // perm as a typed INT64 immediate value (not raw bytes)
+            // perm as INT32 immediate — same ios19 dtype restriction as reshape.shape
             inputs.insert(
                 "perm".to_string(),
-                make_value_arg(make_immediate_int64_value(
+                make_value_arg(make_immediate_int32_value(
                     perm.clone(),
                     &[perm.len() as u64],
                 )),
@@ -2245,19 +2272,19 @@ fn mir_op_to_apple_ops(
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
-            // begin as a typed INT64 immediate value (not raw bytes)
+            // begin as INT32 immediate — same ios19 dtype restriction as reshape.shape
             inputs.insert(
                 "begin".to_string(),
-                make_value_arg(make_immediate_int64_value(
+                make_value_arg(make_immediate_int32_value(
                     begin.clone(),
                     &[begin.len() as u64],
                 )),
             );
 
-            // end as a typed INT64 immediate value (not raw bytes)
+            // end as INT32 immediate — same ios19 dtype restriction as reshape.shape
             inputs.insert(
                 "end".to_string(),
-                make_value_arg(make_immediate_int64_value(
+                make_value_arg(make_immediate_int32_value(
                     end.clone(),
                     &[end.len() as u64],
                 )),
@@ -2283,19 +2310,19 @@ fn mir_op_to_apple_ops(
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("update".to_string(), make_name_arg(update));
 
-            // begin as a typed INT64 immediate value (not raw bytes)
+            // begin as INT32 immediate — same ios19 dtype restriction as reshape.shape
             inputs.insert(
                 "begin".to_string(),
-                make_value_arg(make_immediate_int64_value(
+                make_value_arg(make_immediate_int32_value(
                     begin.clone(),
                     &[begin.len() as u64],
                 )),
             );
 
-            // end as a typed INT64 immediate value (not raw bytes)
+            // end as INT32 immediate — same ios19 dtype restriction as reshape.shape
             inputs.insert(
                 "end".to_string(),
-                make_value_arg(make_immediate_int64_value(
+                make_value_arg(make_immediate_int32_value(
                     end.clone(),
                     &[end.len() as u64],
                 )),
@@ -3051,10 +3078,10 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::Tile { name, x, reps } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            // reps as a typed INT64 immediate value (not raw bytes)
+            // reps as INT32 immediate — same ios19 dtype restriction as reshape.shape
             inputs.insert(
                 "reps".to_string(),
-                make_value_arg(make_immediate_int64_value(
+                make_value_arg(make_immediate_int32_value(
                     reps.clone(),
                     &[reps.len() as u64],
                 )),
@@ -3078,17 +3105,16 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::Fill { name, shape, value, dtype } => {
             // Core ML MIL "fill" op: fill(shape, value) → tensor of given shape.
             // In Apple's wire format:
-            //   inputs["shape"] = INT64 immediate vector
+            //   inputs["shape"] = INT32 immediate vector
             //   inputs["value"] = scalar immediate of the fill dtype
-            // (Optionally, inputs["dtype"] = name ref to a string const, but
-            //  Core ML infers dtype from the value, so we omit it for brevity.)
+            // Core ML ios19 rejects INT64 shape tensors, same as reshape.shape.
             let apple_dtype = mil_dtype_to_apple(dtype);
 
             let mut inputs = HashMap::new();
-            // shape as INT64 immediate value
+            // shape as INT32 immediate value
             inputs.insert(
                 "shape".to_string(),
-                make_value_arg(make_immediate_int64_value(
+                make_value_arg(make_immediate_int32_value(
                     shape.clone(),
                     &[shape.len() as u64],
                 )),
@@ -3414,7 +3440,7 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::ExpandDims { name, x, axis } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("axis".to_string(), make_value_arg(make_immediate_int64_value(axis.clone(), &[axis.len() as u64])));
+            inputs.insert("axis".to_string(), make_value_arg(make_immediate_int32_value(axis.clone(), &[axis.len() as u64])));
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
             vec![apple_proto::mil_spec::Operation {
@@ -3429,7 +3455,7 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::Squeeze { name, x, axis } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("axis".to_string(), make_value_arg(make_immediate_int64_value(axis.clone(), &[axis.len() as u64])));
+            inputs.insert("axis".to_string(), make_value_arg(make_immediate_int32_value(axis.clone(), &[axis.len() as u64])));
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
             vec![apple_proto::mil_spec::Operation {
@@ -3460,7 +3486,7 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::Pad { name, x, pad_amounts, mode, constant_value } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("pad".to_string(), make_value_arg(make_immediate_int64_value(pad_amounts.clone(), &[pad_amounts.len() as u64])));
+            inputs.insert("pad".to_string(), make_value_arg(make_immediate_int32_value(pad_amounts.clone(), &[pad_amounts.len() as u64])));
             inputs.insert("mode".to_string(), make_value_arg(make_immediate_string_value(mode.clone())));
             inputs.insert("constant_value".to_string(), make_value_arg(make_immediate_float32_value(*constant_value)));
             let mut attributes = HashMap::new();
@@ -4203,48 +4229,15 @@ mod tests {
         assert!(parsed.ml_program.as_ref().unwrap().functions.contains_key("main"));
     }
 
-    /// Verify that INT64 immediate vector values use RepeatedLongInts (typed
-    /// int64 elements), NOT RepeatedBytes (raw byte arrays). Core ML rejects
-    /// packages where the stored element count doesn't match the tensor type:
-    /// an INT64[4] stored as 32 bytes looks like 32 stored elements vs 4
-    /// declared, producing "Tensor storage and type have different number of
-    /// elements".
+    /// Verify that shape/perm/axis/reps immediate values are emitted as INT32
+    /// (RepeatedInts), not INT64 (RepeatedLongInts). Core ML's ios19 ops
+    /// (reshape, transpose, tile, fill, etc.) reject INT64 tensors for these
+    /// parameters. For example, ios19.reshape expects shape to be one of
+    /// { tensor<int32, [?]>, tensor<int16, [?]>, tensor<int8, [?]> } and
+    /// rejects tensor<int64, [N]>.
     #[test]
-    fn test_int64_immediate_uses_long_ints_not_bytes() {
-        use prost::Message;
-
-        // Test make_immediate_int64_value directly
-        let val = make_immediate_int64_value(vec![1i64, 2, 1, 1], &[4]);
-
-        // Serialize to protobuf bytes and parse back
-        let bytes = val.encode_to_vec();
-        let parsed = apple_proto::mil_spec::Value::decode(bytes.as_slice())
-            .expect("should parse back");
-
-        // Verify it uses ImmediateValue → Tensor → LongInts (NOT Bytes)
-        let imm = match &parsed.value {
-            Some(apple_proto::mil_spec::value::Value::ImmediateValue(iv)) => iv,
-            _ => panic!("expected ImmediateValue"),
-        };
-        let tensor = match &imm.value {
-            Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv)) => tv,
-            _ => panic!("expected Tensor"),
-        };
-        match &tensor.value {
-            Some(apple_proto::mil_spec::tensor_value::Value::LongInts(long_ints)) => {
-                assert_eq!(long_ints.values, vec![1i64, 2, 1, 1],
-                    "INT64 vector should be stored as typed int64 elements");
-            }
-            Some(apple_proto::mil_spec::tensor_value::Value::Bytes(_)) => {
-                panic!("INT64 vectors must NOT be stored as raw bytes — \
-                       this causes 'Tensor storage and type have different number of elements'");
-            }
-            other => {
-                panic!("unexpected storage variant: {:?}", other);
-            }
-        }
-
-        // Also verify via mir_op_to_apple_ops that tile.reps is LongInts
+    fn test_shape_params_use_int32_not_int64() {
+        // ── Tile.reps should be INT32 (Ints), not INT64 (LongInts) ──
         let tile_op = mir_compat::MirOpCompat::Tile {
             name: "tile_out".to_string(),
             x: "x".to_string(),
@@ -4267,8 +4260,13 @@ mod tests {
             _ => panic!("reps should be Tensor"),
         };
         match &reps_tensor.value {
-            Some(apple_proto::mil_spec::tensor_value::Value::LongInts(long_ints)) => {
-                assert_eq!(long_ints.values, vec![1i64, 2, 1, 1]);
+            Some(apple_proto::mil_spec::tensor_value::Value::Ints(ints)) => {
+                assert_eq!(ints.values, vec![1i32, 2, 1, 1],
+                    "tile.reps should be stored as INT32 elements");
+            }
+            Some(apple_proto::mil_spec::tensor_value::Value::LongInts(_)) => {
+                panic!("tile.reps must NOT use INT64/LongInts — \
+                       Core ML ios19 rejects INT64 for shape-like parameters");
             }
             Some(apple_proto::mil_spec::tensor_value::Value::Bytes(_)) => {
                 panic!("tile.reps must NOT use bytes storage");
@@ -4278,7 +4276,15 @@ mod tests {
             }
         }
 
-        // Verify fill op emission: shape as LongInts, value as Floats
+        // Verify INT32 DataType in the type field
+        if let Some(vt) = &reps_binding.r#type {
+            if let Some(apple_proto::mil_spec::value_type::Type::TensorType(tt)) = &vt.r#type {
+                assert_eq!(tt.data_type, apple_proto::mil_spec::DataType::Int32 as i32,
+                    "tile.reps tensor type should be INT32");
+            }
+        }
+
+        // ── Fill.shape should be INT32 ──
         let fill_op = mir_compat::MirOpCompat::Fill {
             name: "fill_out".to_string(),
             shape: vec![1, 1, 2, 1, 1],
@@ -4288,7 +4294,7 @@ mod tests {
         let ops = mir_op_to_apple_ops(&fill_op, &[], &std::collections::HashMap::new());
         let fill_mil = ops.iter().find(|op| op.r#type == "fill").expect("fill op");
 
-        // Verify shape is INT64 immediate
+        // Verify shape is INT32 immediate
         let shape_arg = fill_mil.inputs.get("shape").expect("shape input");
         let shape_binding = match &shape_arg.arguments.first().unwrap().binding {
             Some(apple_proto::mil_spec::argument::binding::Binding::Value(v)) => v,
@@ -4298,8 +4304,13 @@ mod tests {
             Some(apple_proto::mil_spec::value::Value::ImmediateValue(iv)) => match &iv.value {
                 Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv)) => {
                     match &tv.value {
-                        Some(apple_proto::mil_spec::tensor_value::Value::LongInts(long_ints)) => {
-                            assert_eq!(long_ints.values, vec![1i64, 1, 2, 1, 1]);
+                        Some(apple_proto::mil_spec::tensor_value::Value::Ints(ints)) => {
+                            assert_eq!(ints.values, vec![1i32, 1, 2, 1, 1],
+                                "fill.shape should be stored as INT32 elements");
+                        }
+                        Some(apple_proto::mil_spec::tensor_value::Value::LongInts(_)) => {
+                            panic!("fill.shape must NOT use INT64/LongInts — \
+                                   Core ML ios19 rejects INT64 for shape parameters");
                         }
                         other => panic!("fill.shape unexpected variant: {:?}", other),
                     }
@@ -4341,7 +4352,51 @@ mod tests {
         };
         assert_eq!(output_dtype, apple_proto::mil_spec::DataType::Float16 as i32);
 
-        // Also verify transpose.perm uses LongInts
+        // ── Reshape.shape should be INT32 ──
+        let reshape_op = mir_compat::MirOpCompat::Reshape {
+            name: "reshape_out".to_string(),
+            x: "x".to_string(),
+            shape: vec![1, 512, 16, 128],
+        };
+        let ops = mir_op_to_apple_ops(&reshape_op, &[], &std::collections::HashMap::new());
+        let reshape_mil = ops.iter().find(|op| op.r#type == "reshape").expect("reshape op");
+        let shape_arg = reshape_mil.inputs.get("shape").expect("shape input");
+
+        let shape_binding = match &shape_arg.arguments.first().unwrap().binding {
+            Some(apple_proto::mil_spec::argument::binding::Binding::Value(v)) => v,
+            _ => panic!("shape should be a Value binding"),
+        };
+        match &shape_binding.value {
+            Some(apple_proto::mil_spec::value::Value::ImmediateValue(iv)) => match &iv.value {
+                Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv)) => {
+                    match &tv.value {
+                        Some(apple_proto::mil_spec::tensor_value::Value::Ints(ints)) => {
+                            assert_eq!(ints.values, vec![1i32, 512, 16, 128],
+                                "reshape.shape should be stored as INT32 elements");
+                        }
+                        Some(apple_proto::mil_spec::tensor_value::Value::LongInts(_)) => {
+                            panic!("reshape.shape must NOT use INT64/LongInts — \
+                                   Core ML ios19.reshape rejects INT64: \
+                                   'Expected {{ tensor<int32, [?]>, tensor<int16, [?]>, \
+                                   tensor<int8, [?]> }}; got tensor<int64, [N]>'");
+                        }
+                        other => panic!("reshape.shape unexpected variant: {:?}", other),
+                    }
+                }
+                other => panic!("reshape.shape should be Tensor: {:?}", other),
+            },
+            other => panic!("reshape.shape should be ImmediateValue: {:?}", other),
+        }
+
+        // Verify INT32 DataType in the reshape shape type field
+        if let Some(vt) = &shape_binding.r#type {
+            if let Some(apple_proto::mil_spec::value_type::Type::TensorType(tt)) = &vt.r#type {
+                assert_eq!(tt.data_type, apple_proto::mil_spec::DataType::Int32 as i32,
+                    "reshape.shape tensor type should be INT32, not INT64");
+            }
+        }
+
+        // ── Transpose.perm should be INT32 ──
         let transpose_op = mir_compat::MirOpCompat::Transpose {
             name: "trans_out".to_string(),
             x: "x".to_string(),
@@ -4364,8 +4419,13 @@ mod tests {
             _ => panic!("perm should be Tensor"),
         };
         match &perm_tensor.value {
-            Some(apple_proto::mil_spec::tensor_value::Value::LongInts(long_ints)) => {
-                assert_eq!(long_ints.values, vec![0i64, 1, 3, 2]);
+            Some(apple_proto::mil_spec::tensor_value::Value::Ints(ints)) => {
+                assert_eq!(ints.values, vec![0i32, 1, 3, 2],
+                    "transpose.perm should be stored as INT32 elements");
+            }
+            Some(apple_proto::mil_spec::tensor_value::Value::LongInts(_)) => {
+                panic!("transpose.perm must NOT use INT64/LongInts — \
+                       Core ML ios19 rejects INT64 for perm parameters");
             }
             Some(apple_proto::mil_spec::tensor_value::Value::Bytes(_)) => {
                 panic!("transpose.perm must NOT use bytes storage");

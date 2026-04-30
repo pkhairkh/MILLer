@@ -1269,13 +1269,13 @@ pub fn mir_op_to_compat(
         MirOp::MILReshape { name, x, shape } => Ok(MirOpCompat::Reshape {
             name: name.clone(),
             x: x.0.clone(),
-            shape: shape.iter().map(|&d| d as i64).collect(),
+            shape: shape.iter().map(|&d| d as i32).collect(),
         }),
 
         MirOp::MILTranspose { name, x, perm } => Ok(MirOpCompat::Transpose {
             name: name.clone(),
             x: x.0.clone(),
-            perm: perm.iter().map(|&d| d as i64).collect(),
+            perm: perm.iter().map(|&d| d as i32).collect(),
         }),
 
         MirOp::MILSliceByIndex {
@@ -1290,8 +1290,8 @@ pub fn mir_op_to_compat(
         } => Ok(MirOpCompat::SliceByIndex {
             name: name.clone(),
             x: x.0.clone(),
-            begin: begin.clone(),
-            end: end.clone(),
+            begin: begin.iter().map(|&d| d as i32).collect(),
+            end: end.iter().map(|&d| d as i32).collect(),
         }),
 
         MirOp::MILConcat { name, values, axis } => Ok(MirOpCompat::Concat {
@@ -1397,8 +1397,8 @@ pub fn mir_op_to_compat(
             name: name.clone(),
             x: x.0.clone(),
             update: update.0.clone(),
-            begin: begin.to_vec(),
-            end: end.to_vec(),
+            begin: begin.iter().map(|&d| d as i32).collect(),
+            end: end.iter().map(|&d| d as i32).collect(),
         }),
 
         MirOp::MILExp { name, x } => Ok(MirOpCompat::Exp { name: name.clone(), x: x.0.clone() }),
@@ -1463,13 +1463,13 @@ pub fn mir_op_to_compat(
         MirOp::MILTile { name, x, reps } => Ok(MirOpCompat::Tile {
             name: name.clone(),
             x: x.0.clone(),
-            reps: reps.iter().map(|&r| r as i64).collect(),
+            reps: reps.iter().map(|&r| r as i32).collect(),
         }),
 
         // ─── Fill / FillLike: tensor constant generators for Tile decomposition ───
         MirOp::MILFill { name, shape, value, dtype } => Ok(MirOpCompat::Fill {
             name: name.clone(),
-            shape: shape.iter().map(|&d| d as i64).collect(),
+            shape: shape.iter().map(|&d| d as i32).collect(),
             value: *value,
             dtype: mil_dtype_to_compat(dtype),
         }),
@@ -1489,12 +1489,12 @@ pub fn mir_op_to_compat(
         MirOp::MILExpandDims { name, x, axis } => Ok(MirOpCompat::ExpandDims {
             name: name.clone(),
             x: x.0.clone(),
-            axis: axis.iter().map(|&a| a as i64).collect(),
+            axis: axis.iter().map(|&a| a as i32).collect(),
         }),
         MirOp::MILSqueeze { name, x, axis } => Ok(MirOpCompat::Squeeze {
             name: name.clone(),
             x: x.0.clone(),
-            axis: axis.iter().map(|&a| a as i64).collect(),
+            axis: axis.iter().map(|&a| a as i32).collect(),
         }),
         MirOp::MILSqrt { name, x } => Ok(MirOpCompat::Sqrt { name: name.clone(), x: x.0.clone() }),
         MirOp::MILPow { name, x, y } => Ok(MirOpCompat::Pow { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
@@ -1512,7 +1512,7 @@ pub fn mir_op_to_compat(
         MirOp::MILLogicalOr { name, x, y } => Ok(MirOpCompat::LogicalOr { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
         MirOp::MILPad { name, x, pad_amounts, mode, constant_value } => Ok(MirOpCompat::Pad {
             name: name.clone(), x: x.0.clone(),
-            pad_amounts: pad_amounts.clone(), mode: mode.clone(), constant_value: *constant_value,
+            pad_amounts: pad_amounts.iter().map(|&d| d as i32).collect(), mode: mode.clone(), constant_value: *constant_value,
         }),
         MirOp::MILReduceMax { name, x, axes, keep_dims } => Ok(MirOpCompat::ReduceMax {
             name: name.clone(), x: x.0.clone(),
