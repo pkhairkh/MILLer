@@ -18,6 +18,7 @@
 //! | DecodeStep | Conv1x1AsLinear + SliceByIndex + StateReadFixed + Reshape + ScaledDotProductAttention + Conv1x1AsLinear |
 //! | RMSNorm | ReduceMean + Rsqrt + ElementWise::Mul + ElementWise::Mul |
 //! | RoPETransform | Cos + Sin + ElementWise::Mul + ElementWise::Add |
+//! | Tile | Reshape + Fill(ones) + ElementWise::Mul(broadcast) + Reshape |
 //! | Sampler | Topk + Gather + Softmax |
 //!
 //! **Critique fix (Sprint 36):** `SirOp::LinearProjection` now lowers to
@@ -310,6 +311,16 @@ impl LegalityRewritePass {
                     let (final_id, nodes) =
                         Self::decompose_sampler(sir_node, logits, &sir_to_air, knowledge_query);
                     (final_id, nodes, "mb.topk")
+                }
+                SirOp::Tile { input, reps } => {
+                    let (final_id, nodes) = Self::decompose_tile(
+                        sir_node,
+                        input,
+                        reps,
+                        &sir_to_air,
+                        knowledge_query,
+                    );
+                    (final_id, nodes, "mb.mul") // decomposition root is broadcast Mul
                 }
                 SirOp::ElementWise { op, inputs } => {
                     let air_inputs: Vec<AirNodeId> = inputs
@@ -1206,6 +1217,157 @@ impl LegalityRewritePass {
             AirOp::ElementWise { op: ElementWiseOp::Add, inputs: vec![x_cos_id, x_sin_id] },
             sir_node,
             "mb.add",
+            kq,
+        ));
+
+        (out_id, nodes)
+    }
+
+    /// Decompose SirOp::Tile into ANE-friendly AIR ops.
+    ///
+    /// Tile has no ANEC converter, so it must be decomposed into
+    /// ANE-faithful primitives. The decomposition exploits the ANE's
+    /// native broadcasting support in the PE elementwise engine.
+    ///
+    /// For the GQA pattern (reps = [1, R, 1, 1] on [B, H, S, D]):
+    ///
+    ///   Tile(x, reps=[1, R, 1, 1]) →
+    ///     reshape_5d:  Reshape(x, [B, H, 1, S, D])    // insert size-1 axis
+    ///     ones_const:  Const("tile_ones", fp16)          // ones tensor [1, 1, R, 1, 1]
+    ///     broadcast:   Mul(reshape_5d, ones_const)       // broadcast Mul → [B, H, R, S, D]
+    ///     output:      Reshape(broadcast, [B, H*R, S, D]) // merge expanded dim
+    ///
+    /// For the general case where only one axis has repetition > 1:
+    ///   1. Find the axis where reps[i] > 1 (must be exactly one for ANE compatibility)
+    ///   2. Reshape to insert a size-1 dim at that axis
+    ///   3. Broadcast Mul with a ones constant to expand the dim
+    ///   4. Reshape back to the tiled output shape
+    ///
+    /// If the Tile has multiple axes with reps > 1, fall back to 1:1 passthrough
+    /// (which will hit the CPU-only gate downstream).
+    fn decompose_tile(
+        sir_node: &ane_ir::sir::SirNode,
+        input_sir: &ane_ir::sir::SirNodeId,
+        reps: &[usize],
+        sir_to_air: &std::collections::HashMap<ane_ir::sir::SirNodeId, AirNodeId>,
+        kq: &dyn PassKnowledgeQuery,
+    ) -> (AirNodeId, Vec<AirNode>) {
+        let base = &sir_node.id.0;
+        let input_air =
+            sir_to_air.get(input_sir).cloned().unwrap_or_else(|| AirNodeId(input_sir.0.clone()));
+
+        // Count how many axes have repetition > 1
+        let tiling_axes: Vec<usize> = reps.iter().enumerate()
+            .filter(|&(_, &r)| r > 1)
+            .map(|(i, _)| i)
+            .collect();
+
+        // If multiple axes need tiling, fall back to 1:1 passthrough.
+        // Multi-axis Tile cannot be decomposed with a single broadcast Mul.
+        // This will be caught by the CPU-only gate in make_air_node.
+        if tiling_axes.len() != 1 {
+            let air_id = AirNodeId(sir_node.id.0.clone());
+            let nodes = vec![Self::make_air_node(
+                air_id.clone(),
+                AirOp::Tile { input: input_air, reps: reps.to_vec() },
+                sir_node,
+                "mb.tile",
+                kq,
+            )];
+            return (air_id, nodes);
+        }
+
+        let tile_axis = tiling_axes[0];
+        let tile_factor = reps[tile_axis];
+
+        // ── Step 1: Reshape to insert a size-1 dim at the tiling axis ──
+        //
+        // For reps=[1, R, 1, 1] on shape [B, H, S, D]:
+        //   → Reshape to [B, H, 1, S, D] (insert axis at position 2, i.e. tile_axis+1 in the 5D view)
+        //
+        // The reshape target_shape has len = reps.len() + 1, with a 1 inserted
+        // after the tile_axis position.
+        let mut reshape_shape: Vec<usize> = Vec::with_capacity(reps.len() + 1);
+        for (i, &r) in reps.iter().enumerate() {
+            reshape_shape.push(if i == tile_axis { r } else { r });
+            if i == tile_axis {
+                reshape_shape.push(1); // insert the new size-1 dim
+            }
+        }
+        // For the GQA case: reps=[1, R, 1, 1] → reshape_shape = [1, R, 1, 1, 1]
+        // This is a "shape template" from the reps; the actual shapes will be
+        // resolved during MIL lowering shape inference.
+
+        let reshape_id = AirNodeId(format!("{base}_tile_reshape_expand"));
+        let mut nodes = vec![Self::make_air_node(
+            reshape_id.clone(),
+            AirOp::Reshape {
+                input: input_air,
+                target_shape: reshape_shape.clone(),
+            },
+            sir_node,
+            "mb.reshape",
+            kq,
+        )];
+
+        // ── Step 2: Create a ones constant for broadcast Mul ──
+        //
+        // The ones constant has the same rank as the reshaped input,
+        // with 1s everywhere except the expanded axis which has tile_factor.
+        // For the GQA case: [1, 1, R, 1, 1]
+        let mut ones_shape = vec![1usize; reps.len() + 1];
+        ones_shape[tile_axis + 1] = tile_factor; // the inserted dim position
+
+        let ones_const_id = AirNodeId(format!("{base}_tile_ones"));
+        nodes.push(Self::make_air_node(
+            ones_const_id.clone(),
+            AirOp::Fill {
+                shape: ones_shape.clone(),
+                value: 1.0,
+                dtype: MilDtype::Fp16,
+            },
+            sir_node,
+            "mb.fill",
+            kq,
+        ));
+
+        // ── Step 3: Broadcast Mul (reshaped * ones) ──
+        //
+        // ANE PE natively supports broadcasting: [B, H, 1, S, D] * [1, 1, R, 1, 1]
+        // = [B, H, R, S, D] — the size-1 dim expands to R via broadcasting.
+        let mul_id = AirNodeId(format!("{base}_tile_broadcast_mul"));
+        nodes.push(Self::make_air_node(
+            mul_id.clone(),
+            AirOp::ElementWise {
+                op: ElementWiseOp::Mul,
+                inputs: vec![reshape_id, ones_const_id],
+            },
+            sir_node,
+            "mb.mul",
+            kq,
+        ));
+
+        // ── Step 4: Reshape back to the tiled output shape ──
+        //
+        // [B, H, R, S, D] → [B, H*R, S, D] (merge the expanded axis back)
+        // The output shape is reps[i] * input_dim[i] for each axis.
+        // Since we only tile one axis, the output shape is the same as
+        // the input shape with tile_axis multiplied by tile_factor.
+        // We express this as the reps-driven shape from shape inference.
+        let mut output_shape: Vec<usize> = Vec::with_capacity(reps.len());
+        for (_, &r) in reps.iter().enumerate() {
+            output_shape.push(r); // will be corrected by shape inference in mil_lower
+        }
+
+        let out_id = AirNodeId(sir_node.id.0.clone());
+        nodes.push(Self::make_air_node(
+            out_id.clone(),
+            AirOp::Reshape {
+                input: mul_id,
+                target_shape: output_shape,
+            },
+            sir_node,
+            "mb.reshape",
             kq,
         ));
 

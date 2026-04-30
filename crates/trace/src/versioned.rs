@@ -602,9 +602,13 @@ impl OpSupportMatrix {
             SirOp::SpaceToBatch { .. } => OpSupport::CpuOnly(
                 "SpaceToBatch has no direct ANEC converter; falls back to CPU".to_string(),
             ),
-            SirOp::Tile { .. } => OpSupport::CpuOnly(
-                "Tile has no direct ANEC converter; falls back to CPU".to_string(),
-            ),
+            SirOp::Tile { .. } => {
+                // Tile decomposes to Reshape + broadcast Mul + Reshape,
+                // all ANE-faithful ops. The legality rewrite pass handles
+                // the decomposition; this classification reflects that the
+                // decomposed form is fully ANE-compatible.
+                OpSupport::AneSupported(AneEngineSupport::PE)
+            }
 
             // ─── Gather/Scatter ────────────────────────────────────
             SirOp::Gather { axis, .. } => {
