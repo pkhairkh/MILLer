@@ -435,6 +435,11 @@ fn compat_input_shape(name: &str, shape: &[usize]) -> Vec<usize> {
     if !shape.is_empty() {
         return shape.to_vec();
     }
+    // Fallback: when MirNode.shape is empty for graph inputs, use a default.
+    // Note: this fallback shape [1, 512] is only for the model's I/O description
+    // in the proto, NOT for shape inference. Shape inference uses the
+    // input_shapes seed from mil_lower.rs which is populated from the traced
+    // graph's actual input dimensions.
     if name.contains("input_ids") {
         vec![1, 512]
     } else {
@@ -1278,7 +1283,7 @@ pub fn mir_op_to_compat(
             //   input [1,512,2048] + target [0,0,16,128] → resolved [1,512,16,128]
             // Fallback to zero-resolution if node_shape is empty or has a
             // different rank (shouldn't happen, but defensive).
-            let resolved_shape = if !node_shape.is_empty() && node_shape.len() == shape.len() {
+            let resolved_shape: Vec<i32> = if !node_shape.is_empty() && node_shape.len() == shape.len() {
                 node_shape.iter().map(|&d| d as i32).collect()
             } else {
                 // Defensive fallback: resolve zeros against node_shape if possible
@@ -1292,6 +1297,17 @@ pub fn mir_op_to_compat(
                 }
                 resolved.iter().map(|&d| d as i32).collect()
             };
+
+            // Validate: no zeros should remain in the resolved shape.
+            // Core ML rejects reshape targets with zero dimensions.
+            if resolved_shape.iter().any(|&d| d == 0) {
+                eprintln!(
+                    "[ERROR] Reshape '{}' still has zero dimensions after resolution: {:?}. \
+                     This will be rejected by Core ML. Raw shape: {:?}, node_shape: {:?}",
+                    name, resolved_shape, shape, node_shape
+                );
+            }
+
             Ok(MirOpCompat::Reshape {
                 name: name.clone(),
                 x: x.0.clone(),

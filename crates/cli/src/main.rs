@@ -5391,11 +5391,25 @@ fn run_trace_compile(
     // point. Without this, every node gets shape=[] which poisons the entire
     // shape propagation chain — the first Identity/Placeholder node gets empty
     // shape, and all downstream ops inherit emptiness.
+    //
+    // IMPORTANT: Use the actual traced input shapes from the Python tracer,
+    // NOT the CLI --seq-len default. The traced graph records the real tensor
+    // dimensions used during tracing (e.g., [1, 512] when --seq-len 512 was
+    // passed). Using the CLI default (32) causes all downstream shapes to have
+    // the wrong sequence dimension, producing invalid reshape targets like
+    // [1,32,16,128] instead of [1,512,16,128].
     let mut input_shapes: std::collections::HashMap<ane_ir::air::AirNodeId, Vec<usize>> =
         std::collections::HashMap::new();
     for input_id in &air.inputs {
         let shape = if input_id.0.contains("input_ids") || input_id.0.starts_with("sir_0_") {
-            vec![batch_size, seq_len]
+            // Use the traced graph's actual input shape, falling back to CLI args
+            let traced_input_shape = traced_graph.inputs.first()
+                .map(|spec| spec.shape.dims.clone())
+                .filter(|dims| dims.len() >= 2);
+            match traced_input_shape {
+                Some(dims) => dims,
+                None => vec![batch_size, seq_len],
+            }
         } else {
             // Fallback: use the task's primary input shape
             vec![batch_size, seq_len, traced_graph.model_config.hidden_size]

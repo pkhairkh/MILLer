@@ -155,7 +155,17 @@ def trace_model_fx(
     except Exception as e:
         # Fallback: build structural graph from config
         sys.stderr.write(f"Warning: symbolic_trace failed ({e}), falling back to structural graph construction\n")
-        return build_fallback_graph(model_config, model_id, decompose, model_class=model_class, model=model)
+        # Extract seq_len from input_ids tensor shape for the fallback builder
+        import torch
+        fallback_seq_len = None
+        if isinstance(input_ids, torch.Tensor) and input_ids.dim() >= 2:
+            fallback_seq_len = input_ids.shape[1]
+        elif isinstance(input_ids, dict):
+            for v in input_ids.values():
+                if isinstance(v, torch.Tensor) and v.dim() >= 2:
+                    fallback_seq_len = v.shape[1]
+                    break
+        return build_fallback_graph(model_config, model_id, decompose, model_class=model_class, model=model, seq_len=fallback_seq_len)
 
     # ─── Dynamic Feature Discovery ────────────────────────────────
     # Walk the model's modules to discover what types are actually present.
@@ -1361,7 +1371,7 @@ def _build_input_specs(input_ids, model_class):
         return [{"name": "input_ids", "shape": {"dims": [1, 32], "dtype": "int32"}}]
 
 
-def build_fallback_graph(model_config, model_id: str, decompose: bool, model_class: str = "causal_lm", model=None) -> Dict[str, Any]:
+def build_fallback_graph(model_config, model_id: str, decompose: bool, model_class: str = "causal_lm", model=None, seq_len: int = None) -> Dict[str, Any]:
     """
     Build a TracedGraph using structural knowledge when torch.fx tracing fails.
 
@@ -1380,7 +1390,17 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
     the normed hidden state and the pre-norm residual. This makes the
     residual connection explicit in the graph so the Rust SIR builder can
     see it without relying on heuristics.
+
+    Args:
+        seq_len: Sequence length to use in output shapes. If None, defaults to 32.
+                 Should match the --seq-len CLI argument for consistency.
     """
+    # Use the provided seq_len or fall back to 32 (the historical default).
+    # This is critical: if the user passes --seq-len 512, all output shapes
+    # must use 512, not 32. The Rust compiler's shape inference seeds from
+    # these shapes, so a wrong seq_len here produces invalid reshape targets.
+    if seq_len is None:
+        seq_len = 32
     config = extract_model_config(model_config)
     config["model_class"] = model_class
     config["is_encoder_decoder"] = (model_class == "seq2seq_lm")
@@ -1458,7 +1478,7 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
             "op": {"type": "Placeholder"},
             "name": "encoder_hidden_states",
             "inputs": [],
-            "output_shape": {"dims": [1, 32, hidden_size], "dtype": "fp16"},
+            "output_shape": {"dims": [1, seq_len, hidden_size], "dtype": "fp16"},
             "is_parameter": False,
             "module_path": None,
         })
@@ -1468,7 +1488,7 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
             "op": {"type": "Placeholder"},
             "name": "decoder_input_ids",
             "inputs": [],
-            "output_shape": {"dims": [1, 32], "dtype": "int32"},
+            "output_shape": {"dims": [1, seq_len], "dtype": "int32"},
             "is_parameter": False,
             "module_path": None,
         })
@@ -1479,7 +1499,7 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
             "op": {"type": "Placeholder"},
             "name": "input_ids",
             "inputs": [],
-            "output_shape": {"dims": [1, 32], "dtype": "int32"},
+            "output_shape": {"dims": [1, seq_len], "dtype": "int32"},
             "is_parameter": False,
             "module_path": None,
         })
@@ -1492,7 +1512,7 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
         "op": {"type": "Embedding", "vocab_size": config["vocab_size"], "embed_dim": hidden_size},
         "name": "embed_tokens",
         "inputs": [embed_input],
-        "output_shape": {"dims": [1, 32, hidden_size], "dtype": "fp16"},
+        "output_shape": {"dims": [1, seq_len, hidden_size], "dtype": "fp16"},
         "is_parameter": False,
         "module_path": "model.embed_tokens",
     })
@@ -1524,7 +1544,7 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
                 "op": {"type": "RmsNorm", "hidden_size": hidden_size, "epsilon": config["layer_norm_epsilon"]},
                 "name": f"{layer_prefix}_input_norm",
                 "inputs": [prev_id],
-                "output_shape": {"dims": [1, 32, hidden_size], "dtype": "fp16"},
+                "output_shape": {"dims": [1, seq_len, hidden_size], "dtype": "fp16"},
                 "is_parameter": False,
                 "module_path": f"model.layers.{i}.input_layernorm",
             })
@@ -1546,7 +1566,7 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
             "op": attn_op,
             "name": f"{layer_prefix}_self_attn",
             "inputs": [prev_id, attn_residual_id],
-            "output_shape": {"dims": [1, 32, hidden_size], "dtype": "fp16"},
+            "output_shape": {"dims": [1, seq_len, hidden_size], "dtype": "fp16"},
             "is_parameter": False,
             "module_path": f"model.layers.{i}.self_attn",
         })
@@ -1562,7 +1582,7 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
                 "op": {"type": "RmsNorm", "hidden_size": hidden_size, "epsilon": config["layer_norm_epsilon"]},
                 "name": f"{layer_prefix}_post_attn_norm",
                 "inputs": [prev_id],
-                "output_shape": {"dims": [1, 32, hidden_size], "dtype": "fp16"},
+                "output_shape": {"dims": [1, seq_len, hidden_size], "dtype": "fp16"},
                 "is_parameter": False,
                 "module_path": f"model.layers.{i}.post_attention_layernorm",
             })
@@ -1580,7 +1600,7 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
             },
             "name": f"{layer_prefix}_mlp",
             "inputs": [prev_id, mlp_residual_id],
-            "output_shape": {"dims": [1, 32, hidden_size], "dtype": "fp16"},
+            "output_shape": {"dims": [1, seq_len, hidden_size], "dtype": "fp16"},
             "is_parameter": False,
             "module_path": f"model.layers.{i}.mlp",
         })
@@ -1593,7 +1613,7 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
             "op": {"type": "RmsNorm", "hidden_size": hidden_size, "epsilon": config["layer_norm_epsilon"]},
             "name": "final_norm",
             "inputs": [prev_id],
-            "output_shape": {"dims": [1, 32, hidden_size], "dtype": "fp16"},
+            "output_shape": {"dims": [1, seq_len, hidden_size], "dtype": "fp16"},
             "is_parameter": False,
             "module_path": "model.norm",
         })
@@ -1605,7 +1625,7 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
         "op": {"type": "Linear", "in_features": hidden_size, "out_features": config["vocab_size"], "has_bias": False},
         "name": "lm_head",
         "inputs": [prev_id],
-        "output_shape": {"dims": [1, 32, config["vocab_size"]], "dtype": "fp16"},
+        "output_shape": {"dims": [1, seq_len, config["vocab_size"]], "dtype": "fp16"},
         "is_parameter": False,
         "module_path": "lm_head",
     })
@@ -1616,7 +1636,7 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
         "op": {"type": "Output"},
         "name": "output",
         "inputs": ["lm_head"],
-        "output_shape": {"dims": [1, 32, config["vocab_size"]], "dtype": "fp16"},
+        "output_shape": {"dims": [1, seq_len, config["vocab_size"]], "dtype": "fp16"},
         "is_parameter": False,
         "module_path": None,
     })
@@ -1630,11 +1650,11 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
     # Build input specs
     if is_encoder_decoder:
         input_specs = [
-            {"name": "encoder_hidden_states", "shape": {"dims": [1, 32, hidden_size], "dtype": "fp16"}},
-            {"name": "decoder_input_ids", "shape": {"dims": [1, 32], "dtype": "int32"}},
+            {"name": "encoder_hidden_states", "shape": {"dims": [1, seq_len, hidden_size], "dtype": "fp16"}},
+            {"name": "decoder_input_ids", "shape": {"dims": [1, seq_len], "dtype": "int32"}},
         ]
     else:
-        input_specs = [{"name": "input_ids", "shape": {"dims": [1, 32], "dtype": "int32"}}]
+        input_specs = [{"name": "input_ids", "shape": {"dims": [1, seq_len], "dtype": "int32"}}]
 
     # Locate safetensors files (same strategies as trace_model_fx)
     safetensors_files = []
@@ -1739,7 +1759,7 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
         "model_cache_dir": model_cache_dir,
         "safetensors_files": safetensors_files,
         "inputs": input_specs,
-        "outputs": [{"name": "logits", "shape": {"dims": [1, 32, config["vocab_size"]], "dtype": "fp16"}}],
+        "outputs": [{"name": "logits", "shape": {"dims": [1, seq_len, config["vocab_size"]], "dtype": "fp16"}}],
         "state_declarations": [],
         "trace_metadata": {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
