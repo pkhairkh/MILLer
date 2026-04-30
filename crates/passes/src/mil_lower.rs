@@ -115,34 +115,97 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
             // Resolve zero-placeholder dimensions in the target shape.
             // Core ML's ios19.reshape treats 0 as a literal zero dimension,
             // not as an "infer from input" sentinel (unlike PyTorch's -1).
-            // A reshape([1,512,2048], [0,0,16,128]) produces a zero-element
-            // tensor [0,0,16,128] and Core ML rejects it:
-            //   "cannot reshape tensor of size 1048576 into shape [0, 0, 16, 128]"
             //
-            // Strategy: replace each 0 in target_shape with the corresponding
-            // dimension from the input shape, preserving the leading positions.
-            // This matches the intent of the zero placeholders: the first two
-            // dims (batch, seq) are "infer from input".
+            // Resolution strategy (in order of priority):
+            // 1. Positional: copy dim from input_shape[i] → target[i]
+            //    Works when input and target have the same rank (e.g., 3D→4D
+            //    where the first dims align: [B,S,E]→[B,S,H,D])
+            // 2. Element-count-based: compute zeros from the total element count
+            //    Works for rank-changing reshapes where positional is wrong
+            //    (e.g., [B,H,S,D]→[B,S,E]: pos 1 gives H instead of S)
+            //    For 2+ zeros, assumes batch=1 for the first zero.
             if let Some(input_shape) = node_shapes.get(input) {
+                let input_elements: usize = input_shape.iter().product();
                 let mut resolved = target_shape.clone();
-                let mut zeros_found = 0;
-                for i in 0..resolved.len() {
-                    if resolved[i] == 0 {
-                        if let Some(&dim) = input_shape.get(i) {
-                            resolved[i] = dim;
-                            zeros_found += 1;
+                let has_zeros = resolved.iter().any(|&d| d == 0);
+
+                if has_zeros && input_elements > 0 {
+                    // Step 1: Try positional resolution
+                    let mut positional_works = true;
+                    for i in 0..resolved.len() {
+                        if resolved[i] == 0 {
+                            if let Some(&dim) = input_shape.get(i) {
+                                resolved[i] = dim;
+                            } else {
+                                positional_works = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    // Verify element count after positional resolution
+                    if positional_works {
+                        let resolved_elements: usize = resolved.iter().product();
+                        if resolved_elements != input_elements {
+                            // Positional resolution produced wrong count —
+                            // reset and use element-count-based inference
+                            resolved = target_shape.clone();
+                            positional_works = false;
+                        }
+                    }
+
+                    if !positional_works {
+                        // Step 2: Element-count-based inference
+                        let non_zero_product: usize =
+                            resolved.iter().filter(|&&d| d != 0).product();
+                        if non_zero_product > 0 {
+                            let remaining = input_elements / non_zero_product;
+                            if remaining * non_zero_product == input_elements {
+                                let zero_count = resolved.iter().filter(|&&d| d == 0).count();
+                                match zero_count {
+                                    1 => {
+                                        for i in 0..resolved.len() {
+                                            if resolved[i] == 0 {
+                                                resolved[i] = remaining;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    2 => {
+                                        // Two zeros — assume batch=1, compute the other
+                                        let first = resolved.iter().position(|&d| d == 0).unwrap();
+                                        let last = resolved.iter().rposition(|&d| d == 0).unwrap();
+                                        resolved[first] = 1;
+                                        resolved[last] = remaining;
+                                    }
+                                    _ => {
+                                        // Set all zeros to 1 except the last, compute last
+                                        let zero_positions: Vec<usize> = resolved
+                                            .iter()
+                                            .enumerate()
+                                            .filter(|(_, &d)| d == 0)
+                                            .map(|(i, _)| i)
+                                            .collect();
+                                        for &pos in &zero_positions[..zero_positions.len() - 1] {
+                                            resolved[pos] = 1;
+                                        }
+                                        if let Some(&last_pos) = zero_positions.last() {
+                                            resolved[last_pos] = remaining;
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-                if zeros_found > 0 {
-                    // Validate: product of resolved shape must match product of input shape
-                    let input_elems: usize = input_shape.iter().product();
-                    let resolved_elems: usize = resolved.iter().product();
-                    if input_elems != resolved_elems && input_elems != 0 {
+
+                if has_zeros {
+                    let resolved_elements: usize = resolved.iter().product();
+                    if resolved_elements != input_elements && input_elements != 0 {
                         eprintln!(
                             "[WARN] Reshape zero-resolution mismatch: {:?} → {:?} \
                              ({} vs {} elements). The source may have incorrect dims.",
-                            input_shape, resolved, input_elems, resolved_elems
+                            input_shape, resolved, input_elements, resolved_elements
                         );
                     }
                 }

@@ -74,12 +74,33 @@ pub fn build_sir_from_trace(
     target_family: AneFamily,
 ) -> Result<SirGraph, String> {
     let compiler = VersionedCompiler::new(target_family);
+    // Extract batch_size and seq_len from the traced graph's input specification.
+    // These are used to emit concrete reshape target shapes (e.g., [1, 512, 16, 128])
+    // instead of zero placeholders (e.g., [0, 0, 16, 128]) which Core ML rejects.
+    // The zero-placeholder approach was previously attempted but failed because:
+    //   1. infer_shape() couldn't resolve zeros (input shape propagation failures)
+    //   2. Positional zero resolution is wrong for rank-changing reshapes (4D→3D)
+    //   3. Element-count-based inference is ambiguous with multiple zero dimensions
+    let (batch_size, seq_len) = trace
+        .inputs
+        .first()
+        .map(|spec| {
+            if spec.shape.dims.len() >= 2 {
+                (spec.shape.dims[0], spec.shape.dims[1])
+            } else {
+                (1, 32) // fallback: default batch=1, seq=32
+            }
+        })
+        .unwrap_or((1, 32));
+
     let ctx = SirBuildContext {
         trace,
         config: &trace.model_config,
         compiler: &compiler,
         node_map: std::collections::HashMap::new(),
         next_id: 0,
+        batch_size,
+        seq_len,
     };
     ctx.build()
 }
@@ -91,6 +112,12 @@ struct SirBuildContext<'a> {
     compiler: &'a VersionedCompiler,
     node_map: std::collections::HashMap<String, SirNodeId>,
     next_id: usize,
+    /// Batch size from the traced graph's input specification.
+    /// Used for concrete reshape target shapes instead of zero placeholders.
+    batch_size: usize,
+    /// Sequence length from the traced graph's input specification.
+    /// Used for concrete reshape target shapes instead of zero placeholders.
+    seq_len: usize,
 }
 
 impl<'a> SirBuildContext<'a> {
@@ -740,14 +767,22 @@ impl<'a> SirBuildContext<'a> {
         let q_proj_dim = num_heads * head_dim; // e.g., 16 * 128 = 2048
         let kv_proj_dim = num_kv_heads * head_dim; // e.g., 8 * 128 = 1024
 
-        // Use zero placeholders for batch and seq_len in reshape target shapes.
-        // Core ML's ios19.reshape treats 0 as a literal zero dimension, so these
-        // zeros must be resolved against the actual input tensor shape before
-        // emission. The resolution happens in two places:
-        //   1. infer_shape() in mil_lower.rs resolves zeros to input dims
-        //   2. mir_to_compat.rs uses the resolved node_shape for the reshape shape
-        // Using the trace input shape (which defaults to [1,32]) is WRONG because
-        // the actual tensor may have a different sequence length (e.g., 512).
+        // Use concrete batch/seq_len from the traced graph's input specification
+        // for reshape target shapes. Core ML's ios19.reshape treats 0 as a literal
+        // zero dimension (not an "infer from input" sentinel like PyTorch's -1),
+        // so zero placeholders MUST NOT be used. Previous zero-placeholder approach
+        // failed because:
+        //   1. infer_shape() couldn't resolve zeros — input shape propagation broke
+        //      when the reshape's input wasn't yet in the node_shapes map
+        //   2. Positional zero resolution is wrong for rank-changing reshapes:
+        //      e.g., input [1,heads,S,D] → target [0,0,embed] resolves to
+        //      [1,heads,embed] instead of the correct [1,S,embed]
+        //   3. Element-count-based inference is ambiguous with multiple zero dims
+        // The concrete values come from TracedGraph.inputs (populated from the
+        // CLI --seq-len argument or trace config), so they reflect the actual
+        // compilation shape, NOT the trace default of [1,32].
+        let batch = self.batch_size;
+        let seq = self.seq_len;
 
         // Resolve weight names using the module_path from the traced node.
         // For attention, the module_path is typically "model.layers.0.self_attn"
@@ -844,14 +879,13 @@ impl<'a> SirBuildContext<'a> {
         // K: [B, S, kv_heads*D] → [B, S, kv_heads, D]
         // V: [B, S, kv_heads*D] → [B, S, kv_heads, D]
         //
-        // Zero placeholders are used for batch (pos 0) and seq_len (pos 1).
-        // These are resolved against the actual input tensor shape in:
-        //   1. infer_shape() in mil_lower.rs (for MirNode.shape metadata)
-        //   2. mir_to_compat.rs (for the reshape shape emitted to Core ML)
+        // Concrete batch/seq from TracedGraph.inputs — NOT zero placeholders.
+        // Core ML treats 0 as literal zero, and positional resolution is wrong
+        // for rank-changing reshapes.
         ops.push((
             SirOp::Reshape {
                 input: q_id,
-                target_shape: vec![0, 0, num_heads, head_dim],
+                target_shape: vec![batch, seq, num_heads, head_dim],
             },
             "q_reshape_4d".to_string(),
         ));
@@ -860,7 +894,7 @@ impl<'a> SirBuildContext<'a> {
         ops.push((
             SirOp::Reshape {
                 input: k_id,
-                target_shape: vec![0, 0, num_kv_heads, head_dim],
+                target_shape: vec![batch, seq, num_kv_heads, head_dim],
             },
             "k_reshape_4d".to_string(),
         ));
@@ -869,7 +903,7 @@ impl<'a> SirBuildContext<'a> {
         ops.push((
             SirOp::Reshape {
                 input: v_id,
-                target_shape: vec![0, 0, num_kv_heads, head_dim],
+                target_shape: vec![batch, seq, num_kv_heads, head_dim],
             },
             "v_reshape_4d".to_string(),
         ));
@@ -995,12 +1029,14 @@ impl<'a> SirBuildContext<'a> {
         // 3D [B, S, num_heads*D] for the output projection.
         // The output projection expects a 3D input because it's a Conv1x1AsLinear.
         //
-        // Zero placeholders for batch (pos 0) and seq (pos 1) are resolved
-        // against the actual input tensor shape at emission time.
+        // Concrete batch/seq from TracedGraph.inputs — zero placeholders were
+        // previously used but Core ML treats 0 as literal zero, and positional
+        // zero resolution fails for this 4D→3D reshape (pos 1 maps to heads
+        // instead of seq in the input's [B, heads, S, D] layout).
         ops.push((
             SirOp::Reshape {
                 input: attn_result_id,
-                target_shape: vec![0, 0, q_proj_dim], // [B, S, num_heads*head_dim] — zeros resolved at emission
+                target_shape: vec![batch, seq, q_proj_dim], // [B, S, num_heads*head_dim]
             },
             "attn_reshape_3d".to_string(),
         ));

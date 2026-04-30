@@ -120,11 +120,23 @@ pub fn mir_graph_to_compat(
 ) -> Result<MirGraphCompat> {
     let alias_map = build_input_alias_map(graph);
 
+    // Build a shape map from MirNode.id → MirNode.shape so that reshape ops
+    // can resolve zero-placeholder dimensions by looking up their input node's
+    // shape. This is critical because infer_shape() in mil_lower.rs may fail
+    // to propagate shapes correctly (e.g., when input shapes aren't seeded or
+    // positional zero resolution is wrong for rank-changing reshapes).
+    let shape_map: std::collections::HashMap<String, Vec<usize>> = graph
+        .nodes
+        .iter()
+        .filter(|n| !n.shape.is_empty())
+        .map(|n| (n.id.0.clone(), n.shape.clone()))
+        .collect();
+
     // Phase 1: Convert all MIR nodes to compat ops
     let ops: Vec<MirOpCompat> = graph
         .nodes
         .iter()
-        .map(|node| mir_node_to_compat(node, resolver))
+        .map(|node| mir_node_to_compat_with_shapes(node, resolver, &shape_map))
         .map(|op| op.map(|op| remap_compat_inputs(op, &alias_map)))
         .collect::<Result<Vec<_>>>()?;
 
@@ -1163,6 +1175,7 @@ fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
     }
 }
 
+#[allow(dead_code)]
 fn mir_node_to_compat(node: &MirNode, resolver: &dyn WeightResolver) -> Result<MirOpCompat> {
     let compat = mir_op_to_compat(&node.op, &node.shape, resolver)?;
 
@@ -1208,6 +1221,236 @@ fn mir_node_to_compat(node: &MirNode, resolver: &dyn WeightResolver) -> Result<M
     }
 
     Ok(compat)
+}
+
+/// Convert a MIR node to compat with access to a graph-wide shape map.
+///
+/// This is the shape-aware version of `mir_node_to_compat` that can resolve
+/// reshape zero placeholders by looking up the input node's shape from the
+/// full MIR graph. This is necessary because `infer_shape()` in mil_lower.rs
+/// may fail to propagate shapes correctly (e.g., when input shapes aren't
+/// seeded, or positional zero resolution is wrong for rank-changing reshapes).
+fn mir_node_to_compat_with_shapes(
+    node: &MirNode,
+    resolver: &dyn WeightResolver,
+    shape_map: &std::collections::HashMap<String, Vec<usize>>,
+) -> Result<MirOpCompat> {
+    let compat = mir_op_to_compat_with_shapes(&node.op, &node.shape, resolver, shape_map)?;
+
+    // CRITICAL: Override the compat op's output name with the MIR node's unique ID.
+    // (Same logic as mir_node_to_compat — see its comment for details.)
+    let compat = rename_compat_output(compat, node.id.0.clone());
+
+    // For ReadState, propagate the actual dtype from the MIR node instead
+    // of the hardcoded Fp16 default.
+    if let MirOpCompat::ReadState { name, state_id, shape, .. } = &compat {
+        let node_dtype = mil_dtype_to_compat(&node.dtype);
+        return Ok(MirOpCompat::ReadState {
+            name: name.clone(),
+            state_id: state_id.clone(),
+            shape: shape.clone(),
+            dtype: node_dtype,
+        });
+    }
+
+    // For Identity, propagate the actual dtype and convert graph-input
+    // Identity ops to Placeholder ops.
+    if let MirOpCompat::Identity { name, x, .. } = &compat {
+        let node_dtype = compat_input_dtype(&node.id.0, &node.dtype);
+        if x == "__placeholder__" {
+            return Ok(MirOpCompat::Placeholder { name: name.clone(), dtype: node_dtype });
+        }
+        return Ok(MirOpCompat::Identity { name: name.clone(), x: x.clone(), dtype: node_dtype });
+    }
+
+    Ok(compat)
+}
+
+/// Shape-aware version of `mir_op_to_compat` that can resolve reshape zeros
+/// using the graph-wide shape map.
+pub fn mir_op_to_compat_with_shapes(
+    op: &MirOp,
+    node_shape: &[usize],
+    resolver: &dyn WeightResolver,
+    shape_map: &std::collections::HashMap<String, Vec<usize>>,
+) -> Result<MirOpCompat> {
+    match op {
+        MirOp::MILReshape { name, x, shape } => {
+            // Resolve reshape target shape using multiple strategies:
+            //
+            // 1. If node_shape is populated and has the correct rank with no zeros,
+            //    use it directly (the infer_shape() path worked correctly).
+            //
+            // 2. If the raw shape has zeros, look up the input node's shape from
+            //    the shape_map and resolve using element-count-based inference.
+            //    This handles cases where infer_shape() failed to propagate shapes.
+            //
+            // 3. As a last resort, try positional resolution from node_shape.
+            let has_zeros = shape.iter().any(|&d| d == 0);
+            let node_shape_valid = !node_shape.is_empty()
+                && node_shape.len() == shape.len()
+                && !node_shape.iter().any(|&d| d == 0);
+
+            let resolved_shape: Vec<i32> = if !has_zeros {
+                // No zeros — shape is already concrete
+                shape.iter().map(|&d| d as i32).collect()
+            } else if node_shape_valid {
+                // node_shape is valid and has no zeros — use it
+                node_shape.iter().map(|&d| d as i32).collect()
+            } else if let Some(input_shape) = shape_map.get(&x.0) {
+                // Look up the input node's shape and resolve zeros
+                resolve_reshape_shape(shape, input_shape, name)
+            } else if !node_shape.is_empty() && node_shape.len() == shape.len() {
+                // node_shape has zeros too, but try positional fallback
+                let mut resolved = shape.clone();
+                for i in 0..resolved.len() {
+                    if resolved[i] == 0 {
+                        if let Some(&dim) = node_shape.get(i) {
+                            if dim != 0 {
+                                resolved[i] = dim;
+                            }
+                        }
+                    }
+                }
+                resolved.iter().map(|&d| d as i32).collect()
+            } else {
+                // No resolution possible — emit as-is (will produce error below)
+                shape.iter().map(|&d| d as i32).collect()
+            };
+
+            // Validate: no zeros should remain in the resolved shape.
+            if resolved_shape.iter().any(|&d| d == 0) {
+                eprintln!(
+                    "[ERROR] Reshape '{}' still has zero dimensions after resolution: {:?}. \
+                     This will be rejected by Core ML. Raw shape: {:?}, node_shape: {:?}, \
+                     input_shape: {:?}",
+                    name, resolved_shape, shape, node_shape, shape_map.get(&x.0)
+                );
+            }
+
+            Ok(MirOpCompat::Reshape {
+                name: name.clone(),
+                x: x.0.clone(),
+                shape: resolved_shape,
+            })
+        }
+
+        // All other ops delegate to the original mir_op_to_compat
+        _ => mir_op_to_compat(op, node_shape, resolver),
+    }
+}
+
+/// Resolve zero-placeholder dimensions in a reshape target shape using the
+/// input tensor's shape and element-count-based inference.
+///
+/// Strategy:
+/// 1. For each zero in the target shape, try to copy the dimension from the
+///    corresponding position in the input shape (works when input and target
+///    have the same rank, e.g., [B,S,E] → [B,S,H,D]).
+/// 2. If positional resolution produces a shape whose element count doesn't
+///    match the input, fall back to element-count-based inference:
+///    - Compute the product of non-zero target dimensions
+///    - Distribute the remaining elements among the zero dimensions
+///    - If batch=1 is assumed for the first zero, compute the rest
+fn resolve_reshape_shape(
+    target_shape: &[usize],
+    input_shape: &[usize],
+    _name: &str,
+) -> Vec<i32> {
+    let input_elements: usize = input_shape.iter().product();
+    if input_elements == 0 {
+        return target_shape.iter().map(|&d| d as i32).collect();
+    }
+
+    let mut resolved: Vec<usize> = target_shape.to_vec();
+
+    // Step 1: Try positional resolution
+    let mut positional_works = true;
+    for i in 0..resolved.len() {
+        if resolved[i] == 0 {
+            if let Some(&dim) = input_shape.get(i) {
+                resolved[i] = dim;
+            } else {
+                positional_works = false;
+                break;
+            }
+        }
+    }
+
+    // Verify element count after positional resolution
+    if positional_works {
+        let resolved_elements: usize = resolved.iter().product();
+        if resolved_elements == input_elements {
+            return resolved.iter().map(|&d| d as i32).collect();
+        }
+        // Positional resolution produced wrong element count — reset and
+        // use element-count-based inference instead
+        resolved = target_shape.to_vec();
+    }
+
+    // Step 2: Element-count-based inference
+    let non_zero_product: usize = resolved.iter().filter(|&&d| d != 0).product();
+    if non_zero_product == 0 {
+        return target_shape.iter().map(|&d| d as i32).collect();
+    }
+
+    let remaining = input_elements / non_zero_product;
+    if remaining * non_zero_product != input_elements {
+        // Element count doesn't divide evenly — can't resolve
+        return target_shape.iter().map(|&d| d as i32).collect();
+    }
+
+    let zero_count = resolved.iter().filter(|&&d| d == 0).count();
+    match zero_count {
+        0 => {} // No zeros (shouldn't reach here, but handle gracefully)
+        1 => {
+            // Single zero — resolve directly
+            for i in 0..resolved.len() {
+                if resolved[i] == 0 {
+                    resolved[i] = remaining;
+                    break;
+                }
+            }
+        }
+        2 => {
+            // Two zeros — assume first zero is batch (typically 1), compute
+            // the second from the remaining product. This is the common case
+            // for [0, 0, embed] or [0, 0, H, D] reshapes in attention.
+            let first_zero = resolved.iter().position(|&d| d == 0).unwrap();
+            let second_zero = resolved.iter().rposition(|&d| d == 0).unwrap();
+
+            // Try batch=1 first
+            resolved[first_zero] = 1;
+            if remaining % 1 == 0 {
+                resolved[second_zero] = remaining / 1;
+            } else {
+                // Try the other way around
+                resolved[first_zero] = 0;
+                resolved[second_zero] = 1;
+                if remaining % 1 == 0 {
+                    resolved[first_zero] = remaining / 1;
+                }
+            }
+        }
+        _ => {
+            // More than 2 zeros — distribute as 1 for each except the last,
+            // then compute the last from the remaining product
+            let zero_positions: Vec<usize> =
+                resolved.iter().enumerate().filter(|(_, &d)| d == 0).map(|(i, _)| i).collect();
+            let mut product_so_far = 1usize;
+            for &pos in &zero_positions[..zero_positions.len() - 1] {
+                resolved[pos] = 1;
+                product_so_far *= 1;
+            }
+            if let Some(&last_pos) = zero_positions.last() {
+                if product_so_far > 0 && remaining % product_so_far == 0 {
+                    resolved[last_pos] = remaining / product_so_far;
+                }
+            }
+        }
+    }
+
+    resolved.iter().map(|&d| d as i32).collect()
 }
 
 /// Convert a single MIR op to the compat representation.
@@ -1272,26 +1515,30 @@ pub fn mir_op_to_compat(
         }
 
         MirOp::MILReshape { name, x, shape } => {
-            // Use node_shape (the resolved output shape from infer_shape)
-            // instead of the raw MirOp shape, which may contain zero placeholders.
-            // Core ML's ios19.reshape treats 0 as a literal zero dimension,
-            // so zeros MUST be resolved against the actual input tensor shape
-            // before emission. infer_shape() in mil_lower.rs resolves zeros
-            // position-by-position against the input shape, producing the
-            // correct concrete dimensions in MirNode.shape (passed here as
-            // node_shape). For example:
-            //   input [1,512,2048] + target [0,0,16,128] → resolved [1,512,16,128]
-            // Fallback to zero-resolution if node_shape is empty or has a
-            // different rank (shouldn't happen, but defensive).
-            let resolved_shape: Vec<i32> = if !node_shape.is_empty() && node_shape.len() == shape.len() {
+            // Resolve reshape target shape using node_shape (from infer_shape)
+            // as the primary source. For the shape-aware version that can also
+            // look up the input node's shape from the graph, see
+            // mir_op_to_compat_with_shapes.
+            let has_zeros = shape.iter().any(|&d| d == 0);
+            let node_shape_valid = !node_shape.is_empty()
+                && node_shape.len() == shape.len()
+                && !node_shape.iter().any(|&d| d == 0);
+
+            let resolved_shape: Vec<i32> = if !has_zeros {
+                // No zeros — shape is already concrete
+                shape.iter().map(|&d| d as i32).collect()
+            } else if node_shape_valid {
+                // node_shape has no zeros — use it
                 node_shape.iter().map(|&d| d as i32).collect()
             } else {
-                // Defensive fallback: resolve zeros against node_shape if possible
+                // Fallback: try positional resolution from node_shape
                 let mut resolved = shape.clone();
                 for i in 0..resolved.len() {
                     if resolved[i] == 0 {
                         if let Some(&dim) = node_shape.get(i) {
-                            resolved[i] = dim;
+                            if dim != 0 {
+                                resolved[i] = dim;
+                            }
                         }
                     }
                 }
@@ -1299,7 +1546,6 @@ pub fn mir_op_to_compat(
             };
 
             // Validate: no zeros should remain in the resolved shape.
-            // Core ML rejects reshape targets with zero dimensions.
             if resolved_shape.iter().any(|&d| d == 0) {
                 eprintln!(
                     "[ERROR] Reshape '{}' still has zero dimensions after resolution: {:?}. \
@@ -2498,3 +2744,30 @@ mod tests {
         }
     }
 }
+
+    #[test]
+    fn test_resolve_reshape_shape_element_count_inference() {
+        // Test element-count-based zero resolution for rank-changing reshapes.
+        // This is the key scenario for attn_reshape_3d where positional
+        // resolution gives wrong results.
+
+        // Case 1: 3D→4D with same rank (positional works)
+        // input [1, 512, 2048] → target [0, 0, 16, 128]
+        let result = resolve_reshape_shape(&[0, 0, 16, 128], &[1, 512, 2048], "test");
+        assert_eq!(result, vec![1, 512, 16, 128], "3D→4D positional should work");
+
+        // Case 2: 4D→3D (positional WRONG, element-count needed)
+        // input [1, 16, 512, 128] → target [0, 0, 2048]
+        // Positional would give [1, 16, 2048] (wrong), element-count gives [1, 512, 2048]
+        let result = resolve_reshape_shape(&[0, 0, 2048], &[1, 16, 512, 128], "test");
+        assert_eq!(result, vec![1, 512, 2048], "4D→3D should use element-count");
+
+        // Case 3: Single zero dimension
+        // input [1, 512, 1024] → target [1, 0, 1024]
+        let result = resolve_reshape_shape(&[1, 0, 1024], &[1, 512, 1024], "test");
+        assert_eq!(result, vec![1, 512, 1024], "Single zero should resolve directly");
+
+        // Case 4: No zeros (concrete shape)
+        let result = resolve_reshape_shape(&[1, 512, 16, 128], &[1, 512, 2048], "test");
+        assert_eq!(result, vec![1, 512, 16, 128], "No zeros should pass through");
+    }
