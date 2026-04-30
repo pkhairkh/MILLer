@@ -7,13 +7,18 @@
 //! Also includes the sharded linear pipeline path (S9.2):
 //! task spec → per-shard SIR → per-shard MIR → per-shard bridge payload.
 //! Each shard has explicit role semantics (Entry/Interior/Exit).
+//!
+//! Bridge payload types live in [`super::payload`] and shard-related types
+//! live in [`super::shard_desc`]; both are re-exported here for backward
+//! compatibility.
+
+// Re-exports for backward compatibility: consumers that import from
+// `ane_ir::linear_slice::{…}` continue to compile without changes.
+pub use super::payload::*;
+pub use super::shard_desc::*;
 
 use crate::mir::{ComputeUnitHint, MilDtype, MirGraph, MirNode, MirNodeId, MirOp};
-use crate::pir::{
-    FunctionEntry, Handoff, Package, PackageRole, PirGraph, ShardPartitionEntry, ShardRole,
-    ShardTemplate, TensorSpec as PirTensorSpec,
-};
-use crate::sir::{KvCacheLayout, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+use crate::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
 use crate::task_spec::{SyntheticTaskSpec, TaskOp};
 
 /// Build a SIR graph from a synthetic linear projection task spec.
@@ -178,1136 +183,15 @@ pub fn lower_linear_projection_to_mir(
         nodes,
         inputs: vec![input_id],
         outputs: vec![add_id],
-        opset_version: "iOS18".into(),
+        opset_version: crate::DEFAULT_OPSET_VERSION.into(),
         shard_name: shard_name.into(),
-    })
-}
-
-/// A single function descriptor in the bridge payload.
-/// Schema seam for multifunction packages: current emission always
-/// produces one function; future emission may produce multiple.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct FunctionDescriptor {
-    pub name: String,
-    pub inputs: Vec<TensorDescriptor>,
-    pub outputs: Vec<TensorDescriptor>,
-    pub stateful: bool,
-}
-
-/// Tensor shape/dtype descriptor for function I/O.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct TensorDescriptor {
-    pub name: String,
-    pub shape: Vec<usize>,
-    pub dtype: String,
-}
-
-/// Bridge payload: the JSON structure sent to the Python bridge
-/// for a linear projection emission.
-///
-/// Versioned: `bridge_version` field enables Python to reject incompatible
-/// payload versions cleanly. Bump this when the payload schema changes
-/// in a way that breaks backward compatibility.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct LinearProjectionPayload {
-    /// Bridge protocol version. Must match what Python expects.
-    /// Version history:
-    ///   1 — initial schema (command + task + dimensions + dtype + functions)
-    pub bridge_version: u32,
-    pub command: String,
-    pub task_name: String,
-    pub family: String,
-    pub input_dim: usize,
-    pub output_dim: usize,
-    pub batch_size: usize,
-    pub dtype: String,
-    pub opset_version: String,
-    pub compute_units: String,
-    pub output_path: String,
-    pub seed: u64,
-    /// Function descriptors for this package.
-    /// Defaults to a single "main" function.
-    /// The Python emitter records these in the result payload
-    /// for manifest correctness. When multifunction emission is
-    /// implemented, this list will contain multiple entries and
-    /// the emitter will build one MIL program per function.
-    pub functions: Vec<FunctionDescriptor>,
-}
-
-/// Bridge payload: the JSON structure sent to the Python bridge
-/// for a dedicated LUT projection emission.
-///
-/// This is structurally distinct from `LinearProjectionPayload`:
-/// it carries LUT-specific fields (`vocab_size`, `embed_dim`, `num_groups`,
-/// `lut_bitwidth`) and uses `command: "emit_lut_projection"` so the
-/// Python bridge dispatches to the dedicated LUT emission handler.
-///
-/// The LUT emission path builds a gather-based program that models
-/// the `constexpr_lut`-to-`gather` pattern used in ANE palettized
-/// inference, rather than the matmul+add pattern of linear projection.
-///
-/// Sprint 20 (S20.1): this payload replaces the previous approach where
-/// LUT tasks were sent through `LinearProjectionPayload` with
-/// `embed_dim × embed_dim` dimensions.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct LutProjectionPayload {
-    /// Bridge protocol version. Must match what Python expects.
-    pub bridge_version: u32,
-    /// Command identifier: always "emit_lut_projection".
-    pub command: String,
-    pub task_name: String,
-    pub family: String,
-    /// Number of possible index values (LUT entries per group).
-    pub vocab_size: usize,
-    /// Embedding dimension (number of output features per group).
-    pub embed_dim: usize,
-    /// Number of independent LUT groups.
-    pub num_groups: usize,
-    /// LUT precision in bits (1, 2, 3, 4, 6, or 8).
-    pub lut_bitwidth: usize,
-    pub batch_size: usize,
-    pub dtype: String,
-    pub opset_version: String,
-    pub compute_units: String,
-    pub output_path: String,
-    pub seed: u64,
-    pub functions: Vec<FunctionDescriptor>,
-}
-
-/// Bridge payload: the JSON structure sent to the Python bridge
-/// for a dedicated decode-step emission.
-///
-/// This is structurally distinct from `LinearProjectionPayload`:
-/// it carries decode-step-specific fields (`embed_dim`, `num_heads`,
-/// `head_dim`, `kv_len`) and uses `command: "emit_stateful_decode_step"`
-/// so the Python bridge dispatches to the stateful decode-step emission
-/// handler (Sprint 40).
-///
-/// The decode-step emission path builds a program that models the
-/// three-part decode-step pattern (QKV projection → attention →
-/// output projection), rather than the simple matmul+add pattern of
-/// linear projection.
-///
-/// Sprint 40: The default decode-step bridge command is now
-/// `emit_stateful_decode_step` (uses real `mb.read_state` /
-/// `mb.coreml_update_state` for KV-cache state semantics, iOS 18+).
-/// The previous stateless path (`emit_decode_step` using `mb.const`
-/// KV cache) is available as `emit_stateless_decode_step` for
-/// single-step testing.
-///
-/// Sprint 24 follow-up (resolves Sprint 19/23 residual): this payload
-/// replaces the previous approach where decode-step tasks were sent
-/// through `LinearProjectionPayload` with `embed_dim × embed_dim`
-/// dimensions.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct DecodeStepPayload {
-    /// Bridge protocol version. Must match what Python expects.
-    pub bridge_version: u32,
-    /// Command identifier: "emit_stateful_decode_step" (Sprint 40).
-    ///
-    /// Previously "emit_decode_step" which dispatched to the stateless
-    /// path (mb.const KV cache). Now defaults to the stateful path
-    /// (mb.read_state / mb.coreml_update_state for real KV-cache
-    /// state semantics, iOS 18+).
-    pub command: String,
-    pub task_name: String,
-    pub family: String,
-    /// Embedding dimension (model hidden size).
-    pub embed_dim: usize,
-    /// Number of attention heads.
-    pub num_heads: usize,
-    /// Dimension per attention head.
-    pub head_dim: usize,
-    /// KV cache sequence length.
-    pub kv_len: usize,
-    pub batch_size: usize,
-    pub dtype: String,
-    pub opset_version: String,
-    pub compute_units: String,
-    pub output_path: String,
-    pub seed: u64,
-    pub functions: Vec<FunctionDescriptor>,
-}
-
-impl DecodeStepPayload {
-    /// Build a dedicated decode-step bridge payload from a task spec.
-    ///
-    /// Unlike the old approach of reusing LinearProjectionPayload,
-    /// this payload carries all decode-step-specific fields and uses
-    /// the dedicated "emit_stateful_decode_step" command so the Python
-    /// bridge dispatches to the stateful decode-step emission handler
-    /// (Sprint 40).
-    pub fn from_spec(spec: &SyntheticTaskSpec, output_path: &str) -> Result<Self, String> {
-        Self::from_spec_with_override(spec, output_path, None)
-    }
-
-    /// Build a dedicated decode-step bridge payload with an optional dtype override.
-    ///
-    /// When `dtype_override` is `Some`, the payload uses the overridden dtype
-    /// instead of the spec's default. This is the propagation mechanism for
-    /// precision adaptation.
-    pub fn from_spec_with_override(
-        spec: &SyntheticTaskSpec,
-        output_path: &str,
-        dtype_override: Option<&str>,
-    ) -> Result<Self, String> {
-        let (embed_dim, num_heads, head_dim, kv_len, batch_size, spec_dtype) = match &spec.op {
-            TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, dtype } => {
-                (*embed_dim, *num_heads, *head_dim, *kv_len, *batch_size, dtype.clone())
-            }
-            _ => return Err("Expected DecodeStep task for DecodeStepPayload".into()),
-        };
-
-        let effective_dtype = dtype_override.map(|s| s.to_string()).unwrap_or(spec_dtype);
-
-        Ok(Self {
-            bridge_version: BRIDGE_VERSION,
-            command: "emit_stateful_decode_step".into(),
-            task_name: spec.name.clone(),
-            family: spec.family.clone(),
-            embed_dim,
-            num_heads,
-            head_dim,
-            kv_len,
-            batch_size,
-            dtype: effective_dtype.clone(),
-            opset_version: "iOS18".into(),
-            compute_units: "CPU_AND_NE".into(),
-            output_path: output_path.into(),
-            seed: 42,
-            functions: vec![FunctionDescriptor {
-                name: "main".into(),
-                inputs: vec![TensorDescriptor {
-                    name: "x".into(),
-                    shape: vec![batch_size, embed_dim],
-                    dtype: effective_dtype.clone(),
-                }],
-                outputs: vec![TensorDescriptor {
-                    name: "output".into(),
-                    shape: vec![batch_size, embed_dim],
-                    dtype: effective_dtype,
-                }],
-                stateful: true, // DecodeStep manages KV cache state
-            }],
-        })
-    }
-}
-
-/// MLP block payload for the Python bridge.
-/// it carries MLP-block-specific fields (`input_dim`, `hidden_dim`,
-/// `output_dim`, `activation`) and uses `command: "emit_mlp_block"` so
-/// the Python bridge dispatches to the dedicated MLP block emission
-/// handler.
-///
-/// The MLP block emission path builds a program that models the
-/// fused linear-activation-linear pattern (feed-forward network block)
-/// used in transformer inference, rather than the simple matmul+add
-/// pattern of linear projection.
-///
-/// Sprint 28 (S28.1): this payload replaces the previous approach where
-/// MLP block tasks were sent through `LinearProjectionPayload`.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct MlpBlockPayload {
-    /// Bridge protocol version. Must match what Python expects.
-    pub bridge_version: u32,
-    /// Command identifier: always "emit_mlp_block".
-    pub command: String,
-    pub task_name: String,
-    pub family: String,
-    /// Input dimension (typically equals embed_dim).
-    pub input_dim: usize,
-    /// Hidden (up-projected) dimension.
-    pub hidden_dim: usize,
-    /// Output dimension (typically equals embed_dim).
-    pub output_dim: usize,
-    /// Activation function: "gelu" or "relu".
-    pub activation: String,
-    pub batch_size: usize,
-    pub dtype: String,
-    pub opset_version: String,
-    pub compute_units: String,
-    pub output_path: String,
-    pub seed: u64,
-    pub functions: Vec<FunctionDescriptor>,
-}
-
-impl MlpBlockPayload {
-    /// Build a dedicated MLP block bridge payload from a task spec.
-    ///
-    /// Unlike the old approach of reusing LinearProjectionPayload,
-    /// this payload carries all MLP-block-specific fields and uses
-    /// the dedicated "emit_mlp_block" command so the Python bridge
-    /// dispatches to the correct MLP block emission handler.
-    pub fn from_spec(spec: &SyntheticTaskSpec, output_path: &str) -> Result<Self, String> {
-        Self::from_spec_with_override(spec, output_path, None)
-    }
-
-    /// Build an MLP block bridge payload with an optional dtype override.
-    ///
-    /// When `dtype_override` is `Some`, the payload uses the overridden dtype
-    /// instead of the spec's default. This is the propagation mechanism for
-    /// precision adaptation: the PrecisionPolicyPass determines that the spec's
-    /// default dtype (e.g., fp16) is unsafe and should be overridden (e.g., to fp32),
-    /// and this method ensures the adapted dtype reaches the Python emitter.
-    ///
-    /// Sprint 30: this adds dtype override support for MLP block payloads,
-    /// matching the pattern established by LinearProjectionPayload.
-    pub fn from_spec_with_override(
-        spec: &SyntheticTaskSpec,
-        output_path: &str,
-        dtype_override: Option<&str>,
-    ) -> Result<Self, String> {
-        let (input_dim, hidden_dim, output_dim, activation, batch_size, spec_dtype) = match &spec.op
-        {
-            TaskOp::MlpBlock {
-                input_dim,
-                hidden_dim,
-                output_dim,
-                activation,
-                batch_size,
-                dtype,
-            } => (
-                *input_dim,
-                *hidden_dim,
-                *output_dim,
-                activation.clone(),
-                *batch_size,
-                dtype.clone(),
-            ),
-            _ => return Err("Expected MlpBlock task for MlpBlockPayload".into()),
-        };
-
-        let effective_dtype = dtype_override.map(|s| s.to_string()).unwrap_or(spec_dtype);
-
-        Ok(Self {
-            bridge_version: BRIDGE_VERSION,
-            command: "emit_mlp_block".into(),
-            task_name: spec.name.clone(),
-            family: spec.family.clone(),
-            input_dim,
-            hidden_dim,
-            output_dim,
-            activation,
-            batch_size,
-            dtype: effective_dtype.clone(),
-            opset_version: "iOS18".into(),
-            compute_units: "CPU_AND_NE".into(),
-            output_path: output_path.into(),
-            seed: 42,
-            functions: vec![FunctionDescriptor {
-                name: "main".into(),
-                inputs: vec![TensorDescriptor {
-                    name: "x".into(),
-                    shape: vec![batch_size, input_dim],
-                    dtype: effective_dtype.clone(),
-                }],
-                outputs: vec![TensorDescriptor {
-                    name: "output".into(),
-                    shape: vec![batch_size, output_dim],
-                    dtype: effective_dtype,
-                }],
-                stateful: false,
-            }],
-        })
-    }
-}
-
-/// Bridge payload: the JSON structure sent to the Python bridge
-/// for a dedicated attention emission.
-///
-/// This is structurally distinct from `LinearProjectionPayload`:
-/// it carries attention-specific fields (`embed_dim`, `num_heads`,
-/// `head_dim`, `seq_len`) and uses `command: "emit_attention"` so
-/// the Python bridge dispatches to the dedicated attention emission
-/// handler.
-///
-/// The attention emission path builds a program that models the
-/// multi-head self-attention pattern (QKV projection → scaled
-/// dot-product attention → output projection).
-///
-/// Sprint 29 (S29.4): this payload provides the dedicated emission
-/// path for the fifth real task family.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct AttentionPayload {
-    /// Bridge protocol version. Must match what Python expects.
-    pub bridge_version: u32,
-    /// Command identifier: always "emit_attention".
-    pub command: String,
-    pub task_name: String,
-    pub family: String,
-    /// Embedding dimension (model hidden size).
-    pub embed_dim: usize,
-    /// Number of attention heads.
-    pub num_heads: usize,
-    /// Dimension per attention head.
-    pub head_dim: usize,
-    /// Input sequence length.
-    pub seq_len: usize,
-    pub batch_size: usize,
-    pub dtype: String,
-    pub opset_version: String,
-    pub compute_units: String,
-    pub output_path: String,
-    pub seed: u64,
-    pub functions: Vec<FunctionDescriptor>,
-}
-
-impl AttentionPayload {
-    /// Build a dedicated attention bridge payload from a task spec.
-    ///
-    /// This payload carries all attention-specific fields and uses
-    /// the dedicated "emit_attention" command so the Python bridge
-    /// dispatches to the correct attention emission handler.
-    pub fn from_spec(spec: &SyntheticTaskSpec, output_path: &str) -> Result<Self, String> {
-        Self::from_spec_with_override(spec, output_path, None)
-    }
-
-    /// Build a dedicated attention bridge payload with an optional dtype override.
-    ///
-    /// When `dtype_override` is `Some`, the payload uses the overridden dtype
-    /// instead of the spec's default. This is the propagation mechanism for
-    /// precision adaptation: the PrecisionPolicyPass determines that the spec's
-    /// default dtype (e.g., fp16) is unsafe and should be overridden (e.g., to fp32),
-    /// and this method ensures the adapted dtype reaches the Python emitter.
-    ///
-    /// Sprint 30: this adds dtype override support for attention payloads,
-    /// matching the pattern established by LinearProjectionPayload.
-    pub fn from_spec_with_override(
-        spec: &SyntheticTaskSpec,
-        output_path: &str,
-        dtype_override: Option<&str>,
-    ) -> Result<Self, String> {
-        let (embed_dim, num_heads, head_dim, seq_len, batch_size, spec_dtype) = match &spec.op {
-            TaskOp::Attention { embed_dim, num_heads, head_dim, seq_len, batch_size, dtype } => {
-                (*embed_dim, *num_heads, *head_dim, *seq_len, *batch_size, dtype.clone())
-            }
-            _ => return Err("Expected Attention task for AttentionPayload".into()),
-        };
-
-        let effective_dtype = dtype_override.map(|s| s.to_string()).unwrap_or(spec_dtype);
-
-        Ok(Self {
-            bridge_version: BRIDGE_VERSION,
-            command: "emit_attention".into(),
-            task_name: spec.name.clone(),
-            family: spec.family.clone(),
-            embed_dim,
-            num_heads,
-            head_dim,
-            seq_len,
-            batch_size,
-            dtype: effective_dtype.clone(),
-            opset_version: "iOS18".into(),
-            compute_units: "CPU_AND_NE".into(),
-            output_path: output_path.into(),
-            seed: 42,
-            functions: vec![FunctionDescriptor {
-                name: "main".into(),
-                inputs: vec![TensorDescriptor {
-                    name: "x".into(),
-                    shape: vec![batch_size, seq_len, embed_dim],
-                    dtype: effective_dtype.clone(),
-                }],
-                outputs: vec![TensorDescriptor {
-                    name: "output".into(),
-                    shape: vec![batch_size, seq_len, embed_dim],
-                    dtype: effective_dtype,
-                }],
-                stateful: false,
-            }],
-        })
-    }
-}
-
-/// Generic family-agnostic bridge payload.
-///
-/// This replaces the family-specific payload structs (LinearProjectionPayload,
-/// LutProjectionPayload, DecodeStepPayload, MlpBlockPayload, AttentionPayload)
-/// with a single generic structure that carries family-specific parameters as
-/// a JSON value. The Python bridge dispatches on the `command` field, just
-/// like before. The `params` field contains all family-specific fields.
-///
-/// This design means adding a new family requires NO changes to this struct,
-/// NO new payload type, and NO new match arm in payload construction. The only
-/// change needed is adding the family's `bridge_command()` to TaskOp.
-///
-/// The family-specific payload structs are retained for backward compatibility
-/// but are deprecated. All new code should use FamilyPayload.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct FamilyPayload {
-    /// Bridge protocol version. Must match what Python expects.
-    pub bridge_version: u32,
-    /// Command identifier for Python bridge dispatch (e.g., "emit_linear_projection").
-    pub command: String,
-    /// Task name.
-    pub task_name: String,
-    /// Family identifier (e.g., "LinearProjection", "Attention").
-    pub family: String,
-    /// Family-specific parameters as a JSON value.
-    /// This contains all the fields that were previously on separate
-    /// payload structs: input_dim, output_dim, embed_dim, etc.
-    pub params: serde_json::Value,
-    /// Opset version requirement.
-    pub opset_version: String,
-    /// Compute units hint.
-    pub compute_units: String,
-    /// Output path for the mlpackage.
-    pub output_path: String,
-    /// Random seed for deterministic weight generation.
-    pub seed: u64,
-    /// Function descriptors for this package.
-    pub functions: Vec<FunctionDescriptor>,
-}
-
-impl FamilyPayload {
-    /// Build a generic bridge payload from any task spec.
-    ///
-    /// This is the single entry point for all families. It extracts the
-    /// bridge command, family params, and tensor shapes from the TaskOp's
-    /// generic methods, eliminating the need for per-family payload construction.
-    pub fn from_spec(spec: &SyntheticTaskSpec, output_path: &str) -> Result<Self, String> {
-        Self::from_spec_with_override(spec, output_path, None)
-    }
-
-    /// Build a generic bridge payload with an optional dtype override.
-    ///
-    /// When `dtype_override` is `Some`, the payload uses the overridden dtype
-    /// instead of the spec's default. This is the propagation mechanism for
-    /// precision adaptation.
-    pub fn from_spec_with_override(
-        spec: &SyntheticTaskSpec,
-        output_path: &str,
-        dtype_override: Option<&str>,
-    ) -> Result<Self, String> {
-        let op = &spec.op;
-        let mut params = op.family_params();
-
-        // Apply dtype override if provided
-        if let Some(override_dtype) = dtype_override {
-            params["dtype"] = serde_json::Value::String(override_dtype.to_string());
-        }
-
-        let effective_dtype = params["dtype"].as_str().unwrap_or("fp16").to_string();
-
-        Ok(Self {
-            bridge_version: BRIDGE_VERSION,
-            command: op.bridge_command().to_string(),
-            task_name: spec.name.clone(),
-            family: spec.family.clone(),
-            params,
-            opset_version: "iOS18".into(),
-            compute_units: "CPU_AND_NE".into(),
-            output_path: output_path.into(),
-            seed: 42,
-            functions: vec![FunctionDescriptor {
-                name: "main".into(),
-                inputs: vec![TensorDescriptor {
-                    name: op.input_tensor_name().to_string(),
-                    shape: op.input_tensor_shape(),
-                    dtype: op.input_tensor_dtype(),
-                }],
-                outputs: vec![TensorDescriptor {
-                    name: "output".into(),
-                    shape: op.output_tensor_shape(),
-                    dtype: effective_dtype,
-                }],
-                stateful: false,
-            }],
-        })
-    }
-
-    /// Serialize this payload to a JSON string.
-    pub fn to_json(&self) -> Result<String, String> {
-        serde_json::to_string(self).map_err(|e| format!("Failed to serialize FamilyPayload: {}", e))
-    }
-
-    /// Serialize this payload to a pretty-printed JSON string.
-    pub fn to_json_pretty(&self) -> Result<String, String> {
-        serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Failed to serialize FamilyPayload: {}", e))
-    }
-}
-
-/// Current bridge protocol version. Bumped when the payload schema
-/// changes in a way that breaks backward compatibility.
-pub const BRIDGE_VERSION: u32 = 1;
-
-impl LinearProjectionPayload {
-    pub fn from_spec(spec: &SyntheticTaskSpec, output_path: &str) -> Result<Self, String> {
-        Self::from_spec_with_override(spec, output_path, None)
-    }
-
-    /// Build a bridge payload with an optional dtype override.
-    ///
-    /// When `dtype_override` is `Some`, the payload uses the overridden dtype
-    /// instead of the spec's default. This is the propagation mechanism for
-    /// precision adaptation: the PrecisionPolicyPass determines that the spec's
-    /// default dtype (e.g., fp16) is unsafe and should be overridden (e.g., to fp32),
-    /// and this method ensures the adapted dtype reaches the Python emitter.
-    ///
-    /// The bridge payload carries the effective dtype to the Python emitter,
-    /// which uses it to set `compute_precision` in the MIL program. Without
-    /// this override, the emitter would use the spec's dtype and the
-    /// knowledge-informed adaptation would be lost.
-    pub fn from_spec_with_override(
-        spec: &SyntheticTaskSpec,
-        output_path: &str,
-        dtype_override: Option<&str>,
-    ) -> Result<Self, String> {
-        let (input_dim, output_dim, batch_size, spec_dtype) = match &spec.op {
-            TaskOp::LinearProjection { input_dim, output_dim, batch_size, dtype, .. } => {
-                (*input_dim, *output_dim, *batch_size, dtype.clone())
-            }
-            // LUT projection now uses its own dedicated LutProjectionPayload.
-            // If this path is reached, the caller should use LutProjectionPayload instead.
-            TaskOp::LutProjection { .. } => {
-                return Err("LutProjection tasks must use LutProjectionPayload, not LinearProjectionPayload".into());
-            }
-            // Wildcard kept for forward compatibility with future TaskOp variants
-            #[allow(unreachable_patterns)]
-            _ => return Err("Expected LinearProjection task for LinearProjectionPayload".into()),
-        };
-
-        let effective_dtype = dtype_override.map(|s| s.to_string()).unwrap_or(spec_dtype);
-
-        Ok(Self {
-            bridge_version: BRIDGE_VERSION,
-            command: "emit_linear_projection".into(),
-            task_name: spec.name.clone(),
-            family: spec.family.clone(),
-            input_dim,
-            output_dim,
-            batch_size,
-            dtype: effective_dtype.clone(),
-            opset_version: "iOS18".into(),
-            compute_units: "CPU_AND_NE".into(),
-            output_path: output_path.into(),
-            seed: 42,
-            functions: vec![FunctionDescriptor {
-                name: "main".into(),
-                inputs: vec![TensorDescriptor {
-                    name: "x".into(),
-                    shape: vec![batch_size, input_dim],
-                    dtype: effective_dtype.clone(),
-                }],
-                outputs: vec![TensorDescriptor {
-                    name: "output".into(),
-                    shape: vec![batch_size, output_dim],
-                    dtype: effective_dtype,
-                }],
-                stateful: false,
-            }],
-        })
-    }
-}
-
-impl LutProjectionPayload {
-    /// Build a dedicated LUT projection bridge payload from a task spec.
-    ///
-    /// Unlike the old approach of reusing LinearProjectionPayload with
-    /// embed_dim × embed_dim dimensions, this payload carries all LUT-specific
-    /// fields (vocab_size, num_groups, lut_bitwidth) and uses the dedicated
-    /// "emit_lut_projection" command so the Python bridge dispatches to the
-    /// correct LUT emission handler.
-    pub fn from_spec(spec: &SyntheticTaskSpec, output_path: &str) -> Result<Self, String> {
-        Self::from_spec_with_override(spec, output_path, None)
-    }
-
-    /// Build a dedicated LUT projection bridge payload with an optional dtype override.
-    ///
-    /// When `dtype_override` is `Some`, the payload uses the overridden dtype
-    /// instead of the spec's default. This is the propagation mechanism for
-    /// precision adaptation: the PrecisionPolicyPass determines that the spec's
-    /// default dtype (e.g., fp16) is unsafe and should be overridden (e.g., to fp32),
-    /// and this method ensures the adapted dtype reaches the Python emitter.
-    ///
-    /// Sprint 30: this adds dtype override support for LUT projection payloads,
-    /// matching the pattern established by LinearProjectionPayload.
-    pub fn from_spec_with_override(
-        spec: &SyntheticTaskSpec,
-        output_path: &str,
-        dtype_override: Option<&str>,
-    ) -> Result<Self, String> {
-        let (vocab_size, embed_dim, num_groups, lut_bitwidth, batch_size, spec_dtype) = match &spec
-            .op
-        {
-            TaskOp::LutProjection {
-                vocab_size,
-                embed_dim,
-                num_groups,
-                lut_bitwidth,
-                batch_size,
-                dtype,
-            } => (*vocab_size, *embed_dim, *num_groups, *lut_bitwidth, *batch_size, dtype.clone()),
-            _ => return Err("Expected LutProjection task for LutProjectionPayload".into()),
-        };
-
-        let effective_dtype = dtype_override.map(|s| s.to_string()).unwrap_or(spec_dtype);
-
-        Ok(Self {
-            bridge_version: BRIDGE_VERSION,
-            command: "emit_lut_projection".into(),
-            task_name: spec.name.clone(),
-            family: spec.family.clone(),
-            vocab_size,
-            embed_dim,
-            num_groups,
-            lut_bitwidth,
-            batch_size,
-            dtype: effective_dtype.clone(),
-            opset_version: "iOS18".into(),
-            compute_units: "CPU_AND_NE".into(),
-            output_path: output_path.into(),
-            seed: 42,
-            functions: vec![FunctionDescriptor {
-                name: "main".into(),
-                inputs: vec![TensorDescriptor {
-                    name: "indices".into(),
-                    shape: vec![batch_size],
-                    dtype: "int32".into(),
-                }],
-                outputs: vec![TensorDescriptor {
-                    name: "output".into(),
-                    shape: vec![batch_size, embed_dim],
-                    dtype: effective_dtype,
-                }],
-                stateful: false,
-            }],
-        })
-    }
-}
-
-// ─── Sharded Linear Pipeline (S9.2) ──────────────────────────────────────────
-
-/// Description of a single shard within a sharded pipeline.
-///
-/// Each shard has a role (Entry, Interior, Exit), its own input/output
-/// dimensions, a shard name used for the output mlpackage directory,
-/// and the compute units appropriate for its role.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ShardDesc {
-    /// Shard role: Entry, Interior, or Exit.
-    pub role: ShardRole,
-    /// Shard name (e.g., "entry_shard", "interior_shard", "exit_shard").
-    pub shard_name: String,
-    /// Input dimension for this shard's linear projection.
-    pub input_dim: usize,
-    /// Output dimension for this shard's linear projection.
-    pub output_dim: usize,
-    /// Compute units for this shard (ANE-targeted for decoder shards).
-    pub compute_units: ComputeUnitHint,
-}
-
-/// Produce the shard descriptors for a ShardedLinearPipeline task.
-///
-/// The pipeline composes three shards:
-/// - Entry:     [batch, input_dim]  -> [batch, hidden_dim]   (CPU_AND_NE)
-/// - Interior:  [batch, hidden_dim] -> [batch, hidden_dim]   (CPU_AND_NE)
-/// - Exit:      [batch, hidden_dim] -> [batch, output_dim]   (CPU_AND_NE)
-///
-/// This mirrors the Qwen3 three-shard decomposition at a micro scale.
-pub fn sharded_pipeline_shards(spec: &SyntheticTaskSpec) -> Result<Vec<ShardDesc>, String> {
-    let (input_dim, hidden_dim, output_dim, _batch_size, _dtype) = match &spec.op {
-        TaskOp::ShardedLinearPipeline { input_dim, hidden_dim, output_dim, batch_size, dtype } => {
-            (*input_dim, *hidden_dim, *output_dim, *batch_size, dtype.clone())
-        }
-        _ => return Err("Expected ShardedLinearPipeline task".into()),
-    };
-
-    Ok(vec![
-        ShardDesc {
-            role: ShardRole::Entry,
-            shard_name: format!("{}_entry", spec.name),
-            input_dim,
-            output_dim: hidden_dim,
-            compute_units: ShardRole::Entry.default_compute_units(),
-        },
-        ShardDesc {
-            role: ShardRole::Interior,
-            shard_name: format!("{}_interior", spec.name),
-            input_dim: hidden_dim,
-            output_dim: hidden_dim,
-            compute_units: ShardRole::Interior.default_compute_units(),
-        },
-        ShardDesc {
-            role: ShardRole::Exit,
-            shard_name: format!("{}_exit", spec.name),
-            input_dim: hidden_dim,
-            output_dim,
-            compute_units: ShardRole::Exit.default_compute_units(),
-        },
-    ])
-}
-
-/// Build a MIR graph for one shard of a sharded linear pipeline.
-///
-/// Each shard is a simple linear projection (matmul + bias add),
-/// identical in structure to the single-shard path but with its
-/// own dimensions and shard name.
-pub fn lower_shard_to_mir(
-    shard: &ShardDesc,
-    batch_size: usize,
-    dtype: &str,
-) -> Result<MirGraph, String> {
-    let mil_dtype = match dtype {
-        "fp16" => MilDtype::Fp16,
-        "fp32" => MilDtype::Fp32,
-        _ => MilDtype::Fp16,
-    };
-
-    // Sprint 58 (S58.3): inline conversion removed — compute_units is now
-    // ComputeUnitHint directly, so no conversion needed.
-    let compute_hint = shard.compute_units.clone();
-
-    let weight_id = MirNodeId("weight".into());
-    let bias_id = MirNodeId("bias".into());
-    let input_id = MirNodeId("input".into());
-    let matmul_id = MirNodeId("matmul".into());
-    let add_id = MirNodeId("add".into());
-
-    let nodes = vec![
-        MirNode {
-            id: weight_id.clone(),
-            op: MirOp::MILConst {
-                name: "weight".into(),
-                value_path: "weight.npy".into(),
-                dtype: mil_dtype.clone(),
-            },
-            dtype: mil_dtype.clone(),
-            shape: vec![shard.input_dim, shard.output_dim],
-            compute_unit_hint: None,
-            air_source: None,
-        },
-        MirNode {
-            id: bias_id.clone(),
-            op: MirOp::MILConst {
-                name: "bias".into(),
-                value_path: "bias.npy".into(),
-                dtype: mil_dtype.clone(),
-            },
-            dtype: mil_dtype.clone(),
-            shape: vec![shard.output_dim],
-            compute_unit_hint: None,
-            air_source: None,
-        },
-        MirNode {
-            id: matmul_id.clone(),
-            op: MirOp::MILMatMul {
-                name: "matmul".into(),
-                x: input_id.clone(),
-                y: weight_id.clone(),
-            },
-            dtype: mil_dtype.clone(),
-            shape: vec![batch_size, shard.output_dim],
-            compute_unit_hint: Some(compute_hint.clone()),
-            air_source: None,
-        },
-        MirNode {
-            id: add_id.clone(),
-            op: MirOp::MILAdd { name: "add".into(), x: matmul_id.clone(), y: bias_id.clone() },
-            dtype: mil_dtype.clone(),
-            shape: vec![batch_size, shard.output_dim],
-            compute_unit_hint: Some(compute_hint),
-            air_source: None,
-        },
-    ];
-
-    Ok(MirGraph {
-        nodes,
-        inputs: vec![input_id],
-        outputs: vec![add_id],
-        opset_version: "iOS18".into(),
-        shard_name: shard.shard_name.clone(),
-    })
-}
-
-/// Bridge payload for one shard of a sharded pipeline.
-///
-/// Each shard gets its own payload with role metadata, allowing
-/// the Python emitter and downstream manifests to reflect the
-/// shard's role semantics.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ShardedShardPayload {
-    pub bridge_version: u32,
-    pub command: String,
-    pub task_name: String,
-    pub family: String,
-    pub shard_name: String,
-    /// Shard role: "Entry", "Interior", or "Exit".
-    pub shard_role: String,
-    pub input_dim: usize,
-    pub output_dim: usize,
-    pub batch_size: usize,
-    pub dtype: String,
-    pub opset_version: String,
-    pub compute_units: String,
-    pub output_path: String,
-    pub seed: u64,
-    pub functions: Vec<FunctionDescriptor>,
-}
-
-impl ShardedShardPayload {
-    /// Build a bridge payload for one shard.
-    pub fn from_shard(
-        shard: &ShardDesc,
-        task_name: &str,
-        family: &str,
-        batch_size: usize,
-        dtype: &str,
-        output_path: &str,
-        seed: u64,
-    ) -> Self {
-        Self::from_shard_with_override(
-            shard,
-            task_name,
-            family,
-            batch_size,
-            dtype,
-            output_path,
-            seed,
-            None,
-        )
-    }
-
-    /// Build a bridge payload for one shard with an optional dtype override.
-    ///
-    /// When `dtype_override` is `Some`, the payload uses the overridden dtype
-    /// instead of the spec's default. This ensures precision adaptations
-    /// propagate to the emitted mlpackage per shard.
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_shard_with_override(
-        shard: &ShardDesc,
-        task_name: &str,
-        family: &str,
-        batch_size: usize,
-        dtype: &str,
-        output_path: &str,
-        seed: u64,
-        dtype_override: Option<&str>,
-    ) -> Self {
-        let effective_dtype = dtype_override.unwrap_or(dtype);
-        let compute_units_str = shard.compute_units.to_coreml_string();
-        Self {
-            bridge_version: BRIDGE_VERSION,
-            command: "emit_linear_projection".into(),
-            task_name: task_name.into(),
-            family: family.into(),
-            shard_name: shard.shard_name.clone(),
-            shard_role: shard.role.canonical_name().to_string(),
-            input_dim: shard.input_dim,
-            output_dim: shard.output_dim,
-            batch_size,
-            dtype: effective_dtype.into(),
-            opset_version: "iOS18".into(),
-            compute_units: compute_units_str.into(),
-            output_path: output_path.into(),
-            seed,
-            functions: vec![FunctionDescriptor {
-                name: "main".into(),
-                inputs: vec![TensorDescriptor {
-                    name: "x".into(),
-                    shape: vec![batch_size, shard.input_dim],
-                    dtype: effective_dtype.into(),
-                }],
-                outputs: vec![TensorDescriptor {
-                    name: "output".into(),
-                    shape: vec![batch_size, shard.output_dim],
-                    dtype: effective_dtype.into(),
-                }],
-                stateful: false,
-            }],
-        }
-    }
-
-    /// Build a bridge payload for one decode-step shard with role-sensitive emission.
-    ///
-    /// This uses the `emit_shard_decode_step` bridge command instead of
-    /// `emit_linear_projection`, ensuring that each shard role produces a
-    /// structurally different MIL program (different dimensions, head counts,
-    /// and KV cache state shapes). This closes the Sprint 37 gap where
-    /// "shard emission is still too uniform until shard role materially
-    /// changes emitted graphs and/or dimensions."
-    ///
-    /// The payload includes decode-step-specific dimensions (embed_dim,
-    /// num_heads, head_dim, kv_len) and passes shard_role so the Python
-    /// emitter can vary the program structure by role.
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_shard_decode_step(
-        shard: &ShardDesc,
-        task_name: &str,
-        family: &str,
-        batch_size: usize,
-        dtype: &str,
-        output_path: &str,
-        seed: u64,
-        dtype_override: Option<&str>,
-        embed_dim: usize,
-        num_heads: usize,
-        head_dim: usize,
-        kv_len: usize,
-    ) -> Self {
-        let effective_dtype = dtype_override.unwrap_or(dtype);
-        let compute_units_str = shard.compute_units.to_coreml_string();
-        Self {
-            bridge_version: BRIDGE_VERSION,
-            command: "emit_shard_decode_step".into(),
-            task_name: task_name.into(),
-            family: family.into(),
-            shard_name: shard.shard_name.clone(),
-            shard_role: shard.role.canonical_name().to_string(),
-            input_dim: shard.input_dim,
-            output_dim: shard.output_dim,
-            batch_size,
-            dtype: effective_dtype.into(),
-            opset_version: "iOS18".into(),
-            compute_units: compute_units_str.into(),
-            output_path: output_path.into(),
-            seed,
-            functions: vec![FunctionDescriptor {
-                name: "main".into(),
-                inputs: vec![
-                    TensorDescriptor {
-                        name: "x".into(),
-                        shape: vec![batch_size, embed_dim],
-                        dtype: effective_dtype.into(),
-                    },
-                    TensorDescriptor {
-                        name: "k_state".into(),
-                        shape: vec![1, num_heads, kv_len, head_dim],
-                        dtype: effective_dtype.into(),
-                    },
-                    TensorDescriptor {
-                        name: "v_state".into(),
-                        shape: vec![1, num_heads, kv_len, head_dim],
-                        dtype: effective_dtype.into(),
-                    },
-                ],
-                outputs: vec![TensorDescriptor {
-                    name: "output".into(),
-                    shape: vec![batch_size, shard.output_dim],
-                    dtype: effective_dtype.into(),
-                }],
-                stateful: true,
-            }],
-        }
-    }
-}
-
-/// Build a PIR graph for a sharded linear pipeline.
-///
-/// The PIR captures the full deployment structure: three decoder shard
-/// packages with Entry/Interior/Exit roles, inter-shard handoffs, and
-/// a shard template reference.
-pub fn build_sharded_pipeline_pir(spec: &SyntheticTaskSpec) -> Result<PirGraph, String> {
-    let (_input_dim, hidden_dim, _output_dim, _batch_size, _dtype) = match &spec.op {
-        TaskOp::ShardedLinearPipeline { input_dim, hidden_dim, output_dim, batch_size, dtype } => {
-            (*input_dim, *hidden_dim, *output_dim, *batch_size, dtype.clone())
-        }
-        _ => return Err("Expected ShardedLinearPipeline task".into()),
-    };
-
-    let shards = sharded_pipeline_shards(spec)?;
-
-    let packages: Vec<Package> = shards
-        .iter()
-        .map(|shard| Package {
-            name: shard.shard_name.clone(),
-            role: PackageRole::DecoderShard(shard.role.clone()),
-            compute_units: shard.compute_units.clone(),
-            mil_program_ref: shard.shard_name.clone(),
-            functions: vec![FunctionEntry {
-                name: "main".into(),
-                inputs: vec![PirTensorSpec {
-                    name: "x".into(),
-                    shape: vec![1, shard.input_dim],
-                    dtype: "fp16".into(),
-                }],
-                outputs: vec![PirTensorSpec {
-                    name: "output".into(),
-                    shape: vec![1, shard.output_dim],
-                    dtype: "fp16".into(),
-                }],
-                stateful: false,
-            }],
-        })
-        .collect();
-
-    // Build handoffs: entry -> interior -> exit
-    // Each handoff carries concrete runtime semantics:
-    // - execution_order defines the pipeline sequence
-    // - source_output_name/target_input_name link to function I/O
-    // - handoff_kind captures the mechanism (direct pass-through)
-    let handoffs = vec![
-        Handoff {
-            from_package: format!("{}_entry", spec.name),
-            to_package: format!("{}_interior", spec.name),
-            tensor_name: "output".into(),
-            shape: vec![1, hidden_dim],
-            dtype: "fp16".into(),
-            handoff_kind: crate::pir::HandoffKind::TensorPassThrough,
-            execution_order: 0,
-            source_output_name: "output".into(),
-            target_input_name: "x".into(),
-        },
-        Handoff {
-            from_package: format!("{}_interior", spec.name),
-            to_package: format!("{}_exit", spec.name),
-            tensor_name: "output".into(),
-            shape: vec![1, hidden_dim],
-            dtype: "fp16".into(),
-            handoff_kind: crate::pir::HandoffKind::TensorPassThrough,
-            execution_order: 1,
-            source_output_name: "output".into(),
-            target_input_name: "x".into(),
-        },
-    ];
-
-    // Shard template describing the three-shard decomposition
-    let shard_template = ShardTemplate {
-        template_id: format!("{}_3shard_template", spec.name),
-        partition_spec: vec![
-            ShardPartitionEntry {
-                role: ShardRole::Entry,
-                layer_start: 0,
-                layer_end: 0, // synthetic task has no real layers
-                compute_units: ComputeUnitHint::CPUAndNE,
-            },
-            ShardPartitionEntry {
-                role: ShardRole::Interior,
-                layer_start: 1,
-                layer_end: 1,
-                compute_units: ComputeUnitHint::CPUAndNE,
-            },
-            ShardPartitionEntry {
-                role: ShardRole::Exit,
-                layer_start: 2,
-                layer_end: 2,
-                compute_units: ComputeUnitHint::CPUAndNE,
-            },
-        ],
-        io_compute_units: None,      // No IO model in this synthetic task
-        sampler_compute_units: None, // No sampler in this synthetic task
-        state_config: None,          // No state in linear projection
-        context_length: 0,
-    };
-
-    Ok(PirGraph {
-        packages,
-        state_declarations: vec![],
-        handoffs,
-        shard_template: Some(shard_template),
-        context_length: 0,
-        opset_version: "iOS18".into(),
-        minimum_deployment_target: "iOS18".into(),
-        kv_cache_layout: KvCacheLayout::default(),
-        sampler_spec: None,
-        io_model_spec: None,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pir::{PackageRole, ShardRole};
     use crate::task_spec::{MeasurementConfig, SyntheticTaskSpec, TaskOp};
 
     fn test_sharded_spec() -> SyntheticTaskSpec {
@@ -1536,6 +420,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_payload_dtype_override_changes_bridge_dtype() {
         let spec = test_linear_spec_fp16();
 
@@ -1564,6 +449,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_payload_dtype_no_override_preserves_spec() {
         let spec = test_linear_spec_fp16();
         let payload =
@@ -1609,6 +495,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_precision_override_propagates_full_pipeline() {
         // End-to-end test: SIR with precision_override → AIR → MIR
         // This proves that precision adaptation propagates through the IR pipeline.
@@ -1672,6 +559,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_lut_payload_from_spec_succeeds() {
         let spec = test_lut_spec();
         let payload = LutProjectionPayload::from_spec(&spec, "/tmp/lut_test").unwrap();
@@ -1690,6 +578,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_lut_payload_rejects_linear_spec() {
         let spec = test_linear_spec_fp16();
         let result = LutProjectionPayload::from_spec(&spec, "/tmp/test");
@@ -1697,6 +586,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_linear_payload_rejects_lut_spec() {
         let spec = test_lut_spec();
         let result = LinearProjectionPayload::from_spec(&spec, "/tmp/test");
@@ -1705,6 +595,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_linear_vs_lut_payload_command_divergence() {
         // S20.4: Prove that linear and LUT compile paths generate
         // different bridge commands/payloads.
@@ -1748,6 +639,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_lut_payload_deterministic_serialization() {
         let spec = test_lut_spec();
         let payload1 = LutProjectionPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -1759,6 +651,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_lut_payload_function_descriptors() {
         let spec = test_lut_spec();
         let payload = LutProjectionPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -1802,6 +695,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_decode_step_payload_from_spec_succeeds() {
         let spec = test_decode_step_spec();
         let payload = DecodeStepPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -1818,6 +712,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_decode_step_payload_rejects_linear_spec() {
         let spec = test_linear_spec_fp16();
         let result = DecodeStepPayload::from_spec(&spec, "/tmp/test");
@@ -1825,6 +720,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_decode_step_payload_command_differs_from_linear() {
         let linear_spec = test_linear_spec_fp16();
         let decode_spec = test_decode_step_spec();
@@ -1837,6 +733,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_decode_step_payload_command_differs_from_lut() {
         let lut_spec = SyntheticTaskSpec {
             name: "test_lut".into(),
@@ -1866,6 +763,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_decode_step_payload_deterministic_serialization() {
         let spec = test_decode_step_spec();
         let payload1 = DecodeStepPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -1876,6 +774,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_decode_step_payload_function_descriptors() {
         let spec = test_decode_step_spec();
         let payload = DecodeStepPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -1915,6 +814,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_mlp_block_payload_creation() {
         let spec = test_mlp_block_spec();
         let payload = MlpBlockPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -1928,6 +828,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_mlp_block_payload_rejects_linear() {
         let spec = test_linear_spec_fp16();
         let result = MlpBlockPayload::from_spec(&spec, "/tmp/test");
@@ -1935,6 +836,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_mlp_block_payload_command_diverges_from_linear() {
         let linear_spec = test_linear_spec_fp16();
         let linear_payload = LinearProjectionPayload::from_spec(&linear_spec, "/tmp/test").unwrap();
@@ -1951,6 +853,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_mlp_block_payload_deterministic_serialization() {
         let spec = test_mlp_block_spec();
         let payload = MlpBlockPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -1961,6 +864,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_mlp_block_payload_function_descriptors() {
         let spec = test_mlp_block_spec();
         let payload = MlpBlockPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -2000,6 +904,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_attention_payload_from_spec_succeeds() {
         let spec = test_attention_spec();
         let payload = AttentionPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -2013,6 +918,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_attention_payload_rejects_linear_spec() {
         let spec = test_linear_spec_fp16();
         let result = AttentionPayload::from_spec(&spec, "/tmp/test");
@@ -2020,6 +926,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_attention_payload_dtype_override() {
         let spec = test_attention_spec();
 
@@ -2036,6 +943,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_attention_payload_function_descriptors() {
         let spec = test_attention_spec();
         let payload = AttentionPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -2053,6 +961,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_mlp_block_payload_dtype_override() {
         let spec = test_mlp_block_spec();
 
@@ -2069,6 +978,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_lut_projection_payload_dtype_override() {
         let spec = test_lut_spec();
         let payload_no = LutProjectionPayload::from_spec(&spec, "/tmp/test").unwrap();

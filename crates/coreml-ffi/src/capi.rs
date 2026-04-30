@@ -325,7 +325,7 @@ pub unsafe extern "C" fn coreml_free_string(s: *mut c_char) {
 ///
 /// 1. The path exists and is a directory
 /// 2. `Manifest.json` exists and is valid JSON
-/// 3. `Model/com.apple.CoreML/model.mlmodel` exists
+/// 3. `Data/com.apple.CoreML/model.mlmodel` exists
 /// 4. `Data/com.apple.CoreML/weights/weight.bin` exists (if referenced in manifest)
 ///
 /// This function works on **all platforms** — it does NOT require macOS
@@ -373,8 +373,9 @@ pub unsafe extern "C" fn coreml_validate_proto_package(path: *const c_char) -> C
         return CoreMlStatus::ErrorSerialization;
     }
 
-    // Check 3: Model/com.apple.CoreML/model.mlmodel exists
-    let mlmodel_path = pkg_path.join("Model/com.apple.CoreML/model.mlmodel");
+    // Check 3: Data/com.apple.CoreML/model.mlmodel exists
+    // Apple's mlpackage format uses Data/ not Model/ for the model protobuf.
+    let mlmodel_path = pkg_path.join("Data/com.apple.CoreML/model.mlmodel");
     if !mlmodel_path.exists() {
         return CoreMlStatus::ErrorModelLoad;
     }
@@ -671,7 +672,7 @@ mod tests {
         // Create a directory with model.mlmodel but no Manifest.json
         let tmp_dir = std::env::temp_dir().join("coreml_ffi_test_no_manifest");
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        let model_dir = tmp_dir.join("Model/com.apple.CoreML");
+        let model_dir = tmp_dir.join("Data/com.apple.CoreML");
         std::fs::create_dir_all(&model_dir).unwrap();
         std::fs::write(model_dir.join("model.mlmodel"), b"").unwrap();
 
@@ -687,7 +688,7 @@ mod tests {
         // Create a directory with invalid Manifest.json
         let tmp_dir = std::env::temp_dir().join("coreml_ffi_test_bad_manifest");
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        let model_dir = tmp_dir.join("Model/com.apple.CoreML");
+        let model_dir = tmp_dir.join("Data/com.apple.CoreML");
         std::fs::create_dir_all(&model_dir).unwrap();
         std::fs::write(tmp_dir.join("Manifest.json"), b"not valid json {{{").unwrap();
         std::fs::write(model_dir.join("model.mlmodel"), b"").unwrap();
@@ -719,7 +720,7 @@ mod tests {
         // Create a directory with manifest and model.mlmodel but no weight.bin
         let tmp_dir = std::env::temp_dir().join("coreml_ffi_test_no_weights");
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        let model_dir = tmp_dir.join("Model/com.apple.CoreML");
+        let model_dir = tmp_dir.join("Data/com.apple.CoreML");
         std::fs::create_dir_all(&model_dir).unwrap();
         std::fs::write(tmp_dir.join("Manifest.json"), r#"{"schemaVersion":"1.0"}"#).unwrap();
         std::fs::write(model_dir.join("model.mlmodel"), b"").unwrap();
@@ -737,7 +738,7 @@ mod tests {
         // Create a complete, valid mlpackage structure
         let tmp_dir = std::env::temp_dir().join("coreml_ffi_test_valid");
         let _ = std::fs::remove_dir_all(&tmp_dir);
-        let model_dir = tmp_dir.join("Model/com.apple.CoreML");
+        let model_dir = tmp_dir.join("Data/com.apple.CoreML");
         let weights_dir = tmp_dir.join("Data/com.apple.CoreML/weights");
         std::fs::create_dir_all(&model_dir).unwrap();
         std::fs::create_dir_all(&weights_dir).unwrap();

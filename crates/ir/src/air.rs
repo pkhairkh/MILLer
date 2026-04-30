@@ -3,17 +3,28 @@
 //! The graph after legality verification. All 167 MIL ops have
 //! corresponding AIR representations for full coverage.
 
+use super::common::IrNodeId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AirNodeId(pub String);
+
+impl IrNodeId for AirNodeId {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    fn from_string(s: String) -> Self {
+        AirNodeId(s)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AirOp {
     // ─── Constants ───────────────────────────────────────────────
     Const {
         value_path: String,
-        dtype: super::mir::MilDtype,
+        dtype: super::common::MilDtype,
     },
 
     // ─── Linear / FC ─────────────────────────────────────────────
@@ -287,7 +298,7 @@ pub enum AirOp {
     },
     Cast {
         input: AirNodeId,
-        dtype: super::mir::MilDtype,
+        dtype: super::common::MilDtype,
     },
     Select {
         condition: AirNodeId,
@@ -595,12 +606,12 @@ pub enum AirOp {
     Fill {
         shape: Vec<usize>,
         value: f32,
-        dtype: super::mir::MilDtype,
+        dtype: super::common::MilDtype,
     },
     FillLike {
         ref_tensor: AirNodeId,
         value: f32,
-        dtype: super::mir::MilDtype,
+        dtype: super::common::MilDtype,
     },
     Identity {
         input: AirNodeId,
@@ -611,7 +622,7 @@ pub enum AirOp {
         on_value: f32,
         off_value: f32,
         axis: usize,
-        dtype: super::mir::MilDtype,
+        dtype: super::common::MilDtype,
     },
     NonZero {
         input: AirNodeId,
@@ -698,14 +709,14 @@ pub enum AirOp {
         scale: f32,
         zero_point: i32,
         axis: isize,
-        output_dtype: super::mir::MilDtype,
+        output_dtype: super::common::MilDtype,
     },
     Dequantize {
         input: AirNodeId,
         scale: f32,
         zero_point: i32,
         axis: isize,
-        output_dtype: super::mir::MilDtype,
+        output_dtype: super::common::MilDtype,
     },
 
     // ─── Constexpr / Compression ─────────────────────────────────
@@ -733,7 +744,7 @@ pub enum AirOp {
     },
     ConstexprCast {
         data: String,
-        dtype: super::mir::MilDtype,
+        dtype: super::common::MilDtype,
     },
     ConstexprLutToSparse {
         data: String,
@@ -789,7 +800,7 @@ pub enum AirOp {
     },
     MakeList {
         elems: Vec<AirNodeId>,
-        dtype: super::mir::MilDtype,
+        dtype: super::common::MilDtype,
     },
     ListLength {
         ls: AirNodeId,
@@ -818,34 +829,34 @@ pub enum AirOp {
         shape: Vec<usize>,
         prob: f32,
         seed: Option<u64>,
-        dtype: super::mir::MilDtype,
+        dtype: super::common::MilDtype,
     },
     RandomNormal {
         shape: Vec<usize>,
         mean: f32,
         stddev: f32,
         seed: Option<u64>,
-        dtype: super::mir::MilDtype,
+        dtype: super::common::MilDtype,
     },
     RandomUniform {
         shape: Vec<usize>,
         low: f32,
         high: f32,
         seed: Option<u64>,
-        dtype: super::mir::MilDtype,
+        dtype: super::common::MilDtype,
     },
     RandomCategorical {
         logits: AirNodeId,
         num_samples: usize,
         seed: Option<u64>,
-        dtype: super::mir::MilDtype,
+        dtype: super::common::MilDtype,
     },
 
     // ─── State ───────────────────────────────────────────────────
     StateReadFixed {
         state_id: String,
         shape: Vec<usize>,
-        dtype: super::mir::MilDtype,
+        dtype: super::common::MilDtype,
     },
     StateWriteFixed {
         state_id: String,

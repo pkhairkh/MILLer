@@ -4,11 +4,22 @@
 //! SIR representations. Complex ops (AttentionBlock, DecodeStep, RMSNorm,
 //! etc.) decompose into multiple AIR ops; simple ops map 1:1.
 
-use super::mir::MilDtype;
+use super::common::IrNodeId;
+use super::common::MilDtype;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SirNodeId(pub String);
+
+impl IrNodeId for SirNodeId {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    fn from_string(s: String) -> Self {
+        SirNodeId(s)
+    }
+}
 
 /// Default axes for RMSNorm: [2] for 3D [batch, seq, embed] tensors.
 /// Used for serde backward compatibility when deserializing older SIR

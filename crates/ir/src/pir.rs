@@ -43,7 +43,7 @@ use serde::{Deserialize, Serialize};
 
 // Sprint 58 (S58.3): ComputeUnits was removed. PIR now uses
 // `ComputeUnitHint` from the mir module directly, eliminating the duplicate type.
-pub use super::mir::ComputeUnitHint;
+pub use super::common::ComputeUnitHint;
 pub use super::sir::{IoModelSpec, KvCacheLayout, QuantizationStrategy, SamplerSpec};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

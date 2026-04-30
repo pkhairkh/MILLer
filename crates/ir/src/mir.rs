@@ -10,19 +10,20 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::common::IrNodeId;
+pub use super::common::{ComputeUnitHint, MilDtype};
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MirNodeId(pub String);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MilDtype {
-    Fp16,
-    Fp32,
-    Int32,
-    UInt8,
-    Bool,
-    Fp64,
-    Int8,
-    Int16,
+impl IrNodeId for MirNodeId {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    fn from_string(s: String) -> Self {
+        MirNodeId(s)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1261,41 +1262,7 @@ pub struct MirNode {
     pub air_source: Option<super::air::AirNodeId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ComputeUnitHint {
-    CPUAndNE,
-    CPUAndGPU,
-    CPUOnly,
-    All,
-}
-
-impl ComputeUnitHint {
-    /// Parse compute unit hint from the string representation used in
-    /// task specs, bridge payloads, and shard template seeds.
-    ///
-    /// Sprint 58 (S58.3): moved from the removed `ComputeUnits` type in pir.rs.
-    pub fn from_str_flexible(s: &str) -> Option<Self> {
-        match s {
-            "CPU_AND_NE" | "CPUAndNE" => Some(ComputeUnitHint::CPUAndNE),
-            "CPU_AND_GPU" | "CPUAndGPU" => Some(ComputeUnitHint::CPUAndGPU),
-            "CPU_ONLY" | "CPUOnly" => Some(ComputeUnitHint::CPUOnly),
-            "ALL" | "All" => Some(ComputeUnitHint::All),
-            _ => None,
-        }
-    }
-
-    /// Returns the Core ML compatible string for this compute unit setting.
-    ///
-    /// Sprint 58 (S58.3): moved from the removed `ComputeUnits` type in pir.rs.
-    pub fn to_coreml_string(&self) -> &'static str {
-        match self {
-            ComputeUnitHint::CPUAndNE => "CPU_AND_NE",
-            ComputeUnitHint::CPUAndGPU => "CPU_AND_GPU",
-            ComputeUnitHint::CPUOnly => "CPU_ONLY",
-            ComputeUnitHint::All => "ALL",
-        }
-    }
-}
+// ComputeUnitHint moved to common.rs; re-exported via `pub use super::common::ComputeUnitHint;` above.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MirGraph {

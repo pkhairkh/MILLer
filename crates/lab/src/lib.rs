@@ -19,4 +19,5 @@ pub mod harness;
 pub mod host_inspect;
 pub mod mir_compare;
 pub mod run_dir;
+pub mod session;
 pub mod task_gen;

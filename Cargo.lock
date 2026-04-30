@@ -148,12 +148,16 @@ dependencies = [
 name = "ane-lab"
 version = "0.1.0"
 dependencies = [
+ "ane-artifacts",
  "ane-bridge",
  "ane-ir",
+ "ane-knowledge",
+ "ane-passes",
  "anyhow",
  "chrono",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "toml",
 ]
