@@ -5,9 +5,9 @@
 //!
 //! Current AIR→MIR lowering coverage:
 //! - Linear/FC: AirOp::MatMul → MILMatMul, AirOp::Conv1x1AsLinear → MILLinear
-//! - Elementwise: AirOp::ElementWise::Add → MILAdd, AirOp::ElementWise::Mul → MILMul,
-//!   AirOp::ElementWise::Abs → MILAbs, AirOp::ElementWise::Maximum → MILMaximum,
-//!   AirOp::ElementWise::Minimum → MILMinimum
+//! - Elementwise: AirOp::Add → MILAdd, AirOp::Mul → MILMul,
+//!   AirOp::Abs → MILAbs, AirOp::Maximum → MILMaximum,
+//!   AirOp::Minimum → MILMinimum
 //! - Shape ops: AirOp::Reshape → MILReshape, AirOp::Transpose → MILTranspose,
 //!   AirOp::Split → MILSplit, AirOp::Concat → MILConcat
 //! - Attention: AirOp::Softmax → MILSoftmax,
@@ -25,7 +25,7 @@
 //! lowering paths (Sprint 36). The SIR→AIR decompositions in LegalityRewritePass
 //! produce the AIR ops that feed these lowering paths.
 //!
-//! Sprint 55: ElementWise::Maximum/Minimum now lower to MILMaximum/MILMinimum
+//! Sprint 55: AirOp::Maximum/Minimum now lower to MILMaximum/MILMinimum
 //! instead of erroring.
 //!
 //! Sprint 57: StaticLUTProjection now lowers to MILGather as a de-scoped
@@ -89,27 +89,26 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
             }
         }
 
-        AirOp::ElementWise { inputs, .. } => {
+        AirOp::Add { x, y } | AirOp::Mul { x, y } | AirOp::Sub { x, y }
+        | AirOp::Maximum { x, y } | AirOp::Minimum { x, y } => {
             // Sprint 62: Validate broadcast compatibility for binary elementwise ops.
             // Core ML requires broadcasting rules: dimensions must be compatible
             // (equal, or one of them is 1, or one is missing from the shorter shape).
             // Invalid broadcasts like [1,512,2048] * [128] will be caught here.
-            if inputs.len() == 2 {
-                let shape_a = node_shapes.get(&inputs[0]).cloned().unwrap_or_default();
-                let shape_b = node_shapes.get(&inputs[1]).cloned().unwrap_or_default();
-                if !shape_a.is_empty() && !shape_b.is_empty() {
-                    if let Err(e) = validate_broadcast_compatibility(&shape_a, &shape_b) {
-                        eprintln!(
-                            "[WARN] Broadcast incompatibility: {} * {} — {}. \
-                             This will fail Core ML type inference.",
-                            format_shape(&shape_a),
-                            format_shape(&shape_b),
-                            e
-                        );
-                    }
+            let shape_a = node_shapes.get(x).cloned().unwrap_or_default();
+            let shape_b = node_shapes.get(y).cloned().unwrap_or_default();
+            if !shape_a.is_empty() && !shape_b.is_empty() {
+                if let Err(e) = validate_broadcast_compatibility(&shape_a, &shape_b) {
+                    eprintln!(
+                        "[WARN] Broadcast incompatibility: {} * {} — {}. \
+                         This will fail Core ML type inference.",
+                        format_shape(&shape_a),
+                        format_shape(&shape_b),
+                        e
+                    );
                 }
             }
-            inputs.first().and_then(|id| node_shapes.get(id).cloned()).unwrap_or_default()
+            node_shapes.get(x).cloned().unwrap_or_default()
         }
         AirOp::Reshape { input, target_shape } => {
             // Resolve zero-placeholder dimensions in the target shape.
@@ -344,16 +343,9 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
         }
         // ─── Unary ops that pass through input shape ───
         AirOp::Silu { input }
-        | AirOp::Abs { input }
         | AirOp::Neg { input }
         | AirOp::Sqrt { input }
         | AirOp::Cast { input, .. } => node_shapes.get(input).cloned().unwrap_or_default(),
-        // ─── Binary ops: use first operand shape ───
-        AirOp::Add { x, .. }
-        | AirOp::Mul { x, .. }
-        | AirOp::Sub { x, .. }
-        | AirOp::Maximum { x, .. }
-        | AirOp::Minimum { x, .. } => node_shapes.get(x).cloned().unwrap_or_default(),
         // All remaining AIR ops: conservatively return empty shape
         _ => vec![],
     }
@@ -468,7 +460,7 @@ impl MilLowerPass {
     /// For the current vertical slice, this pass:
     /// - Converts AirOp::MatMul to MirOp::MILMatMul
     /// - Converts AirOp::Conv1x1AsLinear to MirOp::MILLinear (fixes dead-letter bug)
-    /// - Converts AirOp::ElementWise::Add to MirOp::MILAdd
+    /// - Converts AirOp::Add to MirOp::MILAdd
     /// - Assigns fp16 dtype and compute unit hint from the shard plan
     /// - Produces a single-shard MIR graph (one MIL program)
     ///
@@ -597,99 +589,74 @@ impl MilLowerPass {
                         bias: None, // Conv1x1AsLinear has no bias field
                     }
                 }
-                AirOp::ElementWise { op, inputs } => {
-                    match op {
-                        ane_ir::sir::ElementWiseOp::Add => {
-                            let x = inputs.first().map(|id| {
-                                air_to_mir
-                                    .get(id)
-                                    .cloned()
-                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
-                            });
-                            let y = inputs.get(1).map(|id| {
-                                air_to_mir
-                                    .get(id)
-                                    .cloned()
-                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
-                            });
-                            // For the linear projection vertical slice, we need both operands.
-                            // If we don't have two inputs (weight/bias are constants, not in AIR inputs),
-                            // we create a placeholder referencing by name.
-                            MirOp::MILAdd {
-                                name: air_node.name.clone(),
-                                x: x.unwrap_or_else(|| MirNodeId("input".into())),
-                                y: y.unwrap_or_else(|| MirNodeId("bias".into())),
-                            }
-                        }
-                        ane_ir::sir::ElementWiseOp::Mul => {
-                            let x = inputs.first().map(|id| {
-                                air_to_mir
-                                    .get(id)
-                                    .cloned()
-                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
-                            });
-                            let y = inputs.get(1).map(|id| {
-                                air_to_mir
-                                    .get(id)
-                                    .cloned()
-                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
-                            });
-                            MirOp::MILMul {
-                                name: air_node.name.clone(),
-                                x: x.unwrap_or_else(|| MirNodeId("input".into())),
-                                y: y.unwrap_or_else(|| MirNodeId("weight".into())),
-                            }
-                        }
-                        ane_ir::sir::ElementWiseOp::Abs => {
-                            let x = inputs.first().map(|id| {
-                                air_to_mir
-                                    .get(id)
-                                    .cloned()
-                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
-                            });
-                            MirOp::MILAbs {
-                                name: air_node.name.clone(),
-                                x: x.unwrap_or_else(|| MirNodeId("input".into())),
-                            }
-                        }
-                        ane_ir::sir::ElementWiseOp::Maximum => {
-                            let x = inputs.first().map(|id| {
-                                air_to_mir
-                                    .get(id)
-                                    .cloned()
-                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
-                            });
-                            let y = inputs.get(1).map(|id| {
-                                air_to_mir
-                                    .get(id)
-                                    .cloned()
-                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
-                            });
-                            MirOp::MILMaximum {
-                                name: air_node.name.clone(),
-                                x: x.unwrap_or_else(|| MirNodeId("input".into())),
-                                y: y.unwrap_or_else(|| MirNodeId("zero".into())),
-                            }
-                        }
-                        ane_ir::sir::ElementWiseOp::Minimum => {
-                            let x = inputs.first().map(|id| {
-                                air_to_mir
-                                    .get(id)
-                                    .cloned()
-                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
-                            });
-                            let y = inputs.get(1).map(|id| {
-                                air_to_mir
-                                    .get(id)
-                                    .cloned()
-                                    .unwrap_or_else(|| MirNodeId(id.0.clone()))
-                            });
-                            MirOp::MILMinimum {
-                                name: air_node.name.clone(),
-                                x: x.unwrap_or_else(|| MirNodeId("input".into())),
-                                y: y.unwrap_or_else(|| MirNodeId("zero".into())),
-                            }
-                        }
+                AirOp::Abs { input } => {
+                    let x = air_to_mir
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
+                    MirOp::MILAbs {
+                        name: air_node.name.clone(),
+                        x,
+                    }
+                }
+                AirOp::Add { x, y } => {
+                    let x_mir = air_to_mir
+                        .get(x)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let y_mir = air_to_mir
+                        .get(y)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILAdd {
+                        name: air_node.name.clone(),
+                        x: x_mir,
+                        y: y_mir,
+                    }
+                }
+                AirOp::Mul { x, y } => {
+                    let x_mir = air_to_mir
+                        .get(x)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let y_mir = air_to_mir
+                        .get(y)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILMul {
+                        name: air_node.name.clone(),
+                        x: x_mir,
+                        y: y_mir,
+                    }
+                }
+                AirOp::Maximum { x, y } => {
+                    let x_mir = air_to_mir
+                        .get(x)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let y_mir = air_to_mir
+                        .get(y)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILMaximum {
+                        name: air_node.name.clone(),
+                        x: x_mir,
+                        y: y_mir,
+                    }
+                }
+                AirOp::Minimum { x, y } => {
+                    let x_mir = air_to_mir
+                        .get(x)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let y_mir = air_to_mir
+                        .get(y)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILMinimum {
+                        name: air_node.name.clone(),
+                        x: x_mir,
+                        y: y_mir,
                     }
                 }
                 AirOp::Reshape { input, target_shape } => {
@@ -1009,13 +976,13 @@ impl MilLowerPass {
                 // These are pass-through lowerings that preserve the op semantics
                 // from AIR into MIR for MIL emission.
 
-                // Direct elementwise unary variants (also handled via ElementWise legacy path)
-                AirOp::Abs { input } => {
+                // Direct elementwise unary variants
+                AirOp::Neg { input } => {
                     let mi = air_to_mir
                         .get(input)
                         .cloned()
                         .unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    MirOp::MILAbs { name: air_node.name.clone(), x: mi }
+                    MirOp::MILNeg { name: air_node.name.clone(), x: mi }
                 }
 
                 AirOp::Const { value_path, dtype } => MirOp::MILConst {
@@ -1108,30 +1075,10 @@ impl MilLowerPass {
                 }
 
                 // Elementwise binary ops
-                AirOp::Add { x, y } => {
-                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
-                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
-                    MirOp::MILAdd { name: air_node.name.clone(), x: mx, y: my }
-                }
-                AirOp::Mul { x, y } => {
-                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
-                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
-                    MirOp::MILMul { name: air_node.name.clone(), x: mx, y: my }
-                }
                 AirOp::Sub { x, y } => {
                     let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
                     let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
                     MirOp::MILSub { name: air_node.name.clone(), x: mx, y: my }
-                }
-                AirOp::Maximum { x, y } => {
-                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
-                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
-                    MirOp::MILMaximum { name: air_node.name.clone(), x: mx, y: my }
-                }
-                AirOp::Minimum { x, y } => {
-                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
-                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
-                    MirOp::MILMinimum { name: air_node.name.clone(), x: mx, y: my }
                 }
                 AirOp::FloorDiv { x, y } => {
                     let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
@@ -1195,13 +1142,6 @@ impl MilLowerPass {
                 }
 
                 // Elementwise unary ops
-                AirOp::Neg { input } => {
-                    let mi = air_to_mir
-                        .get(input)
-                        .cloned()
-                        .unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    MirOp::MILNeg { name: air_node.name.clone(), x: mi }
-                }
                 AirOp::Relu6 { input } => {
                     let mi = air_to_mir
                         .get(input)
@@ -2640,14 +2580,13 @@ impl MilLowerPass {
 mod tests {
     use super::*;
     use ane_ir::air::{AirNode, AirNodeId};
-    use ane_ir::sir::ElementWiseOp;
 
     fn make_air_graph_with_precision(override_dtype: Option<&str>) -> AirGraph {
         AirGraph {
             nodes: vec![
                 AirNode {
                     id: AirNodeId("weight".into()),
-                    op: AirOp::ElementWise { op: ElementWiseOp::Mul, inputs: vec![] },
+                    op: AirOp::Mul { x: AirNodeId(String::new()), y: AirNodeId(String::new()) },
                     name: "weight".into(),
                     legality_confidence: 0.5,
                     sir_source: None,
@@ -3488,9 +3427,9 @@ mod tests {
         let air = AirGraph {
             nodes: vec![make_simple_air_node(
                 "max_out",
-                AirOp::ElementWise {
-                    op: ElementWiseOp::Maximum,
-                    inputs: vec![AirNodeId("x".into()), AirNodeId("zero".into())],
+                AirOp::Maximum {
+                    x: AirNodeId("x".into()),
+                    y: AirNodeId("zero".into()),
                 },
             )],
             inputs: vec![AirNodeId("x".into())],
@@ -3516,9 +3455,9 @@ mod tests {
         let air = AirGraph {
             nodes: vec![make_simple_air_node(
                 "min_out",
-                AirOp::ElementWise {
-                    op: ElementWiseOp::Minimum,
-                    inputs: vec![AirNodeId("x".into()), AirNodeId("cap".into())],
+                AirOp::Minimum {
+                    x: AirNodeId("x".into()),
+                    y: AirNodeId("cap".into()),
                 },
             )],
             inputs: vec![AirNodeId("x".into())],
@@ -3539,29 +3478,22 @@ mod tests {
 
     #[test]
     fn test_all_elementwise_ops_lower() {
-        // Verify that all 5 declared ElementWiseOp variants now lower successfully.
-        // Previously, Maximum and Minimum would error.
+        // Verify that all elementwise op variants lower successfully.
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
 
-        let cases: Vec<(&str, ElementWiseOp)> = vec![
-            ("add", ElementWiseOp::Add),
-            ("mul", ElementWiseOp::Mul),
-            ("abs", ElementWiseOp::Abs),
-            ("max", ElementWiseOp::Maximum),
-            ("min", ElementWiseOp::Minimum),
+        let cases: Vec<(&str, AirOp)> = vec![
+            ("add", AirOp::Add { x: AirNodeId("a".into()), y: AirNodeId("b".into()) }),
+            ("mul", AirOp::Mul { x: AirNodeId("a".into()), y: AirNodeId("b".into()) }),
+            ("abs", AirOp::Abs { input: AirNodeId("a".into()) }),
+            ("max", AirOp::Maximum { x: AirNodeId("a".into()), y: AirNodeId("b".into()) }),
+            ("min", AirOp::Minimum { x: AirNodeId("a".into()), y: AirNodeId("b".into()) }),
         ];
 
         for (name, op) in cases {
             let label = format!("{:?}", op);
             let air = AirGraph {
-                nodes: vec![make_simple_air_node(
-                    name,
-                    AirOp::ElementWise {
-                        op,
-                        inputs: vec![AirNodeId("a".into()), AirNodeId("b".into())],
-                    },
-                )],
+                nodes: vec![make_simple_air_node(name, op)],
                 inputs: vec![AirNodeId("a".into())],
                 outputs: vec![AirNodeId(name.into())],
                 staticization_decisions: vec![],
@@ -3569,7 +3501,7 @@ mod tests {
             let result = pass.run(&air, &shard_plan, &HashMap::new());
             assert!(
                 result.is_ok(),
-                "ElementWiseOp::{} should lower successfully, but got error: {:?}",
+                "{} should lower successfully, but got error: {:?}",
                 label,
                 result.err()
             );
@@ -3628,7 +3560,7 @@ mod tests {
             nodes: vec![
                 AirNode {
                     id: AirNodeId("weight".into()),
-                    op: AirOp::ElementWise { op: ElementWiseOp::Mul, inputs: vec![] },
+                    op: AirOp::Mul { x: AirNodeId(String::new()), y: AirNodeId(String::new()) },
                     name: "weight".into(),
                     legality_confidence: 0.5,
                     sir_source: None,

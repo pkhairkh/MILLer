@@ -9,9 +9,6 @@
 //! for synthetic/real-model runs). The former `compute_confidence`
 //! function had contradictory, more optimistic base values and
 //! has been removed.
-//!
-//! This module retains `decay_confidence` for temporal decay
-//! calculations.
 
 /// Decay confidence over time (simulated temporal decay).
 ///
@@ -23,10 +20,6 @@
 /// should use [`update::initial_confidence`] for computing initial confidence
 /// values. If temporal decay is needed in production, integrate this into the
 /// update pipeline rather than calling it directly.
-#[deprecated(
-    since = "0.2.0",
-    note = "Not used in production code. Integrate temporal decay into the update pipeline if needed."
-)]
 pub fn decay_confidence(current: f32, halflife_days: f32, elapsed_days: f32) -> f32 {
     current * 0.5f32.powf(elapsed_days / halflife_days)
 }

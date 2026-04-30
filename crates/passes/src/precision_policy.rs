@@ -97,7 +97,11 @@ impl PrecisionPolicyPass {
             ane_ir::sir::SirOp::AttentionBlock { .. } => "AttentionBlock",
             ane_ir::sir::SirOp::RMSNorm { .. } => "RMSNorm",
             ane_ir::sir::SirOp::RoPETransform { .. } => "RoPETransform",
-            ane_ir::sir::SirOp::ElementWise { .. } => "ElementWise",
+            ane_ir::sir::SirOp::Add { .. } => "Add",
+            ane_ir::sir::SirOp::Mul { .. } => "Mul",
+            ane_ir::sir::SirOp::Abs { .. } => "Abs",
+            ane_ir::sir::SirOp::Maximum { .. } => "Maximum",
+            ane_ir::sir::SirOp::Minimum { .. } => "Minimum",
             ane_ir::sir::SirOp::Reshape { .. } => "Reshape",
             ane_ir::sir::SirOp::Transpose { .. } => "Transpose",
             ane_ir::sir::SirOp::Split { .. } => "Split",
@@ -205,7 +209,7 @@ mod tests {
         ComputePlanPlacementInfo, LegalityInfo, NoKnowledge, PrecisionHazardInfo, RiskInfo,
     };
     use ane_ir::sir::{
-        ElementWiseOp, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin,
+        SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin,
     };
 
     /// A mock knowledge query that reports a precision hazard for LinearProjection.
@@ -351,7 +355,7 @@ mod tests {
             nodes: vec![
                 SirNode {
                     id: SirNodeId("weight".into()),
-                    op: SirOp::ElementWise { op: ElementWiseOp::Mul, inputs: vec![] },
+                    op: SirOp::Mul { x: SirNodeId(String::new()), y: SirNodeId(String::new()) },
                     name: "weight".into(),
                     metadata: SirMetadata {
                         task_origin: TaskOrigin::Synthetic,

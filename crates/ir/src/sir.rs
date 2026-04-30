@@ -913,34 +913,10 @@ pub enum SirOp {
     // into appropriate primitive op patterns. No specialized KV cache
     // op variants are needed — the strategy framework discovers and
     // applies the right pattern dynamically.
-
-    // ─── Legacy compat: ElementWise used by linear_slice.rs ──────
-    #[deprecated(
-        since = "0.2.0",
-        note = "Legacy variant. Use individual Add/Mul/Abs ops instead. See linear_slice.rs migration plan."
-    )]
-    ElementWise {
-        op: ElementWiseOp,
-        inputs: Vec<SirNodeId>,
-    },
 }
 
 // Sprint 58 (S58.2): MilDtypeRepr was removed. SIR now uses
 // `super::mir::MilDtype` directly, eliminating the duplicate type.
-
-// Legacy compatibility: ElementWiseOp still used by some existing code paths
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[deprecated(
-    since = "0.2.0",
-    note = "Legacy enum. Use individual SirOp variants (Add, Mul, Abs, Maximum, Minimum) instead."
-)]
-pub enum ElementWiseOp {
-    Add,
-    Mul,
-    Abs,
-    Maximum,
-    Minimum,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SirNode {

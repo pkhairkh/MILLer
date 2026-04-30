@@ -951,7 +951,7 @@ mod tests {
             nodes: vec![
                 SirNode {
                     id: SirNodeId("weight".into()),
-                    op: SirOp::ElementWise { op: ane_ir::sir::ElementWiseOp::Mul, inputs: vec![] },
+                    op: SirOp::Mul { x: SirNodeId(String::new()), y: SirNodeId(String::new()) },
                     name: "weight".into(),
                     metadata: SirMetadata {
                         task_origin: TaskOrigin::Synthetic,

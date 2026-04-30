@@ -745,8 +745,7 @@ impl OpSupportMatrix {
                 OpSupport::CpuOnly("RNN/LSTM/GRU have no direct ANEC converter".to_string())
             }
 
-            // ─── Legacy compat ─────────────────────────────────────
-            SirOp::ElementWise { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            // ─── Elementwise ops handled individually ────────────────
         }
     }
 }

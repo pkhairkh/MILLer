@@ -32,7 +32,7 @@ use crate::cpu_only_ops;
 use crate::knowledge_query::PassKnowledgeQuery;
 use ane_ir::air::{AirGraph, AirNode, AirNodeId, AirOp};
 use ane_ir::mir::MilDtype;
-use ane_ir::sir::{ElementWiseOp, SirGraph, SirOp};
+use ane_ir::sir::{SirGraph, SirOp};
 use anyhow::Result;
 
 /// Task dimensions needed by AIR decomposition functions.
@@ -326,29 +326,69 @@ impl LegalityRewritePass {
                     );
                     (final_id, nodes, "mb.mul") // decomposition root is broadcast Mul
                 }
-                SirOp::ElementWise { op, inputs } => {
-                    let air_inputs: Vec<AirNodeId> = inputs
-                        .iter()
-                        .map(|id| {
-                            sir_to_air.get(id).cloned().unwrap_or_else(|| AirNodeId(id.0.clone()))
-                        })
-                        .collect();
-                    let pattern = match op {
-                        ElementWiseOp::Add => "mb.add",
-                        ElementWiseOp::Mul => "mb.mul",
-                        ElementWiseOp::Abs => "mb.abs",
-                        ElementWiseOp::Maximum => "mb.maximum",
-                        ElementWiseOp::Minimum => "mb.minimum",
-                    };
+                SirOp::Add { x, y } => {
+                    let air_x = sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
+                    let air_y = sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
-                        AirOp::ElementWise { op: op.clone(), inputs: air_inputs },
+                        AirOp::Add { x: air_x, y: air_y },
                         sir_node,
-                        pattern,
+                        "mb.add",
                         knowledge_query,
                     )];
-                    (air_id, nodes, pattern)
+                    (air_id, nodes, "mb.add")
+                }
+                SirOp::Mul { x, y } => {
+                    let air_x = sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
+                    let air_y = sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
+                    let air_id = AirNodeId(sir_node.id.0.clone());
+                    let nodes = vec![Self::make_air_node(
+                        air_id.clone(),
+                        AirOp::Mul { x: air_x, y: air_y },
+                        sir_node,
+                        "mb.mul",
+                        knowledge_query,
+                    )];
+                    (air_id, nodes, "mb.mul")
+                }
+                SirOp::Abs { input } => {
+                    let air_input = sir_to_air.get(input).cloned().unwrap_or_else(|| AirNodeId(input.0.clone()));
+                    let air_id = AirNodeId(sir_node.id.0.clone());
+                    let nodes = vec![Self::make_air_node(
+                        air_id.clone(),
+                        AirOp::Abs { input: air_input },
+                        sir_node,
+                        "mb.abs",
+                        knowledge_query,
+                    )];
+                    (air_id, nodes, "mb.abs")
+                }
+                SirOp::Maximum { x, y } => {
+                    let air_x = sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
+                    let air_y = sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
+                    let air_id = AirNodeId(sir_node.id.0.clone());
+                    let nodes = vec![Self::make_air_node(
+                        air_id.clone(),
+                        AirOp::Maximum { x: air_x, y: air_y },
+                        sir_node,
+                        "mb.maximum",
+                        knowledge_query,
+                    )];
+                    (air_id, nodes, "mb.maximum")
+                }
+                SirOp::Minimum { x, y } => {
+                    let air_x = sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
+                    let air_y = sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
+                    let air_id = AirNodeId(sir_node.id.0.clone());
+                    let nodes = vec![Self::make_air_node(
+                        air_id.clone(),
+                        AirOp::Minimum { x: air_x, y: air_y },
+                        sir_node,
+                        "mb.minimum",
+                        knowledge_query,
+                    )];
+                    (air_id, nodes, "mb.minimum")
                 }
                 SirOp::Reshape { input, target_shape } => {
                     let air_input = sir_to_air
@@ -1111,7 +1151,7 @@ impl LegalityRewritePass {
         let normed_id = AirNodeId(format!("{base}_normed"));
         nodes.push(Self::make_air_node(
             normed_id.clone(),
-            AirOp::ElementWise { op: ElementWiseOp::Mul, inputs: vec![input_air, rsqrt_id] },
+            AirOp::Mul { x: input_air, y: rsqrt_id },
             sir_node,
             "mb.mul",
             kq,
@@ -1126,9 +1166,9 @@ impl LegalityRewritePass {
         };
         nodes.push(Self::make_air_node(
             mul_out_id.clone(),
-            AirOp::ElementWise {
-                op: ElementWiseOp::Mul,
-                inputs: vec![normed_id, AirNodeId(weight.into())],
+            AirOp::Mul {
+                x: normed_id,
+                y: AirNodeId(weight.into()),
             },
             sir_node,
             "mb.mul",
@@ -1200,7 +1240,7 @@ impl LegalityRewritePass {
         let x_cos_id = AirNodeId(format!("{base}_x_cos"));
         nodes.push(Self::make_air_node(
             x_cos_id.clone(),
-            AirOp::ElementWise { op: ElementWiseOp::Mul, inputs: vec![input_air.clone(), cos_id] },
+            AirOp::Mul { x: input_air.clone(), y: cos_id },
             sir_node,
             "mb.mul",
             kq,
@@ -1209,7 +1249,7 @@ impl LegalityRewritePass {
         let x_sin_id = AirNodeId(format!("{base}_x_sin"));
         nodes.push(Self::make_air_node(
             x_sin_id.clone(),
-            AirOp::ElementWise { op: ElementWiseOp::Mul, inputs: vec![input_air, sin_id] },
+            AirOp::Mul { x: input_air, y: sin_id },
             sir_node,
             "mb.mul",
             kq,
@@ -1218,7 +1258,7 @@ impl LegalityRewritePass {
         let out_id = AirNodeId(sir_node.id.0.clone());
         nodes.push(Self::make_air_node(
             out_id.clone(),
-            AirOp::ElementWise { op: ElementWiseOp::Add, inputs: vec![x_cos_id, x_sin_id] },
+            AirOp::Add { x: x_cos_id, y: x_sin_id },
             sir_node,
             "mb.add",
             kq,
@@ -1378,9 +1418,9 @@ impl LegalityRewritePass {
         let mul_id = AirNodeId(format!("{base}_tile_broadcast_mul"));
         nodes.push(Self::make_air_node(
             mul_id.clone(),
-            AirOp::ElementWise {
-                op: ElementWiseOp::Mul,
-                inputs: vec![reshape_id, ones_const_id],
+            AirOp::Mul {
+                x: reshape_id,
+                y: ones_const_id,
             },
             sir_node,
             "mb.mul",
@@ -2370,11 +2410,6 @@ impl LegalityRewritePass {
             }
             SirOp::Classify { input } => (AirOp::Classify { input: aid(input) }, "mb.classify"),
 
-            // ─── Legacy compat (handled explicitly above, fallback) ──
-            SirOp::ElementWise { .. } => {
-                (AirOp::ElementWise { op: ElementWiseOp::Add, inputs: vec![] }, "mb.add")
-            }
-
             // ─── Composite ops (should be handled by decompositions, not here) ──
             SirOp::LinearProjection { .. }
             | SirOp::AttentionBlock { .. }
@@ -2498,7 +2533,7 @@ mod tests {
             nodes: vec![
                 SirNode {
                     id: SirNodeId("weight".into()),
-                    op: SirOp::ElementWise { op: ElementWiseOp::Mul, inputs: vec![] },
+                    op: SirOp::Mul { x: SirNodeId(String::new()), y: SirNodeId(String::new()) },
                     name: "weight".into(),
                     metadata: SirMetadata {
                         task_origin: TaskOrigin::Synthetic,
@@ -2819,11 +2854,11 @@ mod tests {
         let has_mul = air
             .nodes
             .iter()
-            .any(|n| matches!(n.op, AirOp::ElementWise { op: ElementWiseOp::Mul, .. }));
+            .any(|n| matches!(n.op, AirOp::Mul { .. }));
 
         assert!(has_reduce_mean, "RMSNorm decomposition must include ReduceMean");
         assert!(has_rsqrt, "RMSNorm decomposition must include Rsqrt");
-        assert!(has_mul, "RMSNorm decomposition must include ElementWise::Mul");
+        assert!(has_mul, "RMSNorm decomposition must include Mul");
     }
 
     /// Test that RoPETransform decomposes into Cos + Sin + Mul + Mul + Add.
@@ -3416,8 +3451,7 @@ mod tests {
     ///   residual add:    [1, 512, 1024]   (attn_out + residual)
     #[test]
     fn test_full_attention_block_with_qk_norm_shape_flow() {
-        use ane_ir::sir::{SirGraph, SirNode, SirNodeId, SirOp, SirMetadata, TaskOrigin,
-                          ElementWiseOp};
+        use ane_ir::sir::{SirGraph, SirNode, SirNodeId, SirOp, SirMetadata, TaskOrigin};
 
         // Build a minimal SIR that mimics the Qwen3 attention decomposition:
         // LinearProjection(q) → RMSNorm(q, axes=3) → LinearProjection(k) →
@@ -3600,8 +3634,8 @@ mod tests {
         // All ElementWise::Mul ops must have broadcastable inputs
         // This is the key check: no [1,512,2048] * [128] allowed
         for node in &air.nodes {
-            if let AirOp::ElementWise { op: ElementWiseOp::Mul, inputs } = &node.op {
-                eprintln!("  Mul: inputs={:?}", inputs.iter().map(|i| &i.0).collect::<Vec<_>>());
+            if let AirOp::Mul { x, y } = &node.op {
+                eprintln!("  Mul: x={}, y={}", x.0, y.0);
                 // The weight input should NOT be a flat [128] applied to [1,512,2048]
                 // After 4D reshape, it's [1,512,16,128] * [128] which IS broadcastable
             }

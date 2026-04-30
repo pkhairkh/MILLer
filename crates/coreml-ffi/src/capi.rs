@@ -397,7 +397,7 @@ pub unsafe extern "C" fn coreml_validate_proto_package(path: *const c_char) -> C
         // Try to decode as a prost Model message.
         // This is best-effort — if it fails, we don't reject the package
         // because the proto schema may have been updated.
-        let _ = ane_coreml_proto::proto::Model::decode(mlmodel_bytes.as_slice());
+        let _ = ane_coreml_proto::apple_proto::Model::decode(mlmodel_bytes.as_slice());
     }
 
     CoreMlStatus::Ok

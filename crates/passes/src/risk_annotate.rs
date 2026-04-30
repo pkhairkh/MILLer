@@ -14,7 +14,6 @@
 
 use crate::knowledge_query::PassKnowledgeQuery;
 use ane_ir::air::{AirGraph, AirOp};
-use ane_ir::sir::ElementWiseOp;
 use anyhow::Result;
 
 /// Default fallback risk score for operations without specific knowledge.
@@ -76,13 +75,11 @@ impl RiskAnnotatePass {
                 // Derive op pattern from the AIR node's operation type
                 let op_pattern = match &node.op {
                     AirOp::MatMul { .. } => "mb.matmul",
-                    AirOp::ElementWise { op, .. } => match op {
-                        ElementWiseOp::Add => "mb.add",
-                        ElementWiseOp::Mul => "mb.mul",
-                        ElementWiseOp::Abs => "mb.abs",
-                        ElementWiseOp::Maximum => "mb.maximum",
-                        ElementWiseOp::Minimum => "mb.minimum",
-                    },
+                    AirOp::Add { .. } => "mb.add",
+                    AirOp::Mul { .. } => "mb.mul",
+                    AirOp::Abs { .. } => "mb.abs",
+                    AirOp::Maximum { .. } => "mb.maximum",
+                    AirOp::Minimum { .. } => "mb.minimum",
                     AirOp::Reshape { .. } => "mb.reshape",
                     AirOp::Transpose { .. } => "mb.transpose",
                     AirOp::Split { .. } => "mb.split",

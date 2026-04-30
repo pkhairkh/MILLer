@@ -55,7 +55,7 @@ pub fn sir_from_linear_projection(spec: &SyntheticTaskSpec) -> Result<SirGraph, 
     let nodes = vec![
         SirNode {
             id: weight_id.clone(),
-            op: SirOp::ElementWise { op: crate::sir::ElementWiseOp::Mul, inputs: vec![] },
+            op: SirOp::Mul { x: SirNodeId(String::new()), y: SirNodeId(String::new()) },
             name: "weight".into(),
             metadata: SirMetadata {
                 task_origin: TaskOrigin::Synthetic,
@@ -66,7 +66,7 @@ pub fn sir_from_linear_projection(spec: &SyntheticTaskSpec) -> Result<SirGraph, 
         },
         SirNode {
             id: bias_id.clone(),
-            op: SirOp::ElementWise { op: crate::sir::ElementWiseOp::Add, inputs: vec![] },
+            op: SirOp::Add { x: SirNodeId(String::new()), y: SirNodeId(String::new()) },
             name: "bias".into(),
             metadata: SirMetadata {
                 task_origin: TaskOrigin::Synthetic,
@@ -420,7 +420,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_payload_dtype_override_changes_bridge_dtype() {
         let spec = test_linear_spec_fp16();
 
@@ -449,7 +448,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_payload_dtype_no_override_preserves_spec() {
         let spec = test_linear_spec_fp16();
         let payload =
@@ -495,7 +493,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_precision_override_propagates_full_pipeline() {
         // End-to-end test: SIR with precision_override → AIR → MIR
         // This proves that precision adaptation propagates through the IR pipeline.
@@ -559,7 +556,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_lut_payload_from_spec_succeeds() {
         let spec = test_lut_spec();
         let payload = LutProjectionPayload::from_spec(&spec, "/tmp/lut_test").unwrap();
@@ -578,7 +574,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_lut_payload_rejects_linear_spec() {
         let spec = test_linear_spec_fp16();
         let result = LutProjectionPayload::from_spec(&spec, "/tmp/test");
@@ -586,7 +581,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_linear_payload_rejects_lut_spec() {
         let spec = test_lut_spec();
         let result = LinearProjectionPayload::from_spec(&spec, "/tmp/test");
@@ -595,7 +589,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_linear_vs_lut_payload_command_divergence() {
         // S20.4: Prove that linear and LUT compile paths generate
         // different bridge commands/payloads.
@@ -639,7 +632,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_lut_payload_deterministic_serialization() {
         let spec = test_lut_spec();
         let payload1 = LutProjectionPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -651,7 +643,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_lut_payload_function_descriptors() {
         let spec = test_lut_spec();
         let payload = LutProjectionPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -695,7 +686,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_decode_step_payload_from_spec_succeeds() {
         let spec = test_decode_step_spec();
         let payload = DecodeStepPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -712,7 +702,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_decode_step_payload_rejects_linear_spec() {
         let spec = test_linear_spec_fp16();
         let result = DecodeStepPayload::from_spec(&spec, "/tmp/test");
@@ -720,7 +709,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_decode_step_payload_command_differs_from_linear() {
         let linear_spec = test_linear_spec_fp16();
         let decode_spec = test_decode_step_spec();
@@ -733,7 +721,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_decode_step_payload_command_differs_from_lut() {
         let lut_spec = SyntheticTaskSpec {
             name: "test_lut".into(),
@@ -763,7 +750,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_decode_step_payload_deterministic_serialization() {
         let spec = test_decode_step_spec();
         let payload1 = DecodeStepPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -774,7 +760,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_decode_step_payload_function_descriptors() {
         let spec = test_decode_step_spec();
         let payload = DecodeStepPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -814,7 +799,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_mlp_block_payload_creation() {
         let spec = test_mlp_block_spec();
         let payload = MlpBlockPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -828,7 +812,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_mlp_block_payload_rejects_linear() {
         let spec = test_linear_spec_fp16();
         let result = MlpBlockPayload::from_spec(&spec, "/tmp/test");
@@ -836,7 +819,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_mlp_block_payload_command_diverges_from_linear() {
         let linear_spec = test_linear_spec_fp16();
         let linear_payload = LinearProjectionPayload::from_spec(&linear_spec, "/tmp/test").unwrap();
@@ -853,7 +835,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_mlp_block_payload_deterministic_serialization() {
         let spec = test_mlp_block_spec();
         let payload = MlpBlockPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -864,7 +845,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_mlp_block_payload_function_descriptors() {
         let spec = test_mlp_block_spec();
         let payload = MlpBlockPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -904,7 +884,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_attention_payload_from_spec_succeeds() {
         let spec = test_attention_spec();
         let payload = AttentionPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -918,7 +897,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_attention_payload_rejects_linear_spec() {
         let spec = test_linear_spec_fp16();
         let result = AttentionPayload::from_spec(&spec, "/tmp/test");
@@ -926,7 +904,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_attention_payload_dtype_override() {
         let spec = test_attention_spec();
 
@@ -943,7 +920,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_attention_payload_function_descriptors() {
         let spec = test_attention_spec();
         let payload = AttentionPayload::from_spec(&spec, "/tmp/test").unwrap();
@@ -961,7 +937,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_mlp_block_payload_dtype_override() {
         let spec = test_mlp_block_spec();
 
@@ -978,7 +953,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_lut_projection_payload_dtype_override() {
         let spec = test_lut_spec();
         let payload_no = LutProjectionPayload::from_spec(&spec, "/tmp/test").unwrap();

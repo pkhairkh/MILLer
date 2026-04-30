@@ -1,9 +1,5 @@
 //! Core ML Protobuf Definitions (Sprint 41)
 //!
-//! **Note**: This crate defines the `proto` module as deprecated for external use.
-//! Internal usage within this crate is allowed during the migration period.
-#![allow(deprecated)]
-//!
 //! This crate provides Rust type definitions for the Core ML model
 //! protobuf format, enabling direct Rust-to-mlpackage emission without
 //! the Python bridge subprocess.
@@ -53,15 +49,10 @@
 
 /// Prost-generated Core ML protobuf types (legacy custom format).
 ///
-/// **Deprecated**: This module uses a custom `coreml` protobuf package that does
-/// not match Apple's actual wire format. Use [`apple_proto`] instead, which
-/// produces protobuf that Core ML's runtime can decode. This module is kept only
-/// for backward compatibility with existing tests and will be removed after
-/// Sprint 60. No new code should import from this module.
-#[deprecated(
-    since = "0.2.0",
-    note = "Use `apple_proto` instead. Legacy proto format does not match Apple's wire format. Removal planned after Sprint 60."
-)]
+/// This module uses a custom `coreml` protobuf package that does
+/// not match Apple's actual wire format. Use [`apple_proto`] for
+/// producing protobuf that Core ML's runtime can decode. This module
+/// is kept for backward compatibility with existing tests.
 pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/coreml.rs"));
 }

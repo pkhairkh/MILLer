@@ -40,7 +40,6 @@ pub struct TensorDescriptor {
 /// Versioned: `bridge_version` field enables Python to reject incompatible
 /// payload versions cleanly. Bump this when the payload schema changes
 /// in a way that breaks backward compatibility.
-#[deprecated(since = "0.2.0", note = "Use FamilyPayload instead")]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LinearProjectionPayload {
     /// Bridge protocol version. Must match what Python expects.
@@ -67,7 +66,6 @@ pub struct LinearProjectionPayload {
     pub functions: Vec<FunctionDescriptor>,
 }
 
-#[allow(deprecated)]
 impl LinearProjectionPayload {
     pub fn from_spec(spec: &SyntheticTaskSpec, output_path: &str) -> Result<Self, String> {
         Self::from_spec_with_override(spec, output_path, None)
@@ -152,7 +150,6 @@ impl LinearProjectionPayload {
 /// Sprint 20 (S20.1): this payload replaces the previous approach where
 /// LUT tasks were sent through `LinearProjectionPayload` with
 /// `embed_dim × embed_dim` dimensions.
-#[deprecated(since = "0.2.0", note = "Use FamilyPayload instead")]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LutProjectionPayload {
     /// Bridge protocol version. Must match what Python expects.
@@ -178,7 +175,6 @@ pub struct LutProjectionPayload {
     pub functions: Vec<FunctionDescriptor>,
 }
 
-#[allow(deprecated)]
 impl LutProjectionPayload {
     /// Build a dedicated LUT projection bridge payload from a task spec.
     ///
@@ -280,7 +276,6 @@ impl LutProjectionPayload {
 /// replaces the previous approach where decode-step tasks were sent
 /// through `LinearProjectionPayload` with `embed_dim × embed_dim`
 /// dimensions.
-#[deprecated(since = "0.2.0", note = "Use FamilyPayload instead")]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DecodeStepPayload {
     /// Bridge protocol version. Must match what Python expects.
@@ -311,7 +306,6 @@ pub struct DecodeStepPayload {
     pub functions: Vec<FunctionDescriptor>,
 }
 
-#[allow(deprecated)]
 impl DecodeStepPayload {
     /// Build a dedicated decode-step bridge payload from a task spec.
     ///
@@ -389,7 +383,6 @@ impl DecodeStepPayload {
 ///
 /// Sprint 28 (S28.1): this payload replaces the previous approach where
 /// MLP block tasks were sent through `LinearProjectionPayload`.
-#[deprecated(since = "0.2.0", note = "Use FamilyPayload instead")]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MlpBlockPayload {
     /// Bridge protocol version. Must match what Python expects.
@@ -415,7 +408,6 @@ pub struct MlpBlockPayload {
     pub functions: Vec<FunctionDescriptor>,
 }
 
-#[allow(deprecated)]
 impl MlpBlockPayload {
     /// Build a dedicated MLP block bridge payload from a task spec.
     ///
@@ -512,7 +504,6 @@ impl MlpBlockPayload {
 ///
 /// Sprint 29 (S29.4): this payload provides the dedicated emission
 /// path for the fifth real task family.
-#[deprecated(since = "0.2.0", note = "Use FamilyPayload instead")]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AttentionPayload {
     /// Bridge protocol version. Must match what Python expects.
@@ -538,7 +529,6 @@ pub struct AttentionPayload {
     pub functions: Vec<FunctionDescriptor>,
 }
 
-#[allow(deprecated)]
 impl AttentionPayload {
     /// Build a dedicated attention bridge payload from a task spec.
     ///
