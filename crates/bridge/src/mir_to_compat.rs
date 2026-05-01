@@ -547,8 +547,8 @@ fn remap_compat_inputs(
             weight_name: remap_name(weight_name, aliases),
             bias_name: bias_name.map(|v| remap_name(v, aliases)),
         },
-        MirOpCompat::MatMul { name, x, y } => {
-            MirOpCompat::MatMul { name, x: remap_name(x, aliases), y: remap_name(y, aliases) }
+        MirOpCompat::MatMul { name, x, y, transpose_y } => {
+            MirOpCompat::MatMul { name, x: remap_name(x, aliases), y: remap_name(y, aliases), transpose_y }
         }
         MirOpCompat::Add { name, x, y } => {
             MirOpCompat::Add { name, x: remap_name(x, aliases), y: remap_name(y, aliases) }
@@ -804,7 +804,7 @@ fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
         MirOpCompat::Linear { name: _, x, weight_name, bias_name } => {
             MirOpCompat::Linear { name: new_name, x, weight_name, bias_name }
         }
-        MirOpCompat::MatMul { name: _, x, y } => MirOpCompat::MatMul { name: new_name, x, y },
+        MirOpCompat::MatMul { name: _, x, y, transpose_y } => MirOpCompat::MatMul { name: new_name, x, y, transpose_y },
         MirOpCompat::Add { name: _, x, y } => MirOpCompat::Add { name: new_name, x, y },
         MirOpCompat::Mul { name: _, x, y } => MirOpCompat::Mul { name: new_name, x, y },
         MirOpCompat::Sub { name: _, x, y } => MirOpCompat::Sub { name: new_name, x, y },
@@ -1266,8 +1266,8 @@ pub fn mir_op_to_compat(
             bias_name: bias.clone(),
         }),
 
-        MirOp::MILMatMul { name, x, y } => {
-            Ok(MirOpCompat::MatMul { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        MirOp::MILMatMul { name, x, y, transpose_y } => {
+            Ok(MirOpCompat::MatMul { name: name.clone(), x: x.0.clone(), y: y.0.clone(), transpose_y: *transpose_y })
         }
 
         MirOp::MILAdd { name, x, y } => {
@@ -2057,6 +2057,7 @@ mod tests {
                     name: "mm".into(),
                     x: MirNodeId("x".into()),
                     y: MirNodeId("y".into()),
+                    transpose_y: false,
                 },
                 &[],
             ),

@@ -46,6 +46,7 @@ pub enum MirOp {
         name: String,
         x: MirNodeId,
         y: MirNodeId,
+        transpose_y: bool,
     },
     MILEinsum {
         name: String,

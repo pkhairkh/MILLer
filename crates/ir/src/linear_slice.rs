@@ -163,6 +163,7 @@ pub fn lower_linear_projection_to_mir(
                 name: "matmul".into(),
                 x: input_id.clone(),
                 y: weight_id.clone(),
+                transpose_y: false,
             },
             dtype: mil_dtype.clone(),
             shape: vec![batch_size, output_dim],

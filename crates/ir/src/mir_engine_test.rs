@@ -25,7 +25,7 @@ fn all_mir_op_variants() -> Vec<(String, MirOp)> {
 
         // ─── Linear / FC ─────────────────────────────────────────────
         ("MILLinear".into(), MirOp::MILLinear { name: "l".into(), x: nid("x"), weight: "w".into(), bias: None }),
-        ("MILMatMul".into(), MirOp::MILMatMul { name: "m".into(), x: nid("x"), y: nid("y") }),
+        ("MILMatMul".into(), MirOp::MILMatMul { name: "m".into(), x: nid("x"), y: nid("y"), transpose_y: false }),
         ("MILEinsum".into(), MirOp::MILEinsum { name: "e".into(), inputs: vec![nid("a"), nid("b")], equation: "ij,jk->ik".into() }),
 
         // ─── Convolution ─────────────────────────────────────────────
@@ -257,7 +257,7 @@ fn test_ne_pipeline_ops_map_to_ne() {
     use crate::ane_engine::AneEngine;
     let ne_ops: Vec<MirOp> = vec![
         MirOp::MILLinear { name: "l".into(), x: nid("x"), weight: "w".into(), bias: None },
-        MirOp::MILMatMul { name: "m".into(), x: nid("x"), y: nid("y") },
+        MirOp::MILMatMul { name: "m".into(), x: nid("x"), y: nid("y"), transpose_y: false },
         MirOp::MILConv { name: "c".into(), x: nid("x"), weight: nid("w"), pad_type: "valid".into(), groups: 1, strides: vec![1], pad_amounts: vec![0], dilations: vec![1] },
         MirOp::MILScaledDotProductAttention { name: "sdpa".into(), query: nid("q"), key: nid("k"), value: nid("v"), attention_mask: None, scale: None },
         MirOp::MILMaxPool { name: "mp".into(), x: nid("x"), kernel_sizes: vec![3], strides: vec![1], pad_types: vec!["valid".into()], pad_amounts: vec![0] },

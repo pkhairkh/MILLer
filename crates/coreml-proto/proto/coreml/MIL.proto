@@ -101,6 +101,7 @@ message MilConstOp {
 message MilMatMulOp {
     OperandRef x = 1;
     OperandRef y = 2;
+    bool transpose_y = 3;
 }
 
 message MilLinearOp {

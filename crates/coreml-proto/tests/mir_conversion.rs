@@ -42,6 +42,7 @@ fn test_mir_op_to_compat_exhaustive_coverage() {
         name: "mm".into(),
         x: nid("a"),
         y: nid("b"),
+        transpose_y: false,
     };
     let compat: MirOpCompat = op.into();
     assert!(matches!(compat, MirOpCompat::MatMul { .. }));

@@ -350,6 +350,7 @@ pub mod mir_compat {
             name: String,
             x: String,
             y: String,
+            transpose_y: bool,
         },
         Add {
             name: String,
@@ -907,10 +908,11 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
                 weight_name: weight,
                 bias_name: bias,
             },
-            MirOp::MILMatMul { name, x, y } => mir_compat::MirOpCompat::MatMul {
+            MirOp::MILMatMul { name, x, y, transpose_y } => mir_compat::MirOpCompat::MatMul {
                 name,
                 x: nid(x),
                 y: nid(y),
+                transpose_y,
             },
             MirOp::MILEinsum { name, .. } => unsupported("einsum", &name, &op_json),
 
@@ -1383,11 +1385,12 @@ pub fn mir_op_to_proto_op(
                 }),
             )
         }
-        mir_compat::MirOpCompat::MatMul { name, x, y } => (
+        mir_compat::MirOpCompat::MatMul { name, x, y, transpose_y } => (
             name.clone(),
             proto::mil_operation::Operation::MatmulOp(proto::MilMatMulOp {
                 x: Some(proto::OperandRef { name: x.clone() }),
                 y: Some(proto::OperandRef { name: y.clone() }),
+                transpose_y: *transpose_y,
             }),
         ),
         mir_compat::MirOpCompat::Add { name, x, y } => (
@@ -2463,7 +2466,7 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
-        mir_compat::MirOpCompat::MatMul { name, x, y } => {
+        mir_compat::MirOpCompat::MatMul { name, x, y, transpose_y } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("y".to_string(), make_name_arg(y));
@@ -2473,7 +2476,7 @@ fn mir_op_to_apple_ops(
             );
             inputs.insert(
                 "transpose_y".to_string(),
-                make_value_arg(make_immediate_bool_value(false)),
+                make_value_arg(make_immediate_bool_value(*transpose_y)),
             );
 
             let mut attributes = HashMap::new();
@@ -4995,6 +4998,7 @@ mod tests {
                 name: "mm".to_string(),
                 x: "x".to_string(),
                 y: "y".to_string(),
+                transpose_y: false,
             },
             mir_compat::MirOpCompat::Add {
                 name: "a".to_string(),

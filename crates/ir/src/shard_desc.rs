@@ -131,6 +131,7 @@ pub fn lower_shard_to_mir(
                 name: "matmul".into(),
                 x: input_id.clone(),
                 y: weight_id.clone(),
+                transpose_y: false,
             },
             dtype: mil_dtype.clone(),
             shape: vec![batch_size, shard.output_dim],
