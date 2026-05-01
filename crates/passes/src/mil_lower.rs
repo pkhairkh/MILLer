@@ -3651,89 +3651,14 @@ impl MilLowerPass {
                 }
             }
 
-            // ── 4. Replace MILSliceUpdate with state mul+add pattern ──
-            // The reference model uses: read_state → mul(old, decay) + mul(new, write) → coreml_update_state
-            // slice_update is a scatter-type op that is CPU-only on ANE.
+            // ── 4. Check for remaining MILSliceUpdate (now handled at SIR→AIR level) ──
+            // Sprint 67: SliceUpdate is now replaced by masked blend (mul+add)
+            // at the SIR→AIR decomposition level in legality_rewrite.rs.
+            // Any remaining SliceUpdate ops in the MIR are from non-decode paths
+            // (e.g., io_model, sampler) which run on CPU.
             let su_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILSliceUpdate { .. })).count();
             if su_count > 0 {
-                eprintln!("  [ANE legality] Replacing {} MILSliceUpdate → state mul+add pattern", su_count);
-                let su_replacements: Vec<(usize, Vec<MirNode>)> = Vec::new();
-                let su_extra_shapes: Vec<(AirNodeId, Vec<usize>)> = Vec::new();
-
-                for (_idx, node) in mir_nodes.iter().enumerate() {
-                    if let MirOp::MILSliceUpdate { name, x: _, update: _, begin: _, end: _ } = &node.op {
-                        let su_id = &node.id;
-                        let su_dtype = &node.dtype;
-                        let su_compute = &node.compute_unit_hint;
-                        let output_shape = node.shape.clone();
-
-                        eprintln!("    slice_update '{}' → state mul+add", name);
-
-                        let new_nodes: Vec<MirNode> = Vec::new();
-
-                        // The pattern: mul(old_cache * decay_mask) + mul(new_value * write_mask)
-                        // → coreml_update_state
-                        //
-                        // For a simple slice_update that writes new_value at a specific position,
-                        // the equivalent state-based pattern is:
-                        //   read_state → mul(old, decay) → result_a
-                        //   mul(new, write) → result_b
-                        //   add(result_a, result_b) → combined
-                        //   coreml_update_state(combined)
-                        //
-                        // But we need the state_id. For now, since SliceUpdate doesn't carry
-                        // a state_id, we emit the simplest ANE-legal pattern:
-                        //   mul(x, 1) + mul(update, 1) which is a no-op identity for the update.
-                        //
-                        // Actually, the reference model's pattern is:
-                        //   read_state(state) → old
-                        //   mul(old, sub_1) → decayed  (sub_1 is 0 at write position, 1 elsewhere)
-                        //   mul(new, reshape_1) → written  (reshape_1 is 1 at write position, 0 elsewhere)
-                        //   add(decayed, written) → combined
-                        //   coreml_update_state(state, combined)
-                        //
-                        // This requires knowing the state_id and the write position, which
-                        // aren't available from MILSliceUpdate alone. For now, we'll
-                        // convert SliceUpdate to a simpler pattern that uses MILConcat
-                        // to splice the new value into the cache.
-                        //
-                        // The simplest ANE-legal replacement for SliceUpdate(x, update, begin, end)
-                        // is to use concat of the three slices: before, update, after.
-                        // But this is complex. For now, skip if we can't determine the pattern.
-                        //
-                        // Instead, we just log a warning and leave the SliceUpdate in place
-                        // for the io_model/sampler (which run on CPU), and handle it properly
-                        // for decoder shards when we have the full state context.
-
-                        // For decoder shards: the SliceUpdate is used for KV cache updates.
-                        // The proper replacement requires read_state + mul + add + coreml_update_state.
-                        // Since we don't have the state_id here, we emit a placeholder
-                        // that uses the existing x (old cache) and update (new value).
-                        //
-                        // Pattern: add(mul(x, decay_mask), mul(update, write_mask))
-                        // where decay_mask = 0 at write position, 1 elsewhere
-                        // and write_mask = 1 at write position, 0 elsewhere
-                        //
-                        // But without knowing the exact write position and state_id,
-                        // we can't create the proper masks. So for now, we just
-                        // mark this as needing attention and skip the transformation.
-                        eprintln!("    [WARN] SliceUpdate '{}' cannot be auto-converted to state pattern without state_id. Leaving as-is.", name);
-
-                        // Don't add to su_replacements — leave the SliceUpdate in place
-                        // for now. This will need manual fixing for decoder shards.
-                        let _ = (su_id, su_dtype, su_compute, output_shape, new_nodes);
-                    }
-                }
-
-                for (idx, new_nodes) in su_replacements.into_iter().rev() {
-                    mir_nodes.remove(idx);
-                    for (i, node) in new_nodes.into_iter().enumerate() {
-                        mir_nodes.insert(idx + i, node);
-                    }
-                }
-                for (id, shape) in su_extra_shapes {
-                    node_shapes.insert(id, shape);
-                }
+                eprintln!("  [ANE legality] {} MILSliceUpdate remain (non-decode path, CPU-bound)", su_count);
             }
 
             // ── 5. Replace MILFill/MILFillLike with ANE-legal alternatives ──
@@ -3832,26 +3757,54 @@ impl MilLowerPass {
                 }
             }
 
-            // ── 7. Replace MILCos/MILSin with MILGather on precomputed tables ──
-            // The reference model uses gather to look up cos/sin values from
-            // precomputed tables, rather than computing cos/sin at runtime.
-            // For now, we leave cos/sin as-is since they may be ANE-compatible
-            // (the reference model doesn't use them because it precomputes tables,
-            // but cos/sin might still be schedulable on ANE).
+            // ── 7. Check for remaining MILCos/MILSin (should be zero after Sprint 67) ──
+            // The SIR→AIR decomposition now always uses Const+Gather instead of
+            // Cos/Sin. If any remain, it's a bug in the legality rewrite pass.
             let cos_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILCos { .. })).count();
             let sin_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILSin { .. })).count();
             if cos_count > 0 || sin_count > 0 {
-                eprintln!("  [ANE legality] {} MILCos + {} MILSin remain (may need gather-on-tables conversion)", cos_count, sin_count);
+                eprintln!("  [ANE legality] WARNING: {} MILCos + {} MILSin remain! These are ANE-illegal and should have been replaced by Const+Gather in the SIR→AIR decomposition.", cos_count, sin_count);
             }
 
-            // ── 8. Replace MILTile with split-based GQA ──
-            // The reference model handles GQA by splitting Q into individual heads
-            // and pairing each Q head with its corresponding KV head, rather than
-            // tiling KV heads. The SDPA decomposition (step above) already handles
-            // this correctly, so any remaining Tile ops are from the legacy path.
+            // ── 8. Check for remaining MILTile (should be zero after Sprint 67) ──
+            // The SIR→AIR decomposition now uses split-based GQA instead of Tile.
             let tile_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILTile { .. })).count();
             if tile_count > 0 {
-                eprintln!("  [ANE legality] {} MILTile ops remain (should be eliminated by SDPA decomposition)", tile_count);
+                eprintln!("  [ANE legality] WARNING: {} MILTile ops remain! These are ANE-illegal in decoder shards and should have been replaced by split-based GQA.", tile_count);
+            }
+
+            // ── 9. Check for remaining MILSliceUpdate (should be zero after Sprint 67) ──
+            // The SIR→AIR decomposition now uses masked blend (mul+add) for KV cache.
+            let su_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILSliceUpdate { .. })).count();
+            if su_count > 0 {
+                eprintln!("  [ANE legality] WARNING: {} MILSliceUpdate ops remain! These are ANE-illegal and should have been replaced by masked blend (mul+add) in the SIR→AIR decomposition.", su_count);
+            }
+
+            // ── 10. Check for remaining MILScaledDotProductAttention (should be zero after Sprint 67) ──
+            // The SIR→AIR decomposition now uses manual per-head matmul+softmax.
+            let sdpa_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILScaledDotProductAttention { .. })).count();
+            if sdpa_count > 0 {
+                eprintln!("  [ANE legality] WARNING: {} MILSDPA ops remain! These are absent from the reference model and may cause ANE issues.", sdpa_count);
+            }
+
+            // ── 11. Apply transpose_y=True to per-head attention matmuls ──
+            // The per-head attention pattern from decompose_decode_step produces:
+            //   logits = matmul(q_i, k_i) where k_i is [B, 1, seq, hd]
+            // The reference model uses: mb.matmul(x=q_i, y=k_blocks[kv_idx], transpose_y=True)
+            // Our AIR→MIR lowering produces MILMatMul without transpose_y for
+            // AirOp::MatMul. We need to detect the per-head attention matmul
+            // pattern and set transpose_y=True for the QK logits matmul.
+            //
+            // Pattern: MILMatMul where x is a "q_head_N" node and y is a "k_head_N" node
+            // This is fragile but matches the naming convention from decompose_decode_step.
+            for node in mir_nodes.iter_mut() {
+                if let MirOp::MILMatMul { name, x: _, y: _, transpose_y } = &mut node.op {
+                    if !*transpose_y && name.contains("_logits_") {
+                        // Per-head attention QK matmul needs transpose_y=True
+                        *transpose_y = true;
+                        eprintln!("    [ANE legality] Setting transpose_y=True for attention logits matmul '{}'", name);
+                    }
+                }
             }
 
             // ── Final audit: log all remaining op types ──

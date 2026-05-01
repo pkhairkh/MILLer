@@ -35,12 +35,16 @@ pub struct StaticTablesResult {
 pub fn run_static_tables_pass(graph: &mut SirGraph) -> StaticTablesResult {
     let mut result = StaticTablesResult { rope_converted: 0, tables_inserted: 0 };
 
-    // Find RoPETransform nodes and collect their table references
+    // Find RoPETransform and DecodeStep nodes and collect their table references
     let rope_info: Vec<(String, String, SirMetadata)> = graph
         .nodes
         .iter()
         .filter_map(|node| match &node.op {
             SirOp::RoPETransform { tables, .. } => {
+                Some((node.id.0.clone(), tables.clone(), node.metadata.clone()))
+            }
+            SirOp::DecodeStep { rope_tables: Some(tables), .. } => {
+                // DecodeStep also needs static tables for RoPE
                 Some((node.id.0.clone(), tables.clone(), node.metadata.clone()))
             }
             _ => None,

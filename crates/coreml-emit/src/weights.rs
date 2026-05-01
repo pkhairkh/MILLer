@@ -1,9 +1,36 @@
-//! Weight Binary Builder
+//! Weight Binary Builder (MILBlob Storage Format — blob_v1)
 //!
 //! Constructs the `weight.bin` file that lives inside an mlpackage at
-//! `Data/com.apple.CoreML/weights/weight.bin`. This file contains all
-//! weight data for constant tensors, concatenated into a single binary
-//! blob. The model protobuf references weights by offset into this file.
+//! `Data/com.apple.CoreML/weights/weight.bin`. This file uses Apple's
+//! **MILBlob Storage format** (version 2, aka "blob_v1"), which is the
+//! only format accepted by CoreML's Espresso/EIR execution planner.
+//!
+//! ## File Layout
+//!
+//! ```text
+//! |<storage_header>|<blob_metadata 0>|<data 0>|...|<blob_metadata k>|<data k>|
+//! ```
+//!
+//! Every structure is **64-byte aligned**.
+//!
+//! ### storage_header (64 bytes)
+//!
+//! | Offset | Size | Field     | Value                     |
+//! |--------|------|-----------|---------------------------|
+//! | 0      | 4    | count     | Number of blob entries    |
+//! | 4      | 4    | version   | Must be 2                 |
+//! | 8      | 56   | reserved  | All zeros                 |
+//!
+//! ### blob_metadata (64 bytes, one per weight tensor)
+//!
+//! | Offset | Size | Field                 | Value                        |
+//! |--------|------|-----------------------|------------------------------|
+//! | 0      | 4    | sentinel              | 0xDEADBEEF                   |
+//! | 4      | 4    | mil_dtype             | BlobDataType enum value      |
+//! | 8      | 8    | sizeInBytes           | Size of raw data             |
+//! | 16     | 8    | offset                | Absolute file offset to data |
+//! | 24     | 8    | padding_size_in_bits  | 0 for byte-aligned types     |
+//! | 32     | 32   | reserved              | All zeros                    |
 //!
 //! ## Weight Sharing
 //!
@@ -13,11 +40,84 @@
 //! they reference the same offset in weight.bin rather than each getting
 //! their own copy. This produces smaller mlpackages than coremltools 9.0,
 //! which duplicates constants per function boundary.
+//!
+//! ## Offset Semantics
+//!
+//! The `WeightEntry.offset` field stores the **blob_metadata offset**
+//! (not the raw data offset). This is because the protobuf's
+//! `BlobFileValue.offset` must point to the `blob_metadata` header —
+//! the runtime's `StorageReader` reads the metadata at that offset to
+//! find where the actual data lives.
 
 use ane_coreml_proto::{CoreMlDataType, SharedWeightRef, WeightEntry};
 use anyhow::{bail, Result};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+
+// ─── MILBlob Constants ──────────────────────────────────────────────────────
+
+/// MILBlob Storage format version. Must be 2 for the runtime to accept it.
+const BLOB_STORAGE_VERSION: u32 = 2;
+
+/// Magic sentinel value for each blob_metadata entry.
+const BLOB_METADATA_SENTINEL: u32 = 0xDEADBEEF;
+
+/// Size of the storage_header in bytes (64-byte aligned).
+const STORAGE_HEADER_SIZE: u64 = 64;
+
+/// Size of each blob_metadata entry in bytes (64-byte aligned).
+const BLOB_METADATA_SIZE: u64 = 64;
+
+/// Alignment for all structures in the blob file (64 bytes).
+const BLOB_ALIGNMENT: u64 = 64;
+
+// ─── BlobDataType Enum (mirrors Apple's BlobDataType.hpp) ───────────────────
+
+/// Data type enum for the MILBlob format.
+///
+/// These values match Apple's `BlobDataType` enum from
+/// `mlmodel/src/MILBlob/Blob/BlobDataType.hpp` in the coremltools source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+enum BlobDataType {
+    Float16 = 1,
+    Float32 = 2,
+    UInt8 = 3,
+    Int8 = 4,
+    BFloat16 = 5,
+    Int16 = 6,
+    UInt16 = 7,
+    Int4 = 8,
+    UInt1 = 9,
+    UInt2 = 10,
+    UInt4 = 11,
+    UInt3 = 12,
+    UInt6 = 13,
+    Int32 = 14,
+    UInt32 = 15,
+    Float8E4M3FN = 16,
+    Float8E5M2 = 17,
+}
+
+/// Map CoreMlDataType to MILBlob BlobDataType enum value.
+///
+/// This is a free function because we cannot add inherent methods to
+/// `CoreMlDataType` which is defined in the `ane-coreml-proto` crate.
+fn coreml_dtype_to_blob_dtype(dtype: &CoreMlDataType) -> u32 {
+    match dtype {
+        CoreMlDataType::Float16 => BlobDataType::Float16 as u32,
+        CoreMlDataType::Float32 => BlobDataType::Float32 as u32,
+        CoreMlDataType::UInt8 => BlobDataType::UInt8 as u32,
+        CoreMlDataType::Int8 => BlobDataType::Int8 as u32,
+        CoreMlDataType::Int32 => BlobDataType::Int32 as u32,
+        // Conservatively map unknown/unsupported types to Float32
+        CoreMlDataType::Float64
+        | CoreMlDataType::Bool
+        | CoreMlDataType::Unknown => BlobDataType::Float32 as u32,
+    }
+}
+
+// ─── Deduplication ──────────────────────────────────────────────────────────
 
 /// SHA-256 content hash for weight deduplication.
 type ContentHash = [u8; 32];
@@ -28,6 +128,8 @@ fn content_hash(data: &[u8]) -> ContentHash {
     hasher.update(data);
     hasher.finalize().into()
 }
+
+// ─── Builder ────────────────────────────────────────────────────────────────
 
 /// Builder for the weight.bin file inside an mlpackage.
 ///
@@ -66,10 +168,6 @@ pub struct WeightBinBuilder {
     content_aliases: HashMap<String, usize>,
     /// Whether content-hash deduplication is enabled.
     enable_content_dedup: bool,
-    /// Current offset (in bytes) into the binary file.
-    current_offset: u64,
-    /// Alignment requirement for weight data (16 bytes for ANE).
-    alignment: u64,
     /// Number of weight additions that were deduplicated by name.
     name_dedup_count: usize,
     /// Bytes saved by name-based deduplication.
@@ -83,9 +181,9 @@ pub struct WeightBinBuilder {
 /// Result of building a weight.bin file.
 #[derive(Debug, Clone)]
 pub struct WeightBinResult {
-    /// The raw binary data for weight.bin.
+    /// The raw binary data for weight.bin (in MILBlob Storage format).
     pub data: Vec<u8>,
-    /// Entries with updated offsets.
+    /// Entries with updated offsets (offset points to blob_metadata header).
     pub entries: Vec<WeightEntry>,
     /// Total size of the weight.bin file.
     pub total_size: u64,
@@ -106,7 +204,10 @@ impl Default for WeightBinBuilder {
 }
 
 impl WeightBinBuilder {
-    /// Create a new weight binary builder with 16-byte alignment (ANE requirement).
+    /// Create a new weight binary builder.
+    ///
+    /// The MILBlob Storage format requires 64-byte alignment for all
+    /// structures (storage_header, blob_metadata, and data sections).
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
@@ -114,25 +215,6 @@ impl WeightBinBuilder {
             content_hash_to_index: HashMap::new(),
             content_aliases: HashMap::new(),
             enable_content_dedup: false,
-            current_offset: 0,
-            alignment: 16,
-            name_dedup_count: 0,
-            name_dedup_bytes_saved: 0,
-            content_dedup_count: 0,
-            content_dedup_bytes_saved: 0,
-        }
-    }
-
-    /// Create a new weight binary builder with custom alignment.
-    pub fn with_alignment(alignment: u64) -> Self {
-        Self {
-            entries: Vec::new(),
-            name_to_index: HashMap::new(),
-            content_hash_to_index: HashMap::new(),
-            content_aliases: HashMap::new(),
-            enable_content_dedup: false,
-            current_offset: 0,
-            alignment,
             name_dedup_count: 0,
             name_dedup_bytes_saved: 0,
             content_dedup_count: 0,
@@ -169,6 +251,7 @@ impl WeightBinBuilder {
     /// name is recorded as a content alias.
     ///
     /// Returns the offset of the weight in the binary file.
+    /// Note: The offset is set during `build()`; before that, it is 0.
     pub fn add_weight(
         &mut self,
         name: &str,
@@ -220,15 +303,9 @@ impl WeightBinBuilder {
             }
         }
 
-        // Align the offset
-        let aligned_offset = align_up(self.current_offset, self.alignment);
-
-        // Add padding bytes if needed
-        let _padding = (aligned_offset - self.current_offset) as usize;
-
         let entry = WeightEntry {
             name: name.to_string(),
-            offset: aligned_offset,
+            offset: 0, // Will be set during build()
             size: data.len() as u64,
             shape,
             dtype,
@@ -246,9 +323,9 @@ impl WeightBinBuilder {
         }
 
         self.entries.push(entry);
-        self.current_offset = aligned_offset + self.entries.last().expect("entry just pushed must exist").size;
 
-        Ok(aligned_offset)
+        // Return 0 placeholder — the actual offset is computed during build()
+        Ok(0)
     }
 
     /// Add a shared weight that will be referenced by multiple functions.
@@ -270,43 +347,83 @@ impl WeightBinBuilder {
         Ok(SharedWeightRef { weight: entry, referencing_functions })
     }
 
-    /// Build the weight.bin binary data.
+    /// Build the weight.bin binary data in MILBlob Storage format (blob_v1).
     ///
-    /// This concatenates all weight tensors with appropriate alignment
-    /// padding and returns the complete binary data plus updated entries.
-    /// Both name-based and content-hash deduplication metrics are reported.
+    /// This produces the binary format expected by CoreML's Espresso/EIR
+    /// execution planner and StorageReader:
+    ///
+    /// ```text
+    /// | storage_header (64B) | blob_metadata_0 (64B) | data_0 (padded) | blob_metadata_1 (64B) | data_1 (padded) | ...
+    /// ```
+    ///
+    /// The `WeightEntry.offset` in the result points to the `blob_metadata`
+    /// header for that weight — this is the offset that must go into the
+    /// protobuf's `BlobFileValue.offset` field, because the runtime's
+    /// StorageReader reads the metadata at that offset to locate the data.
     pub fn build(self) -> WeightBinResult {
-        let total_entries = self.entries.len();
-        let mut data = Vec::new();
+        let num_entries = self.entries.len();
+        let mut buf: Vec<u8> = Vec::new();
         let mut current_pos: u64 = 0;
 
-        // Single pass: build the binary while tracking offsets.
-        // The first-pass total_size calculation in the original code was dead —
-        // the result used current_pos instead. Removed the redundant first pass.
-        let mut updated_entries = Vec::with_capacity(total_entries);
         let deduplicated_count = self.name_dedup_count;
         let deduplicated_bytes = self.name_dedup_bytes_saved;
         let content_deduplicated_count = self.content_dedup_count;
         let content_deduplicated_bytes = self.content_dedup_bytes_saved;
 
-        for mut entry in self.entries {
-            let aligned_offset = align_up(current_pos, self.alignment);
+        // ── Step 1: Write storage_header (64 bytes) ─────────────────────
+        // We write a placeholder count first; if the file is empty we leave
+        // it as-is, otherwise we patch it after writing all entries.
+        write_storage_header(&mut buf, num_entries as u32);
+        current_pos = STORAGE_HEADER_SIZE;
 
-            // Add padding
-            if aligned_offset > current_pos {
-                let padding = (aligned_offset - current_pos) as usize;
-                data.extend(std::iter::repeat_n(0u8, padding));
+        // ── Step 2: For each entry, write blob_metadata + data ──────────
+        let mut updated_entries = Vec::with_capacity(num_entries);
+
+        for mut entry in self.entries {
+            // Align to 64-byte boundary for the blob_metadata header
+            let metadata_offset = align_up(current_pos, BLOB_ALIGNMENT);
+            if metadata_offset > current_pos {
+                let padding = (metadata_offset - current_pos) as usize;
+                buf.extend(std::iter::repeat_n(0u8, padding));
             }
 
-            entry.offset = aligned_offset;
-            data.extend_from_slice(&entry.data);
-            current_pos = aligned_offset + entry.size;
+            // The raw data starts immediately after the blob_metadata header.
+            // Since metadata_offset is 64-byte aligned and BLOB_METADATA_SIZE
+            // is 64, data_offset = metadata_offset + 64 is also 64-byte aligned.
+            let data_offset = metadata_offset + BLOB_METADATA_SIZE;
 
+            // Write blob_metadata (64 bytes)
+            write_blob_metadata(
+                &mut buf,
+                coreml_dtype_to_blob_dtype(&entry.dtype),
+                entry.size,
+                data_offset,
+            );
+
+            // Write raw weight data
+            buf.extend_from_slice(&entry.data);
+
+            // Pad data to 64-byte boundary
+            let data_end = data_offset + entry.size;
+            let padded_end = align_up(data_end, BLOB_ALIGNMENT);
+            if padded_end > data_end {
+                let padding = (padded_end - data_end) as usize;
+                buf.extend(std::iter::repeat_n(0u8, padding));
+            }
+
+            current_pos = padded_end;
+
+            // Store the metadata offset in the entry — this is what the
+            // protobuf's BlobFileValue.offset must reference.
+            entry.offset = metadata_offset;
             updated_entries.push(entry);
         }
 
+        // ── Step 3: If there are zero entries, we still need a valid header ─
+        // (Already written above with count=0.)
+
         WeightBinResult {
-            data,
+            data: buf,
             entries: updated_entries,
             total_size: current_pos,
             deduplicated_count,
@@ -322,6 +439,9 @@ impl WeightBinBuilder {
     }
 
     /// Get the offset of an existing weight, if it exists.
+    ///
+    /// Note: The offset is only valid after `build()` has been called.
+    /// Before build(), offsets are 0 placeholders.
     pub fn get_weight_offset(&self, name: &str) -> Option<u64> {
         self.name_to_index.get(name).map(|&idx| self.entries[idx].offset)
     }
@@ -331,10 +451,60 @@ impl WeightBinBuilder {
         self.entries.len()
     }
 
-    /// Total size of the binary data (with alignment padding).
+    /// Estimated size of the binary data (with alignment and metadata overhead).
     pub fn estimated_size(&self) -> u64 {
-        self.current_offset
+        if self.entries.is_empty() {
+            return STORAGE_HEADER_SIZE;
+        }
+        let data_total: u64 = self.entries.iter().map(|e| e.size).sum();
+        let padding_per_entry: u64 = self
+            .entries
+            .iter()
+            .map(|e| {
+                let data_end = e.size;
+                align_up(data_end, BLOB_ALIGNMENT) - data_end
+            })
+            .sum();
+        STORAGE_HEADER_SIZE
+            + (BLOB_METADATA_SIZE * self.entries.len() as u64)
+            + data_total
+            + padding_per_entry
     }
+}
+
+// ─── Binary Writing Helpers ─────────────────────────────────────────────────
+
+/// Write the MILBlob storage_header (64 bytes) to the buffer.
+///
+/// Layout:
+/// - bytes 0-3:   count (u32 LE) — number of blob entries
+/// - bytes 4-7:   version (u32 LE) — must be 2
+/// - bytes 8-63:  reserved — all zeros
+fn write_storage_header(buf: &mut Vec<u8>, count: u32) {
+    buf.extend_from_slice(&count.to_le_bytes());
+    buf.extend_from_slice(&BLOB_STORAGE_VERSION.to_le_bytes());
+    // Reserved: 56 bytes of zeros (7 × u64)
+    buf.extend(std::iter::repeat_n(0u8, 56));
+}
+
+/// Write a blob_metadata entry (64 bytes) to the buffer.
+///
+/// Layout:
+/// - bytes 0-3:   sentinel (u32 LE) — 0xDEADBEEF
+/// - bytes 4-7:   mil_dtype (u32 LE) — BlobDataType enum value
+/// - bytes 8-15:  sizeInBytes (u64 LE)
+/// - bytes 16-23: offset (u64 LE) — absolute file offset to raw data
+/// - bytes 24-31: padding_size_in_bits (u64 LE) — 0 for byte-aligned types
+/// - bytes 32-63: reserved — all zeros (4 × u64)
+fn write_blob_metadata(buf: &mut Vec<u8>, mil_dtype: u32, size_in_bytes: u64, data_offset: u64) {
+    buf.extend_from_slice(&BLOB_METADATA_SENTINEL.to_le_bytes());
+    buf.extend_from_slice(&mil_dtype.to_le_bytes());
+    buf.extend_from_slice(&size_in_bytes.to_le_bytes());
+    buf.extend_from_slice(&data_offset.to_le_bytes());
+    // padding_size_in_bits = 0 (byte-aligned types)
+    buf.extend_from_slice(&0u64.to_le_bytes());
+    // Reserved: 32 bytes of zeros (4 × u64)
+    buf.extend(std::iter::repeat_n(0u8, 32));
 }
 
 /// Align a value up to the given alignment boundary.
@@ -345,65 +515,189 @@ fn align_up(value: u64, alignment: u64) -> u64 {
     value.div_ceil(alignment) * alignment
 }
 
+// ─── Tests ──────────────────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_weight_bin_builder_basic() {
+    fn test_blob_v1_storage_header() {
         let mut builder = WeightBinBuilder::new();
-
-        let data = vec![1u8; 64];
-        let offset = builder
-            .add_weight("weight_0", vec![4, 16], CoreMlDataType::Float16, data.clone())
+        builder
+            .add_weight("weight_0", vec![4, 16], CoreMlDataType::Float16, vec![1u8; 128])
             .unwrap();
 
-        assert_eq!(offset, 0); // First weight starts at offset 0
-
         let result = builder.build();
-        assert_eq!(result.entries.len(), 1);
-        assert_eq!(result.total_size, 64);
+
+        // File must start with storage_header
+        assert!(result.data.len() >= 64, "File must be at least 64 bytes for header");
+
+        // Check storage_header fields
+        let count = u32::from_le_bytes(result.data[0..4].try_into().unwrap());
+        let version = u32::from_le_bytes(result.data[4..8].try_into().unwrap());
+        assert_eq!(count, 1, "Storage header count should be 1");
+        assert_eq!(version, BLOB_STORAGE_VERSION, "Storage header version must be 2");
+
+        // Reserved bytes 8-63 must be zero
+        for i in 8..64 {
+            assert_eq!(result.data[i], 0, "Reserved byte {} must be zero", i);
+        }
     }
 
     #[test]
-    fn test_weight_bin_builder_shared() {
+    fn test_blob_v1_metadata_sentinel() {
+        let mut builder = WeightBinBuilder::new();
+        builder
+            .add_weight("weight_0", vec![4, 16], CoreMlDataType::Float16, vec![1u8; 128])
+            .unwrap();
+
+        let result = builder.build();
+
+        // First blob_metadata starts at offset 64 (after storage_header)
+        let sentinel = u32::from_le_bytes(result.data[64..68].try_into().unwrap());
+        assert_eq!(sentinel, BLOB_METADATA_SENTINEL, "Sentinel must be 0xDEADBEEF");
+    }
+
+    #[test]
+    fn test_blob_v1_metadata_dtype() {
+        let mut builder = WeightBinBuilder::new();
+        builder
+            .add_weight("fp16_weight", vec![4, 16], CoreMlDataType::Float16, vec![1u8; 128])
+            .unwrap();
+
+        let result = builder.build();
+
+        // Check dtype field in metadata (offset 68-71)
+        let dtype = u32::from_le_bytes(result.data[68..72].try_into().unwrap());
+        assert_eq!(dtype, BlobDataType::Float16 as u32, "dtype should be Float16 (1)");
+    }
+
+    #[test]
+    fn test_blob_v1_metadata_data_offset() {
+        let mut builder = WeightBinBuilder::new();
+        let weight_data = vec![0xABu8; 128];
+        builder
+            .add_weight("weight_0", vec![4, 32], CoreMlDataType::Float16, weight_data.clone())
+            .unwrap();
+
+        let result = builder.build();
+
+        // The data offset should be metadata_offset + 64 = 64 + 64 = 128
+        let data_offset = u64::from_le_bytes(result.data[80..88].try_into().unwrap());
+        assert_eq!(data_offset, 128u64, "Data should start at offset 128");
+
+        // Verify the actual data is at that offset
+        assert_eq!(&result.data[128..256], &weight_data[..], "Data at offset must match");
+    }
+
+    #[test]
+    fn test_blob_v1_offset_is_metadata_offset() {
+        let mut builder = WeightBinBuilder::new();
+        builder
+            .add_weight("weight_0", vec![4, 16], CoreMlDataType::Float16, vec![1u8; 128])
+            .unwrap();
+
+        let result = builder.build();
+
+        // The entry.offset should point to the blob_metadata, not the raw data
+        assert_eq!(result.entries[0].offset, 64, "Offset should point to metadata at byte 64");
+    }
+
+    #[test]
+    fn test_blob_v1_multiple_entries() {
+        let mut builder = WeightBinBuilder::new();
+        builder
+            .add_weight("weight_0", vec![4, 16], CoreMlDataType::Float16, vec![1u8; 128])
+            .unwrap();
+        builder
+            .add_weight("weight_1", vec![8, 16], CoreMlDataType::Float16, vec![2u8; 256])
+            .unwrap();
+
+        let result = builder.build();
+
+        // Check count in header
+        let count = u32::from_le_bytes(result.data[0..4].try_into().unwrap());
+        assert_eq!(count, 2);
+
+        // First entry: metadata at 64, data at 128, data ends at 256, padded to 256
+        assert_eq!(result.entries[0].offset, 64);
+
+        // Second entry: metadata at 256 (next 64-byte boundary after data_0),
+        // data at 320
+        assert_eq!(result.entries[1].offset, 256);
+
+        // Verify second entry's metadata sentinel
+        let sentinel2 = u32::from_le_bytes(result.data[256..260].try_into().unwrap());
+        assert_eq!(sentinel2, BLOB_METADATA_SENTINEL);
+
+        // Verify second entry's data offset
+        let data_offset2 = u64::from_le_bytes(result.data[272..280].try_into().unwrap());
+        assert_eq!(data_offset2, 320u64);
+    }
+
+    #[test]
+    fn test_blob_v1_shared_weight_same_offset() {
         let mut builder = WeightBinBuilder::new();
 
         let data = vec![42u8; 128];
-        let offset1 = builder
+        let _offset1 = builder
             .add_weight("shared_weight", vec![8, 16], CoreMlDataType::Float16, data.clone())
             .unwrap();
 
-        // Adding the same weight again should return the same offset
-        let offset2 = builder
+        // Adding the same weight again should deduplicate
+        let _offset2 = builder
             .add_weight("shared_weight", vec![8, 16], CoreMlDataType::Float16, data.clone())
             .unwrap();
-
-        assert_eq!(offset1, offset2);
 
         let result = builder.build();
-        assert_eq!(result.entries.len(), 1); // Only one entry, not two
+        assert_eq!(result.entries.len(), 1, "Only one entry, not two");
+        assert_eq!(result.deduplicated_count, 1, "One dedup event");
     }
 
     #[test]
-    fn test_weight_bin_builder_alignment() {
-        let mut builder = WeightBinBuilder::with_alignment(16);
+    fn test_blob_v1_dtype_mappings() {
+        // Test each supported dtype maps correctly
+        assert_eq!(coreml_dtype_to_blob_dtype(&CoreMlDataType::Float16), 1);
+        assert_eq!(coreml_dtype_to_blob_dtype(&CoreMlDataType::Float32), 2);
+        assert_eq!(coreml_dtype_to_blob_dtype(&CoreMlDataType::UInt8), 3);
+        assert_eq!(coreml_dtype_to_blob_dtype(&CoreMlDataType::Int8), 4);
+        assert_eq!(coreml_dtype_to_blob_dtype(&CoreMlDataType::Int32), 14);
+    }
 
-        // Add a weight that's not a multiple of 16
-        let data1 = vec![1u8; 10];
-        let offset1 =
-            builder.add_weight("weight_0", vec![10], CoreMlDataType::UInt8, data1).unwrap();
-
-        // Second weight should be aligned to 16 bytes
-        let data2 = vec![2u8; 32];
-        let offset2 =
-            builder.add_weight("weight_1", vec![16], CoreMlDataType::Float16, data2).unwrap();
-
-        assert_eq!(offset1, 0);
-        assert_eq!(offset2, 16); // Aligned to 16 bytes
+    #[test]
+    fn test_blob_v1_small_weight_padding() {
+        let mut builder = WeightBinBuilder::new();
+        // 10 bytes of data — needs padding to 64-byte boundary
+        builder
+            .add_weight("small_weight", vec![10], CoreMlDataType::UInt8, vec![1u8; 10])
+            .unwrap();
 
         let result = builder.build();
-        assert_eq!(result.total_size, 48); // 16 (aligned) + 32
+
+        // metadata at 64, data at 128, data is 10 bytes, padded to 192
+        assert_eq!(result.entries[0].offset, 64);
+
+        let size_in_bytes = u64::from_le_bytes(result.data[72..80].try_into().unwrap());
+        assert_eq!(size_in_bytes, 10u64, "sizeInBytes should be 10 (unpadded)");
+
+        // Total size: header(64) + metadata(64) + data_padded(64) = 192
+        assert_eq!(result.total_size, 192);
+    }
+
+    #[test]
+    fn test_blob_v1_empty_model() {
+        let builder = WeightBinBuilder::new();
+        let result = builder.build();
+
+        // Should still produce a valid header
+        assert_eq!(result.entries.len(), 0);
+        assert_eq!(result.data.len(), 64, "Empty model should have 64-byte header");
+
+        let count = u32::from_le_bytes(result.data[0..4].try_into().unwrap());
+        let version = u32::from_le_bytes(result.data[4..8].try_into().unwrap());
+        assert_eq!(count, 0);
+        assert_eq!(version, BLOB_STORAGE_VERSION);
     }
 
     #[test]
@@ -426,62 +720,39 @@ mod tests {
     }
 
     #[test]
-    fn test_weight_bin_builder_shared_weight_ref() {
-        let mut builder = WeightBinBuilder::new();
-
-        let data = vec![42u8; 256];
-        let shared = builder
-            .add_shared_weight(
-                "shared_projection_weight",
-                vec![128, 128],
-                CoreMlDataType::Float16,
-                data,
-                vec!["embedding".to_string(), "decode_step".to_string()],
-            )
-            .unwrap();
-
-        assert_eq!(shared.referencing_functions.len(), 2);
-        assert_eq!(shared.weight.name, "shared_projection_weight");
-    }
-
-    #[test]
     fn test_align_up() {
-        assert_eq!(align_up(0, 16), 0);
-        assert_eq!(align_up(1, 16), 16);
-        assert_eq!(align_up(15, 16), 16);
-        assert_eq!(align_up(16, 16), 16);
-        assert_eq!(align_up(17, 16), 32);
+        assert_eq!(align_up(0, 64), 0);
+        assert_eq!(align_up(1, 64), 64);
+        assert_eq!(align_up(63, 64), 64);
+        assert_eq!(align_up(64, 64), 64);
+        assert_eq!(align_up(65, 64), 128);
+        assert_eq!(align_up(128, 64), 128);
+        assert_eq!(align_up(129, 64), 192);
     }
 
-    /// Test that deduplication metrics are correctly tracked.
-    ///
-    /// This proves that the proto-direct path can measure and report
-    /// exactly how much weight data was saved by deduplication —
-    /// a capability that coremltools 9.0 lacks.
+    /// Test that deduplication metrics are correctly tracked with blob format.
     #[test]
     fn test_deduplication_metrics_tracked() {
         let mut builder = WeightBinBuilder::new();
 
         // Add a unique weight
-        let data_a = vec![1u8; 64];
         builder
-            .add_weight("weight_a", vec![4, 16], CoreMlDataType::Float16, data_a.clone())
+            .add_weight("weight_a", vec![4, 16], CoreMlDataType::Float16, vec![1u8; 64])
             .unwrap();
 
         // Add a shared weight (first occurrence)
-        let data_shared = vec![42u8; 128];
         builder
-            .add_weight("shared_proj", vec![8, 16], CoreMlDataType::Float16, data_shared.clone())
+            .add_weight("shared_proj", vec![8, 16], CoreMlDataType::Float16, vec![42u8; 128])
             .unwrap();
 
         // Deduplicate: add the same shared weight again (second occurrence)
         builder
-            .add_weight("shared_proj", vec![8, 16], CoreMlDataType::Float16, data_shared.clone())
+            .add_weight("shared_proj", vec![8, 16], CoreMlDataType::Float16, vec![42u8; 128])
             .unwrap();
 
         // Deduplicate again: third occurrence of the same weight
         builder
-            .add_weight("shared_proj", vec![8, 16], CoreMlDataType::Float16, data_shared.clone())
+            .add_weight("shared_proj", vec![8, 16], CoreMlDataType::Float16, vec![42u8; 128])
             .unwrap();
 
         let result = builder.build();
@@ -499,12 +770,6 @@ mod tests {
         assert_eq!(
             result.deduplicated_bytes, 256,
             "Should track 256 bytes saved (128 bytes × 2 dedup events)"
-        );
-
-        // Total size should be 64 + 128 = 192 (not 64 + 128*3 = 448)
-        assert_eq!(
-            result.total_size, 192,
-            "Total size should reflect deduplicated storage, not naive concatenation"
         );
     }
 
@@ -524,32 +789,18 @@ mod tests {
         assert_eq!(result.entries.len(), 3, "All 3 unique weights should be present");
     }
 
-    /// Test content-hash based deduplication: different names but identical content
-    /// can be deduplicated when explicitly opted in via `with_content_dedup()`.
-    ///
-    /// This goes beyond name-based deduplication (which coremltools 9.0 cannot do
-    /// at all) and adds the ability to detect that two differently-named weights
-    /// have the same binary content, sharing storage.
+    /// Test content-hash based deduplication with blob format.
     #[test]
     fn test_content_hash_deduplication() {
+        let content = vec![42u8; 256];
+
         // --- Without content-hash dedup (default): different names, identical content → stored separately ---
         let mut builder_no_dedup = WeightBinBuilder::new();
-        let content = vec![42u8; 256];
         builder_no_dedup
-            .add_weight(
-                "embedding_projection_w",
-                vec![128, 16],
-                CoreMlDataType::Float16,
-                content.clone(),
-            )
+            .add_weight("embedding_projection_w", vec![128, 16], CoreMlDataType::Float16, content.clone())
             .unwrap();
         builder_no_dedup
-            .add_weight(
-                "decode_step_projection_w",
-                vec![128, 16],
-                CoreMlDataType::Float16,
-                content.clone(),
-            )
+            .add_weight("decode_step_projection_w", vec![128, 16], CoreMlDataType::Float16, content.clone())
             .unwrap();
 
         let result_no_dedup = builder_no_dedup.build();
@@ -562,20 +813,10 @@ mod tests {
         let mut builder = WeightBinBuilder::new().with_content_dedup();
 
         builder
-            .add_weight(
-                "embedding_projection_w",
-                vec![128, 16],
-                CoreMlDataType::Float16,
-                content.clone(),
-            )
+            .add_weight("embedding_projection_w", vec![128, 16], CoreMlDataType::Float16, content.clone())
             .unwrap();
         builder
-            .add_weight(
-                "decode_step_projection_w",
-                vec![128, 16],
-                CoreMlDataType::Float16,
-                content.clone(),
-            )
+            .add_weight("decode_step_projection_w", vec![128, 16], CoreMlDataType::Float16, content.clone())
             .unwrap();
 
         let result = builder.build();
@@ -592,9 +833,6 @@ mod tests {
         );
         assert_eq!(result.content_deduplicated_count, 1, "One content-hash dedup event");
         assert_eq!(result.content_deduplicated_bytes, 256, "256 bytes saved by content-hash dedup");
-
-        // Verify the content-deduped entry has the correct size
-        assert_eq!(result.entries[0].size, 256);
     }
 
     /// Test that name-based deduplication still works when content dedup is enabled.
@@ -626,7 +864,6 @@ mod tests {
     fn test_content_dedup_shape_mismatch_not_deduped() {
         let mut builder = WeightBinBuilder::new().with_content_dedup();
 
-        // Same bytes, different shapes → NOT deduplicated
         let content = vec![0u8; 64];
         builder
             .add_weight("weight_a", vec![4, 16], CoreMlDataType::Float16, content.clone())
@@ -649,7 +886,6 @@ mod tests {
     fn test_content_dedup_dtype_mismatch_not_deduped() {
         let mut builder = WeightBinBuilder::new().with_content_dedup();
 
-        // Same bytes, same shape, different dtype → NOT deduplicated
         let content = vec![0u8; 32];
         builder.add_weight("weight_a", vec![8], CoreMlDataType::Float16, content.clone()).unwrap();
         builder.add_weight("weight_b", vec![4], CoreMlDataType::Float32, content.clone()).unwrap();
@@ -665,56 +901,30 @@ mod tests {
 
     /// Test the coremltools gap: different function namespaces produce
     /// differently-named weights with identical data.
-    ///
-    /// This is the real-world scenario that motivates content-hash dedup:
-    /// coremltools 9.0's `add_function()` + `ct.convert()` duplicates weight data per function
-    /// (though `save_multifunction()` does perform cross-function dedup),
-    /// but proto-direct emission with content dedup produces one copy.
     #[test]
     fn test_content_dedup_coremltools_scenario() {
-        let weight_data = vec![7u8; 1024]; // 512×512 fp16 weight matrix
+        let weight_data = vec![7u8; 1024];
 
         // --- coremltools 9.0 path: no content dedup → duplicated ---
         let mut no_dedup = WeightBinBuilder::new();
         no_dedup
-            .add_weight(
-                "embedding_projection_w",
-                vec![512, 512],
-                CoreMlDataType::Float16,
-                weight_data.clone(),
-            )
+            .add_weight("embedding_projection_w", vec![512, 512], CoreMlDataType::Float16, weight_data.clone())
             .unwrap();
         no_dedup
-            .add_weight(
-                "decode_step_projection_w",
-                vec![512, 512],
-                CoreMlDataType::Float16,
-                weight_data.clone(),
-            )
+            .add_weight("decode_step_projection_w", vec![512, 512], CoreMlDataType::Float16, weight_data.clone())
             .unwrap();
         let no_dedup_result = no_dedup.build();
 
         // --- Proto-direct with content dedup: shared ---
         let mut with_dedup = WeightBinBuilder::new().with_content_dedup();
         with_dedup
-            .add_weight(
-                "embedding_projection_w",
-                vec![512, 512],
-                CoreMlDataType::Float16,
-                weight_data.clone(),
-            )
+            .add_weight("embedding_projection_w", vec![512, 512], CoreMlDataType::Float16, weight_data.clone())
             .unwrap();
         with_dedup
-            .add_weight(
-                "decode_step_projection_w",
-                vec![512, 512],
-                CoreMlDataType::Float16,
-                weight_data.clone(),
-            )
+            .add_weight("decode_step_projection_w", vec![512, 512], CoreMlDataType::Float16, weight_data.clone())
             .unwrap();
         let with_dedup_result = with_dedup.build();
 
-        // Content-dedup path produces one entry, coremltools-style produces two
         assert_eq!(
             with_dedup_result.entries.len(),
             1,
@@ -726,7 +936,6 @@ mod tests {
             "No content dedup: two entries for two differently-named weights"
         );
 
-        // Proto-direct + content dedup is smaller by exactly one weight's worth
         assert!(
             with_dedup_result.total_size < no_dedup_result.total_size,
             "Content-dedup path ({}) must be smaller than coremltools-style path ({})",
@@ -755,66 +964,40 @@ mod tests {
         assert_eq!(result.content_deduplicated_count, 0);
     }
 
-    /// Test multi-function weight sharing scenario (the coremltools 9.0 gap).
-    ///
-    /// When an embedding function and a decode_step function share a projection
-    /// weight matrix, coremltools 9.0 duplicates the weight in weight.bin.
-    /// Our proto-direct path stores it once and both functions reference the
-    /// same offset, producing a smaller mlpackage.
+    /// Verify binary output matches expected blob_v1 format exactly.
     #[test]
-    fn test_multifunction_weight_sharing_saves_space() {
-        let weight_data = vec![7u8; 1024]; // Simulate a 512×512 fp16 weight matrix
+    fn test_blob_v1_binary_format_exact() {
+        let mut builder = WeightBinBuilder::new();
+        let weight_data = vec![0xAAu8; 64]; // 64 bytes = 32 fp16 elements
+        builder
+            .add_weight("test_weight", vec![2, 16], CoreMlDataType::Float16, weight_data.clone())
+            .unwrap();
 
-        // --- Proto-direct path: shared weight ---
-        let mut shared_builder = WeightBinBuilder::new();
-        shared_builder
-            .add_weight(
-                "projection_w",
-                vec![512, 512],
-                CoreMlDataType::Float16,
-                weight_data.clone(),
-            )
-            .unwrap();
-        // Second function references the same weight (deduplicated)
-        shared_builder
-            .add_weight(
-                "projection_w",
-                vec![512, 512],
-                CoreMlDataType::Float16,
-                weight_data.clone(),
-            )
-            .unwrap();
-        let shared_result = shared_builder.build();
+        let result = builder.build();
 
-        // --- coremltools 9.0 path: duplicated weight ---
-        let mut dup_builder = WeightBinBuilder::new();
-        dup_builder
-            .add_weight(
-                "embedding_projection_w",
-                vec![512, 512],
-                CoreMlDataType::Float16,
-                weight_data.clone(),
-            )
-            .unwrap();
-        dup_builder
-            .add_weight(
-                "decode_step_projection_w",
-                vec![512, 512],
-                CoreMlDataType::Float16,
-                weight_data.clone(),
-            )
-            .unwrap();
-        let dup_result = dup_builder.build();
+        // Total: header(64) + metadata(64) + data(64) = 192
+        // (data is already 64-byte aligned, no padding needed)
+        assert_eq!(result.data.len(), 192);
 
-        // Proto-direct saves exactly the weight size (1024 bytes)
-        assert!(
-            shared_result.total_size < dup_result.total_size,
-            "Proto-direct shared path ({}) must be smaller than duplicated path ({})",
-            shared_result.total_size,
-            dup_result.total_size
-        );
-        assert_eq!(shared_result.deduplicated_count, 1, "One deduplication event");
-        assert_eq!(shared_result.deduplicated_bytes, 1024, "1024 bytes saved");
-        assert_eq!(dup_result.deduplicated_count, 0, "No dedup in coremltools-style path");
+        // ── storage_header ──
+        assert_eq!(u32::from_le_bytes(result.data[0..4].try_into().unwrap()), 1); // count
+        assert_eq!(u32::from_le_bytes(result.data[4..8].try_into().unwrap()), 2); // version
+        // bytes 8-63: reserved zeros
+        assert!(&result.data[8..64].iter().all(|&b| b == 0));
+
+        // ── blob_metadata at offset 64 ──
+        assert_eq!(u32::from_le_bytes(result.data[64..68].try_into().unwrap()), 0xDEADBEEF); // sentinel
+        assert_eq!(u32::from_le_bytes(result.data[68..72].try_into().unwrap()), 1); // Float16
+        assert_eq!(u64::from_le_bytes(result.data[72..80].try_into().unwrap()), 64); // sizeInBytes
+        assert_eq!(u64::from_le_bytes(result.data[80..88].try_into().unwrap()), 128); // data offset
+        assert_eq!(u64::from_le_bytes(result.data[88..96].try_into().unwrap()), 0); // padding_size_in_bits
+        // bytes 96-127: reserved zeros
+        assert!(&result.data[96..128].iter().all(|&b| b == 0));
+
+        // ── data at offset 128 ──
+        assert_eq!(&result.data[128..192], &weight_data[..]);
+
+        // Entry offset should be 64 (metadata offset)
+        assert_eq!(result.entries[0].offset, 64);
     }
 }

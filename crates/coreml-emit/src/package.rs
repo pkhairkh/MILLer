@@ -10,8 +10,12 @@
 //!     └── com.apple.CoreML/
 //!         ├── model.mlmodel   — Protobuf model definition
 //!         └── weights/
-//!             └── weight.bin  — Concatenated weight data
+//!             └── weight.bin  — MILBlob Storage format (blob_v1)
 //! ```
+//!
+//! The `weight.bin` file uses Apple's MILBlob Storage format (version 2,
+//! aka "blob_v1"), which is the only format accepted by CoreML's Espresso/EIR
+//! execution planner and StorageReader.
 
 use crate::weights::WeightBinBuilder;
 use ane_coreml_proto::{CoreMlModel, ManifestItemInfo, PackageManifest};
@@ -82,8 +86,13 @@ impl MlPackageWriter {
         fs::create_dir_all(&data_dir)?;
         fs::create_dir_all(&weights_dir)?;
 
-        // Step 1: Build and write weight.bin
-        let mut weight_builder = WeightBinBuilder::new();
+        // Step 1: Build and write weight.bin (MILBlob Storage format — blob_v1)
+        // Enable content deduplication for multi-function models where
+        // different functions may produce differently-named weights with
+        // identical content (e.g., embedding and decode_step sharing a
+        // projection weight).
+        let has_shared = !model.shared_weights.is_empty();
+        let mut weight_builder = WeightBinBuilder::new().with_content_dedup();
         for weight in &model.weights {
             weight_builder.add_weight(
                 &weight.name,
@@ -94,14 +103,11 @@ impl MlPackageWriter {
         }
 
         // Handle shared weights
-        let mut has_shared_weights = false;
-        for _shared in &model.shared_weights {
-            has_shared_weights = true;
-            // The shared weight was already added via add_weight above.
-            // The SharedWeightRef just tracks which functions reference it.
-            // We don't need to add it again — the dedup in add_weight
-            // handles this.
-        }
+        let has_shared_weights = has_shared;
+        // The shared weight was already added via add_weight above.
+        // The SharedWeightRef just tracks which functions reference it.
+        // We don't need to add it again — the dedup in add_weight
+        // handles this.
 
         let weight_result = weight_builder.build();
         let weight_bin_path = weights_dir.join("weight.bin");
