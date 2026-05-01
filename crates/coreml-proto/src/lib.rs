@@ -3526,32 +3526,61 @@ fn mir_op_to_apple_ops(
             }]
         }
         mir_compat::MirOpCompat::FillLike { name, ref_tensor, value, dtype } => {
-            // Core ML MIL "fill_like" op: fill_like(ref_tensor, value) → tensor
-            // with same shape as ref_tensor, filled with the given scalar.
+            // fill_like is ANE-illegal (Core ML cannot provision it on the Neural Engine).
+            // Decompose to ANE-legal ops:
+            //   fill_like(ref, val) → mul(ref, 0) + add(zero, val)
+            //
+            // Step 1: zero_tensor = mul(ref_tensor, 0)
+            //   Creates a zero tensor with the same shape as ref_tensor.
+            // Step 2: eps_tensor = add(zero_tensor, val)
+            //   Fills the zero tensor with val via broadcasting.
+            //
+            // This matches the approach used in the reference CoreML export at
+            // https://huggingface.co/pkhairkh/qwen3-coreml-palettized which avoids
+            // fill/fill_like entirely for ANE compatibility.
             let apple_dtype = mil_dtype_to_apple(dtype);
+            let shape = lookup_shape_u64(name, node_shapes);
 
-            let mut inputs = HashMap::new();
-            inputs.insert("x".to_string(), make_name_arg(ref_tensor));
-            // value dtype must match the fill_like output dtype (same rule as fill).
-            inputs.insert(
-                "value".to_string(),
+            // Step 1: zero = mul(ref_tensor, 0)
+            let zero_name = format!("{name}__zero");
+            let mut mul_inputs = HashMap::new();
+            mul_inputs.insert("x".to_string(), make_name_arg(ref_tensor));
+            mul_inputs.insert(
+                "y".to_string(),
+                make_value_arg(make_immediate_float_value(apple_dtype, 0.0)),
+            );
+
+            let mut mul_attrs = HashMap::new();
+            add_name_attribute(&mut mul_attrs, &zero_name);
+
+            let mul_op = apple_proto::mil_spec::Operation {
+                r#type: "mul".to_string(),
+                inputs: mul_inputs,
+                outputs: vec![make_apple_named_value_type(&zero_name, apple_dtype, &shape)],
+                blocks: vec![],
+                attributes: mul_attrs,
+            };
+
+            // Step 2: eps = add(zero, epsilon)
+            let mut add_inputs = HashMap::new();
+            add_inputs.insert("x".to_string(), make_name_arg(&zero_name));
+            add_inputs.insert(
+                "y".to_string(),
                 make_value_arg(make_immediate_float_value(apple_dtype, *value)),
             );
 
-            let mut attributes = HashMap::new();
-            add_name_attribute(&mut attributes, name);
+            let mut add_attrs = HashMap::new();
+            add_name_attribute(&mut add_attrs, name);
 
-            vec![apple_proto::mil_spec::Operation {
-                r#type: "fill_like".to_string(),
-                inputs,
-                outputs: vec![make_apple_named_value_type(
-                    name,
-                    apple_dtype,
-                    &lookup_shape_u64(name, node_shapes),
-                )],
+            let add_op = apple_proto::mil_spec::Operation {
+                r#type: "add".to_string(),
+                inputs: add_inputs,
+                outputs: vec![make_apple_named_value_type(name, apple_dtype, &shape)],
                 blocks: vec![],
-                attributes,
-            }]
+                attributes: add_attrs,
+            };
+
+            vec![mul_op, add_op]
         }
         mir_compat::MirOpCompat::Neg { name, x } => {
             // Core ML does NOT have a "neg" op. Lower to mul(x, -1).

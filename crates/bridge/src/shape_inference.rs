@@ -289,6 +289,31 @@ pub fn compat_output_shape(
                 vec![]
             }
         }
+        // SliceByIndex: compute output shape respecting begin_mask/end_mask
+        MirOp::MILSliceByIndex { x, begin, end, begin_mask, end_mask, .. } => {
+            if let Some(input_shape) = node_shapes.get(&x.0) {
+                (0..begin.len())
+                    .map(|i| {
+                        let b = if begin_mask.get(i).copied().unwrap_or(false) {
+                            0
+                        } else {
+                            begin[i].max(0) as usize
+                        };
+                        let e = if end_mask.get(i).copied().unwrap_or(false) {
+                            input_shape.get(i).copied().unwrap_or(0)
+                        } else if end[i] < 0 {
+                            let dim = input_shape.get(i).copied().unwrap_or(0) as i64;
+                            (dim + end[i]).max(0) as usize
+                        } else {
+                            end[i] as usize
+                        };
+                        e.saturating_sub(b)
+                    })
+                    .collect()
+            } else {
+                vec![]
+            }
+        }
         // Identity for graph inputs (placeholder): use known input shape
         MirOp::MILIdentity { x, .. } if x.0 == "__placeholder__" => vec![1, 512],
         // Identity: propagate input shape

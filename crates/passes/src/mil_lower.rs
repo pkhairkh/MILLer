@@ -363,17 +363,41 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 vec![]
             }
         }
-        AirOp::SliceByIndex { input, begin, end, .. } => {
-            if begin.iter().all(|v| *v >= 0)
+        AirOp::SliceByIndex { input, begin, end, begin_mask, end_mask, .. } => {
+            // Compute the output shape respecting begin_mask and end_mask.
+            // begin_mask[i]=true  → ignore begin[i], start from 0
+            // end_mask[i]=true    → ignore end[i], go to full extent of dimension
+            if let Some(input_shape) = node_shapes.get(input) {
+                (0..begin.len())
+                    .map(|i| {
+                        let b = if begin_mask.get(i).copied().unwrap_or(false) {
+                            0
+                        } else {
+                            begin[i].max(0) as usize
+                        };
+                        let e = if end_mask.get(i).copied().unwrap_or(false) {
+                            input_shape.get(i).copied().unwrap_or(0)
+                        } else if end[i] < 0 {
+                            // Negative end index: count from the end of the dimension.
+                            let dim = input_shape.get(i).copied().unwrap_or(0) as i64;
+                            (dim + end[i]).max(0) as usize
+                        } else {
+                            end[i] as usize
+                        };
+                        e.saturating_sub(b)
+                    })
+                    .collect()
+            } else if begin.iter().all(|v| *v >= 0)
                 && end.iter().all(|v| *v >= 0)
                 && begin.len() == end.len()
             {
+                // Fallback: no input shape available, no masks, all positive.
                 end.iter()
                     .zip(begin.iter())
                     .map(|(e, b)| (*e as usize).saturating_sub(*b as usize))
                     .collect()
             } else {
-                node_shapes.get(input).cloned().unwrap_or_default()
+                vec![]
             }
         }
         AirOp::Where { x, .. } => node_shapes.get(x).cloned().unwrap_or_default(),
