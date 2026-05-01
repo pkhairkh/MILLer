@@ -2790,6 +2790,16 @@ fn mir_op_to_apple_ops(
                 make_value_arg(make_immediate_int32_value(vec![*axis as i32], &[])),
             );
 
+            // interleave as bool scalar — Core ML's ios19.concat requires this
+            // parameter to be explicitly serialized (the compiler does not apply
+            // the default value of false when it's missing). Non-interleaved
+            // concat is the standard behavior for all current use cases
+            // (RoPE rotate_half, attention Q/K/V stacking, etc.).
+            inputs.insert(
+                "interleave".to_string(),
+                make_value_arg(make_immediate_bool_value(false)),
+            );
+
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
 
