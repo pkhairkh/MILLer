@@ -929,6 +929,48 @@ impl<'a> SirBuildContext<'a> {
         ));
         v_id = SirNodeId(format!("sir_v_transpose_{}", node.id));
 
+        // Step 7b: Apply RoPE to Q and K (if the model uses RoPE).
+        //
+        // RoPE (Rotary Positional Embeddings) applies position-dependent
+        // rotation to Q and K vectors in the head_dim dimension. This is
+        // critical for position-aware attention — without it, the model
+        // has no position information and produces garbage output.
+        //
+        // The formula is: output = x * cos(θ) + rotate_half(x) * sin(θ)
+        // where θ = position * frequency_i for each dimension pair.
+        //
+        // The static_tables pass (runs later) will insert pre-computed
+        // cos_tab and sin_tab const nodes based on the tables reference.
+        // The legality_rewrite pass will then decompose RoPETransform into
+        // the correct AIR ops with rotate_half.
+        //
+        // RoPE is applied in the [B, heads, S, D] layout (after transpose,
+        // before GQA tile) so that the position information is correct per
+        // head and the cos/sin tables can broadcast along the heads dim.
+        if self.config.uses_rope {
+            let rope_tables = format!("rope_tables_{}", node.id);
+
+            // Apply RoPE to Q
+            ops.push((
+                SirOp::RoPETransform {
+                    input: q_id,
+                    tables: rope_tables.clone(),
+                },
+                "q_rope".to_string(),
+            ));
+            q_id = SirNodeId(format!("sir_q_rope_{}", node.id));
+
+            // Apply RoPE to K (before GQA tile — each KV head gets its own RoPE)
+            ops.push((
+                SirOp::RoPETransform {
+                    input: k_id,
+                    tables: rope_tables,
+                },
+                "k_rope".to_string(),
+            ));
+            k_id = SirNodeId(format!("sir_k_rope_{}", node.id));
+        }
+
         // Step 8: GQA expansion (if needed)
         // K/V heads need to be tiled to match the Q head count.
         // ANE-compatible: Tile on A14+ (replaces the old ExpandDims+Identity hack).

@@ -302,10 +302,16 @@ impl LegalityRewritePass {
                     );
                     (final_id, nodes, "mb.layer_norm")
                 }
-                SirOp::RoPETransform { input, tables: _ } => {
-                    let (final_id, nodes) =
-                        Self::decompose_rope(sir_node, input, &sir_to_air, knowledge_query);
-                    (final_id, nodes, "mb.cos")
+                SirOp::RoPETransform { input, tables } => {
+                    let (final_id, nodes) = Self::decompose_rope(
+                        sir_node,
+                        input,
+                        tables,
+                        &sir_to_air,
+                        knowledge_query,
+                        ctx,
+                    );
+                    (final_id, nodes, "mb.mul")
                 }
                 SirOp::Sampler { logits, temperature: _, top_p: _, rep_penalty: _, .. } => {
                     let (final_id, nodes) =
@@ -313,18 +319,24 @@ impl LegalityRewritePass {
                     (final_id, nodes, "mb.topk")
                 }
                 SirOp::Tile { input, reps } => {
-                    let tile_ctx = ctx.and_then(|c| {
-                        if c.embed_dim > 0 { Some(c.clone()) } else { None }
-                    });
-                    let (final_id, nodes) = Self::decompose_tile(
+                    // Use native mb.tile instead of decomposing into
+                    // reshape + fill + mul + reshape. Core ML's ios19
+                    // MIL program format supports the "tile" operation
+                    // natively, and it is not in the CPU_ONLY set.
+                    // The previous decomposition (fill(ones) + broadcast mul)
+                    // added 3 unnecessary ops per tile (56 fill + 56 mul +
+                    // 56 extra reshape = 168 ops for a 28-layer QWEN3 model).
+                    let input_air =
+                        sir_to_air.get(input).cloned().unwrap_or_else(|| AirNodeId(input.0.clone()));
+                    let air_id = AirNodeId(sir_node.id.0.clone());
+                    let nodes = vec![Self::make_air_node(
+                        air_id.clone(),
+                        AirOp::Tile { input: input_air, reps: reps.clone() },
                         sir_node,
-                        input,
-                        reps,
-                        &sir_to_air,
+                        "mb.tile",
                         knowledge_query,
-                        tile_ctx.as_ref(),
-                    );
-                    (final_id, nodes, "mb.mul") // decomposition root is broadcast Mul
+                    )];
+                    (air_id, nodes, "mb.tile")
                 }
                 SirOp::Add { x, y } => {
                     let air_x = sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
@@ -1027,15 +1039,18 @@ impl LegalityRewritePass {
     /// Decompose SirOp::RMSNorm into AIR ops.
     ///
     /// RMSNorm(x, weight, epsilon) →
-    ///   mean: ReduceMean(x^2, axes=[-1], keep_dims=true)
-    ///   rsqrt: Rsqrt(mean + epsilon)
-    ///   normed: ElementWise::Mul(x, rsqrt)
-    ///   output: ElementWise::Mul(normed, weight)
+    ///   x_sq:    Mul(x, x)
+    ///   mean:    ReduceMean(x^2, axes=[-1], keep_dims=true)
+    ///   eps:     FillLike(mean, epsilon)
+    ///   biased:  Add(mean, eps)
+    ///   rsqrt:   Rsqrt(biased)
+    ///   normed:  ElementWise::Mul(x, rsqrt)
+    ///   output:  ElementWise::Mul(normed, weight)
     fn decompose_rms_norm(
         sir_node: &ane_ir::sir::SirNode,
         input_sir: &ane_ir::sir::SirNodeId,
         weight: &str,
-        _epsilon: f32,
+        epsilon: f32,
         axes: &[usize],
         sir_to_air: &std::collections::HashMap<ane_ir::sir::SirNodeId, AirNodeId>,
         kq: &dyn PassKnowledgeQuery,
@@ -1123,12 +1138,26 @@ impl LegalityRewritePass {
             input_air = reshape_4d_id;
         }
 
-        // Step 1: x^2 mean via ReduceMean
+        // Step 1: x^2 = Mul(x, x)
+        //
+        // RMSNorm requires the mean of x², not the mean of x.
+        // The previous code passed input_air directly to ReduceMean,
+        // computing E[x] instead of E[x²] — a critical correctness bug.
+        let x_sq_id = AirNodeId(format!("{base}_x_sq"));
+        nodes.push(Self::make_air_node(
+            x_sq_id.clone(),
+            AirOp::Mul { x: input_air.clone(), y: input_air.clone() },
+            sir_node,
+            "mb.mul",
+            kq,
+        ));
+
+        // Step 2: mean(x^2) via ReduceMean
         let mean_id = AirNodeId(format!("{base}_mean"));
         nodes.push(Self::make_air_node(
             mean_id.clone(),
             AirOp::ReduceMean {
-                input: input_air.clone(),
+                input: x_sq_id,
                 axes: effective_axes.clone(),
                 keep_dims: true,
             },
@@ -1137,17 +1166,45 @@ impl LegalityRewritePass {
             kq,
         ));
 
-        // Step 2: Rsqrt of mean
+        // Step 3: mean(x^2) + epsilon
+        //
+        // RMSNorm requires rsqrt(mean(x²) + ε) for numerical stability.
+        // The previous code passed the raw mean directly to Rsqrt with no
+        // epsilon, causing division-by-zero for zero inputs and instability
+        // for small values. QWEN3 uses rms_norm_eps = 1e-6.
+        let eps_id = AirNodeId(format!("{base}_eps"));
+        nodes.push(Self::make_air_node(
+            eps_id.clone(),
+            AirOp::FillLike {
+                ref_tensor: mean_id.clone(),
+                value: epsilon,
+                dtype: MilDtype::Fp16,
+            },
+            sir_node,
+            "mb.fill_like",
+            kq,
+        ));
+
+        let mean_plus_eps_id = AirNodeId(format!("{base}_mean_plus_eps"));
+        nodes.push(Self::make_air_node(
+            mean_plus_eps_id.clone(),
+            AirOp::Add { x: mean_id, y: eps_id },
+            sir_node,
+            "mb.add",
+            kq,
+        ));
+
+        // Step 4: Rsqrt of (mean(x^2) + epsilon)
         let rsqrt_id = AirNodeId(format!("{base}_rsqrt"));
         nodes.push(Self::make_air_node(
             rsqrt_id.clone(),
-            AirOp::Rsqrt { input: mean_id },
+            AirOp::Rsqrt { input: mean_plus_eps_id },
             sir_node,
             "mb.rsqrt",
             kq,
         ));
 
-        // Step 3: x * rsqrt(x^2_mean)
+        // Step 5: x * rsqrt(mean(x^2) + epsilon)
         let normed_id = AirNodeId(format!("{base}_normed"));
         nodes.push(Self::make_air_node(
             normed_id.clone(),
@@ -1157,7 +1214,7 @@ impl LegalityRewritePass {
             kq,
         ));
 
-        // Step 4: normed * weight (gamma)
+        // Step 6: normed * weight (gamma)
         // In 4D mode, this produces [B, S, heads, head_dim] * [head_dim] → [B, S, heads, head_dim]
         let mul_out_id = if needs_4d_reshape && batch > 0 {
             AirNodeId(format!("{base}_normed_weighted"))
@@ -1175,7 +1232,7 @@ impl LegalityRewritePass {
             kq,
         ));
 
-        // Step 5 (4D mode only): reshape back to 3D [B, S, heads*head_dim]
+        // Step 7 (4D mode only): reshape back to 3D [B, S, heads*head_dim]
         let out_id = if needs_4d_reshape && batch > 0 {
             let flat_id = AirNodeId(sir_node.id.0.clone());
             nodes.push(Self::make_air_node(
@@ -1198,20 +1255,43 @@ impl LegalityRewritePass {
 
     /// Decompose SirOp::RoPETransform into AIR ops.
     ///
-    /// RoPETransform(x, tables) →
-    ///   cos_vals: Cos(tables)
-    ///   sin_vals: Sin(tables)
-    ///   x_cos: ElementWise::Mul(x, cos_vals)
-    ///   x_sin: ElementWise::Mul(x, sin_vals)
-    ///   output: ElementWise::Add(x_cos, x_sin)
+    /// Correct RoPE formula:
+    ///   output = x * cos(θ) + rotate_half(x) * sin(θ)
     ///
-    /// This is a simplified decomposition; a full RoPE would also need
-    /// the half-rotation and negation of odd elements.
+    /// Where rotate_half(x) splits the last dimension in half, negates
+    /// the second half, swaps, and concatenates:
+    ///   x1 = x[..., :d/2]
+    ///   x2 = x[..., d/2:]
+    ///   rotate_half(x) = concat(-x2, x1, axis=-1)
+    ///
+    /// The `tables` field references pre-computed frequency tables.
+    /// The static_tables pass (which runs before legality_rewrite) inserts
+    /// Const nodes for cos_tab and sin_tab at known IDs based on the
+    /// tables reference. We look up these const nodes by their convention:
+    ///   cos_tab: "sir_static_cos_tab_{base}"
+    ///   sin_tab: "sir_static_sin_tab_{base}"
+    ///
+    /// If the static tables are not found (e.g., static_tables pass not run),
+    /// we fall back to computing cos/sin from the tables reference as an
+    /// angle tensor. This is less efficient but correct.
+    ///
+    /// Decomposition:
+    ///   1. cos_vals: reference to pre-computed cos table (or Cos(tables))
+    ///   2. sin_vals: reference to pre-computed sin table (or Sin(tables))
+    ///   3. x1: SliceByIndex(x, [..., :head_dim//2]) — first half
+    ///   4. x2: SliceByIndex(x, [..., head_dim//2:]) — second half
+    ///   5. neg_x2: Neg(x2)
+    ///   6. rotated: Concat([neg_x2, x1], axis=-1)
+    ///   7. x_cos: Mul(x, cos_vals)
+    ///   8. rotated_sin: Mul(rotated, sin_vals)
+    ///   9. output: Add(x_cos, rotated_sin)
     fn decompose_rope(
         sir_node: &ane_ir::sir::SirNode,
         input_sir: &ane_ir::sir::SirNodeId,
+        tables: &str,
         sir_to_air: &std::collections::HashMap<ane_ir::sir::SirNodeId, AirNodeId>,
         kq: &dyn PassKnowledgeQuery,
+        ctx: Option<&DecompositionContext>,
     ) -> (AirNodeId, Vec<AirNode>) {
         let base = &sir_node.id.0;
         let input_air =
@@ -1219,46 +1299,143 @@ impl LegalityRewritePass {
 
         let mut nodes = Vec::new();
 
-        let cos_id = AirNodeId(format!("{base}_cos"));
+        // Determine head_dim from context (needed for rotate_half slicing)
+        let head_dim = ctx.map(|c| c.head_dim).unwrap_or(128); // default: QWEN3-0.6B
+        let half = head_dim / 2;
+
+        // Step 1-2: Get cos/sin values.
+        //
+        // The static_tables pass inserts Const nodes for pre-computed
+        // cos_tab and sin_tab at IDs:
+        //   "sir_static_cos_tab_{base}" and "sir_static_sin_tab_{base}"
+        //
+        // If these are in the sir_to_air map, use them directly.
+        // Otherwise, fall back to computing cos/sin from the tables reference.
+        let cos_tab_air_id = AirNodeId(format!("sir_static_cos_tab_{base}"));
+        let sin_tab_air_id = AirNodeId(format!("sir_static_sin_tab_{base}"));
+
+        let cos_id = if sir_to_air.contains_key(&ane_ir::sir::SirNodeId(cos_tab_air_id.0.clone()))
+        {
+            // Use pre-computed cos table from static_tables pass
+            cos_tab_air_id
+        } else {
+            // Fallback: compute cos from the tables angle tensor
+            let tables_air = AirNodeId(tables.to_string());
+            let cos_id = AirNodeId(format!("{base}_cos"));
+            nodes.push(Self::make_air_node(
+                cos_id.clone(),
+                AirOp::Cos { input: tables_air },
+                sir_node,
+                "mb.cos",
+                kq,
+            ));
+            cos_id
+        };
+
+        let sin_id = if sir_to_air.contains_key(&ane_ir::sir::SirNodeId(sin_tab_air_id.0.clone())) {
+            // Use pre-computed sin table from static_tables pass
+            sin_tab_air_id
+        } else {
+            // Fallback: compute sin from the tables angle tensor
+            let tables_air = AirNodeId(tables.to_string());
+            let sin_id = AirNodeId(format!("{base}_sin"));
+            nodes.push(Self::make_air_node(
+                sin_id.clone(),
+                AirOp::Sin { input: tables_air },
+                sir_node,
+                "mb.sin",
+                kq,
+            ));
+            sin_id
+        };
+
+        // Save input_air for step 7 (x * cos) — we need it after slicing
+        let input_for_mul = input_air.clone();
+
+        // Step 3: Slice first half: x1 = x[..., :head_dim//2]
+        let x1_id = AirNodeId(format!("{base}_x1"));
         nodes.push(Self::make_air_node(
-            cos_id.clone(),
-            AirOp::Cos { input: input_air.clone() },
+            x1_id.clone(),
+            AirOp::SliceByIndex {
+                input: input_air.clone(),
+                begin: vec![0, 0, 0, 0],
+                end: vec![0, 0, 0, half as i64],
+                stride: vec![1, 1, 1, 1],
+                begin_mask: vec![true, true, true, false],
+                end_mask: vec![true, true, true, false],
+                squeeze_mask: vec![false; 4],
+            },
             sir_node,
-            "mb.cos",
+            "mb.slice_by_index",
             kq,
         ));
 
-        let sin_id = AirNodeId(format!("{base}_sin"));
+        // Step 4: Slice second half: x2 = x[..., head_dim//2:]
+        let x2_id = AirNodeId(format!("{base}_x2"));
         nodes.push(Self::make_air_node(
-            sin_id.clone(),
-            AirOp::Sin { input: input_air.clone() },
+            x2_id.clone(),
+            AirOp::SliceByIndex {
+                input: input_air,
+                begin: vec![0, 0, 0, half as i64],
+                end: vec![0, 0, 0, -1],
+                stride: vec![1, 1, 1, 1],
+                begin_mask: vec![true, true, true, false],
+                end_mask: vec![true, true, true, true],
+                squeeze_mask: vec![false; 4],
+            },
             sir_node,
-            "mb.sin",
+            "mb.slice_by_index",
             kq,
         ));
 
+        // Step 5: Negate second half: -x2
+        let neg_x2_id = AirNodeId(format!("{base}_neg_x2"));
+        nodes.push(Self::make_air_node(
+            neg_x2_id.clone(),
+            AirOp::Neg { input: x2_id },
+            sir_node,
+            "mb.neg",
+            kq,
+        ));
+
+        // Step 6: Concatenate: rotated = concat(-x2, x1, axis=-1)
+        let rotated_id = AirNodeId(format!("{base}_rotated"));
+        nodes.push(Self::make_air_node(
+            rotated_id.clone(),
+            AirOp::Concat {
+                inputs: vec![neg_x2_id, x1_id],
+                axis: 3, // last axis in [B, heads, S, head_dim]
+            },
+            sir_node,
+            "mb.concat",
+            kq,
+        ));
+
+        // Step 7: x * cos(θ)
         let x_cos_id = AirNodeId(format!("{base}_x_cos"));
         nodes.push(Self::make_air_node(
             x_cos_id.clone(),
-            AirOp::Mul { x: input_air.clone(), y: cos_id },
+            AirOp::Mul { x: input_for_mul, y: cos_id },
             sir_node,
             "mb.mul",
             kq,
         ));
 
-        let x_sin_id = AirNodeId(format!("{base}_x_sin"));
+        // Step 8: rotate_half(x) * sin(θ)
+        let rotated_sin_id = AirNodeId(format!("{base}_rotated_sin"));
         nodes.push(Self::make_air_node(
-            x_sin_id.clone(),
-            AirOp::Mul { x: input_air, y: sin_id },
+            rotated_sin_id.clone(),
+            AirOp::Mul { x: rotated_id, y: sin_id },
             sir_node,
             "mb.mul",
             kq,
         ));
 
+        // Step 9: output = x * cos(θ) + rotate_half(x) * sin(θ)
         let out_id = AirNodeId(sir_node.id.0.clone());
         nodes.push(Self::make_air_node(
             out_id.clone(),
-            AirOp::Add { x: x_cos_id, y: x_sin_id },
+            AirOp::Add { x: x_cos_id, y: rotated_sin_id },
             sir_node,
             "mb.add",
             kq,
