@@ -1967,6 +1967,23 @@ fn make_apple_value_type(dtype: i32, shape: &[u64]) -> apple_proto::mil_spec::Va
     }
 }
 
+/// Sanitize a string for use as a MIL SSA variable identifier.
+///
+/// MIL (and Python) treat `.` as an attribute accessor, so `lm_head.weight`
+/// is parsed as `lm_head` accessing attribute `weight`. To avoid this, we
+/// replace dots and other non-identifier characters with underscores.
+///
+/// This function replaces:
+/// - `.` → `_` (most common: HuggingFace weight names like `model.layers.0.weight`)
+/// - Any other non-alphanumeric, non-underscore, non-hyphen character → `_`
+///
+/// The original name is preserved in the `name = string(...)` attribute for
+/// debugging/metadata; only the SSA variable identifier is sanitized.
+fn sanitize_mil_ident(name: &str) -> String {
+    name.replace('.', "_")
+        .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_")
+}
+
 /// Build an `apple_proto::mil_spec::NamedValueType` (name + type pair).
 fn make_apple_named_value_type(
     name: &str,
@@ -4447,6 +4464,112 @@ fn validate_matmul_shapes(operations: &[apple_proto::mil_spec::Operation]) {
     }
 }
 
+/// Sanitize SSA variable identifiers in a list of operations.
+///
+/// MIL (and Python) treat `.` as an attribute accessor, so names like
+/// `lm_head.weight` are parsed as `lm_head` accessing attribute `weight`.
+/// This pass replaces all SSA variable identifiers with sanitized versions
+/// (dots → underscores, etc.) while preserving the original dotted names
+/// in the `name = string(...)` attribute for debugging/metadata.
+///
+/// The pass works in two phases:
+/// 1. **Collect**: scan all output names and build an `original → sanitized` map
+/// 2. **Replace**: walk all operations and replace output names and input
+///    name references with their sanitized equivalents
+fn sanitize_mil_identifiers(
+    operations: &mut Vec<apple_proto::mil_spec::Operation>,
+    block_output_names: &mut Vec<String>,
+    fn_input_names: &mut Vec<apple_proto::mil_spec::NamedValueType>,
+) {
+    // Phase 1: Collect all names that need sanitization
+    let mut name_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+    for op in operations.iter() {
+        for output in &op.outputs {
+            let sanitized = sanitize_mil_ident(&output.name);
+            if sanitized != output.name {
+                name_map.entry(output.name.clone()).or_insert(sanitized);
+            }
+        }
+        // Also collect input name references that might be dotted
+        for (_key, arg) in &op.inputs {
+            for binding in &arg.arguments {
+                if let Some(apple_proto::mil_spec::argument::binding::Binding::Name(ref n)) =
+                    binding.binding
+                {
+                    let sanitized = sanitize_mil_ident(n);
+                    if sanitized != *n {
+                        name_map.entry(n.clone()).or_insert(sanitized);
+                    }
+                }
+            }
+        }
+    }
+
+    // Also check block outputs and function inputs
+    for name in block_output_names.iter() {
+        let sanitized = sanitize_mil_ident(name);
+        if sanitized != *name {
+            name_map.entry(name.clone()).or_insert(sanitized);
+        }
+    }
+    for input in fn_input_names.iter() {
+        let sanitized = sanitize_mil_ident(&input.name);
+        if sanitized != input.name {
+            name_map.entry(input.name.clone()).or_insert(sanitized);
+        }
+    }
+
+    // If no names need sanitization, skip the mutation phase
+    if name_map.is_empty() {
+        return;
+    }
+
+    eprintln!(
+        "[INFO] Sanitizing {} MIL identifier(s) (dots → underscores) for Core ML compatibility",
+        name_map.len()
+    );
+
+    // Phase 2: Replace all occurrences
+    for op in operations.iter_mut() {
+        // Replace output names (these become MIL variable identifiers)
+        for output in &mut op.outputs {
+            if let Some(sanitized) = name_map.get(&output.name) {
+                output.name = sanitized.clone();
+            }
+        }
+        // Replace input name references (these must match output names for SSA wire-up)
+        for (_key, arg) in op.inputs.iter_mut() {
+            for binding in &mut arg.arguments {
+                if let Some(apple_proto::mil_spec::argument::binding::Binding::Name(ref mut n)) =
+                    binding.binding
+                {
+                    if let Some(sanitized) = name_map.get(n) {
+                        *n = sanitized.clone();
+                    }
+                }
+            }
+        }
+        // NOTE: We do NOT sanitize the "name" attribute value — it's a string
+        // constant, not an identifier, and should preserve the original dotted
+        // name for debugging/metadata: name = string("lm_head.weight")
+    }
+
+    // Sanitize block output names
+    for name in block_output_names.iter_mut() {
+        if let Some(sanitized) = name_map.get(name) {
+            *name = sanitized.clone();
+        }
+    }
+
+    // Sanitize function input names
+    for input in fn_input_names.iter_mut() {
+        if let Some(sanitized) = name_map.get(&input.name) {
+            input.name = sanitized.clone();
+        }
+    }
+}
+
 /// Convert a `CoreMlFunction` into an Apple-compatible `MILSpec.Function`.
 fn function_to_apple_proto(
     func: &CoreMlFunction,
@@ -4468,6 +4591,17 @@ fn function_to_apple_proto(
         .flat_map(|op| mir_op_to_apple_ops(op, weight_entries, &func.node_shapes))
         .collect();
 
+    // Sanitize MIL variable identifiers: replace dots in names like
+    // "lm_head.weight" → "lm_head_weight" so the MIL text parser doesn't
+    // interpret the dot as an attribute accessor. The original dotted name
+    // is preserved in the name=string(...) attribute for debugging.
+    let mut operations = operations;
+    let mut fn_inputs_mut = fn_inputs;
+    let mut block_output_names: Vec<String> =
+        func.outputs.iter().map(|td| td.name.clone()).collect();
+    sanitize_mil_identifiers(&mut operations, &mut block_output_names, &mut fn_inputs_mut);
+    let fn_inputs = fn_inputs_mut; // consume mutable back
+
     // Validate fill/fill_like dtype consistency before writing.
     // Core ML rejects fill ops where the value parameter dtype differs from the output dtype.
     validate_fill_dtype_consistency(&operations);
@@ -4484,7 +4618,7 @@ fn function_to_apple_proto(
 
     let block = apple_proto::mil_spec::Block {
         inputs: vec![],
-        outputs: func.outputs.iter().map(|td| td.name.clone()).collect(),
+        outputs: block_output_names,
         operations,
         attributes: HashMap::new(),
     };
