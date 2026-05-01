@@ -9,7 +9,7 @@
 //! The pass identifies RoPE-related Mul/Cos/Sin patterns and replaces
 //! dynamic RoPE computation with static table lookups where possible.
 
-use ane_ir::sir::{SirGraph, SirNode, SirNodeId, SirOp};
+use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp};
 
 /// Result of the static tables pass.
 #[derive(Debug, Clone)]
@@ -22,42 +22,39 @@ pub struct StaticTablesResult {
 
 /// Run the static tables pass on a SIR graph.
 ///
-/// This pass identifies RoPE-related computation patterns (Mul with
-/// cos/sin inputs) and marks them for static table materialization.
-/// The actual table values are computed during weight loading, but
-/// the structural transformation happens here.
+/// This pass identifies `SirOp::RoPETransform` nodes and inserts
+/// `SirOp::Const` nodes for the pre-computed RoPE cos/sin/eye/mask
+/// tables. These Const nodes are prepended to the node list so that
+/// `LegalityRewritePass` processes them first — when `decompose_rope`
+/// later checks the `sir_to_air` map for the Const node IDs, they
+/// will already be present.
 ///
-/// For now, this pass annotates RoPETransform nodes with static table
-/// references and inserts Const nodes for the pre-computed tables.
-/// A future pass will replace the dynamic cos/sin computation with
-/// Gather ops from the static tables.
+/// The actual tensor values are computed at emission time by the
+/// `StaticTableResolver` in the bridge crate, which resolves
+/// `value_path` strings like `static_tables/rope_tables_0/sin_tab`.
 pub fn run_static_tables_pass(graph: &mut SirGraph) -> StaticTablesResult {
     let mut result = StaticTablesResult { rope_converted: 0, tables_inserted: 0 };
 
-    // Find RoPETransform nodes and attach static table references
-    let rope_indices: Vec<usize> = graph
+    // Find RoPETransform nodes and collect their table references
+    let rope_info: Vec<(String, String, SirMetadata)> = graph
         .nodes
         .iter()
-        .enumerate()
-        .filter_map(|(idx, node)| match &node.op {
-            SirOp::RoPETransform { .. } => Some(idx),
+        .filter_map(|node| match &node.op {
+            SirOp::RoPETransform { tables, .. } => {
+                Some((node.id.0.clone(), tables.clone(), node.metadata.clone()))
+            }
             _ => None,
         })
         .collect();
 
-    for idx in rope_indices {
-        let (node_id, tables_ref, metadata) = {
-            let node = &graph.nodes[idx];
-            match &node.op {
-                SirOp::RoPETransform { tables, .. } => {
-                    (node.id.0.clone(), tables.clone(), node.metadata.clone())
-                }
-                _ => unreachable!(),
-            }
-        };
-
-        // Insert static table constants: sin_tab, cos_tab, eye_tab, mask_tab
-        // These will be materialized during weight loading/emission
+    // Collect all new Const nodes, then prepend them to the graph.
+    // Prepending is critical: LegalityRewritePass processes nodes in order,
+    // and decompose_rope checks sir_to_air for the Const node IDs.
+    // If the Const nodes come AFTER the RoPETransform nodes, they won't
+    // be in sir_to_air yet when decompose_rope looks for them, causing
+    // a fallback to AirOp::Cos/AirOp::Sin with unresolved references.
+    let mut new_const_nodes = Vec::new();
+    for (node_id, tables_ref, metadata) in &rope_info {
         let tables = &["sin_tab", "cos_tab", "eye_tab", "mask_tab"];
         for &table_name in tables {
             let const_id = SirNodeId(format!("sir_static_{}_{}", table_name, node_id));
@@ -70,12 +67,16 @@ pub fn run_static_tables_pass(graph: &mut SirGraph) -> StaticTablesResult {
                 name: format!("static_{}_{}", table_name, node_id),
                 metadata: metadata.clone(),
             };
-            graph.nodes.push(const_node);
+            new_const_nodes.push(const_node);
             result.tables_inserted += 1;
         }
-
         result.rope_converted += 1;
     }
+
+    // Prepend all Const nodes before the existing nodes
+    let mut new_nodes = new_const_nodes;
+    new_nodes.append(&mut graph.nodes);
+    graph.nodes = new_nodes;
 
     result
 }
@@ -115,5 +116,27 @@ mod tests {
         let const_count =
             graph.nodes.iter().filter(|n| matches!(n.op, SirOp::Const { .. })).count();
         assert_eq!(const_count, 4);
+
+        // Verify Const nodes are PREPENDED before the RoPETransform node.
+        // This is critical: LegalityRewritePass processes nodes in order,
+        // and decompose_rope checks sir_to_air for the Const IDs. If they
+        // come after the RoPETransform, the fallback path emits unresolved
+        // AirOp::Cos/AirOp::Sin references.
+        let rope_idx = graph
+            .nodes
+            .iter()
+            .position(|n| matches!(n.op, SirOp::RoPETransform { .. }))
+            .expect("RoPETransform node should exist");
+        let first_const_idx = graph
+            .nodes
+            .iter()
+            .position(|n| matches!(n.op, SirOp::Const { .. }))
+            .expect("at least one Const node should exist");
+        assert!(
+            first_const_idx < rope_idx,
+            "Const nodes must come before RoPETransform: first_const={}, rope={}",
+            first_const_idx,
+            rope_idx
+        );
     }
 }

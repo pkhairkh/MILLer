@@ -4160,14 +4160,15 @@ fn run_trace_compile(
         );
     }
     // Add static table shapes for shape inference
+    // cos/sin shape: [1, 1, seq_len, head_dim] — broadcasts with Q/K [B, H, S, D]
     for rope_ref in &unique_rope_refs {
         weight_shapes.insert(
             format!("static_tables/{}/sin_tab", rope_ref),
-            vec![seq_len, 1, 1, head_dim],
+            vec![1, 1, seq_len, head_dim],
         );
         weight_shapes.insert(
             format!("static_tables/{}/cos_tab", rope_ref),
-            vec![seq_len, 1, 1, head_dim],
+            vec![1, 1, seq_len, head_dim],
         );
         weight_shapes.insert(
             format!("static_tables/{}/eye_tab", rope_ref),

@@ -16,10 +16,15 @@
 //!
 //! | Table | Shape | dtype | Purpose |
 //! |-------|-------|-------|---------|
-//! | sin_tab | [seq_len, 1, 1, head_dim] | float16 | RoPE sin values per position |
-//! | cos_tab | [seq_len, 1, 1, head_dim] | float16 | RoPE cos values per position |
+//! | sin_tab | [1, 1, seq_len, head_dim] | float16 | RoPE sin values per position |
+//! | cos_tab | [1, 1, seq_len, head_dim] | float16 | RoPE cos values per position |
 //! | eye_tab | [seq_len, seq_len] | float16 | Identity for KV-cache ring buffer |
 //! | mask_tab | [seq_len, seq_len] | float16 | Causal attention mask |
+//!
+//! The sin/cos table shape `[1, 1, seq_len, head_dim]` is chosen for broadcast
+//! compatibility with the Q/K tensor shape `[1, num_heads, seq_len, head_dim]`.
+//! Core ML broadcasting aligns dimensions right-to-left, so this shape broadcasts
+//! correctly across the heads dimension (1 → num_heads).
 //!
 //! ## Mathematical formula
 //!
@@ -27,8 +32,8 @@
 //! inv_freq[i] = 1 / theta^(2i/d)   for i = 0..d/2-1
 //! freqs[pos, i] = pos * inv_freq[i]
 //! emb[pos, :] = cat(freqs[pos], freqs[pos])  (duplicate to full head_dim)
-//! cos_tab[pos, 0, 0, :] = cos(emb[pos, :])
-//! sin_tab[pos, 0, 0, :] = sin(emb[pos, :])
+//! cos_tab[0, 0, pos, :] = cos(emb[pos, :])
+//! sin_tab[0, 0, pos, :] = sin(emb[pos, :])
 //! ```
 
 use crate::mir_to_compat::{WeightData, WeightResolver};
@@ -130,13 +135,15 @@ impl StaticTableResolver {
         // emb[pos, :] = cat(freqs[pos, :], freqs[pos, :])  — duplicate to full head_dim
         // cos/sin = cos(emb) / sin(emb)
         //
-        // Shape: sin_tab and cos_tab = [seq_len, 1, 1, head_dim] in fp16
-        let mut sin_bytes = Vec::with_capacity(seq * 1 * 1 * hd * 2);
-        let mut cos_bytes = Vec::with_capacity(seq * 1 * 1 * hd * 2);
+        // Shape: sin_tab and cos_tab = [1, 1, seq_len, head_dim] in fp16
+        // The [1, 1, S, D] shape broadcasts correctly with Q/K [1, H, S, D]
+        // where H = num_heads. Core ML broadcasting aligns right-to-left.
+        let mut sin_bytes = Vec::with_capacity(1 * 1 * seq * hd * 2);
+        let mut cos_bytes = Vec::with_capacity(1 * 1 * seq * hd * 2);
 
-        for pos in 0..seq {
-            for _extra in 0..1 {
-                for _extra in 0..1 {
+        for _batch in 0..1 {
+            for _heads in 0..1 {
+                for pos in 0..seq {
                     for i in 0..hd {
                         // Determine the frequency index: first half and second half
                         // share the same frequencies (duplicated)
@@ -179,13 +186,14 @@ impl StaticTableResolver {
         }
 
         // Cache all four tables
+        // cos/sin shape: [1, 1, seq_len, head_dim] — broadcasts with [B, H, S, D]
         self.cache.insert(
             format!("static_tables/{}/sin_tab", tables_ref),
-            WeightData { data: sin_bytes, shape: vec![seq, 1, 1, hd] },
+            WeightData { data: sin_bytes, shape: vec![1, 1, seq, hd] },
         );
         self.cache.insert(
             format!("static_tables/{}/cos_tab", tables_ref),
-            WeightData { data: cos_bytes, shape: vec![seq, 1, 1, hd] },
+            WeightData { data: cos_bytes, shape: vec![1, 1, seq, hd] },
         );
         self.cache.insert(
             format!("static_tables/{}/eye_tab", tables_ref),
@@ -276,13 +284,13 @@ mod tests {
 
         // Check sin_tab
         let sin_data = resolver.resolve("static_tables/rope_tables_0/sin_tab").unwrap();
-        assert_eq!(sin_data.shape, vec![8, 1, 1, 128]);
-        assert_eq!(sin_data.data.len(), 8 * 1 * 1 * 128 * 2); // fp16 = 2 bytes
+        assert_eq!(sin_data.shape, vec![1, 1, 8, 128]);
+        assert_eq!(sin_data.data.len(), 1 * 1 * 8 * 128 * 2); // fp16 = 2 bytes
 
         // Check cos_tab
         let cos_data = resolver.resolve("static_tables/rope_tables_0/cos_tab").unwrap();
-        assert_eq!(cos_data.shape, vec![8, 1, 1, 128]);
-        assert_eq!(cos_data.data.len(), 8 * 1 * 1 * 128 * 2);
+        assert_eq!(cos_data.shape, vec![1, 1, 8, 128]);
+        assert_eq!(cos_data.data.len(), 1 * 1 * 8 * 128 * 2);
 
         // Check eye_tab
         let eye_data = resolver.resolve("static_tables/rope_tables_0/eye_tab").unwrap();
