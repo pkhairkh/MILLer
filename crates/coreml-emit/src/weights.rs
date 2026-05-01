@@ -77,6 +77,10 @@ const BLOB_ALIGNMENT: u64 = 64;
 ///
 /// These values match Apple's `BlobDataType` enum from
 /// `mlmodel/src/MILBlob/Blob/BlobDataType.hpp` in the coremltools source.
+/// Only variants used by MILLer's supported CoreMlDataTypes are included.
+/// The full Apple enum also defines: BFloat16=5, Int16=6, UInt16=7,
+/// Int4=8, UInt1=9, UInt2=10, UInt4=11, UInt3=12, UInt6=13, UInt32=15,
+/// Float8E4M3FN=16, Float8E5M2=17.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 enum BlobDataType {
@@ -84,19 +88,7 @@ enum BlobDataType {
     Float32 = 2,
     UInt8 = 3,
     Int8 = 4,
-    BFloat16 = 5,
-    Int16 = 6,
-    UInt16 = 7,
-    Int4 = 8,
-    UInt1 = 9,
-    UInt2 = 10,
-    UInt4 = 11,
-    UInt3 = 12,
-    UInt6 = 13,
     Int32 = 14,
-    UInt32 = 15,
-    Float8E4M3FN = 16,
-    Float8E5M2 = 17,
 }
 
 /// Map CoreMlDataType to MILBlob BlobDataType enum value.
@@ -363,7 +355,6 @@ impl WeightBinBuilder {
     pub fn build(self) -> WeightBinResult {
         let num_entries = self.entries.len();
         let mut buf: Vec<u8> = Vec::new();
-        let mut current_pos: u64 = 0;
 
         let deduplicated_count = self.name_dedup_count;
         let deduplicated_bytes = self.name_dedup_bytes_saved;
@@ -374,7 +365,7 @@ impl WeightBinBuilder {
         // We write a placeholder count first; if the file is empty we leave
         // it as-is, otherwise we patch it after writing all entries.
         write_storage_header(&mut buf, num_entries as u32);
-        current_pos = STORAGE_HEADER_SIZE;
+        let mut current_pos: u64 = STORAGE_HEADER_SIZE;
 
         // ── Step 2: For each entry, write blob_metadata + data ──────────
         let mut updated_entries = Vec::with_capacity(num_entries);
