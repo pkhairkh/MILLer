@@ -4035,12 +4035,40 @@ fn run_trace_compile(
     println!("[5/10] Running LegalityRewritePass (SIR→AIR)...");
     let legality = LegalityRewritePass::new();
     let no_knowledge = NoKnowledge;
-    // Use head_dim from the model config directly rather than deriving it
-    // as hidden_size / num_attention_heads — some models (Qwen3, etc.) have
-    // head_dim that doesn't equal that quotient because the q_proj output
-    // dimension is num_heads * head_dim, which may differ from hidden_size.
-    let head_dim = traced_graph.model_config.head_dim
-        .unwrap_or(traced_graph.model_config.hidden_size / traced_graph.model_config.num_attention_heads);
+    // Use head_dim from the model config if available. Otherwise, extract it
+    // from the traced graph's AttentionBlock or RopeTransform nodes, which
+    // always contain the correct head_dim (populated by the Python tracer
+    // from the model's actual Q projection output dimension).
+    //
+    // CRITICAL: Do NOT fall back to hidden_size / num_attention_heads — some
+    // models (Qwen3, etc.) have head_dim != hidden_size / num_heads because
+    // the q_proj output dim is num_heads * head_dim, which may differ from
+    // hidden_size. For Qwen3-0.6B: hidden_size=1024, num_heads=16, but
+    // head_dim=128 (not 64), because Q proj is 1024→2048 = 16*128.
+    // Using the wrong head_dim=64 causes RoPE cos/sin tables to have shape
+    // [1,1,512,64] instead of [1,1,512,128], which creates broadcast
+    // incompatibility: [1,16,512,128] * [1,1,512,64] → Core ML rejects.
+    let head_dim = traced_graph.model_config.head_dim.unwrap_or_else(|| {
+        // Extract from traced graph nodes — prefer RopeTransform (exact head_dim),
+        // then AttentionBlock (also has head_dim). The Python tracer always
+        // populates these from the model's actual configuration.
+        use ane_trace::graph::TracedOp;
+        for node in &traced_graph.nodes {
+            match &node.op {
+                TracedOp::RopeTransform { head_dim: hd, .. } => return *hd,
+                TracedOp::AttentionBlock { head_dim: hd, .. } => return *hd,
+                _ => {}
+            }
+        }
+        // Last resort: hidden_size / num_heads (may be wrong for some models)
+        eprintln!(
+            "[WARN] head_dim not found in model_config or traced nodes. \
+             Falling back to hidden_size/num_heads = {}. This may be incorrect \
+             for models where head_dim != hidden_size/num_heads (e.g., Qwen3).",
+            traced_graph.model_config.hidden_size / traced_graph.model_config.num_attention_heads
+        );
+        traced_graph.model_config.hidden_size / traced_graph.model_config.num_attention_heads
+    });
     let decomp_ctx = DecompositionContext::for_attention_full(
         batch_size,
         traced_graph.model_config.hidden_size,

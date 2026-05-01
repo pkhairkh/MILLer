@@ -1312,8 +1312,9 @@ impl LegalityRewritePass {
         // Since all RoPE nodes share the same tables_ref ("rope_tables_shared"),
         // there is only one set of Const nodes shared across all layers.
         //
-        // If these are in the sir_to_air map, use them directly.
-        // Otherwise, fall back to computing cos/sin from the tables reference.
+        // The static tables MUST be present — cos/sin are ANE-illegal ops
+        // (no ANE converter for runtime trig functions). If they're missing,
+        // it means the static_tables pass was not run before legality_rewrite.
         let cos_tab_air_id = AirNodeId(format!("sir_static_cos_tab_{}", tables));
         let sin_tab_air_id = AirNodeId(format!("sir_static_sin_tab_{}", tables));
 
@@ -1322,7 +1323,16 @@ impl LegalityRewritePass {
             // Use pre-computed cos table from static_tables pass
             cos_tab_air_id
         } else {
-            // Fallback: compute cos from the tables angle tensor
+            // ANE-illegal fallback: cos/sin cannot run on the Neural Engine.
+            // This should never happen in the trace-compile pipeline where
+            // the static_tables pass runs before legality_rewrite.
+            eprintln!(
+                "[ERROR] RoPE cos table not found for ref '{}'. \
+                 The static_tables pass must run before legality_rewrite. \
+                 Runtime cos/sin computation is ANE-illegal and will cause \
+                 Core ML to fall back to CPU or reject the model.",
+                tables
+            );
             let tables_air = AirNodeId(tables.to_string());
             let cos_id = AirNodeId(format!("{base}_cos"));
             nodes.push(Self::make_air_node(
@@ -1339,7 +1349,13 @@ impl LegalityRewritePass {
             // Use pre-computed sin table from static_tables pass
             sin_tab_air_id
         } else {
-            // Fallback: compute sin from the tables angle tensor
+            eprintln!(
+                "[ERROR] RoPE sin table not found for ref '{}'. \
+                 The static_tables pass must run before legality_rewrite. \
+                 Runtime cos/sin computation is ANE-illegal and will cause \
+                 Core ML to fall back to CPU or reject the model.",
+                tables
+            );
             let tables_air = AirNodeId(tables.to_string());
             let sin_id = AirNodeId(format!("{base}_sin"));
             nodes.push(Self::make_air_node(
@@ -1392,6 +1408,9 @@ impl LegalityRewritePass {
         ));
 
         // Step 5: Negate second half: -x2
+        // Note: Core ML has no "neg" op; this is lowered to mul(x, -1)
+        // at the emission level (see mir_op_to_apple_ops). The AIR-level
+        // Neg correctly propagates the input shape through inference.
         let neg_x2_id = AirNodeId(format!("{base}_neg_x2"));
         nodes.push(Self::make_air_node(
             neg_x2_id.clone(),
