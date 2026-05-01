@@ -69,7 +69,7 @@ impl Default for TraceConfig {
             ane_only: true,
             decompose_at_trace: true,
             input_shapes: vec![InputShape { batch_size: 1, seq_len: 32 }],
-            with_kv_cache: false,
+            with_kv_cache: true,
             max_seq_len: 2048,
             dtype: "fp16".to_string(),
             trace_script: "python/trace_model.py".to_string(),

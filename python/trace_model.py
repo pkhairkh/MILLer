@@ -48,7 +48,7 @@ def main():
     model_id = config.get("model_id", "gpt2")
     input_shapes = config.get("input_shapes", [{"batch_size": 1, "seq_len": 32}])
     decompose = config.get("decompose", True)
-    with_kv_cache = config.get("with_kv_cache", False)
+    with_kv_cache = config.get("with_kv_cache", True)
     max_seq_len = config.get("max_seq_len", 2048)
     dtype_str = config.get("dtype", "fp16")
     fx_options = config.get("fx_options", {})
@@ -121,7 +121,7 @@ def trace_model_fx(
     model_config,
     model_id: str,
     decompose: bool = True,
-    with_kv_cache: bool = False,
+    with_kv_cache: bool = True,
     fx_options: Dict[str, Any] = None,
     model_class: str = "causal_lm",
 ) -> Dict[str, Any]:

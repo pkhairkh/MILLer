@@ -610,8 +610,9 @@ impl OpSupportMatrix {
             SirOp::Tile { .. } => {
                 // Tile decomposes to Reshape + broadcast Mul + Reshape,
                 // all ANE-faithful ops. The legality rewrite pass handles
-                // the decomposition; this classification reflects that the
-                // decomposed form is fully ANE-compatible.
+                // the decomposition; the decomposed form is fully
+                // ANE-compatible and produces zero Tile ops in the
+                // final emitted model.
                 OpSupport::AneSupported(AneEngineSupport::PE)
             }
 

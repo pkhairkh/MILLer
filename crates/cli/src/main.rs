@@ -441,7 +441,11 @@ enum Commands {
         decompose: bool,
 
         /// Whether to include KV-cache state in the traced graph.
-        #[arg(long, default_value_t = false)]
+        /// Enabled by default for causal LM models — required for
+        /// decode-step (autoregressive) compilation with stateful
+        /// KV-cache and multi-function (embedding + decode_step) layout.
+        /// Use --no-with-kv-cache to disable.
+        #[arg(long, default_value_t = true)]
         with_kv_cache: bool,
 
         /// Path to the Python tracing script.
@@ -4243,12 +4247,120 @@ fn run_trace_compile(
     if mirs.is_empty() {
         return Err("MilLowerPass produced no MIR graphs — nothing to emit".to_string());
     }
-    let emit_result = emit_mir_graph_proto_direct_with_resolver(
-        &mirs[0],
-        mlpackage_dir.to_str().unwrap_or(""),
-        &chained_resolver,
-    )
-    .map_err(|e| format!("Proto-direct emission failed: {}", e))?;
+
+    // ─── Multi-function emission when KV cache is enabled ─────────────
+    // When with_kv_cache=true, emit a multi-function Core ML model with:
+    //   - "embedding" function: processes the initial prompt (prefill)
+    //   - "decode_step" function: processes one token at a time with
+    //     KV-cache state reads/writes for autoregressive generation
+    //
+    // This matches the reference model (pkhairkh/qwen3-coreml-palettized)
+    // which uses a multi-function layout with shared weights between
+    // embedding and decode_step (embed_tokens, lm_head).
+    //
+    // Without KV cache (single-function model), the model is useless for
+    // inference: every forward pass recomputes the entire KV cache from
+    // scratch, and autoregressive generation is impossible.
+    let emit_result = if with_kv_cache && mirs.len() == 1 {
+        use ane_bridge::proto_direct::emit_proto_direct_multifunction;
+        use ane_bridge::mir_to_compat::mir_graph_to_compat;
+
+        println!("  KV-cache enabled: emitting multi-function model (embedding + decode_step)");
+
+        // Build the embedding (prefill) MIR — this is the single-function
+        // MIR we already have, which processes the full prompt at once.
+        let embedding_mir = &mirs[0];
+
+        // Build the decode_step MIR using the DecompositionContext.
+        // The decode_step function processes one token at a time, reading
+        // and writing KV-cache states.
+        //
+        // For each transformer layer, we need to produce:
+        //   - mb.read_state for K and V caches
+        //   - Q/K/V projections for the new token
+        //   - Split-based per-head attention (no Tile, no SDPA)
+        //   - mb.coreml_update_state for K and V caches
+        //
+        // We construct decode_step MIR from the AIR graph by using a
+        // separate MilLower pass that targets a "decode_step" function
+        // name and includes state operations.
+        let num_layers = traced_graph.model_config.num_hidden_layers;
+        let num_heads = traced_graph.model_config.num_attention_heads;
+        let num_kv_heads = traced_graph.model_config.num_key_value_heads.unwrap_or(num_heads);
+        let head_dim_val = head_dim;
+        let hidden_size = traced_graph.model_config.hidden_size;
+
+        // Build decode_step MIR via the LegalityRewritePass with
+        // DecodeStep SIR ops for each layer. This produces the correct
+        // mb.read_state / mb.coreml_update_state pattern.
+        let decode_step_sir = build_decode_step_sir(
+            &traced_graph,
+            num_layers,
+            num_heads,
+            num_kv_heads,
+            head_dim_val,
+            hidden_size,
+            seq_len,
+            batch_size,
+        );
+        let decode_step_air = legality
+            .run(decode_step_sir.clone(), &no_knowledge, Some(&decomp_ctx))
+            .map_err(|e| format!("LegalityRewritePass for decode_step failed: {}", e))?;
+        let decode_step_mirs = mil_lower
+            .run_with_weight_shapes(&decode_step_air, &shard_plan, &input_shapes, &weight_shapes)
+            .map_err(|e| format!("MilLowerPass for decode_step failed: {}", e))?;
+
+        if decode_step_mirs.is_empty() {
+            return Err("MilLowerPass produced no MIR graphs for decode_step".to_string());
+        }
+
+        let decode_step_mir = &decode_step_mirs[0];
+
+        println!(
+            "  Embedding MIR: {} nodes, {} inputs, {} outputs",
+            embedding_mir.nodes.len(),
+            embedding_mir.inputs.len(),
+            embedding_mir.outputs.len()
+        );
+        println!(
+            "  Decode-step MIR: {} nodes, {} inputs, {} outputs",
+            decode_step_mir.nodes.len(),
+            decode_step_mir.inputs.len(),
+            decode_step_mir.outputs.len()
+        );
+
+        // Identify shared weights: embed_tokens and lm_head are used by
+        // both embedding and decode_step functions.
+        let shared_weight_names = identify_shared_weights(embedding_mir, decode_step_mir);
+        println!("  Shared weights: {} tensor(s)", shared_weight_names.len());
+
+        // Convert both MIRs to compat format
+        let embedding_compat = mir_graph_to_compat(embedding_mir, &chained_resolver)
+            .map_err(|e| format!("Embedding MIR compat conversion failed: {}", e))?;
+        let decode_step_compat = mir_graph_to_compat(decode_step_mir, &chained_resolver)
+            .map_err(|e| format!("Decode-step MIR compat conversion failed: {}", e))?;
+
+        // Rename functions appropriately
+        let mut embedding_compat = embedding_compat;
+        embedding_compat.function_name = "embedding".to_string();
+        let mut decode_step_compat = decode_step_compat;
+        decode_step_compat.function_name = "decode_step".to_string();
+
+        let graphs = vec![embedding_compat, decode_step_compat];
+        emit_proto_direct_multifunction(
+            &graphs,
+            &shared_weight_names,
+            mlpackage_dir.to_str().unwrap_or(""),
+        )
+        .map_err(|e| format!("Multi-function proto-direct emission failed: {}", e))?
+    } else {
+        emit_mir_graph_proto_direct_with_resolver(
+            &mirs[0],
+            mlpackage_dir.to_str().unwrap_or(""),
+            &chained_resolver,
+        )
+        .map_err(|e| format!("Proto-direct emission failed: {}", e))?
+    };
     println!("  Emitted: {}", mlpackage_dir.display());
     println!(
         "  Total size: {} bytes, {} file(s), {} weight(s)",
@@ -4334,6 +4446,172 @@ fn run_trace_compile(
     println!("Artifacts in: {}", output);
 
     Ok(())
+}
+
+/// Build a SIR graph for the decode_step function of a causal LM.
+///
+/// This produces a SIR graph with one `DecodeStep` op per transformer layer,
+/// each with KV-cache state references. The `LegalityRewritePass` will then
+/// decompose each `DecodeStep` into the correct `mb.read_state` /
+/// `mb.coreml_update_state` pattern with split-based per-head attention.
+///
+/// The decode_step function processes a single token at a time, reading
+/// the current KV cache states, computing attention against the full
+/// cached context, and updating the KV cache with the new K/V values.
+fn build_decode_step_sir(
+    traced_graph: &ane_trace::graph::TracedGraph,
+    num_layers: usize,
+    num_heads: usize,
+    num_kv_heads: usize,
+    head_dim: usize,
+    _hidden_size: usize,
+    max_seq_len: usize,
+    _batch_size: usize,
+) -> ane_ir::sir::SirGraph {
+    use ane_ir::sir::{QualityContract, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+
+    let mut sir_nodes: Vec<SirNode> = Vec::new();
+    let mut sir_inputs: Vec<SirNodeId> = Vec::new();
+    let mut sir_outputs: Vec<SirNodeId> = Vec::new();
+
+    // Input: token_ids (single token for decode)
+    let token_input_id = SirNodeId("sir_0_input_ids".to_string());
+    sir_inputs.push(token_input_id.clone());
+
+    // Build KV cache state map and DecodeStep ops for each layer
+    let mut current_hidden = token_input_id.clone();
+
+    for layer_idx in 0..num_layers {
+        let layer_base = format!("layer_{}", layer_idx);
+        let layer_prefix = format!("model.layers.{}.self_attn", layer_idx);
+
+        // KV cache state IDs for this layer
+        let k_state_id = format!("kv_cache_layer_{}_key", layer_idx);
+        let v_state_id = format!("kv_cache_layer_{}_value", layer_idx);
+        let state_map = vec![k_state_id, v_state_id];
+
+        // DecodeStep op: processes one token through the attention layer
+        // with KV-cache state reads/writes
+        let decode_step_id = SirNodeId(format!("sir_{}_decode_step_{}", sir_nodes.len(), layer_base));
+        let decode_step_op = SirOp::DecodeStep {
+            token: current_hidden.clone(),
+            state_map,
+            q_weight: Some(format!("{}.q_proj.weight", layer_prefix)),
+            k_weight: Some(format!("{}.k_proj.weight", layer_prefix)),
+            v_weight: Some(format!("{}.v_proj.weight", layer_prefix)),
+            out_weight: Some(format!("{}.o_proj.weight", layer_prefix)),
+            rope_tables: Some(format!("rope_tables_layer_{}_self_attn", layer_idx)),
+            position: Some(SirNodeId("sir_position_input".to_string())),
+            q_norm_weight: Some(format!("{}.q_norm.weight", layer_prefix)),
+            k_norm_weight: Some(format!("{}.k_norm.weight", layer_prefix)),
+            norm_epsilon: traced_graph.model_config.layer_norm_epsilon as f32,
+            qk_norm_type: "rms".to_string(),
+            mask_ref: None,
+        };
+
+        let metadata = SirMetadata {
+            task_origin: TaskOrigin::TransformersTrace {
+                name: traced_graph.model_id.clone(),
+            },
+            model_id: Some(traced_graph.model_id.clone()),
+            quality_contract: Some(QualityContract {
+                max_perplexity_delta: Some(0.1),
+                max_latency_ms: Some(15.0), // decode_step should be ~5-15ms
+            }),
+            precision_override: None,
+        };
+
+        sir_nodes.push(SirNode {
+            id: decode_step_id.clone(),
+            op: decode_step_op,
+            name: format!("decode_step_{}", layer_idx),
+            metadata,
+        });
+
+        current_hidden = decode_step_id;
+    }
+
+    // Output: the hidden state from the last layer's decode step
+    sir_outputs.push(current_hidden);
+
+    SirGraph {
+        nodes: sir_nodes,
+        inputs: sir_inputs,
+        outputs: sir_outputs,
+    }
+}
+
+/// Identify weights that are shared between the embedding and decode_step MIRs.
+///
+/// Shared weights appear in both functions but should be stored once in
+/// weight.bin and referenced by both. The key shared weights for causal LMs are:
+/// - `model.embed_tokens.weight` (embedding lookup table)
+/// - `lm_head.weight` (output projection, often tied with embed_tokens)
+fn identify_shared_weights(
+    embedding_mir: &ane_ir::mir::MirGraph,
+    decode_step_mir: &ane_ir::mir::MirGraph,
+) -> Vec<String> {
+    use ane_ir::mir::MirOp;
+
+    // Collect all weight names from both MIR graphs
+    let embedding_weights: std::collections::HashSet<String> = embedding_mir
+        .nodes
+        .iter()
+        .filter_map(|node| match &node.op {
+            MirOp::MILLinear { weight, .. } => Some(weight.clone()),
+            MirOp::MILGather { x, .. } => Some(x.0.clone()),
+            _ => None,
+        })
+        .collect();
+
+    let decode_step_weights: std::collections::HashSet<String> = decode_step_mir
+        .nodes
+        .iter()
+        .filter_map(|node| match &node.op {
+            MirOp::MILLinear { weight, .. } => Some(weight.clone()),
+            MirOp::MILGather { x, .. } => Some(x.0.clone()),
+            _ => None,
+        })
+        .collect();
+
+    // Intersection = shared weights
+    let shared: Vec<String> = embedding_weights
+        .intersection(&decode_step_weights)
+        .cloned()
+        .collect();
+
+    // Also force-include well-known shared weights even if they're
+    // represented differently in the two MIRs (e.g., embed_tokens
+    // might be a Gather in embedding but a MILLinear in decode_step).
+    let mut result = shared;
+    let known_shared = [
+        "model.embed_tokens.weight",
+        "lm_head.weight",
+    ];
+    for name in &known_shared {
+        if !result.iter().any(|r| r == name) {
+            // Check if this weight appears in either MIR
+            let in_embedding = embedding_mir.nodes.iter().any(|n| {
+                match &n.op {
+                    MirOp::MILLinear { weight, .. } => weight == name,
+                    MirOp::MILGather { x, .. } => &x.0 == name,
+                    _ => false,
+                }
+            });
+            let in_decode = decode_step_mir.nodes.iter().any(|n| {
+                match &n.op {
+                    MirOp::MILLinear { weight, .. } => weight == name,
+                    MirOp::MILGather { x, .. } => &x.0 == name,
+                    _ => false,
+                }
+            });
+            if in_embedding || in_decode {
+                result.push(name.to_string());
+            }
+        }
+    }
+
+    result
 }
 
 /// Parse an ANE family string into an AneFamily enum value.

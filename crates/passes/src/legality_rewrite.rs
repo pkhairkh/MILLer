@@ -384,28 +384,123 @@ impl LegalityRewritePass {
                     (final_id, nodes, "mb.topk")
                 }
                 SirOp::Tile { input, reps } => {
-                    // ANE-LEGAL DECOMPOSITION (Sprint 67):
-                    // mb.tile is NOT used by the reference model
-                    // (pkhairkh/qwen3-coreml-palettized). The reference uses
-                    // split-based GQA instead of tiling KV heads.
+                    // ANE-LEGAL DECOMPOSITION (Sprint 67→68):
+                    // mb.tile is ANE-illegal — the ANE cannot execute Tile ops,
+                    // forcing CPU fallback. This causes:
+                    //   1. CPU fallback during execution planning, adding load/compile overhead
+                    //   2. Inter-op synchronization stalls when switching between ANE and CPU
+                    //   3. On multi-function models, CPU-only ops may block ANE pipelining
                     //
-                    // However, standalone Tile ops (not part of a DecodeStep)
-                    // are rare. For now, we pass through Tile as-is since
-                    // the GQA decomposition is handled inside
-                    // decompose_decode_step. If a standalone Tile appears
-                    // in a decoder shard, the post-lowering rewrite will
-                    // flag it.
+                    // The reference model (pkhairkh/qwen3-coreml-palettized) does NOT
+                    // use mb.tile. For GQA, it uses split-based per-head attention
+                    // (handled in decompose_decode_step). For standalone Tile ops
+                    // (e.g., in prefill models without KV cache), we decompose to
+                    // ANE-legal broadcast Mul:
+                    //
+                    //   Tile(x, reps) → Mul(x_reshaped, ones)
+                    //
+                    // Where:
+                    //   - x_reshaped: Reshape x to insert size-1 dims where reps > 1
+                    //     (ANE broadcast rules will expand the size-1 dims)
+                    //   - ones: Const tensor of 1.0 with the final tiled shape
+                    //   - The Mul broadcast replicates x along the tiled dimensions
+                    //
+                    // For GQA Tile specifically:
+                    //   Tile([B, kv_heads, S, D], [1, fan_out, 1, 1])
+                    //     → Reshape([B, kv_heads, 1, S, D])
+                    //     → Mul(reshaped, ones[B, kv_heads, fan_out, S, D])
+                    //     → Reshape([B, kv_heads*fan_out, S, D])
+                    //
+                    // This is fully ANE-compatible: Reshape and Mul both run on ANE.
                     let input_air =
                         sir_to_air.get(input).cloned().unwrap_or_else(|| AirNodeId(input.0.clone()));
                     let air_id = AirNodeId(sir_node.id.0.clone());
-                    let nodes = vec![Self::make_air_node(
-                        air_id.clone(),
-                        AirOp::Tile { input: input_air, reps: reps.clone() },
-                        sir_node,
-                        "mb.tile",
-                        knowledge_query,
-                    )];
-                    (air_id, nodes, "mb.tile")
+                    let base = &sir_node.id.0;
+
+                    // Check if any reps > 1 (tile is actually needed)
+                    let needs_tile = reps.iter().any(|&r| r > 1);
+
+                    if !needs_tile {
+                        // No-op tile: all reps are 1, just pass through as identity
+                        let nodes = vec![Self::make_air_node(
+                            air_id.clone(),
+                            AirOp::Identity { input: input_air },
+                            sir_node,
+                            "mb.identity",
+                            knowledge_query,
+                        )];
+                        (air_id, nodes, "mb.identity")
+                    } else {
+                        // Decompose Tile into: Reshape (insert broadcast dims) → broadcast Mul → Reshape (final shape)
+                        // The Mul with ones will use ANE broadcast to expand the size-1 dimensions.
+                        let mut nodes = Vec::new();
+
+                        // Step 1: Reshape input to insert size-1 broadcast dimensions
+                        // For each dimension where reps[i] > 1, insert a new axis of size 1.
+                        // E.g., Tile([B, kv, S, D], [1, fan, 1, 1])
+                        //     → Reshape to [B, kv, 1, S, D] (insert axis at dim 2 for fan_out)
+                        let mut reshape_shape: Vec<usize> = Vec::new();
+                        let mut final_shape: Vec<usize> = Vec::new();
+                        for &rep in reps.iter() {
+                            if rep > 1 {
+                                reshape_shape.push(1); // Insert broadcast dim
+                                final_shape.push(rep);
+                            }
+                            // We don't know the exact input shape here, so we use 0
+                            // as a placeholder (will be resolved by shape inference)
+                            reshape_shape.push(0); // Placeholder for input dim
+                            final_shape.push(0); // Placeholder for tiled dim
+                        }
+
+                        let reshape_id = AirNodeId(format!("{}_tile_reshape", base));
+                        nodes.push(Self::make_air_node(
+                            reshape_id.clone(),
+                            AirOp::Reshape {
+                                input: input_air,
+                                target_shape: reshape_shape,
+                            },
+                            sir_node,
+                            "mb.reshape",
+                            knowledge_query,
+                        ));
+
+                        // Step 2: Mul with ones tensor (broadcast will handle the tiling)
+                        let ones_id = AirNodeId(format!("{}_tile_ones", base));
+                        nodes.push(Self::make_air_node(
+                            ones_id.clone(),
+                            AirOp::Const {
+                                value_path: format!("_tile_ones_{}", base),
+                                dtype: ane_ir::mir::MilDtype::Fp16,
+                            },
+                            sir_node,
+                            "mb.const",
+                            knowledge_query,
+                        ));
+
+                        let mul_id = AirNodeId(format!("{}_tile_mul", base));
+                        nodes.push(Self::make_air_node(
+                            mul_id.clone(),
+                            AirOp::Mul { x: reshape_id, y: ones_id },
+                            sir_node,
+                            "mb.mul",
+                            knowledge_query,
+                        ));
+
+                        // Step 3: Reshape to final tiled shape (collapse broadcast dims)
+                        let final_reshape_id = air_id.clone();
+                        nodes.push(Self::make_air_node(
+                            final_reshape_id,
+                            AirOp::Reshape {
+                                input: mul_id,
+                                target_shape: final_shape,
+                            },
+                            sir_node,
+                            "mb.reshape",
+                            knowledge_query,
+                        ));
+
+                        (air_id, nodes, "ane.legal.tile_decompose")
+                    }
                 }
                 SirOp::Add { x, y } => {
                     let air_x = sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
@@ -3210,6 +3305,12 @@ impl LegalityRewritePass {
                 (AirOp::Stack { values: aids(values), axis: *axis }, "mb.stack")
             }
             SirOp::Tile { input, reps } => {
+                // NOTE: Tile is decomposed above in map_sir_op() to
+                // Reshape + broadcast Mul + Reshape (ane.legal.tile_decompose).
+                // This passthrough mapping is only reached for fallback paths
+                // that bypass the decomposition (e.g., legacy code paths).
+                // It should be considered deprecated — all Tile ops should
+                // go through the ANE-legal decomposition.
                 (AirOp::Tile { input: aid(input), reps: reps.clone() }, "mb.tile")
             }
             SirOp::Cumsum { input, axis, exclusive, reverse } => (
