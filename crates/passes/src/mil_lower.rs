@@ -2767,6 +2767,156 @@ impl MilLowerPass {
             }
         }
 
+        // ─── Post-lowering: shard lm_head vocab projection ──────────
+        // Even after slicing the hidden state to [1,1,D] before lm_head,
+        // a single linear with V=151936 output channels and a ~311 MB
+        // weight matrix causes the ANE execution planner to fail (error -5).
+        // The planner cannot build a hardware execution plan for a single
+        // operation that produces 151,936 output channels.
+        //
+        // Fix: replace the single lm_head linear with N smaller shard
+        // linears (each producing ~19K output channels), then concat the
+        // shard outputs along the vocab dimension.
+        //
+        //   Before: linear(x=[1,1,D], W=[V,D])          → [1,1,V]
+        //   After:  linear_0(x=[1,1,D], W_0=[V/N,D])    → [1,1,V/N]
+        //           linear_1(x=[1,1,D], W_1=[V/N,D])    → [1,1,V/N]
+        //           ...
+        //           concat([shard_0, shard_1, ...], axis=2) → [1,1,V]
+        //
+        // Each shard weight is a virtual name (e.g., "lm_head.shard_0.weight")
+        // resolved by the SafetensorsWeightResolver by slicing the original
+        // "lm_head.weight" tensor along its first dimension.
+        {
+            const LM_HEAD_SHARD_SIZE: usize = 19_000;
+
+            // Re-find lm_head after the slice-before fix may have moved it
+            let lm_head_idx = mir_nodes.iter().position(|n| {
+                match &n.op {
+                    MirOp::MILLinear { weight, .. } => {
+                        weight == "lm_head.weight" || weight.contains("lm_head.")
+                            && !weight.contains(".shard_") // Don't re-shard
+                    }
+                    _ => false,
+                }
+            });
+
+            if let Some(lm_idx) = lm_head_idx {
+                let (input_mir_id, vocab_size, output_shape, lm_id, lm_dtype, lm_compute_hint, lm_air_source) = {
+                    let lm_node = &mir_nodes[lm_idx];
+                    match &lm_node.op {
+                        MirOp::MILLinear { x, weight: _, .. } => {
+                            let vocab = lm_node.shape.get(2).copied().unwrap_or(0);
+                            (
+                                x.clone(),
+                                vocab,
+                                lm_node.shape.clone(),
+                                lm_node.id.clone(),
+                                lm_node.dtype.clone(),
+                                lm_node.compute_unit_hint.clone(),
+                                lm_node.air_source.clone(),
+                            )
+                        }
+                        _ => unreachable!("lm_head must be MILLinear"),
+                    }
+                };
+
+                // Only shard if vocab size exceeds the shard threshold
+                if vocab_size > LM_HEAD_SHARD_SIZE {
+                    let num_shards = (vocab_size + LM_HEAD_SHARD_SIZE - 1) / LM_HEAD_SHARD_SIZE;
+
+                    eprintln!(
+                        "  [lm_head sharding] vocab_size={}, num_shards={}, shard_size={}",
+                        vocab_size, num_shards, LM_HEAD_SHARD_SIZE
+                    );
+
+                    let mut shard_nodes = Vec::with_capacity(num_shards);
+                    let mut shard_mir_ids = Vec::with_capacity(num_shards);
+
+                    let mut remaining = vocab_size;
+                    for shard_i in 0..num_shards {
+                        let shard_out_dim = remaining.min(LM_HEAD_SHARD_SIZE);
+                        remaining -= shard_out_dim;
+
+                        let shard_weight_name = format!("lm_head.shard_{}.weight", shard_i);
+                        let shard_id = MirNodeId(format!("lm_head_shard_{}", shard_i));
+                        let shard_output_shape = vec![
+                            output_shape.get(0).copied().unwrap_or(1),
+                            output_shape.get(1).copied().unwrap_or(1),
+                            shard_out_dim,
+                        ];
+
+                        shard_nodes.push(MirNode {
+                            id: shard_id.clone(),
+                            op: MirOp::MILLinear {
+                                name: format!("lm_head_shard_{}", shard_i),
+                                x: input_mir_id.clone(),
+                                weight: shard_weight_name.clone(),
+                                bias: None,
+                            },
+                            dtype: lm_dtype.clone(),
+                            shape: shard_output_shape.clone(),
+                            compute_unit_hint: lm_compute_hint.clone(),
+                            air_source: None, // Synthetic node
+                        });
+
+                        shard_mir_ids.push(shard_id.clone());
+
+                        // Seed shard weight shape into node_shapes so downstream
+                        // weight resolution can look up the shape
+                        node_shapes.insert(
+                            AirNodeId(shard_weight_name),
+                            vec![shard_out_dim, output_shape.get(2).copied().unwrap_or(0)],
+                        );
+                        // Also seed the shard node's own shape
+                        node_shapes.insert(
+                            AirNodeId(format!("lm_head_shard_{}", shard_i)),
+                            shard_output_shape,
+                        );
+                    }
+
+                    // Create concat node to merge shard outputs along the vocab axis.
+                    // Reuse the original lm_head MIR ID so output references still work.
+                    let concat_node = MirNode {
+                        id: lm_id.clone(),
+                        op: MirOp::MILConcat {
+                            name: "lm_head".into(),
+                            values: shard_mir_ids,
+                            axis: 2, // Concat along vocab dimension
+                        },
+                        dtype: lm_dtype,
+                        shape: output_shape.clone(), // Same shape as original [1,1,V]
+                        compute_unit_hint: lm_compute_hint,
+                        air_source: lm_air_source.clone(),
+                    };
+
+                    // Replace the original lm_head node with shard nodes + concat
+                    mir_nodes.remove(lm_idx);
+                    for (i, node) in shard_nodes.into_iter().enumerate() {
+                        mir_nodes.insert(lm_idx + i, node);
+                    }
+                    mir_nodes.insert(lm_idx + num_shards, concat_node);
+
+                    // Update node_shapes for the concat (which replaces the original lm_head)
+                    if let Some(air_id) = lm_air_source {
+                        node_shapes.insert(air_id, output_shape.clone());
+                    }
+
+                    eprintln!(
+                        "  [lm_head sharding] Applied: {} shards + concat → [1,1,{}]",
+                        num_shards, vocab_size
+                    );
+                } else {
+                    eprintln!(
+                        "  [lm_head sharding] Skipped: vocab_size={} <= shard_size={}",
+                        vocab_size, LM_HEAD_SHARD_SIZE
+                    );
+                }
+            } else {
+                eprintln!("  [lm_head sharding] No lm_head MILLinear found in MIR nodes");
+            }
+        }
+
         let mir_inputs: Vec<MirNodeId> = input
             .inputs
             .iter()

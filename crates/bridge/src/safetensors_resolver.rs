@@ -266,10 +266,106 @@ impl SafetensorsWeightResolver {
 
 impl WeightResolver for SafetensorsWeightResolver {
     fn resolve(&self, value_path: &str) -> Option<WeightData> {
-        self.tensors
-            .get(value_path)
-            .map(|entry| WeightData { data: entry.data.clone(), shape: entry.shape.clone() })
+        // Direct lookup first
+        if let Some(entry) = self.tensors.get(value_path) {
+            return Some(WeightData { data: entry.data.clone(), shape: entry.shape.clone() });
+        }
+
+        // Virtual shard weight: "lm_head.shard_N.weight"
+        // The lm_head vocab projection is too large for the ANE execution planner
+        // (error -5 for a single linear with 151936 output channels). The compiler
+        // shards it into N smaller linears. Each shard references a virtual weight
+        // name that this resolver resolves by slicing the original lm_head.weight.
+        if let Some((base_weight, shard_index)) = parse_shard_weight_name(value_path) {
+            return self.resolve_shard(&base_weight, shard_index);
+        }
+
+        None
     }
+}
+
+impl SafetensorsWeightResolver {
+    /// Resolve a virtual shard weight by slicing the original weight tensor.
+    ///
+    /// The shard naming convention is: `<base>.shard_<N>.weight`
+    /// (e.g., `lm_head.shard_0.weight`, `lm_head.shard_1.weight`, ...).
+    ///
+    /// Each shard takes `LM_HEAD_SHARD_SIZE` rows from the original weight's
+    /// first dimension (except the last shard, which may be smaller).
+    fn resolve_shard(&self, base_weight: &str, shard_index: usize) -> Option<WeightData> {
+        const LM_HEAD_SHARD_SIZE: usize = 19000;
+
+        let entry = self.tensors.get(base_weight)?;
+        if entry.shape.len() != 2 {
+            eprintln!(
+                "  Warning: shard weight '{}' references non-2D tensor with shape {:?}",
+                base_weight, entry.shape
+            );
+            return None;
+        }
+
+        let vocab_size = entry.shape[0];
+        let hidden_size = entry.shape[1];
+
+        let start_row = shard_index * LM_HEAD_SHARD_SIZE;
+        let end_row = (start_row + LM_HEAD_SHARD_SIZE).min(vocab_size);
+
+        if start_row >= vocab_size {
+            eprintln!(
+                "  Warning: shard index {} out of range for weight '{}' (vocab_size={})",
+                shard_index, base_weight, vocab_size
+            );
+            return None;
+        }
+
+        let shard_rows = end_row - start_row;
+        let bytes_per_row = hidden_size * 2; // FP16 = 2 bytes per element
+        let start_byte = start_row * bytes_per_row;
+        let end_byte = end_row * bytes_per_row;
+
+        let shard_data = entry.data[start_byte..end_byte].to_vec();
+        Some(WeightData {
+            data: shard_data,
+            shape: vec![shard_rows, hidden_size],
+        })
+    }
+}
+
+/// Parse a virtual shard weight name into (base_weight_name, shard_index).
+///
+/// Pattern: `<prefix>.shard_<N>.weight` → `(prefix + ".weight", N)`
+///
+/// Examples:
+/// - `"lm_head.shard_0.weight"` → `("lm_head.weight", 0)`
+/// - `"lm_head.shard_7.weight"` → `("lm_head.weight", 7)`
+/// - `"lm_head.weight"` → `None` (not a shard name)
+/// - `"model.layers.0.self_attn.q_proj.weight"` → `None` (not a shard name)
+fn parse_shard_weight_name(value_path: &str) -> Option<(String, usize)> {
+    // Match pattern: <prefix>.shard_<N>.weight
+    if !value_path.contains(".shard_") {
+        return None;
+    }
+
+    // Try to extract: prefix + ".shard_N" + ".weight"
+    let weight_suffix = ".weight";
+    if !value_path.ends_with(weight_suffix) {
+        return None;
+    }
+
+    let without_suffix = &value_path[..value_path.len() - weight_suffix.len()];
+
+    // Find the last ".shard_" segment
+    if let Some(shard_start) = without_suffix.rfind(".shard_") {
+        let prefix = &without_suffix[..shard_start]; // e.g., "lm_head"
+        let shard_part = &without_suffix[shard_start + ".shard_".len()..]; // e.g., "0", "7"
+
+        if let Ok(index) = shard_part.parse::<usize>() {
+            let base_weight = format!("{}.weight", prefix);
+            return Some((base_weight, index));
+        }
+    }
+
+    None
 }
 
 /// Convert BF16 tensor data to FP16.
@@ -481,5 +577,64 @@ mod tests {
     fn test_from_cache_dir_recursive_nonexistent() {
         let resolver = SafetensorsWeightResolver::from_cache_dir_recursive("/nonexistent/path");
         assert!(resolver.is_empty());
+    }
+
+    #[test]
+    fn test_parse_shard_weight_name() {
+        // Valid shard names
+        assert_eq!(
+            parse_shard_weight_name("lm_head.shard_0.weight"),
+            Some(("lm_head.weight".to_string(), 0))
+        );
+        assert_eq!(
+            parse_shard_weight_name("lm_head.shard_7.weight"),
+            Some(("lm_head.weight".to_string(), 7))
+        );
+
+        // Not a shard name
+        assert_eq!(parse_shard_weight_name("lm_head.weight"), None);
+        assert_eq!(
+            parse_shard_weight_name("model.layers.0.self_attn.q_proj.weight"),
+            None
+        );
+        assert_eq!(parse_shard_weight_name("some_tensor"), None);
+    }
+
+    #[test]
+    fn test_resolve_shard_weight() {
+        use crate::mir_to_compat::WeightResolver;
+
+        // Create a resolver with a fake "lm_head.weight" tensor: shape [40000, 1024] fp16
+        let vocab_size = 40000usize;
+        let hidden_size = 1024usize;
+        let total_elements = vocab_size * hidden_size;
+        let total_bytes = total_elements * 2; // fp16
+        let fake_data: Vec<u8> = (0..total_bytes).map(|i| (i % 256) as u8).collect();
+
+        let mut resolver = SafetensorsWeightResolver::empty();
+        resolver.tensors.insert(
+            "lm_head.weight".to_string(),
+            TensorEntry {
+                data: fake_data,
+                shape: vec![vocab_size, hidden_size],
+            },
+        );
+
+        // Resolve shard 0: rows 0..19000
+        let shard_0 = resolver.resolve("lm_head.shard_0.weight").expect("shard_0 should resolve");
+        assert_eq!(shard_0.shape, vec![19000, hidden_size]);
+        assert_eq!(shard_0.data.len(), 19000 * hidden_size * 2);
+
+        // Resolve shard 2 (last): rows 38000..40000 → 2000 rows
+        let shard_2 = resolver.resolve("lm_head.shard_2.weight").expect("shard_2 should resolve");
+        assert_eq!(shard_2.shape, vec![2000, hidden_size]);
+        assert_eq!(shard_2.data.len(), 2000 * hidden_size * 2);
+
+        // Out of range shard
+        assert!(resolver.resolve("lm_head.shard_3.weight").is_none());
+
+        // Non-shard name still works
+        let original = resolver.resolve("lm_head.weight").expect("original should resolve");
+        assert_eq!(original.shape, vec![vocab_size, hidden_size]);
     }
 }
