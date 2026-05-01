@@ -2637,6 +2637,95 @@ impl MilLowerPass {
             node_shapes.insert(air_node.id.clone(), shape);
         }
 
+        // ─── Post-lowering: last-token slice for lm_head ────────────────
+        // The lm_head linear projects all sequence positions to the full vocabulary,
+        // producing a massive [1, S, V] logits tensor (e.g., [1, 512, 151936] ≈ 155 MB).
+        // Core ML's execution planner fails to build a hardware plan for this
+        // (error code -5). Since next-token prediction only needs the last position's
+        // logits, we insert a SliceByIndex after lm_head to reduce the output to
+        // [1, 1, V] (≈ 300 KB), making the model viable for ANE execution.
+        {
+            let lm_head_node = mir_nodes.iter().find(|n| {
+                match &n.op {
+                    MirOp::MILLinear { weight, .. } => {
+                        weight == "lm_head.weight" || weight.contains("lm_head.")
+                    }
+                    _ => false,
+                }
+            });
+
+            if let Some(lm_node) = lm_head_node {
+                let lm_shape = lm_node.shape.clone();
+                let lm_id = lm_node.id.clone();
+                // The linear output shape is [B, S, V] or [1, S, V].
+                // We need S >= 2 to make slicing worthwhile (S=1 is already single-token).
+                if lm_shape.len() >= 2 && lm_shape[1] > 1 {
+                    let seq_len = lm_shape[1] as i64;
+                    let _vocab_size = lm_shape.last().copied().unwrap_or(0) as i64;
+                    let rank = lm_shape.len();
+
+                    // Slice: take only the last position along the sequence dimension.
+                    // For dim 1 (seq): begin=S-1, end=S → size 1 (last token only)
+                    // For all other dims: begin=0, end=dim_size → full extent
+                    let mut begin = vec![0i64; rank];
+                    let mut end: Vec<i64> = lm_shape.iter().map(|&d| d as i64).collect();
+                    begin[1] = seq_len - 1;  // Start at last position
+                    end[1] = seq_len;        // Seq dim: take 1 position (end is exclusive)
+
+                    let slice_id = MirNodeId(format!("{}_last_token", lm_id.0));
+                    let slice_shape: Vec<usize> = lm_shape.iter().enumerate().map(|(i, &d)| {
+                        if i == 1 { 1 } else { d }
+                    }).collect();
+
+                    let slice_node = MirNode {
+                        id: slice_id.clone(),
+                        op: MirOp::MILSliceByIndex {
+                            name: "lm_head_last_token".into(),
+                            x: lm_id.clone(),
+                            begin: begin.clone(),
+                            end: end.clone(),
+                            stride: vec![1; rank],
+                            begin_mask: vec![false; rank],
+                            end_mask: vec![false; rank],
+                            squeeze_mask: vec![false; rank],
+                        },
+                        dtype: lm_node.dtype.clone(),
+                        shape: slice_shape.clone(),
+                        compute_unit_hint: lm_node.compute_unit_hint.clone(),
+                        air_source: None, // This is a synthetic node, not from AIR
+                    };
+
+                    mir_nodes.push(slice_node);
+
+                    // Remap: any AIR node that previously pointed to the lm_head
+                    // linear output should now point to the last-token slice.
+                    // This ensures mir_outputs (derived via air_to_mir) picks up
+                    // the slice instead of the raw linear.
+                    for air_id in node_shapes.keys() {
+                        if air_to_mir.get(air_id).map(|id| id.0.as_str()) == Some(lm_id.0.as_str()) {
+                            air_to_mir.insert(air_id.clone(), slice_id.clone());
+                        }
+                    }
+                    // Also update node_shapes so downstream consumers see the
+                    // sliced shape, not the full-sequence shape.
+                    node_shapes.insert(
+                        // Use a synthetic key that matches the slice node
+                        AirNodeId(format!("{}_last_token", lm_id.0)),
+                        slice_shape,
+                    );
+
+                    eprintln!(
+                        "  [lm_head slice] Inserted last-token slice: [{},{},{}] → [{},1,{}]",
+                        lm_shape.get(0).unwrap_or(&0),
+                        lm_shape.get(1).unwrap_or(&0),
+                        lm_shape.get(2).unwrap_or(&0),
+                        lm_shape.get(0).unwrap_or(&0),
+                        lm_shape.get(2).unwrap_or(&0),
+                    );
+                }
+            }
+        }
+
         let mir_inputs: Vec<MirNodeId> = input
             .inputs
             .iter()

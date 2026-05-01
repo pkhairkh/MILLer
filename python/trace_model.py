@@ -1630,13 +1630,33 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
         "module_path": "lm_head",
     })
 
+    # Last-token slice: extract only the last position's logits from the
+    # full-sequence lm_head output. Core ML's execution planner cannot
+    # build a hardware plan for a [1, seq_len, vocab_size] output tensor
+    # (too large — ~155 MB for Qwen3-0.6B). Slicing to [1, 1, vocab_size]
+    # (~300 KB) makes the model viable for ANE execution.
+    nodes.append({
+        "id": "lm_head_last_token",
+        "op": {
+            "type": "Slice",
+            "begin": [0, seq_len - 1, 0],
+            "end": [1, seq_len, config["vocab_size"]],
+            "stride": [1, 1, 1],
+        },
+        "name": "lm_head_last_token",
+        "inputs": ["lm_head"],
+        "output_shape": {"dims": [1, 1, config["vocab_size"]], "dtype": "fp16"},
+        "is_parameter": False,
+        "module_path": "lm_head",
+    })
+
     # Output
     nodes.append({
         "id": "output",
         "op": {"type": "Output"},
         "name": "output",
-        "inputs": ["lm_head"],
-        "output_shape": {"dims": [1, seq_len, config["vocab_size"]], "dtype": "fp16"},
+        "inputs": ["lm_head_last_token"],
+        "output_shape": {"dims": [1, 1, config["vocab_size"]], "dtype": "fp16"},
         "is_parameter": False,
         "module_path": None,
     })
@@ -1759,7 +1779,7 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
         "model_cache_dir": model_cache_dir,
         "safetensors_files": safetensors_files,
         "inputs": input_specs,
-        "outputs": [{"name": "logits", "shape": {"dims": [1, seq_len, config["vocab_size"]], "dtype": "fp16"}}],
+        "outputs": [{"name": "logits", "shape": {"dims": [1, 1, config["vocab_size"]], "dtype": "fp16"}}],
         "state_declarations": [],
         "trace_metadata": {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
