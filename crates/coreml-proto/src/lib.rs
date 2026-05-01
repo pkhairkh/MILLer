@@ -404,12 +404,15 @@ pub mod mir_compat {
             end: Vec<i32>,
             /// INT32 stride values. Empty = all 1s (default).
             stride: Vec<i32>,
-            /// Bitmask for begin: bit N set means "ignore begin[N], start at 0".
-            /// Encoded as INT32 immediate scalar.
-            begin_mask: i32,
-            /// Bitmask for end: bit N set means "ignore end[N], go to full extent".
-            /// Encoded as INT32 immediate scalar.
-            end_mask: i32,
+            /// Boolean mask for begin: mask[N]=true means "ignore begin[N], start at 0".
+            /// Emitted as tensor<bool, [rank]> per Core ML ios19 schema.
+            begin_mask: Vec<bool>,
+            /// Boolean mask for end: mask[N]=true means "ignore end[N], go to full extent".
+            /// Emitted as tensor<bool, [rank]> per Core ML ios19 schema.
+            end_mask: Vec<bool>,
+            /// Boolean squeeze mask: mask[N]=true means "remove dimension N from output".
+            /// Emitted as tensor<bool, [rank]> per Core ML ios19 schema.
+            squeeze_mask: Vec<bool>,
         },
         SliceUpdate {
             name: String,
@@ -1040,23 +1043,16 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             MirOp::MILFlatten2d { name, .. } => unsupported("flatten2d", &name, &op_json),
             MirOp::MILReverse { name, .. } => unsupported("reverse", &name, &op_json),
             MirOp::MILReverseSequence { name, .. } => unsupported("reverse_sequence", &name, &op_json),
-            MirOp::MILSliceByIndex { name, x, begin, end, stride, begin_mask, end_mask, .. } => {
-                let bm: i32 = begin_mask.iter().enumerate()
-                    .filter(|&(_, &m)| m)
-                    .map(|(i, _)| 1i32 << i)
-                    .sum();
-                let em: i32 = end_mask.iter().enumerate()
-                    .filter(|&(_, &m)| m)
-                    .map(|(i, _)| 1i32 << i)
-                    .sum();
+            MirOp::MILSliceByIndex { name, x, begin, end, stride, begin_mask, end_mask, squeeze_mask } => {
                 mir_compat::MirOpCompat::SliceByIndex {
                     name,
                     x: nid(x),
                     begin: begin.into_iter().map(|v| v as i32).collect(),
                     end: end.into_iter().map(|v| v as i32).collect(),
                     stride: stride.into_iter().map(|v| v as i32).collect(),
-                    begin_mask: bm,
-                    end_mask: em,
+                    begin_mask: begin_mask.clone(),
+                    end_mask: end_mask.clone(),
+                    squeeze_mask: squeeze_mask.clone(),
                 }
             }
             MirOp::MILSliceBySize { name, .. } => unsupported("slice_by_size", &name, &op_json),
@@ -1449,15 +1445,23 @@ pub fn mir_op_to_proto_op(
                 perm: perm.iter().map(|&d| d as i64).collect(),
             }),
         ),
-        mir_compat::MirOpCompat::SliceByIndex { name, x, begin, end, stride, begin_mask, end_mask } => (
+        mir_compat::MirOpCompat::SliceByIndex { name, x, begin, end, stride, begin_mask, end_mask, squeeze_mask: _ } => (
             name.clone(),
             proto::mil_operation::Operation::SliceByIndexOp(proto::MilSliceByIndexOp {
                 x: Some(proto::OperandRef { name: x.clone() }),
                 begin: begin.iter().map(|&d| d as i64).collect(),
                 end: end.iter().map(|&d| d as i64).collect(),
                 stride: stride.iter().map(|&d| d as i64).collect(),
-                begin_mask: *begin_mask as i64,
-                end_mask: *end_mask as i64,
+                // Legacy proto path: pack bools into bitmasks for the old proto format.
+                // The proto-direct path (used by trace-compile) emits bool tensors instead.
+                begin_mask: begin_mask.iter().enumerate()
+                    .filter(|&(_, &m)| m)
+                    .map(|(i, _)| 1i64 << i)
+                    .sum(),
+                end_mask: end_mask.iter().enumerate()
+                    .filter(|&(_, &m)| m)
+                    .map(|(i, _)| 1i64 << i)
+                    .sum(),
             }),
         ),
         mir_compat::MirOpCompat::SliceUpdate { name, x, update, begin, end } => (
@@ -2089,6 +2093,35 @@ fn make_immediate_bool_value(value: bool) -> apple_proto::mil_spec::Value {
     }
 }
 
+/// Create a boolean tensor immediate value (1D), e.g. for `slice_by_index` masks.
+///
+/// Core ML's `ios19.slice_by_index` requires `begin_mask`, `end_mask`, and
+/// `squeeze_mask` to be `tensor<bool, [rank]>`, NOT integer bitmasks.
+/// This function creates such a boolean tensor immediate value.
+fn make_immediate_bool_tensor_value(values: Vec<bool>) -> apple_proto::mil_spec::Value {
+    let rank = values.len() as u64;
+    apple_proto::mil_spec::Value {
+        doc_string: String::new(),
+        r#type: Some(make_apple_value_type(
+            apple_proto::mil_spec::DataType::Bool as i32,
+            &[rank],
+        )),
+        value: Some(apple_proto::mil_spec::value::Value::ImmediateValue(
+            apple_proto::mil_spec::value::ImmediateValue {
+                value: Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(
+                    apple_proto::mil_spec::TensorValue {
+                        value: Some(apple_proto::mil_spec::tensor_value::Value::Bools(
+                            apple_proto::mil_spec::tensor_value::RepeatedBools {
+                                values,
+                            },
+                        )),
+                    },
+                )),
+            },
+        )),
+    }
+}
+
 fn make_immediate_float32_value(value: f32) -> apple_proto::mil_spec::Value {
     make_immediate_float_value(apple_proto::mil_spec::DataType::Float32 as i32, value)
 }
@@ -2616,7 +2649,7 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
-        mir_compat::MirOpCompat::SliceByIndex { name, x, begin, end, stride, begin_mask, end_mask } => {
+        mir_compat::MirOpCompat::SliceByIndex { name, x, begin, end, stride, begin_mask, end_mask, squeeze_mask } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
@@ -2649,24 +2682,39 @@ fn mir_op_to_apple_ops(
                 );
             }
 
-            // begin_mask as INT32 scalar — bit N set means "ignore begin[N]"
-            if *begin_mask != 0 {
+            // begin_mask as tensor<bool, [rank]> — Core ML ios19.schema requires
+            // boolean tensors, NOT integer bitmasks. mask[N]=true means "ignore
+            // begin[N], start at 0". Only emit when any mask bit is true (Core ML
+            // defaults to all-false when omitted).
+            if begin_mask.iter().any(|&m| m) {
                 inputs.insert(
                     "begin_mask".to_string(),
-                    make_value_arg(make_immediate_int32_value(
-                        vec![*begin_mask],
-                        &[1u64],
+                    make_value_arg(make_immediate_bool_tensor_value(
+                        begin_mask.clone(),
                     )),
                 );
             }
 
-            // end_mask as INT32 scalar — bit N set means "ignore end[N]"
-            if *end_mask != 0 {
+            // end_mask as tensor<bool, [rank]> — same boolean tensor schema.
+            // mask[N]=true means "ignore end[N], go to full extent".
+            if end_mask.iter().any(|&m| m) {
                 inputs.insert(
                     "end_mask".to_string(),
-                    make_value_arg(make_immediate_int32_value(
-                        vec![*end_mask],
-                        &[1u64],
+                    make_value_arg(make_immediate_bool_tensor_value(
+                        end_mask.clone(),
+                    )),
+                );
+            }
+
+            // squeeze_mask as tensor<bool, [rank]> — same boolean tensor schema.
+            // mask[N]=true means "remove dimension N from the output".
+            // Only emit when any squeeze bit is true (Core ML defaults to
+            // all-false = no dimensions squeezed).
+            if squeeze_mask.iter().any(|&m| m) {
+                inputs.insert(
+                    "squeeze_mask".to_string(),
+                    make_value_arg(make_immediate_bool_tensor_value(
+                        squeeze_mask.clone(),
                     )),
                 );
             }
@@ -4836,8 +4884,9 @@ mod tests {
                 begin: vec![0],
                 end: vec![1],
                 stride: vec![],
-                begin_mask: 0,
-                end_mask: 0,
+                begin_mask: vec![false],
+                end_mask: vec![false],
+                squeeze_mask: vec![false],
             },
             mir_compat::MirOpCompat::SliceUpdate {
                 name: "su".to_string(),
