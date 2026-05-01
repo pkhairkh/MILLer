@@ -273,8 +273,30 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 vec![]
             }
         }
-        AirOp::Concat { inputs, axis: _ } => {
-            inputs.first().and_then(|id| node_shapes.get(id).cloned()).unwrap_or_default()
+        AirOp::Concat { inputs, axis } => {
+            // The output shape matches the first input's shape except at the
+            // concatenation axis, where the dimension is the SUM of all inputs'
+            // dimensions at that axis.  Previously we returned the first input's
+            // shape unchanged, which is wrong when concatenating along a
+            // non-trivial axis (e.g., RoPE rotate_half concatenates two
+            // [B,H,S,D/2] halves along axis=3, producing [B,H,S,D]).
+            if let Some(first_shape) = inputs.first().and_then(|id| node_shapes.get(id)) {
+                let mut out = first_shape.clone();
+                if *axis < out.len() {
+                    let mut total_dim = 0usize;
+                    for id in inputs {
+                        if let Some(shape) = node_shapes.get(id) {
+                            if let Some(&dim) = shape.get(*axis) {
+                                total_dim += dim;
+                            }
+                        }
+                    }
+                    out[*axis] = total_dim;
+                }
+                out
+            } else {
+                vec![]
+            }
         }
         AirOp::Softmax { input, .. } => node_shapes.get(input).cloned().unwrap_or_default(),
         AirOp::StateReadFixed { shape, .. } => shape.clone(),
