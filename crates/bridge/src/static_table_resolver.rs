@@ -41,23 +41,27 @@ use std::collections::HashMap;
 
 /// Configuration for RoPE table computation.
 ///
-/// Matches the HuggingFace `Qwen3RotaryEmbedding` parameters.
+/// Generic parameters — not tied to any specific model architecture.
+/// The tracer/compiler pipeline populates these from HuggingFace config
+/// fields (`rope_theta`, `head_dim`, `max_position_embeddings`).
 #[derive(Debug, Clone)]
 pub struct RopeTableConfig {
-    /// RoPE base frequency (theta). Default: 1_000_000 for Qwen3.
+    /// RoPE base frequency (theta). Default: 10,000 (standard transformer).
+    /// Models like Qwen3 use 1,000,000; Llama uses 500,000.
     pub rope_theta: f64,
-    /// Dimension per attention head. Default: 128 for Qwen3-0.6B.
+    /// Dimension per attention head. Default: 64 (standard transformer).
+    /// Models like Qwen3-0.6B use 128; Llama-2 uses 128.
     pub head_dim: usize,
-    /// Maximum sequence length (determines table rows). Default: 4096.
+    /// Maximum sequence length (determines table rows). Default: 2048.
     pub seq_len: usize,
 }
 
 impl Default for RopeTableConfig {
     fn default() -> Self {
         Self {
-            rope_theta: 1_000_000.0,
-            head_dim: 128,
-            seq_len: 4096,
+            rope_theta: 10_000.0,
+            head_dim: 64,
+            seq_len: 2048,
         }
     }
 }
@@ -96,7 +100,10 @@ impl StaticTableResolver {
         Self { config, cache: HashMap::new() }
     }
 
-    /// Create a resolver with default Qwen3-0.6B parameters.
+    /// Create a resolver with parameters typical for modern large language models
+    /// (high rope_theta, large head_dim). The caller should provide the actual
+    /// model-specific parameters via `RopeTableConfig::new()` when available.
+    #[deprecated(note = "Use RopeTableConfig::new() with model-specific parameters instead")]
     pub fn for_qwen3_0_6b(seq_len: usize) -> Self {
         Self::new(RopeTableConfig {
             rope_theta: 1_000_000.0,

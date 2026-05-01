@@ -100,6 +100,9 @@ fn main() {
         kv_heads: cfg.num_key_value_heads.unwrap_or(cfg.num_attention_heads),
         intermediate_size: cfg.intermediate_size,
         vocab_size: cfg.vocab_size,
+        uses_rope: cfg.uses_rope,
+        has_qk_norm: false, // discovered dynamically per attention block
+        uses_gqa: cfg.uses_gqa,
     };
     let legality_pass = LegalityRewritePass::new();
     let air = legality_pass.run(sir.clone(), &kq, Some(&decomp_ctx))

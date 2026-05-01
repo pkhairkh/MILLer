@@ -35,9 +35,17 @@ pub fn run_kv_cache_rewrite_pass(
 ) -> KvCacheRewriteResult {
     let mut result = KvCacheRewriteResult { pairs_converted: 0, ops_inserted: 0 };
 
-    if kv_layout != &KvCacheLayout::MaskedBlend {
+    if kv_layout != &KvCacheLayout::MaskedBlend && kv_layout != &KvCacheLayout::RingBuffer {
         return result;
     }
+
+    // RingBuffer layout: same masked-blend write pattern, but the state
+    // management uses position-aware indexing. The read path uses a
+    // gather-based rotation from the circular buffer using the position
+    // input and the pre-computed eye_tab (identity matrix).
+    // For now, RingBuffer uses the same masked-blend write pattern as
+    // MaskedBlend, with position-dependent gather for reads handled
+    // in the decompose_decode_step function (via the position input).
 
     // Find StateRead ops that read from KV cache states
     let kv_read_indices: Vec<usize> = graph

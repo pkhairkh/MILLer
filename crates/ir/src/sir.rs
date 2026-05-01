@@ -28,6 +28,16 @@ fn default_rms_norm_axes() -> Vec<usize> {
     vec![2]
 }
 
+/// Default epsilon for QK-norm in DecodeStep (1e-6).
+fn default_norm_epsilon() -> f32 {
+    1e-6
+}
+
+/// Default QK-norm type for DecodeStep ("rms").
+fn default_qk_norm_type() -> String {
+    "rms".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SirOp {
     // ─── Composite / High-Level Semantic Ops ─────────────────────
@@ -60,6 +70,54 @@ pub enum SirOp {
     DecodeStep {
         token: SirNodeId,
         state_map: Vec<String>,
+        /// Separate Q projection weight name (HuggingFace convention).
+        /// When `None`, the legacy fused-QKV path is used (backward compat).
+        /// When `Some`, Q is projected via its own linear layer before attention.
+        #[serde(default)]
+        q_weight: Option<String>,
+        /// Separate K projection weight name.
+        #[serde(default)]
+        k_weight: Option<String>,
+        /// Separate V projection weight name.
+        #[serde(default)]
+        v_weight: Option<String>,
+        /// Output projection weight name.
+        /// When `None`, the legacy derived name `{base}_w_out` is used.
+        #[serde(default)]
+        out_weight: Option<String>,
+        /// RoPE tables reference (e.g., `"rope_tables_shared"`).
+        /// When `Some`, RoPE is applied to Q and K after projection and
+        /// before reshaping to 4D. When `None`, RoPE is skipped.
+        #[serde(default)]
+        rope_tables: Option<String>,
+        /// Position input for position-dependent RoPE (gather-based lookup).
+        /// When `Some`, a single row is gathered from the cos/sin tables
+        /// using this position index before broadcasting with Q/K.
+        /// When `None`, the full table is used (broadcast-based, prefill mode).
+        #[serde(default)]
+        position: Option<SirNodeId>,
+        /// Q-norm weight name (e.g., `"model.layers.0.self_attn.q_norm.weight"`).
+        /// When `Some`, RMSNorm with `axes=[3]` is applied to Q after projection.
+        #[serde(default)]
+        q_norm_weight: Option<String>,
+        /// K-norm weight name (e.g., `"model.layers.0.self_attn.k_norm.weight"`).
+        /// When `Some`, RMSNorm with `axes=[3]` is applied to K after projection.
+        #[serde(default)]
+        k_norm_weight: Option<String>,
+        /// Epsilon for QK-norm (RMSNorm epsilon). Default: 1e-6.
+        #[serde(default = "default_norm_epsilon")]
+        norm_epsilon: f32,
+        /// QK-norm type: `"rms"` (default) or `"layer"`.
+        /// Controls whether QK-norm uses RMSNorm or LayerNorm.
+        #[serde(default = "default_qk_norm_type")]
+        qk_norm_type: String,
+        /// Causal mask reference for SDPA.
+        /// When `Some`, a causal attention mask is applied during SDPA.
+        /// For single-token decode this is typically `None` (the new token
+        /// attends to all cached positions), but sliding-window or
+        /// prefix-masked models may require it.
+        #[serde(default)]
+        mask_ref: Option<String>,
     },
     Sampler {
         logits: SirNodeId,
@@ -983,6 +1041,13 @@ pub enum KvCacheLayout {
     /// Paged KV cache with fixed-size blocks. Not yet implemented;
     /// reserved for future paged-attention support.
     Paged,
+    /// Ring buffer KV cache: fixed-size circular buffer where new K/V
+    /// entries are written at `position % max_seq_len` instead of shifting.
+    /// Reading uses a position-dependent rotation (gather from the cache
+    /// with indices computed from the current position). This avoids all
+    /// scatter/shift operations and is fully ANE-compatible.
+    /// Requires: position input, eye_tab (identity matrix) for rotation.
+    RingBuffer,
 }
 
 /// Quantization strategy for a weight tensor or layer.
