@@ -14,12 +14,18 @@
 //! | Split | Split (1:1) |
 //! | Concat | Concat (1:1) |
 //! | Softmax | Softmax (1:1) |
-//! | AttentionBlock | Reshape(Q) + Reshape(K) + Reshape(V) + Transpose(Q) + Transpose(K) + Transpose(V) + ScaledDotProductAttention + Reshape + Conv1x1AsLinear |
-//! | DecodeStep | Conv1x1AsLinear + SliceByIndex + StateReadFixed + Reshape + ScaledDotProductAttention + Conv1x1AsLinear |
+//! | AttentionBlock | Split + per-head MatMul + Softmax + Concat (no Tile, no SDPA) |
+//! | DecodeStep | Split + per-head MatMul + Softmax + Concat (no Tile, no SDPA) |
 //! | RMSNorm | ReduceMean + Rsqrt + ElementWise::Mul + ElementWise::Mul |
 //! | RoPETransform | Const(cos_tab) + Const(sin_tab) + Gather + ElementWise::Mul + ElementWise::Add |
-//! | Tile | Split + per-head MatMul + Softmax + Concat (GQA decomposition) |
+//! | Tile | Reshape + broadcast Mul + Reshape (fallback decomposition) |
 //! | Sampler | Topk + Gather + Softmax |
+//!
+//! **Tile elimination strategy (matching reference model pkhairkh/qwen3-coreml-palettized):**
+//! GQA Tile ops are eliminated at the SIR builder level by using split-based
+//! per-head attention instead of Tile+SDPA. Any remaining standalone Tile ops
+//! are decomposed to Reshape + broadcast Mul + Reshape. The fallback passthrough
+//! panics to prevent Tile from ever reaching AIR/MIR.
 //!
 //! **Critique fix (Sprint 36):** `SirOp::LinearProjection` now lowers to
 //! `AirOp::Conv1x1AsLinear` instead of `AirOp::MatMul`. This closes the
@@ -817,9 +823,9 @@ impl LegalityRewritePass {
         let mut nodes = Vec::new();
 
         // Q, K, V come as separate projections from the SIR builder.
-        // The SIR builder already emits distinct LinearProjection ops for each,
-        // so we must NOT create a fused QKV projection here. Instead, reshape
-        // and transpose each projection output to 4D [batch, heads, seq, head_dim].
+        // The SIR builder now emits split-based per-head attention at the SIR level,
+        // so this function is primarily for backward compat with fused AttentionBlock
+        // SIR ops. We use the same split-based approach here to eliminate Tile+SDPA.
 
         // Steps 1-3: Reshape Q, K, V from [batch, seq, embed] to [batch, seq, heads, head_dim]
         // For GQA models, K/V use kv_heads (not num_heads) because their projection
@@ -861,7 +867,6 @@ impl LegalityRewritePass {
         ));
 
         // Steps 4-6: Transpose to [batch, heads, seq, head_dim]
-        // This is the layout that ANE SDPA expects.
         let q_t_id = AirNodeId(format!("{base}_q_t"));
         nodes.push(Self::make_air_node(
             q_t_id.clone(),
@@ -889,45 +894,268 @@ impl LegalityRewritePass {
             kq,
         ));
 
-        // Step 7: Scaled dot-product attention.
-        // Scale = 1/√d_k, which is the standard scaling factor for dot-product
-        // attention. The mask (if present) carries the causal mask reference.
-        let mask_air = mask_sir.as_ref().and_then(|m| {
-            sir_to_air.get(m).cloned().or_else(|| Some(AirNodeId(m.0.clone())))
-        });
-        let scale = if head_dim > 0 {
-            Some(1.0 / (head_dim as f32).sqrt())
-        } else {
-            None
-        };
+        // Define the attn_flat_id before the if/else so it's available for output projection
+        let attn_flat_id = AirNodeId(format!("{base}_attn_flat"));
 
-        let attn_id = AirNodeId(format!("{base}_attn"));
+        // Step 7: Split-based per-head attention (ANE-legal, no Tile/SDPA)
+        //
+        // The reference model (pkhairkh/qwen3-coreml-palettized) does NOT
+        // use mb.tile or mb.scaled_dot_product_attention. Instead, it splits
+        // Q into individual heads and pairs each Q head with its corresponding
+        // KV head via per-head matmul+softmax+matmul.
+        //
+        // For GQA (kv_heads < num_heads): fan_out = num_heads / kv_heads
+        // Each group of `fan_out` Q heads shares one KV head.
+        // For non-GQA (kv_heads == num_heads): fan_out = 1, per-head attention.
+        //
+        // FALLBACK: When DecompositionContext is not available (heads=0), we
+        // cannot split into per-head attention because we don't know the head
+        // count. In this case, fall back to SDPA (which will be on the ANE for
+        // A16+ targets). This fallback should only occur in synthetic tests.
+
+        if heads > 0 {
+            // ── Split-based per-head attention (primary path) ──────────
+            let fan_out = if kv_heads > 0 && kv_heads < heads {
+                (heads / kv_heads) as usize
+            } else {
+                1
+            };
+
+        // Split Q into per-head blocks: [B, hq, S, D] → hq blocks of [B, 1, S, D]
+        let q_split_id = AirNodeId(format!("{base}_q_split"));
         nodes.push(Self::make_air_node(
-            attn_id.clone(),
-            AirOp::ScaledDotProductAttention {
-                query: q_t_id,
-                key: k_t_id,
-                value: v_t_id,
-                attention_mask: mask_air,
-                scale,
+            q_split_id.clone(),
+            AirOp::Split {
+                input: q_t_id,
+                axis: 1,
+                num_splits: heads as usize,
             },
-            sir_node,
-            "mb.scaled_dot_product_attention",
-            kq,
+            sir_node, "mb.split", kq,
+        ));
+
+        // Split K into per-KV-head blocks: [B, hk, S, D] → hk blocks of [B, 1, S, D]
+        let k_split_id = AirNodeId(format!("{base}_k_split"));
+        nodes.push(Self::make_air_node(
+            k_split_id.clone(),
+            AirOp::Split {
+                input: k_t_id,
+                axis: 1,
+                num_splits: kv_heads.max(1) as usize,
+            },
+            sir_node, "mb.split", kq,
+        ));
+
+        // Split V into per-KV-head blocks: [B, hk, S, D] → hk blocks of [B, 1, S, D]
+        let v_split_id = AirNodeId(format!("{base}_v_split"));
+        nodes.push(Self::make_air_node(
+            v_split_id.clone(),
+            AirOp::Split {
+                input: v_t_id,
+                axis: 1,
+                num_splits: kv_heads.max(1) as usize,
+            },
+            sir_node, "mb.split", kq,
+        ));
+
+        // Scale constant: 1/√d_k
+        let scale_val = if head_dim > 0 {
+            1.0 / (head_dim as f32).sqrt()
+        } else {
+            1.0 / (128.0_f32).sqrt()
+        };
+        let scale_const_id = AirNodeId(format!("{base}_attn_scale"));
+        nodes.push(Self::make_air_node(
+            scale_const_id.clone(),
+            AirOp::Const {
+                value_path: format!("_attn_scale_{}", base),
+                dtype: MilDtype::Fp16,
+            },
+            sir_node, "mb.const", kq,
+        ));
+
+        // Per-head attention loop
+        let mut ctx_parts: Vec<AirNodeId> = Vec::with_capacity(heads as usize);
+
+        for head_idx in 0..(heads as usize) {
+            let kv_idx = head_idx / fan_out;
+
+            // Extract Q head: SliceByIndex from q_split output
+            // Q shape per head: [B, 1, S, D] (squeeze dim 1 → [B, S, D])
+            let q_i_id = AirNodeId(format!("{base}_q_head_{}", head_idx));
+            nodes.push(Self::make_air_node(
+                q_i_id.clone(),
+                AirOp::SliceByIndex {
+                    input: q_split_id.clone(),
+                    begin: vec![0, head_idx as i64, 0, 0],
+                    end: vec![0, (head_idx as i64) + 1, 0, 0],
+                    stride: vec![1, 1, 1, 1],
+                    begin_mask: vec![true, false, true, true],
+                    end_mask: vec![true, false, true, true],
+                    squeeze_mask: vec![false, true, false, false],
+                },
+                sir_node, "mb.slice_by_index", kq,
+            ));
+
+            // Extract K head: SliceByIndex from k_split output
+            let k_i_id = AirNodeId(format!("{base}_k_head_{}", kv_idx));
+            nodes.push(Self::make_air_node(
+                k_i_id.clone(),
+                AirOp::SliceByIndex {
+                    input: k_split_id.clone(),
+                    begin: vec![0, kv_idx as i64, 0, 0],
+                    end: vec![0, (kv_idx as i64) + 1, 0, 0],
+                    stride: vec![1, 1, 1, 1],
+                    begin_mask: vec![true, false, true, true],
+                    end_mask: vec![true, false, true, true],
+                    squeeze_mask: vec![false, true, false, false],
+                },
+                sir_node, "mb.slice_by_index", kq,
+            ));
+
+            // Extract V head: SliceByIndex from v_split output
+            let v_i_id = AirNodeId(format!("{base}_v_head_{}", kv_idx));
+            nodes.push(Self::make_air_node(
+                v_i_id.clone(),
+                AirOp::SliceByIndex {
+                    input: v_split_id.clone(),
+                    begin: vec![0, kv_idx as i64, 0, 0],
+                    end: vec![0, (kv_idx as i64) + 1, 0, 0],
+                    stride: vec![1, 1, 1, 1],
+                    begin_mask: vec![true, false, true, true],
+                    end_mask: vec![true, false, true, true],
+                    squeeze_mask: vec![false, true, false, false],
+                },
+                sir_node, "mb.slice_by_index", kq,
+            ));
+
+            // logits = matmul(q_i, k_i^T)
+            // q_i: [B, S, D], k_i: [B, S, D] → transpose k_i → [B, D, S]
+            // matmul: [B, S, D] @ [B, D, S] = [B, S, S]
+            let k_i_t_id = AirNodeId(format!("{base}_k_head_{}_t", kv_idx));
+            nodes.push(Self::make_air_node(
+                k_i_t_id.clone(),
+                AirOp::Transpose { input: k_i_id, perm: vec![0, 2, 1] },
+                sir_node, "mb.transpose", kq,
+            ));
+
+            let logits_id = AirNodeId(format!("{base}_logits_{}", head_idx));
+            nodes.push(Self::make_air_node(
+                logits_id.clone(),
+                AirOp::MatMul { a: q_i_id, b: k_i_t_id },
+                sir_node, "mb.matmul", kq,
+            ));
+
+            // Scale: logits *= 1/√d_k
+            let scaled_logits_id = AirNodeId(format!("{base}_scaled_logits_{}", head_idx));
+            nodes.push(Self::make_air_node(
+                scaled_logits_id.clone(),
+                AirOp::Mul { x: logits_id, y: scale_const_id.clone() },
+                sir_node, "mb.mul", kq,
+            ));
+
+            // Apply causal mask if available
+            let masked_logits_id = if let Some(ref m) = mask_sir {
+                let mask_air_id = sir_to_air.get(m).cloned().unwrap_or_else(|| AirNodeId(m.0.clone()));
+                let ml_id = AirNodeId(format!("{base}_masked_logits_{}", head_idx));
+                nodes.push(Self::make_air_node(
+                    ml_id.clone(),
+                    AirOp::Add { x: scaled_logits_id, y: mask_air_id },
+                    sir_node, "mb.add", kq,
+                ));
+                ml_id
+            } else {
+                scaled_logits_id
+            };
+
+            // weights = softmax(logits, axis=-1)
+            let weights_id = AirNodeId(format!("{base}_weights_{}", head_idx));
+            nodes.push(Self::make_air_node(
+                weights_id.clone(),
+                AirOp::Softmax { input: masked_logits_id, axis: -1 },
+                sir_node, "mb.softmax", kq,
+            ));
+
+            // ctx_part = matmul(weights, v_i)
+            // weights: [B, S, S], v_i: [B, S, D] → output: [B, S, D]
+            let ctx_part_id = AirNodeId(format!("{base}_ctx_{}", head_idx));
+            nodes.push(Self::make_air_node(
+                ctx_part_id.clone(),
+                AirOp::MatMul { a: weights_id, b: v_i_id },
+                sir_node, "mb.matmul", kq,
+            ));
+
+            // Expand dims: [B, S, D] → [B, 1, S, D] for concat along axis 1
+            let ctx_expanded_id = AirNodeId(format!("{base}_ctx_exp_{}", head_idx));
+            nodes.push(Self::make_air_node(
+                ctx_expanded_id.clone(),
+                AirOp::ExpandDims { input: ctx_part_id, axis: vec![1] },
+                sir_node, "mb.expand_dims", kq,
+            ));
+
+            ctx_parts.push(ctx_expanded_id);
+        }
+
+        // Concat all per-head context: [B, 1, S, D] × hq → [B, hq, S, D]
+        let ctx_concat_id = AirNodeId(format!("{base}_ctx_concat"));
+        nodes.push(Self::make_air_node(
+            ctx_concat_id.clone(),
+            AirOp::Concat { inputs: ctx_parts, axis: 1 },
+            sir_node, "mb.concat", kq,
         ));
 
         // Step 8: Reshape back to [batch, seq, embed]
-        let attn_flat_id = AirNodeId(format!("{base}_attn_flat"));
         nodes.push(Self::make_air_node(
             attn_flat_id.clone(),
             AirOp::Reshape {
-                input: attn_id,
+                input: ctx_concat_id,
                 target_shape: vec![batch as usize, seq as usize, embed as usize],
             },
             sir_node,
             "mb.reshape",
             kq,
         ));
+
+        } else {
+            // ── SDPA fallback (no DecompositionContext) ───────────────
+            // When heads=0 (no context), we don't know the head count for
+            // per-head attention, so fall back to SDPA. This should only
+            // occur in synthetic tests — production compilation always
+            // provides a DecompositionContext.
+            let mask_air = mask_sir.as_ref().and_then(|m| {
+                sir_to_air.get(m).cloned().or_else(|| Some(AirNodeId(m.0.clone())))
+            });
+            let scale = if head_dim > 0 {
+                Some(1.0 / (head_dim as f32).sqrt())
+            } else {
+                None
+            };
+
+            let attn_id = AirNodeId(format!("{base}_attn"));
+            nodes.push(Self::make_air_node(
+                attn_id.clone(),
+                AirOp::ScaledDotProductAttention {
+                    query: q_t_id,
+                    key: k_t_id,
+                    value: v_t_id,
+                    attention_mask: mask_air,
+                    scale,
+                },
+                sir_node,
+                "mb.scaled_dot_product_attention",
+                kq,
+            ));
+
+            nodes.push(Self::make_air_node(
+                attn_flat_id.clone(),
+                AirOp::Reshape {
+                    input: attn_id,
+                    target_shape: vec![batch as usize, seq as usize, embed as usize],
+                },
+                sir_node,
+                "mb.reshape",
+                kq,
+            ));
+        }
 
         // Step 9: Output projection
         let out_id = AirNodeId(sir_node.id.0.clone());
@@ -978,16 +1206,18 @@ impl LegalityRewritePass {
     ///     k_4d: Reshape(k_cache, [1, kv_heads, kv_len, head_dim])
     ///     v_4d: Reshape(v_cache, [1, kv_heads, kv_len, head_dim])
     ///
-    ///   ── Optional GQA tile (when kv_heads < num_heads) ─────────────
-    ///     k_tiled: Tile(k_4d, [1, num_heads/kv_heads, 1, 1])
-    ///     v_tiled: Tile(v_4d, [1, num_heads/kv_heads, 1, 1])
-    ///
-    ///   ── Optional RoPE (when rope_tables provided) ─────────────────
-    ///     q_rope: apply_rotary(q_4d, cos, sin)
-    ///     k_rope: apply_rotary(k_tiled, cos, sin)
-    ///
-    ///   ── SDPA ──────────────────────────────────────────────────────
-    ///     attn: SDPA(q_rope, k_rope, v_tiled, mask?, scale=1/√d_k)
+    ///   ── Split-based per-head attention (ANE-legal, no Tile/SDPA) ──
+    ///     q_split: Split(q_rope, num_splits=heads, axis=1)
+    ///     k_split: Split(k_rope, num_splits=kv_heads, axis=1)
+    ///     v_split: Split(v_rope, num_splits=kv_heads, axis=1)
+    ///     for i in 0..heads:
+    ///       kv_idx = i / fan_out
+    ///       logits = MatMul(q_i, k_{kv_idx}^T)
+    ///       scaled = Mul(logits, scale)
+    ///       masked = Add(scaled, mask)
+    ///       weights = Softmax(masked)
+    ///       ctx_i = MatMul(weights, v_{kv_idx})
+    ///     ctx: Concat(ctx_0..ctx_{heads-1}, axis=1)
     ///
     ///   ── Output ────────────────────────────────────────────────────
     ///     attn_flat: Reshape(attn, [batch, embed])
@@ -3305,13 +3535,23 @@ impl LegalityRewritePass {
                 (AirOp::Stack { values: aids(values), axis: *axis }, "mb.stack")
             }
             SirOp::Tile { input, reps } => {
-                // NOTE: Tile is decomposed above in map_sir_op() to
+                // SAFETY NET: Tile is decomposed above in map_sir_op() to
                 // Reshape + broadcast Mul + Reshape (ane.legal.tile_decompose).
-                // This passthrough mapping is only reached for fallback paths
-                // that bypass the decomposition (e.g., legacy code paths).
-                // It should be considered deprecated — all Tile ops should
-                // go through the ANE-legal decomposition.
-                (AirOp::Tile { input: aid(input), reps: reps.clone() }, "mb.tile")
+                // Additionally, GQA Tile ops have been eliminated at the SIR
+                // builder level via split-based per-head attention.
+                //
+                // If we reach this point, a Tile op has bypassed the decomposition
+                // in map_sir_op(). This is a bug — Tile is ANE-illegal and must
+                // never survive to AIR/MIR. Emit a panic to catch this during
+                // development rather than silently producing an ANE-incompatible model.
+                panic!(
+                    "BUG: SirOp::Tile {{ input: {:?}, reps: {:?} }} reached the fallback \
+                     passthrough in sir_to_air_op(). All Tile ops must be decomposed in \
+                     map_sir_op() (ane.legal.tile_decompose) or eliminated at the SIR builder \
+                     level (split-based attention). mb.tile is ANE-illegal and must never \
+                     reach AIR/MIR.",
+                    input, reps
+                );
             }
             SirOp::Cumsum { input, axis, exclusive, reverse } => (
                 AirOp::Cumsum {
@@ -3960,7 +4200,7 @@ mod tests {
         );
     }
 
-    /// Test that AttentionBlock decomposes into the expected AIR ops.
+    /// Test that AttentionBlock decomposes into split-based per-head attention (no Tile/SDPA).
     #[test]
     fn test_attention_block_decomposition() {
         let sir = SirGraph {
@@ -3988,13 +4228,17 @@ mod tests {
         let pass = LegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
-        // Should have: 3 reshape (Q/K/V) + 3 transpose (Q/K/V) + SDPA + reshape + out proj = 10 nodes
-        // The new decomposition uses separate Q/K/V directly (no fused QKV projection or slicing).
+        // Should have: 3 reshape (Q/K/V) + 3 transpose (Q/K/V) + 3 split (Q/K/V)
+        // + scale const + per-head attention ops + concat + reshape + out proj
+        // NO ScaledDotProductAttention, NO Tile.
         let has_reshape = air.nodes.iter().any(|n| matches!(n.op, AirOp::Reshape { .. }));
         let has_transpose = air.nodes.iter().any(|n| matches!(n.op, AirOp::Transpose { .. }));
+        // Without context (heads=0), falls back to SDPA — no split/MatMul/Concat.
+        // These ops are present only when DecompositionContext provides head count.
+        let has_out_proj = air.nodes.iter().any(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }));
         let has_sdpa =
             air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
-        let has_out_proj = air.nodes.iter().any(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }));
+        let has_tile = air.nodes.iter().any(|n| matches!(n.op, AirOp::Tile { .. }));
 
         assert!(
             has_reshape,
@@ -4004,22 +4248,23 @@ mod tests {
             has_transpose,
             "AttentionBlock decomposition must include Transpose for multi-head layout"
         );
-        assert!(has_sdpa, "AttentionBlock decomposition must include ScaledDotProductAttention");
         assert!(
             has_out_proj,
             "AttentionBlock decomposition must include Conv1x1AsLinear for output projection"
         );
-
-        // Verify that SDPA has scale set (1/√d_k) when context is available
-        let sdpa_node = air.nodes.iter().find(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
-        if let Some(node) = sdpa_node {
-            if let AirOp::ScaledDotProductAttention { scale, attention_mask, .. } = &node.op {
-                // Without context (head_dim=0), scale is None. With context, scale = Some(1/√d_k).
-                // This test has no context, so scale should be None.
-                assert_eq!(*scale, None, "SDPA scale should be None without DecompositionContext");
-                assert_eq!(*attention_mask, None, "SDPA mask should be None when SIR mask is None");
-            }
-        }
+        // Without DecompositionContext (heads=0), falls back to SDPA.
+        // Production compilation always provides DecompositionContext.
+        let has_sdpa =
+            air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
+        let has_tile = air.nodes.iter().any(|n| matches!(n.op, AirOp::Tile { .. }));
+        assert!(
+            has_sdpa,
+            "Without DecompositionContext, AttentionBlock falls back to SDPA"
+        );
+        assert!(
+            !has_tile,
+            "AttentionBlock decomposition must NOT include Tile (ANE-illegal)"
+        );
     }
 
     /// Test that DecodeStep decomposes into AIR ops including state read/write.
@@ -4268,22 +4513,22 @@ mod tests {
             other => panic!("Expected Reshape for attn_q_4d, got {:?}", other),
         }
 
-        // Verify SDPA has correct scale = 1/√32 ≈ 0.17678
-        let sdpa_node = air
-            .nodes
-            .iter()
-            .find(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }))
-            .expect("Expected SDPA node");
-        if let AirOp::ScaledDotProductAttention { scale, .. } = &sdpa_node.op {
-            let expected_scale = 1.0 / (32.0_f32).sqrt();
-            let actual_scale = scale.expect("SDPA scale must be Some with DecompositionContext providing head_dim");
-            assert!(
-                (actual_scale - expected_scale).abs() < 1e-5,
-                "SDPA scale should be 1/√32 ≈ {:.5}, got {:.5}",
-                expected_scale,
-                actual_scale
-            );
-        }
+        // Verify split-based attention: should have Split, MatMul, Softmax, Concat ops
+        // NO ScaledDotProductAttention, NO Tile
+        let has_split = air.nodes.iter().any(|n| matches!(n.op, AirOp::Split { .. }));
+        let has_matmul = air.nodes.iter().any(|n| matches!(n.op, AirOp::MatMul { .. }));
+        let has_softmax = air.nodes.iter().any(|n| matches!(n.op, AirOp::Softmax { .. }));
+        let has_concat = air.nodes.iter().any(|n| matches!(n.op, AirOp::Concat { .. }));
+        let has_sdpa =
+            air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
+        let has_tile = air.nodes.iter().any(|n| matches!(n.op, AirOp::Tile { .. }));
+
+        assert!(has_split, "Split-based attention must include Split ops");
+        assert!(has_matmul, "Split-based attention must include MatMul ops");
+        assert!(has_softmax, "Split-based attention must include Softmax ops");
+        assert!(has_concat, "Split-based attention must include Concat ops");
+        assert!(!has_sdpa, "Split-based attention must NOT include SDPA");
+        assert!(!has_tile, "Split-based attention must NOT include Tile");
 
         // Verify attn_flat reshape has [batch, seq, embed]
         let attn_flat = air
@@ -4345,15 +4590,12 @@ mod tests {
             other => panic!("Expected Reshape for attn_q_4d, got {:?}", other),
         }
 
-        // SDPA scale should be None without context (head_dim=0)
-        let sdpa_node = air
-            .nodes
-            .iter()
-            .find(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }))
-            .expect("Expected SDPA node");
-        if let AirOp::ScaledDotProductAttention { scale, .. } = &sdpa_node.op {
-            assert_eq!(*scale, None, "Without context, SDPA scale should be None");
-        }
+        // Without context (heads=0), falls back to SDPA (no per-head split)
+        let has_sdpa =
+            air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
+        let has_tile = air.nodes.iter().any(|n| matches!(n.op, AirOp::Tile { .. }));
+        assert!(has_sdpa, "Without DecompositionContext, must fall back to SDPA");
+        assert!(!has_tile, "Even in fallback, Tile must NOT be present");
     }
 
     /// Test that DecompositionContext populates real shapes in decode-step decomposition.

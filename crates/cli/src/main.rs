@@ -4291,8 +4291,17 @@ fn run_trace_compile(
         let hidden_size = traced_graph.model_config.hidden_size;
 
         // Build decode_step MIR via the LegalityRewritePass with
-        // DecodeStep SIR ops for each layer. This produces the correct
-        // mb.read_state / mb.coreml_update_state pattern.
+        // full transformer decode step ops for each layer. This produces
+        // the correct mb.read_state / mb.coreml_update_state pattern.
+        //
+        // CRITICAL: Use the actual max_seq_len (from config) for the KV
+        // cache dimension, NOT the trace seq_len. The trace seq_len is
+        // the prefill input length (e.g. 32 or 512), while max_seq_len
+        // is the maximum context window (e.g. 2048 or 32768). Using
+        // seq_len here would cap the KV cache to only 32 positions,
+        // making autoregressive generation impossible beyond that.
+        let actual_max_seq_len = traced_graph.model_config.max_position_embeddings
+            .max(config.max_seq_len);
         let decode_step_sir = build_decode_step_sir(
             &traced_graph,
             num_layers,
@@ -4300,11 +4309,26 @@ fn run_trace_compile(
             num_kv_heads,
             head_dim_val,
             hidden_size,
-            seq_len,
+            actual_max_seq_len,
             batch_size,
         );
+
+        // Create a separate DecompositionContext for decode_step with the
+        // correct max_seq_len as kv_len, plus all dimensions needed for
+        // MLP and lm_head weight output_dim resolution.
+        let decode_decomp_ctx = DecompositionContext::for_attention_full(
+            batch_size,
+            hidden_size,
+            num_heads,
+            head_dim_val,
+            actual_max_seq_len, // kv_len = max_seq_len, not trace seq_len
+            num_kv_heads,
+            traced_graph.model_config.intermediate_size,
+            traced_graph.model_config.vocab_size,
+        );
+
         let decode_step_air = legality
-            .run(decode_step_sir.clone(), &no_knowledge, Some(&decomp_ctx))
+            .run(decode_step_sir.clone(), &no_knowledge, Some(&decode_decomp_ctx))
             .map_err(|e| format!("LegalityRewritePass for decode_step failed: {}", e))?;
         let decode_step_mirs = mil_lower
             .run_with_weight_shapes(&decode_step_air, &shard_plan, &input_shapes, &weight_shapes)
@@ -4450,22 +4474,42 @@ fn run_trace_compile(
 
 /// Build a SIR graph for the decode_step function of a causal LM.
 ///
-/// This produces a SIR graph with one `DecodeStep` op per transformer layer,
-/// each with KV-cache state references. The `LegalityRewritePass` will then
-/// decompose each `DecodeStep` into the correct `mb.read_state` /
-/// `mb.coreml_update_state` pattern with split-based per-head attention.
+/// This produces a SIR graph representing the **complete** decode-step
+/// function, including:
 ///
-/// The decode_step function processes a single token at a time, reading
-/// the current KV cache states, computing attention against the full
-/// cached context, and updating the KV cache with the new K/V values.
+/// ```text
+/// Input: hidden_state (embedded token, shape [1, hidden_size])
+/// Input: position     (current position index for RoPE)
+///
+/// For each transformer layer:
+///   1. input_layernorm:  RMSNorm(hidden, input_layernorm_weight)
+///   2. attention:        DecodeStep(normed, state_map, ...)  ← KV cache read/write
+///   3. residual:         Add(hidden, attn_output)
+///   4. post_attn_norm:   RMSNorm(residual, post_attention_layernorm_weight)
+///   5. MLP (SwiGLU):
+///      gate = LinearProjection(normed_residual, gate_proj.weight)
+///      up   = LinearProjection(normed_residual, up_proj.weight)
+///      mlp_hidden = Mul(Silu(gate), up)
+///      mlp_out    = LinearProjection(mlp_hidden, down_proj.weight)
+///   6. residual:         Add(residual, mlp_out)
+///
+/// Final:
+///   7. final_norm:       RMSNorm(hidden, model.norm.weight)
+///   8. lm_head:          LinearProjection(normed, lm_head.weight) → logits
+/// ```
+///
+/// The `LegalityRewritePass` decomposes each `DecodeStep` into the
+/// correct `mb.read_state` / `mb.coreml_update_state` pattern with
+/// split-based per-head attention (no Tile/SDPA) and masked-blend
+/// KV cache writes.
 fn build_decode_step_sir(
     traced_graph: &ane_trace::graph::TracedGraph,
     num_layers: usize,
-    num_heads: usize,
-    num_kv_heads: usize,
-    head_dim: usize,
+    _num_heads: usize,
+    _num_kv_heads: usize,
+    _head_dim: usize,
     _hidden_size: usize,
-    max_seq_len: usize,
+    _max_seq_len: usize,
     _batch_size: usize,
 ) -> ane_ir::sir::SirGraph {
     use ane_ir::sir::{QualityContract, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
@@ -4473,66 +4517,228 @@ fn build_decode_step_sir(
     let mut sir_nodes: Vec<SirNode> = Vec::new();
     let mut sir_inputs: Vec<SirNodeId> = Vec::new();
     let mut sir_outputs: Vec<SirNodeId> = Vec::new();
+    let mut node_counter: usize = 0;
 
-    // Input: token_ids (single token for decode)
-    let token_input_id = SirNodeId("sir_0_input_ids".to_string());
-    sir_inputs.push(token_input_id.clone());
+    // Helper to create metadata
+    let make_metadata = || SirMetadata {
+        task_origin: TaskOrigin::TransformersTrace {
+            name: traced_graph.model_id.clone(),
+        },
+        model_id: Some(traced_graph.model_id.clone()),
+        quality_contract: Some(QualityContract {
+            max_perplexity_delta: Some(0.1),
+            max_latency_ms: Some(15.0),
+        }),
+        precision_override: None,
+    };
 
-    // Build KV cache state map and DecodeStep ops for each layer
-    let mut current_hidden = token_input_id.clone();
+    // ── Inputs ─────────────────────────────────────────────────────
+    // Input 1: hidden_state — the embedded token vector [1, hidden_size].
+    // The host application is responsible for the embedding lookup
+    // (gather from embed_tokens weight) before calling decode_step.
+    // This avoids integer→float conversion inside the decode graph.
+    let hidden_input_id = SirNodeId("sir_hidden_input".to_string());
+    sir_inputs.push(hidden_input_id.clone());
+
+    // Input 2: position — the current position index (int32 scalar).
+    // Used by RoPE to select the correct cos/sin row from the
+    // position-dependent rotation tables. Without this, the model
+    // would always apply position-0 embeddings.
+    let position_input_id = SirNodeId("sir_position_input".to_string());
+    sir_inputs.push(position_input_id.clone());
+
+    // ── Transformer layers ─────────────────────────────────────────
+    let mut current_hidden = hidden_input_id;
 
     for layer_idx in 0..num_layers {
-        let layer_base = format!("layer_{}", layer_idx);
-        let layer_prefix = format!("model.layers.{}.self_attn", layer_idx);
+        let layer_prefix = format!("model.layers.{}", layer_idx);
+        let attn_prefix = format!("{}.self_attn", layer_prefix);
+        let mlp_prefix = format!("{}.mlp", layer_prefix);
+        let eps = traced_graph.model_config.layer_norm_epsilon as f32;
 
-        // KV cache state IDs for this layer
+        // Step 1: Input RMS norm
+        let input_norm_id = SirNodeId(format!("sir_{}_input_norm_{}", node_counter, layer_idx));
+        node_counter += 1;
+        sir_nodes.push(SirNode {
+            id: input_norm_id.clone(),
+            op: SirOp::RMSNorm {
+                input: current_hidden.clone(),
+                weight: format!("{}.input_layernorm.weight", layer_prefix),
+                epsilon: eps,
+                axes: vec![1], // [batch, hidden] → normalize along hidden
+            },
+            name: format!("input_norm_{}", layer_idx),
+            metadata: make_metadata(),
+        });
+
+        // Step 2: Attention with KV cache (DecodeStep)
         let k_state_id = format!("kv_cache_layer_{}_key", layer_idx);
         let v_state_id = format!("kv_cache_layer_{}_value", layer_idx);
         let state_map = vec![k_state_id, v_state_id];
 
-        // DecodeStep op: processes one token through the attention layer
-        // with KV-cache state reads/writes
-        let decode_step_id = SirNodeId(format!("sir_{}_decode_step_{}", sir_nodes.len(), layer_base));
-        let decode_step_op = SirOp::DecodeStep {
-            token: current_hidden.clone(),
-            state_map,
-            q_weight: Some(format!("{}.q_proj.weight", layer_prefix)),
-            k_weight: Some(format!("{}.k_proj.weight", layer_prefix)),
-            v_weight: Some(format!("{}.v_proj.weight", layer_prefix)),
-            out_weight: Some(format!("{}.o_proj.weight", layer_prefix)),
-            rope_tables: Some(format!("rope_tables_layer_{}_self_attn", layer_idx)),
-            position: Some(SirNodeId("sir_position_input".to_string())),
-            q_norm_weight: Some(format!("{}.q_norm.weight", layer_prefix)),
-            k_norm_weight: Some(format!("{}.k_norm.weight", layer_prefix)),
-            norm_epsilon: traced_graph.model_config.layer_norm_epsilon as f32,
-            qk_norm_type: "rms".to_string(),
-            mask_ref: None,
-        };
-
-        let metadata = SirMetadata {
-            task_origin: TaskOrigin::TransformersTrace {
-                name: traced_graph.model_id.clone(),
-            },
-            model_id: Some(traced_graph.model_id.clone()),
-            quality_contract: Some(QualityContract {
-                max_perplexity_delta: Some(0.1),
-                max_latency_ms: Some(15.0), // decode_step should be ~5-15ms
-            }),
-            precision_override: None,
-        };
-
+        let attn_id = SirNodeId(format!("sir_{}_attn_{}", node_counter, layer_idx));
+        node_counter += 1;
         sir_nodes.push(SirNode {
-            id: decode_step_id.clone(),
-            op: decode_step_op,
+            id: attn_id.clone(),
+            op: SirOp::DecodeStep {
+                token: input_norm_id.clone(),
+                state_map,
+                q_weight: Some(format!("{}.q_proj.weight", attn_prefix)),
+                k_weight: Some(format!("{}.k_proj.weight", attn_prefix)),
+                v_weight: Some(format!("{}.v_proj.weight", attn_prefix)),
+                out_weight: Some(format!("{}.o_proj.weight", attn_prefix)),
+                rope_tables: Some(format!("rope_tables_layer_{}_self_attn", layer_idx)),
+                position: Some(position_input_id.clone()),
+                q_norm_weight: Some(format!("{}.q_norm.weight", attn_prefix)),
+                k_norm_weight: Some(format!("{}.k_norm.weight", attn_prefix)),
+                norm_epsilon: eps,
+                qk_norm_type: "rms".to_string(),
+                mask_ref: None,
+            },
             name: format!("decode_step_{}", layer_idx),
-            metadata,
+            metadata: make_metadata(),
         });
 
-        current_hidden = decode_step_id;
+        // Step 3: Residual connection (hidden + attention_output)
+        let residual1_id = SirNodeId(format!("sir_{}_residual1_{}", node_counter, layer_idx));
+        node_counter += 1;
+        sir_nodes.push(SirNode {
+            id: residual1_id.clone(),
+            op: SirOp::Add {
+                x: current_hidden.clone(),
+                y: attn_id,
+            },
+            name: format!("residual1_{}", layer_idx),
+            metadata: make_metadata(),
+        });
+
+        // Step 4: Post-attention RMS norm
+        let post_attn_norm_id = SirNodeId(format!("sir_{}_post_attn_norm_{}", node_counter, layer_idx));
+        node_counter += 1;
+        sir_nodes.push(SirNode {
+            id: post_attn_norm_id.clone(),
+            op: SirOp::RMSNorm {
+                input: residual1_id.clone(),
+                weight: format!("{}.post_attention_layernorm.weight", layer_prefix),
+                epsilon: eps,
+                axes: vec![1],
+            },
+            name: format!("post_attn_norm_{}", layer_idx),
+            metadata: make_metadata(),
+        });
+
+        // Step 5: MLP (SwiGLU)
+        // gate_proj: hidden_size → intermediate_size
+        let gate_id = SirNodeId(format!("sir_{}_gate_{}", node_counter, layer_idx));
+        node_counter += 1;
+        sir_nodes.push(SirNode {
+            id: gate_id.clone(),
+            op: SirOp::LinearProjection {
+                input: post_attn_norm_id.clone(),
+                weight: format!("{}.gate_proj.weight", mlp_prefix),
+                bias: None,
+            },
+            name: format!("gate_proj_{}", layer_idx),
+            metadata: make_metadata(),
+        });
+
+        // up_proj: hidden_size → intermediate_size
+        let up_id = SirNodeId(format!("sir_{}_up_{}", node_counter, layer_idx));
+        node_counter += 1;
+        sir_nodes.push(SirNode {
+            id: up_id.clone(),
+            op: SirOp::LinearProjection {
+                input: post_attn_norm_id,
+                weight: format!("{}.up_proj.weight", mlp_prefix),
+                bias: None,
+            },
+            name: format!("up_proj_{}", layer_idx),
+            metadata: make_metadata(),
+        });
+
+        // Silu(gate)
+        let gate_silu_id = SirNodeId(format!("sir_{}_gate_silu_{}", node_counter, layer_idx));
+        node_counter += 1;
+        sir_nodes.push(SirNode {
+            id: gate_silu_id.clone(),
+            op: SirOp::Silu { input: gate_id },
+            name: format!("gate_silu_{}", layer_idx),
+            metadata: make_metadata(),
+        });
+
+        // mlp_hidden = Silu(gate) * up
+        let mlp_hidden_id = SirNodeId(format!("sir_{}_mlp_hidden_{}", node_counter, layer_idx));
+        node_counter += 1;
+        sir_nodes.push(SirNode {
+            id: mlp_hidden_id.clone(),
+            op: SirOp::Mul {
+                x: gate_silu_id,
+                y: up_id,
+            },
+            name: format!("mlp_hidden_{}", layer_idx),
+            metadata: make_metadata(),
+        });
+
+        // down_proj: intermediate_size → hidden_size
+        let mlp_out_id = SirNodeId(format!("sir_{}_mlp_out_{}", node_counter, layer_idx));
+        node_counter += 1;
+        sir_nodes.push(SirNode {
+            id: mlp_out_id.clone(),
+            op: SirOp::LinearProjection {
+                input: mlp_hidden_id,
+                weight: format!("{}.down_proj.weight", mlp_prefix),
+                bias: None,
+            },
+            name: format!("down_proj_{}", layer_idx),
+            metadata: make_metadata(),
+        });
+
+        // Step 6: Residual connection (post-attn residual + MLP output)
+        let residual2_id = SirNodeId(format!("sir_{}_residual2_{}", node_counter, layer_idx));
+        node_counter += 1;
+        sir_nodes.push(SirNode {
+            id: residual2_id.clone(),
+            op: SirOp::Add {
+                x: residual1_id,
+                y: mlp_out_id,
+            },
+            name: format!("residual2_{}", layer_idx),
+            metadata: make_metadata(),
+        });
+
+        current_hidden = residual2_id;
     }
 
-    // Output: the hidden state from the last layer's decode step
-    sir_outputs.push(current_hidden);
+    // ── Final norm + lm_head ───────────────────────────────────────
+    let final_norm_id = SirNodeId(format!("sir_{}_final_norm", node_counter));
+    node_counter += 1;
+    sir_nodes.push(SirNode {
+        id: final_norm_id.clone(),
+        op: SirOp::RMSNorm {
+            input: current_hidden,
+            weight: "model.norm.weight".to_string(),
+            epsilon: traced_graph.model_config.layer_norm_epsilon as f32,
+            axes: vec![1],
+        },
+        name: "final_norm".to_string(),
+        metadata: make_metadata(),
+    });
+
+    // lm_head: hidden_size → vocab_size
+    let lm_head_id = SirNodeId(format!("sir_{}_lm_head", node_counter));
+    sir_nodes.push(SirNode {
+        id: lm_head_id.clone(),
+        op: SirOp::LinearProjection {
+            input: final_norm_id,
+            weight: "lm_head.weight".to_string(),
+            bias: None,
+        },
+        name: "lm_head".to_string(),
+        metadata: make_metadata(),
+    });
+
+    // Output: logits [1, vocab_size]
+    sir_outputs.push(lm_head_id);
 
     SirGraph {
         nodes: sir_nodes,

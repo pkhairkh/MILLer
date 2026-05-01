@@ -724,7 +724,7 @@ impl<'a> SirBuildContext<'a> {
         embed_dim: usize,
         num_heads: usize,
         head_dim: usize,
-        use_sdpa: bool,
+        #[allow(unused_variables)] use_sdpa: bool, // Kept for API compat; split-based attention always used
         has_qk_norm: bool,
         node: &TracedNode,
     ) -> Result<Vec<(SirOp, String)>, String> {
@@ -733,7 +733,7 @@ impl<'a> SirBuildContext<'a> {
 
         // ─── IR DIALECT: Attention Shape Flow ──────────────────────────
         //
-        // Qwen3-0.6B attention shape flow (the "dialect" this compiler uses):
+        // Qwen3-0.6B attention shape flow (split-based, no Tile/SDPA):
         //
         //   1. hidden_state:              [B, S, hidden_size]       = [1, 512, 1024]
         //   2. q_proj (Linear):           [B, S, num_heads*D]      = [1, 512, 2048]
@@ -747,17 +747,16 @@ impl<'a> SirBuildContext<'a> {
         //  10. transpose_q:               [B, num_heads, S, D]     = [1, 16, 512, 128]
         //  11. transpose_k:               [B, kv_heads, S, D]      = [1, 8, 512, 128]
         //  12. transpose_v:               [B, kv_heads, S, D]      = [1, 8, 512, 128]
-        //  13. gqa_tile_k:                [B, num_heads, S, D]     = [1, 16, 512, 128]
-        //  14. gqa_tile_v:                [B, num_heads, S, D]     = [1, 16, 512, 128]
-        //  15. SDPA:                      [B, num_heads, S, D]     = [1, 16, 512, 128]
-        //  16. reshape_attn to 3D:        [B, S, num_heads*D]      = [1, 512, 2048]
-        //  17. out_proj (Linear):         [B, S, hidden_size]      = [1, 512, 1024]
-        //  18. residual_add:              [B, S, hidden_size]      = [1, 512, 1024]
+        //  13. split Q/K/V into per-head blocks, per-head matmul+softmax+matmul
+        //  14. concat per-head context:   [B, num_heads, S, D]     = [1, 16, 512, 128]
+        //  15. reshape_attn to 3D:        [B, S, num_heads*D]      = [1, 512, 2048]
+        //  16. out_proj (Linear):         [B, S, hidden_size]      = [1, 512, 1024]
+        //  17. residual_add:              [B, S, hidden_size]      = [1, 512, 1024]
         //
         // Key constraints:
         //   - q/k norm weights are [head_dim] = [128], must broadcast with 4D layout
-        //   - SDPA requires 4D inputs [B, heads, S, D]
-        //   - GQA tile requires 4D inputs [B, heads, S, D]
+        //   - Split-based attention: NO mb.tile, NO mb.scaled_dot_product_attention
+        //   - Per-head MatMul+Softmax+MatMul are all ANE-legal
         //   - out_proj output must match hidden_size for residual add
         //   - Final graph output must be lm_head logits [B, S, vocab_size]
 
@@ -874,7 +873,7 @@ impl<'a> SirBuildContext<'a> {
         }
 
         // Step 6: Reshape Q/K/V from flat 3D to 4D head layout.
-        // This is critical: GQA tile and SDPA both require 4D inputs.
+        // This is critical: split-based per-head attention requires 4D inputs.
         // Q: [B, S, num_heads*D] → [B, S, num_heads, D]
         // K: [B, S, kv_heads*D] → [B, S, kv_heads, D]
         // V: [B, S, kv_heads*D] → [B, S, kv_heads, D]
@@ -910,7 +909,7 @@ impl<'a> SirBuildContext<'a> {
         v_id = SirNodeId(format!("sir_v_reshape_4d_{}", node.id));
 
         // Step 7: Transpose Q/K/V from [B, S, heads, D] to [B, heads, S, D]
-        // This is the layout that ANE SDPA expects.
+        // This is the layout that split-based per-head attention expects.
         ops.push((
             SirOp::Transpose { input: q_id, perm: vec![0, 2, 1, 3] },
             "q_transpose".to_string(),
@@ -945,8 +944,9 @@ impl<'a> SirBuildContext<'a> {
         // the correct AIR ops with rotate_half.
         //
         // RoPE is applied in the [B, heads, S, D] layout (after transpose,
-        // before GQA tile) so that the position information is correct per
-        // head and the cos/sin tables can broadcast along the heads dim.
+        // before split-based attention) so that the position information is
+        // correct per head and the cos/sin tables can broadcast along the
+        // heads dim.
         if self.config.uses_rope {
             // All layers share the same RoPE parameters (same head_dim,
             // same rope_theta), so use a single shared table reference.
@@ -966,7 +966,7 @@ impl<'a> SirBuildContext<'a> {
             ));
             q_id = SirNodeId(format!("sir_q_rope_{}", node.id));
 
-            // Apply RoPE to K (before GQA tile — each KV head gets its own RoPE)
+            // Apply RoPE to K (before split — each KV head gets its own RoPE)
             ops.push((
                 SirOp::RoPETransform {
                     input: k_id,
@@ -977,101 +977,224 @@ impl<'a> SirBuildContext<'a> {
             k_id = SirNodeId(format!("sir_k_rope_{}", node.id));
         }
 
-        // Step 8: GQA expansion (if needed)
-        // K/V heads need to be tiled to match the Q head count.
-        // ANE-compatible: Tile on A14+ (replaces the old ExpandDims+Identity hack).
-        let needs_gqa_expand = self.config.uses_gqa;
-        if needs_gqa_expand {
-            let num_q_heads = self.config.num_attention_heads;
-            let gqa_kv_heads = self.config.num_key_value_heads.unwrap_or(num_q_heads);
-            let num_replicas = num_q_heads / gqa_kv_heads;
-            if num_replicas > 1 {
-                // K: tile along the heads dimension (axis 1 in [B, heads, S, D])
-                ops.push((
-                    SirOp::Tile { input: k_id, reps: vec![1, num_replicas, 1, 1] },
-                    "gqa_k_tile".to_string(),
-                ));
-                k_id = SirNodeId(format!("sir_gqa_k_tile_{}", node.id));
+        // Step 8: Split-based per-head attention (ANE-legal, no Tile/SDPA)
+        //
+        // The reference model (pkhairkh/qwen3-coreml-palettized) does NOT
+        // use mb.tile or mb.scaled_dot_product_attention. Instead, it splits
+        // Q into individual heads and pairs each Q head with its corresponding
+        // KV head:
+        //
+        //   k_blocks = mb.split(k, num_splits=hk, axis=1)
+        //   v_blocks = mb.split(v, num_splits=hk, axis=1)
+        //   q_blocks = mb.split(q, num_splits=hq, axis=1)
+        //   for i, q_i in enumerate(q_blocks):
+        //       kv_idx = i // fan_out
+        //       logits = mb.matmul(q_i, k_blocks[kv_idx], transpose_y=True)
+        //       logits = mb.mul(logits, scale)
+        //       logits = mb.add(logits, mask)
+        //       weights = mb.softmax(logits, axis=-1)
+        //       ctx_part = mb.matmul(weights, v_blocks[kv_idx])
+        //   ctx = mb.concat(ctx_parts, axis=1)
+        //
+        // This eliminates BOTH mb.tile (ANE-illegal, forces CPU fallback)
+        // AND mb.scaled_dot_product_attention (absent from the reference
+        // model's op set), keeping everything on the ANE.
+        //
+        // For non-GQA models (kv_heads == num_heads), fan_out=1 and each
+        // Q head maps to its own KV head — the split is still correct but
+        // degenerates to per-head attention.
 
-                // V: tile along the heads dimension
-                ops.push((
-                    SirOp::Tile { input: v_id, reps: vec![1, num_replicas, 1, 1] },
-                    "gqa_v_tile".to_string(),
-                ));
-                v_id = SirNodeId(format!("sir_gqa_v_tile_{}", node.id));
-            }
-        }
-
-        // Step 9: Attention computation
-        if use_sdpa && self.compiler.target_family().supports_sdpa() {
-            // Use SDPA directly on A16+.
-            // Causal mask: reference to a lower-triangular mask that will be
-            // materialized as a static table by the staticize pass.
-            let causal_mask = Some(SirNodeId(format!("causal_mask_{}", node.id)));
-            ops.push((
-                SirOp::ScaledDotProductAttention {
-                    query: q_id,
-                    key: k_id,
-                    value: v_id,
-                    attention_mask: causal_mask,
-                    scale: Some(1.0 / (head_dim as f32).sqrt()),
-                },
-                "sdpa".to_string(),
-            ));
+        let fan_out = if num_kv_heads < num_heads {
+            num_heads / num_kv_heads
         } else {
-            // Manual QK^T → scale → softmax → @V for pre-A16 families.
-            // This must be numerically equivalent to SDPA on A16+.
-            //
-            // Step 1: Transpose K so we compute Q @ K^T (not Q @ K).
-            // Q is [batch, heads, seq, head_dim], K is [batch, heads, seq, head_dim].
-            // We need K^T = [batch, heads, head_dim, seq] so that Q @ K^T = [batch, heads, seq, seq].
-            let k_t_id = SirNodeId(format!("sir_attn_k_transpose_{}", node.id));
-            ops.push((
-                SirOp::Transpose { input: k_id, perm: vec![0, 1, 3, 2] },
-                "attn_k_transpose".to_string(),
-            ));
+            1
+        };
 
-            // Step 2: Q @ K^T → [batch, heads, seq, seq]
-            ops.push((SirOp::MatMul { a: q_id, b: k_t_id }, "attn_qk".to_string()));
-            let qk_id = SirNodeId(format!("sir_attn_qk_{}", node.id));
+        // Split Q into per-head blocks: [B, hq, S, D] → hq blocks of [B, 1, S, D]
+        let q_split_id = SirNodeId(format!("sir_q_split_{}", node.id));
+        ops.push((
+            SirOp::Split {
+                input: q_id,
+                axis: 1,
+                num_splits: num_heads,
+            },
+            "q_split".to_string(),
+        ));
 
-            // Step 3: Scale by 1/√d_k. This is critical for correct softmax behavior.
-            // Without scaling, the dot products grow with √d_k, causing extremely
-            // peaked softmax distributions and degraded attention quality.
-            let scale_value = 1.0 / (head_dim as f32).sqrt();
-            let scale_const_id = SirNodeId(format!("sir_attn_scale_const_{}", node.id));
+        // Split K into per-KV-head blocks: [B, hk, S, D] → hk blocks of [B, 1, S, D]
+        let k_split_id = SirNodeId(format!("sir_k_split_{}", node.id));
+        ops.push((
+            SirOp::Split {
+                input: k_id,
+                axis: 1,
+                num_splits: num_kv_heads,
+            },
+            "k_split".to_string(),
+        ));
+
+        // Split V into per-KV-head blocks: [B, hk, S, D] → hk blocks of [B, 1, S, D]
+        let v_split_id = SirNodeId(format!("sir_v_split_{}", node.id));
+        ops.push((
+            SirOp::Split {
+                input: v_id,
+                axis: 1,
+                num_splits: num_kv_heads,
+            },
+            "v_split".to_string(),
+        ));
+
+        // Scale constant: 1/√d_k, used per-head
+        let scale_value = 1.0 / (head_dim as f32).sqrt();
+        let scale_const_id = SirNodeId(format!("sir_attn_scale_const_{}", node.id));
+        ops.push((
+            SirOp::Const {
+                value_path: format!("attn_scale_{}_{:.8}", node.id, scale_value),
+                dtype: MilDtype::Fp16,
+            },
+            "attn_scale_const".to_string(),
+        ));
+
+        // Per-head attention loop
+        let mut ctx_parts: Vec<SirNodeId> = Vec::with_capacity(num_heads);
+        // Track already-created K/V head slices to avoid duplicates in GQA
+        let mut k_head_ids: std::collections::HashMap<usize, SirNodeId> = std::collections::HashMap::new();
+        let mut v_head_ids: std::collections::HashMap<usize, SirNodeId> = std::collections::HashMap::new();
+
+        for head_idx in 0..num_heads {
+            let kv_idx = head_idx / fan_out;
+
+            // Extract Q head: SliceByIndex from q_split output
+            // Each Q head is unique, so always create a new slice
+            let q_i_id = SirNodeId(format!("sir_q_head_{}_{}", head_idx, node.id));
             ops.push((
-                SirOp::Const {
-                    value_path: format!("attn_scale_{}_{:.8}", node.id, scale_value),
-                    dtype: MilDtype::Fp16,
+                SirOp::SliceByIndex {
+                    input: q_split_id.clone(),
+                    begin: vec![0, head_idx as i64, 0, 0],
+                    end: vec![0, (head_idx as i64) + 1, 0, 0],
+                    stride: vec![1, 1, 1, 1],
+                    begin_mask: vec![true, false, true, true],
+                    end_mask: vec![true, false, true, true],
+                    squeeze_mask: vec![false, true, false, false],
                 },
-                "attn_scale_const".to_string(),
+                format!("q_head_{}", head_idx),
             ));
-            ops.push((
-                SirOp::Mul { x: qk_id, y: scale_const_id },
-                "attn_scale".to_string(),
-            ));
-            let scaled_qk_id = SirNodeId(format!("sir_attn_scale_{}", node.id));
 
-            // Step 4: Softmax over the last dimension (the seq axis of QK^T)
-            ops.push((
-                SirOp::Softmax { input: scaled_qk_id, axis: -1 },
-                "attn_softmax".to_string(),
-            ));
-            let scores_id = SirNodeId(format!("sir_attn_softmax_{}", node.id));
+            // Extract K head: reuse existing slice if already created (GQA)
+            let k_i_id = if let Some(existing) = k_head_ids.get(&kv_idx) {
+                existing.clone()
+            } else {
+                let id = SirNodeId(format!("sir_k_head_{}_{}", kv_idx, node.id));
+                ops.push((
+                    SirOp::SliceByIndex {
+                        input: k_split_id.clone(),
+                        begin: vec![0, kv_idx as i64, 0, 0],
+                        end: vec![0, (kv_idx as i64) + 1, 0, 0],
+                        stride: vec![1, 1, 1, 1],
+                        begin_mask: vec![true, false, true, true],
+                        end_mask: vec![true, false, true, true],
+                        squeeze_mask: vec![false, true, false, false],
+                    },
+                    format!("k_head_{}", kv_idx),
+                ));
+                k_head_ids.insert(kv_idx, id.clone());
+                id
+            };
 
-            // Step 5: Scores @ V → [batch, heads, seq, head_dim]
-            ops.push((SirOp::MatMul { a: scores_id, b: v_id }, "attn_sv".to_string()));
+            // Extract V head: reuse existing slice if already created (GQA)
+            let v_i_id = if let Some(existing) = v_head_ids.get(&kv_idx) {
+                existing.clone()
+            } else {
+                let id = SirNodeId(format!("sir_v_head_{}_{}", kv_idx, node.id));
+                ops.push((
+                    SirOp::SliceByIndex {
+                        input: v_split_id.clone(),
+                        begin: vec![0, kv_idx as i64, 0, 0],
+                        end: vec![0, (kv_idx as i64) + 1, 0, 0],
+                        stride: vec![1, 1, 1, 1],
+                        begin_mask: vec![true, false, true, true],
+                        end_mask: vec![true, false, true, true],
+                        squeeze_mask: vec![false, true, false, false],
+                    },
+                    format!("v_head_{}", kv_idx),
+                ));
+                v_head_ids.insert(kv_idx, id.clone());
+                id
+            };
+
+            // logits = matmul(q_i, k_i^T)
+            // q_i: [B, S, D], k_i: [B, S, D]
+            // After transpose of k_i: [B, D, S]
+            // matmul: [B, S, D] @ [B, D, S] = [B, S, S]
+            let k_i_t_id = SirNodeId(format!("sir_k_head_{}_transpose_{}", kv_idx, node.id));
+            ops.push((
+                SirOp::Transpose { input: k_i_id, perm: vec![0, 2, 1] },
+                format!("k_head_{}_transpose", kv_idx),
+            ));
+
+            let logits_id = SirNodeId(format!("sir_logits_{}_{}", head_idx, node.id));
+            ops.push((
+                SirOp::MatMul { a: q_i_id, b: k_i_t_id },
+                format!("logits_{}", head_idx),
+            ));
+
+            // Scale: logits *= 1/√d_k
+            let scaled_logits_id = SirNodeId(format!("sir_scaled_logits_{}_{}", head_idx, node.id));
+            ops.push((
+                SirOp::Mul { x: logits_id, y: scale_const_id.clone() },
+                format!("scaled_logits_{}", head_idx),
+            ));
+
+            // Apply causal mask if available
+            // For the prefill/embedding path, the causal mask is applied per-head.
+            // The mask is a lower-triangular [S, S] matrix that broadcasts with [B, S, S].
+            let masked_logits_id = {
+                let mask_ref = SirNodeId(format!("causal_mask_{}", node.id));
+                let ml_id = SirNodeId(format!("sir_masked_logits_{}_{}", head_idx, node.id));
+                ops.push((
+                    SirOp::Add { x: scaled_logits_id, y: mask_ref },
+                    format!("masked_logits_{}", head_idx),
+                ));
+                ml_id
+            };
+
+            // weights = softmax(logits, axis=-1)
+            let weights_id = SirNodeId(format!("sir_weights_{}_{}", head_idx, node.id));
+            ops.push((
+                SirOp::Softmax { input: masked_logits_id, axis: -1 },
+                format!("weights_{}", head_idx),
+            ));
+
+            // ctx_part = matmul(weights, v_i)
+            // weights: [B, S, S], v_i: [B, S, D]
+            // output: [B, S, D]
+            let ctx_part_id = SirNodeId(format!("sir_ctx_{}_{}", head_idx, node.id));
+            ops.push((
+                SirOp::MatMul { a: weights_id, b: v_i_id },
+                format!("ctx_{}", head_idx),
+            ));
+
+            // Expand dims: [B, S, D] → [B, 1, S, D] with head axis
+            // for proper concat along axis 1
+            let ctx_expanded_id = SirNodeId(format!("sir_ctx_exp_{}_{}", head_idx, node.id));
+            ops.push((
+                SirOp::ExpandDims { input: ctx_part_id, axis: vec![1] },
+                format!("ctx_exp_{}", head_idx),
+            ));
+
+            ctx_parts.push(ctx_expanded_id);
         }
+
+        // Concat all per-head context: [B, 1, S, D] × hq → [B, hq, S, D]
+        let ctx_concat_id = SirNodeId(format!("sir_ctx_concat_{}", node.id));
+        ops.push((
+            SirOp::Concat { inputs: ctx_parts, axis: 1 },
+            "ctx_concat".to_string(),
+        ));
 
         // Output projection: its input is the attention computation output,
         // which is currently 4D [B, num_heads, S, D]. We need to reshape it
         // back to 3D [B, S, num_heads*D] before the linear projection.
-        let attn_result_id = if use_sdpa && self.compiler.target_family().supports_sdpa() {
-            SirNodeId(format!("sir_sdpa_{}", node.id))
-        } else {
-            SirNodeId(format!("sir_attn_sv_{}", node.id))
-        };
+        let attn_result_id = ctx_concat_id;
 
         // Step 10: Reshape attention output from 4D [B, heads, S, D] to
         // 3D [B, S, num_heads*D] for the output projection.
@@ -2169,7 +2292,7 @@ mod tests {
         assert!(trace.model_config.uses_gqa);
 
         let sir = build_sir_from_trace(&trace, AneFamily::A12);
-        assert!(sir.is_ok(), "Qwen3-0.6B fixture should produce valid SIR on A12");
+        assert!(sir.is_ok(), "Qwen3-0.6B fixture should produce valid SIR on A12: {:?}", sir.err());
 
         let sir = sir.unwrap();
         assert!(!sir.nodes.is_empty());
@@ -2303,7 +2426,7 @@ mod tests {
     /// - K was not transposed (computing Q@K instead of Q@K^T)
     /// - The decompose_sdpa() ignored the _scale parameter
     #[test]
-    fn test_m2_attention_decomposition_has_scale_and_transpose() {
+    fn test_m2_attention_decomposition_has_scale_and_softmax() {
         // Build a trace with an AttentionBlock
         let mut trace = make_simple_trace();
         trace.nodes.push(TracedNode {
@@ -2322,21 +2445,20 @@ mod tests {
             name: "self_attn_0".to_string(),
         });
 
-        // Build SIR targeting A12 (M2) — SDPA is unreliable here
+        // Build SIR targeting A12 (M2)
         let result = build_sir_from_trace(&trace, AneFamily::A12);
         assert!(result.is_ok(), "M2 SIR build should succeed: {:?}", result.err());
 
         let sir = result.unwrap();
 
-        // Verify the SIR contains the key pre-A16 decomposition ops:
-        // Transpose(K) → MatMul(Q, K^T) → Const(scale) → Mul → Softmax → MatMul(scores, V)
-        let has_k_transpose = sir.nodes.iter().any(|n| {
-            matches!(&n.op, SirOp::Transpose { perm, .. } if perm == &[0, 1, 3, 2])
-                && n.name.contains("k_transpose")
+        // Split-based per-head attention is always used (no Tile, no SDPA)
+        // Key ops: Split, SliceByIndex, MatMul, Const(scale), Softmax
+        let has_split = sir.nodes.iter().any(|n| {
+            matches!(n.op, SirOp::Split { .. })
         });
         assert!(
-            has_k_transpose,
-            "M2 attention decomposition must include K^T transpose (perm [0,1,3,2])"
+            has_split,
+            "M2 attention decomposition must include Split for per-head attention"
         );
 
         let has_scale_const = sir.nodes.iter().any(|n| {
@@ -2347,20 +2469,20 @@ mod tests {
             "M2 attention decomposition must include a scale constant (1/√d_k)"
         );
 
-        let has_scale_mul = sir.nodes.iter().any(|n| {
-            matches!(n.op, SirOp::Mul { .. }) && n.name.contains("attn_scale")
-        });
-        assert!(
-            has_scale_mul,
-            "M2 attention decomposition must include Mul for scaling QK^T"
-        );
-
         let has_softmax = sir.nodes.iter().any(|n| {
-            matches!(n.op, SirOp::Softmax { .. }) && n.name.contains("attn_softmax")
+            matches!(n.op, SirOp::Softmax { .. })
         });
         assert!(
             has_softmax,
-            "M2 attention decomposition must include Softmax"
+            "M2 attention decomposition must include Softmax for per-head attention"
+        );
+
+        let has_matmul = sir.nodes.iter().any(|n| {
+            matches!(n.op, SirOp::MatMul { .. })
+        });
+        assert!(
+            has_matmul,
+            "M2 attention decomposition must include MatMul for per-head attention"
         );
 
         // Verify the scale constant encodes the correct value
@@ -2381,7 +2503,7 @@ mod tests {
 
     /// Test that A16+ attention decomposition uses SDPA directly (no manual decomposition).
     #[test]
-    fn test_a16_attention_decomposition_uses_sdpa() {
+    fn test_a16_attention_decomposition_uses_split_based_attention() {
         let mut trace = make_simple_trace();
         trace.nodes.push(TracedNode {
             id: "attn_0".to_string(),
@@ -2399,29 +2521,37 @@ mod tests {
             name: "self_attn_0".to_string(),
         });
 
-        // Build SIR targeting A16 — SDPA is reliable here
+        // Build SIR targeting A16
         let result = build_sir_from_trace(&trace, AneFamily::A16);
         assert!(result.is_ok(), "A16 SIR build should succeed: {:?}", result.err());
 
         let sir = result.unwrap();
 
-        // On A16+, we should see SDPA, not manual decomposition
+        // Split-based per-head attention is always used (no Tile, no SDPA)
+        let has_split = sir.nodes.iter().any(|n| {
+            matches!(n.op, SirOp::Split { .. })
+        });
+        assert!(
+            has_split,
+            "Attention decomposition must use Split for per-head attention"
+        );
+
+        // Should NOT see SDPA — split-based attention replaces it
         let has_sdpa = sir.nodes.iter().any(|n| {
             matches!(n.op, SirOp::ScaledDotProductAttention { .. })
         });
         assert!(
-            has_sdpa,
-            "A16+ attention decomposition must use ScaledDotProductAttention"
+            !has_sdpa,
+            "Attention decomposition must NOT use SDPA (split-based attention replaces it)"
         );
 
-        // We should NOT see manual K transpose or scale const on A16+
-        let has_k_transpose = sir.nodes.iter().any(|n| {
-            matches!(&n.op, SirOp::Transpose { perm, .. } if perm == &[0, 1, 3, 2])
-                && n.name.contains("k_transpose")
+        // Should NOT see Tile — ANE-illegal, eliminated by split-based approach
+        let has_tile = sir.nodes.iter().any(|n| {
+            matches!(n.op, SirOp::Tile { .. })
         });
         assert!(
-            !has_k_transpose,
-            "A16+ attention decomposition must NOT include manual K^T transpose"
+            !has_tile,
+            "Attention decomposition must NOT use Tile (ANE-illegal)"
         );
     }
 
@@ -2577,10 +2707,9 @@ fn extract_sir_ids_from_json(json: &str) -> Vec<String> {
 ///
 /// The tricky part is determining which position corresponds to which alias.
 /// The decompose functions create ops in a fixed order:
-///   - AttentionBlock: q_proj, k_proj, v_proj, [q_norm, k_norm], [gqa_k_tile, gqa_v_tile], [k_transpose], ...
+///   - AttentionBlock: q_proj, k_proj, v_proj, [q_norm, k_norm], [q/k/v_transpose], [rope], [q/k/v_split], [per-head slice+matmul+softmax+matmul], ctx_concat, ...
 ///   - MLP: gate_proj, [gate_silu], up_proj, [swiglu_mul], down_proj
 ///   - RoPE: cos, [sin, rotated, cos_mul, sin_mul]
-///   - SDPA: k_transpose, qk, scale_const, scaled, softmax
 ///
 /// Since we don't have the exact order without re-running the decompose functions,
 /// we use a heuristic: match the semantic prefix to the sequential allocation
@@ -2598,7 +2727,7 @@ fn resolve_alias(
     // The alias is like "sir_q_proj_layer_0_self_attn"
     // We need to find the traced_node_id suffix.
     // Pattern: "sir_{semantic_prefix}_{traced_node_id}"
-    // The semantic prefix can contain underscores (e.g., "gqa_k_tiled"),
+    // The semantic prefix can contain underscores (e.g., "q_head_0"),
     // so we can't just split on "_". Instead, we try all possible splits
     // and check if the suffix matches a known traced node ID.
 
@@ -2608,7 +2737,7 @@ fn resolve_alias(
     // Try splitting at each underscore position to find a traced_node_id
     // that exists in node_map. We want the LONGEST possible semantic prefix
     // (shortest traced_node_id) that matches, because semantic prefixes are
-    // specific (e.g., "gqa_k_tiled") and traced_node_ids are relatively short
+    // specific (e.g., "q_head_0") and traced_node_ids are relatively short
     // (e.g., "layer_0_self_attn").
     let mut candidates: Vec<String> = Vec::new();
     for (i, c) in alias_stripped.char_indices() {
@@ -2666,22 +2795,17 @@ fn resolve_alias(
 /// decompose_mlp(), decompose_rope(), and decompose_sdpa() push their ops.
 ///
 /// AttentionBlock decomposition order (without QK-Norm, without GQA):
-///   0: q_proj, 1: k_proj, 2: v_proj, 3: sdpa/out_proj, ...
+///   0: q_proj, 1: k_proj, 2: v_proj, 3: ctx_concat/out_proj, ...
 ///
-/// AttentionBlock decomposition order (with QK-Norm + GQA, A16+):
+/// AttentionBlock decomposition order (with QK-Norm + split-based attention):
 ///   0: q_proj, 1: k_proj, 2: v_proj, 3: q_norm, 4: k_norm,
 ///   5: q_reshape_4d, 6: k_reshape_4d, 7: v_reshape_4d,
 ///   8: q_transpose, 9: k_transpose, 10: v_transpose,
-///   11: gqa_k_tile, 12: gqa_v_tile, 13: sdpa,
-///   14: attn_reshape_3d, 15: out_proj, 16: residual_add
-///
-/// AttentionBlock decomposition order (with QK-Norm + GQA, pre-A16):
-///   0: q_proj, 1: k_proj, 2: v_proj, 3: q_norm, 4: k_norm,
-///   5: q_reshape_4d, 6: k_reshape_4d, 7: v_reshape_4d,
-///   8: q_transpose, 9: k_transpose, 10: v_transpose,
-///   11: gqa_k_tile, 12: gqa_v_tile,
-///   13: attn_k_transpose, 14: qk_matmul, 15: scale_const, 16: scaled_qk,
-///   17: softmax, 18: sv_matmul, 19: attn_reshape_3d, 20: out_proj, 21: residual_add
+///   11: q_split, 12: k_split, 13: v_split,
+///   14: attn_scale_const,
+///   15+: per-head attention (q_head, k_head, v_head, k_head_transpose,
+///        logits, scaled_logits, masked_logits, weights, ctx, ctx_exp) × num_heads
+///   ...: ctx_concat, attn_reshape_3d, out_proj, residual_add
 ///
 /// MLP decomposition order (SwiGLU):
 ///   0: gate_proj, 1: gate_silu, 2: up_proj, 3: swiglu_mul, 4: down_proj
@@ -2707,18 +2831,17 @@ fn semantic_prefix_to_position(prefix: &str) -> Option<usize> {
         "q_transpose" => Some(8),
         "k_transpose" => Some(9),
         "v_transpose" => Some(10),
-        "gqa_k_tile" => Some(11),
-        "gqa_v_tile" => Some(12),
-        // Pre-A16 SDPA decomposition (positions 13-18)
-        "attn_k_transpose" => Some(13),
-        "attn_qk" => Some(14),
-        "attn_scale_const" => Some(15),
-        "attn_scale" => Some(16),
-        "attn_softmax" => Some(17),
-        "attn_sv" => Some(18),
-        "sdpa" => Some(13),
-        "attn_reshape_3d" => Some(14), // A16+: position 14; pre-A16: position 19
-        "out_proj" => Some(15),        // A16+: position 15; pre-A16: position 20
+        "q_split" => Some(11),
+        "k_split" => Some(12),
+        "v_split" => Some(13),
+        "attn_scale_const" => Some(14),
+        // Per-head attention ops start at position 15+ (variable count based on num_heads)
+        // These are best resolved by name pattern matching, not position
+        "q_head" | "k_head" | "v_head" | "logits" | "scaled_logits"
+        | "masked_logits" | "weights" | "ctx" | "ctx_exp" => None,
+        "ctx_concat" => None, // position varies based on num_heads
+        "attn_reshape_3d" => None,
+        "out_proj" => None,
         // MLP ops (these come from separate traced nodes, so positions restart)
         "gate_proj" => Some(0),
         "mlp_gate_silu" => Some(1),

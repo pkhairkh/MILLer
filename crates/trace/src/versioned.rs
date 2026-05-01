@@ -608,11 +608,15 @@ impl OpSupportMatrix {
                 "SpaceToBatch has no direct ANEC converter; falls back to CPU".to_string(),
             ),
             SirOp::Tile { .. } => {
-                // Tile decomposes to Reshape + broadcast Mul + Reshape,
-                // all ANE-faithful ops. The legality rewrite pass handles
-                // the decomposition; the decomposed form is fully
-                // ANE-compatible and produces zero Tile ops in the
-                // final emitted model.
+                // Tile is ANE-illegal as a native op. However:
+                //   1. GQA Tile ops are now eliminated at the SIR builder level
+                //      via split-based per-head attention (matching the reference
+                //      model pkhairkh/qwen3-coreml-palettized).
+                //   2. Any remaining standalone Tile ops are decomposed by the
+                //      legality rewrite pass to Reshape + broadcast Mul + Reshape,
+                //      all ANE-faithful ops.
+                //   3. A panic in the fallback path ensures Tile never survives
+                //      to AIR/MIR undecomposed.
                 OpSupport::AneSupported(AneEngineSupport::PE)
             }
 

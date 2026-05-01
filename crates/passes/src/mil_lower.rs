@@ -3766,11 +3766,14 @@ impl MilLowerPass {
                 eprintln!("  [ANE legality] WARNING: {} MILCos + {} MILSin remain! These are ANE-illegal and should have been replaced by Const+Gather in the SIR→AIR decomposition.", cos_count, sin_count);
             }
 
-            // ── 8. Check for remaining MILTile (should be zero after Sprint 67) ──
-            // The SIR→AIR decomposition now uses split-based GQA instead of Tile.
+            // ── 8. Check for remaining MILTile (should be ZERO — Tile is fully eliminated) ──
+            // GQA Tile ops are eliminated at the SIR builder level via split-based
+            // per-head attention. Any remaining Tile ops should have been decomposed
+            // by the legality rewrite pass. The fallback passthrough now panics.
+            // If any MILTile ops survive, it's a bug in the compilation pipeline.
             let tile_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILTile { .. })).count();
             if tile_count > 0 {
-                eprintln!("  [ANE legality] WARNING: {} MILTile ops remain! These are ANE-illegal in decoder shards and should have been replaced by split-based GQA.", tile_count);
+                eprintln!("  [ANE legality] CRITICAL: {} MILTile ops remain! These are ANE-illegal and should have been eliminated by split-based per-head attention (SIR builder) or decomposed to Reshape+Mul+Reshape (legality rewrite). This is a pipeline bug.", tile_count);
             }
 
             // ── 9. Check for remaining MILSliceUpdate (should be zero after Sprint 67) ──
@@ -3780,11 +3783,13 @@ impl MilLowerPass {
                 eprintln!("  [ANE legality] WARNING: {} MILSliceUpdate ops remain! These are ANE-illegal and should have been replaced by masked blend (mul+add) in the SIR→AIR decomposition.", su_count);
             }
 
-            // ── 10. Check for remaining MILScaledDotProductAttention (should be zero after Sprint 67) ──
-            // The SIR→AIR decomposition now uses manual per-head matmul+softmax.
+            // ── 10. Check for remaining MILScaledDotProductAttention (should be ZERO) ──
+            // Both the SIR builder (attention block) and the legality rewrite
+            // (AttentionBlock SIR op) now use split-based per-head attention
+            // instead of SDPA, matching the reference model.
             let sdpa_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILScaledDotProductAttention { .. })).count();
             if sdpa_count > 0 {
-                eprintln!("  [ANE legality] WARNING: {} MILSDPA ops remain! These are absent from the reference model and may cause ANE issues.", sdpa_count);
+                eprintln!("  [ANE legality] CRITICAL: {} MILSDPA ops remain! These are absent from the reference model and are ANE-problematic. Split-based per-head attention should be used instead.", sdpa_count);
             }
 
             // ── 11. Apply transpose_y=True to per-head attention matmuls ──
