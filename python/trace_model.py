@@ -1619,32 +1619,34 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
         })
         prev_id = "final_norm"
 
-    # LM head
+    # Last-token slice: extract the last position from the hidden state
+    # BEFORE lm_head, so the linear only processes a single token.
+    # Slicing *after* lm_head still requires the execution planner to
+    # schedule the full-sequence [1, seq_len, vocab_size] linear
+    # (~155 MB intermediate for Qwen3-0.6B), which causes error -5.
+    # By slicing before lm_head, the linear produces [1, 1, vocab_size]
+    # directly, eliminating the giant intermediate.
+    nodes.append({
+        "id": "hidden_state_last_token",
+        "op": {
+            "type": "Slice",
+            "begin": [0, seq_len - 1, 0],
+            "end": [1, seq_len, hidden_size],
+            "stride": [1, 1, 1],
+        },
+        "name": "hidden_state_last_token",
+        "inputs": [prev_id],
+        "output_shape": {"dims": [1, 1, hidden_size], "dtype": "fp16"},
+        "is_parameter": False,
+        "module_path": "model.norm",
+    })
+
+    # LM head — now operates on a single token [1, 1, hidden_size]
     nodes.append({
         "id": "lm_head",
         "op": {"type": "Linear", "in_features": hidden_size, "out_features": config["vocab_size"], "has_bias": False},
         "name": "lm_head",
-        "inputs": [prev_id],
-        "output_shape": {"dims": [1, seq_len, config["vocab_size"]], "dtype": "fp16"},
-        "is_parameter": False,
-        "module_path": "lm_head",
-    })
-
-    # Last-token slice: extract only the last position's logits from the
-    # full-sequence lm_head output. Core ML's execution planner cannot
-    # build a hardware plan for a [1, seq_len, vocab_size] output tensor
-    # (too large — ~155 MB for Qwen3-0.6B). Slicing to [1, 1, vocab_size]
-    # (~300 KB) makes the model viable for ANE execution.
-    nodes.append({
-        "id": "lm_head_last_token",
-        "op": {
-            "type": "Slice",
-            "begin": [0, seq_len - 1, 0],
-            "end": [1, seq_len, config["vocab_size"]],
-            "stride": [1, 1, 1],
-        },
-        "name": "lm_head_last_token",
-        "inputs": ["lm_head"],
+        "inputs": ["hidden_state_last_token"],
         "output_shape": {"dims": [1, 1, config["vocab_size"]], "dtype": "fp16"},
         "is_parameter": False,
         "module_path": "lm_head",
@@ -1655,7 +1657,7 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
         "id": "output",
         "op": {"type": "Output"},
         "name": "output",
-        "inputs": ["lm_head_last_token"],
+        "inputs": ["lm_head"],
         "output_shape": {"dims": [1, 1, config["vocab_size"]], "dtype": "fp16"},
         "is_parameter": False,
         "module_path": None,

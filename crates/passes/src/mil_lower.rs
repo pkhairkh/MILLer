@@ -2637,15 +2637,20 @@ impl MilLowerPass {
             node_shapes.insert(air_node.id.clone(), shape);
         }
 
-        // ─── Post-lowering: last-token slice for lm_head ────────────────
+        // ─── Post-lowering: slice hidden state before lm_head ──────────
         // The lm_head linear projects all sequence positions to the full vocabulary,
-        // producing a massive [1, S, V] logits tensor (e.g., [1, 512, 151936] ≈ 155 MB).
-        // Core ML's execution planner fails to build a hardware plan for this
-        // (error code -5). Since next-token prediction only needs the last position's
-        // logits, we insert a SliceByIndex after lm_head to reduce the output to
-        // [1, 1, V] (≈ 300 KB), making the model viable for ANE execution.
+        // producing a massive [1, S, V] logits intermediate (e.g., [1, 512, 151936]
+        // ≈ 155 MB). Core ML's execution planner fails to build a hardware plan for
+        // this (error code -5). Slicing the logits *after* lm_head doesn't help
+        // because the planner still has to schedule the full-sequence linear.
+        //
+        // Fix: slice the hidden state *before* lm_head so the linear only ever
+        // sees a single token. This eliminates the [1, S, V] intermediate entirely.
+        //
+        //   Before: [1,S,D] → lm_head → [1,S,V] → slice → [1,1,V]
+        //   After:  [1,S,D] → slice → [1,1,D] → lm_head → [1,1,V]
         {
-            let lm_head_node = mir_nodes.iter().find(|n| {
+            let lm_head_idx = mir_nodes.iter().position(|n| {
                 match &n.op {
                     MirOp::MILLinear { weight, .. } => {
                         weight == "lm_head.weight" || weight.contains("lm_head.")
@@ -2654,34 +2659,48 @@ impl MilLowerPass {
                 }
             });
 
-            if let Some(lm_node) = lm_head_node {
-                let lm_shape = lm_node.shape.clone();
+            if let Some(lm_idx) = lm_head_idx {
+                let lm_node = &mir_nodes[lm_idx];
                 let lm_id = lm_node.id.clone();
-                // The linear output shape is [B, S, V] or [1, S, V].
-                // We need S >= 2 to make slicing worthwhile (S=1 is already single-token).
-                if lm_shape.len() >= 2 && lm_shape[1] > 1 {
-                    let seq_len = lm_shape[1] as i64;
-                    let _vocab_size = lm_shape.last().copied().unwrap_or(0) as i64;
-                    let rank = lm_shape.len();
 
-                    // Slice: take only the last position along the sequence dimension.
-                    // For dim 1 (seq): begin=S-1, end=S → size 1 (last token only)
-                    // For all other dims: begin=0, end=dim_size → full extent
+                // Get the input hidden state node and its shape
+                let (input_mir_id, input_shape) = match &lm_node.op {
+                    MirOp::MILLinear { x, .. } => {
+                        // Look up the input node's shape from node_shapes using
+                        // the AIR ID that mapped to this MIR input.
+                        let input_air_id = air_to_mir.iter()
+                            .find(|(_, mir)| mir.0 == x.0)
+                            .map(|(air_id, _)| air_id.clone());
+                        let shape = input_air_id.as_ref()
+                            .and_then(|id| node_shapes.get(id))
+                            .cloned()
+                            .unwrap_or_default();
+                        (x.clone(), shape)
+                    }
+                    _ => (MirNodeId(String::new()), vec![]),
+                };
+
+                // The hidden state shape is [B, S, D]. We need S >= 2 to slice.
+                if input_shape.len() >= 2 && input_shape[1] > 1 {
+                    let seq_len = input_shape[1] as i64;
+                    let rank = input_shape.len();
+
+                    // Slice hidden state: [0, S-1, 0, ...] : [1, S, D, ...] → [1, 1, D, ...]
                     let mut begin = vec![0i64; rank];
-                    let mut end: Vec<i64> = lm_shape.iter().map(|&d| d as i64).collect();
+                    let mut end: Vec<i64> = input_shape.iter().map(|&d| d as i64).collect();
                     begin[1] = seq_len - 1;  // Start at last position
                     end[1] = seq_len;        // Seq dim: take 1 position (end is exclusive)
 
-                    let slice_id = MirNodeId(format!("{}_last_token", lm_id.0));
-                    let slice_shape: Vec<usize> = lm_shape.iter().enumerate().map(|(i, &d)| {
+                    let slice_id = MirNodeId(format!("{}_last_token", input_mir_id.0));
+                    let slice_shape: Vec<usize> = input_shape.iter().enumerate().map(|(i, &d)| {
                         if i == 1 { 1 } else { d }
                     }).collect();
 
                     let slice_node = MirNode {
                         id: slice_id.clone(),
                         op: MirOp::MILSliceByIndex {
-                            name: "lm_head_last_token".into(),
-                            x: lm_id.clone(),
+                            name: "hidden_state_last_token".into(),
+                            x: input_mir_id.clone(),
                             begin: begin.clone(),
                             end: end.clone(),
                             stride: vec![1; rank],
@@ -2692,35 +2711,64 @@ impl MilLowerPass {
                         dtype: lm_node.dtype.clone(),
                         shape: slice_shape.clone(),
                         compute_unit_hint: lm_node.compute_unit_hint.clone(),
-                        air_source: None, // This is a synthetic node, not from AIR
+                        air_source: None, // Synthetic node
                     };
 
-                    mir_nodes.push(slice_node);
+                    // Insert the slice node right before lm_head
+                    mir_nodes.insert(lm_idx, slice_node);
 
-                    // Remap: any AIR node that previously pointed to the lm_head
-                    // linear output should now point to the last-token slice.
-                    // This ensures mir_outputs (derived via air_to_mir) picks up
-                    // the slice instead of the raw linear.
-                    for air_id in node_shapes.keys() {
-                        if air_to_mir.get(air_id).map(|id| id.0.as_str()) == Some(lm_id.0.as_str()) {
-                            air_to_mir.insert(air_id.clone(), slice_id.clone());
+                    // Update lm_head's input to reference the sliced hidden state
+                    // and fix its output shape (S dimension becomes 1)
+                    let lm_node = &mut mir_nodes[lm_idx + 1]; // +1 because we inserted the slice before it
+                    match &mut lm_node.op {
+                        MirOp::MILLinear { x, .. } => {
+                            *x = slice_id.clone();
+                        }
+                        _ => unreachable!("lm_head must be MILLinear"),
+                    }
+                    // Update the lm_head output shape: replace dim[1] with 1
+                    if lm_node.shape.len() >= 2 {
+                        lm_node.shape[1] = 1;
+                    }
+
+                    // Update air_to_mir: remap the lm_head's AIR node to the
+                    // updated lm_head MIR node (same ID, just different input).
+                    // Also update node_shapes so the lm_head AIR node now maps
+                    // to the sliced output shape [1, 1, V].
+                    for (air_id, mir_id) in air_to_mir.iter_mut() {
+                        if mir_id.0 == lm_id.0 {
+                            // The lm_head MIR node ID didn't change, but its shape did.
+                            // node_shapes will be updated below.
+                            let _ = (air_id, mir_id); // just touching to satisfy borrow
                         }
                     }
-                    // Also update node_shapes so downstream consumers see the
-                    // sliced shape, not the full-sequence shape.
+                    // Update the lm_head's shape in node_shapes
+                    for (_, shape) in node_shapes.iter_mut() {
+                        if shape.len() >= 3 && shape[0] == input_shape[0]
+                            && shape[1] == input_shape[1]
+                            && shape[2] == lm_node.shape.get(2).copied().unwrap_or(0)
+                        {
+                            // This looks like the old lm_head output shape [B, S, V].
+                            // Update it to [B, 1, V].
+                            shape[1] = 1;
+                        }
+                    }
+
+                    // Also register the slice node's shape in node_shapes
+                    // (keyed by its AIR-equivalent ID for compat shape inference)
                     node_shapes.insert(
-                        // Use a synthetic key that matches the slice node
-                        AirNodeId(format!("{}_last_token", lm_id.0)),
+                        AirNodeId(format!("{}_last_token", input_mir_id.0)),
                         slice_shape,
                     );
 
                     eprintln!(
-                        "  [lm_head slice] Inserted last-token slice: [{},{},{}] → [{},1,{}]",
-                        lm_shape.get(0).unwrap_or(&0),
-                        lm_shape.get(1).unwrap_or(&0),
-                        lm_shape.get(2).unwrap_or(&0),
-                        lm_shape.get(0).unwrap_or(&0),
-                        lm_shape.get(2).unwrap_or(&0),
+                        "  [lm_head pre-slice] Slicing hidden state before lm_head: [{},{},{}] → slice → [{},1,{}] → lm_head → [1,1,{}]",
+                        input_shape.get(0).unwrap_or(&0),
+                        input_shape.get(1).unwrap_or(&0),
+                        input_shape.get(2).unwrap_or(&0),
+                        input_shape.get(0).unwrap_or(&0),
+                        input_shape.get(2).unwrap_or(&0),
+                        lm_node.shape.get(2).unwrap_or(&0),
                     );
                 }
             }
