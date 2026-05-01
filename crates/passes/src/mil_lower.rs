@@ -412,6 +412,12 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
         | AirOp::Neg { input }
         | AirOp::Sqrt { input }
         | AirOp::Cast { input, .. } => node_shapes.get(input).cloned().unwrap_or_default(),
+        // ─── Const: look up shape from value_path in node_shapes ───
+        // Const nodes for static tables have value_paths like "static_tables/rope_tables/cos_tab"
+        // which are seeded into node_shapes from weight_shapes during lowering.
+        AirOp::Const { value_path, .. } => {
+            node_shapes.get(&AirNodeId(value_path.clone())).cloned().unwrap_or_default()
+        }
         // All remaining AIR ops: conservatively return empty shape
         _ => vec![],
     }

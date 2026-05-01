@@ -1306,13 +1306,16 @@ impl LegalityRewritePass {
         // Step 1-2: Get cos/sin values.
         //
         // The static_tables pass inserts Const nodes for pre-computed
-        // cos_tab and sin_tab at IDs:
-        //   "sir_static_cos_tab_{base}" and "sir_static_sin_tab_{base}"
+        // cos_tab and sin_tab at IDs based on the tables reference:
+        //   "sir_static_cos_tab_{tables_ref}" and "sir_static_sin_tab_{tables_ref}"
+        //
+        // Since all RoPE nodes share the same tables_ref ("rope_tables_shared"),
+        // there is only one set of Const nodes shared across all layers.
         //
         // If these are in the sir_to_air map, use them directly.
         // Otherwise, fall back to computing cos/sin from the tables reference.
-        let cos_tab_air_id = AirNodeId(format!("sir_static_cos_tab_{base}"));
-        let sin_tab_air_id = AirNodeId(format!("sir_static_sin_tab_{base}"));
+        let cos_tab_air_id = AirNodeId(format!("sir_static_cos_tab_{}", tables));
+        let sin_tab_air_id = AirNodeId(format!("sir_static_sin_tab_{}", tables));
 
         let cos_id = if sir_to_air.contains_key(&ane_ir::sir::SirNodeId(cos_tab_air_id.0.clone()))
         {

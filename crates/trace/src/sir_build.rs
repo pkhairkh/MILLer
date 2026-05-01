@@ -948,7 +948,13 @@ impl<'a> SirBuildContext<'a> {
         // before GQA tile) so that the position information is correct per
         // head and the cos/sin tables can broadcast along the heads dim.
         if self.config.uses_rope {
-            let rope_tables = format!("rope_tables_{}", node.id);
+            // All layers share the same RoPE parameters (same head_dim,
+            // same rope_theta), so use a single shared table reference.
+            // The StaticTableResolver computes the tables once and the
+            // static_tables pass inserts a single set of Const nodes that
+            // all RoPETransform ops reference. This avoids duplicating
+            // 28+ identical table sets in the emitted model.
+            let rope_tables = "rope_tables_shared".to_string();
 
             // Apply RoPE to Q
             ops.push((

@@ -47,24 +47,30 @@ pub fn run_static_tables_pass(graph: &mut SirGraph) -> StaticTablesResult {
         })
         .collect();
 
-    // Collect all new Const nodes, then prepend them to the graph.
-    // Prepending is critical: LegalityRewritePass processes nodes in order,
-    // and decompose_rope checks sir_to_air for the Const node IDs.
-    // If the Const nodes come AFTER the RoPETransform nodes, they won't
-    // be in sir_to_air yet when decompose_rope looks for them, causing
-    // a fallback to AirOp::Cos/AirOp::Sin with unresolved references.
+    // Deduplicate by tables_ref: only insert one set of Const nodes per
+    // unique tables reference. All 56 RoPE nodes (28 layers × 2 for Q/K)
+    // share the same "rope_tables_shared" ref, so only one set of 4 Const
+    // nodes is inserted instead of 56×4 = 224.
+    let mut seen_tables_refs: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut new_const_nodes = Vec::new();
-    for (node_id, tables_ref, metadata) in &rope_info {
+    for (_node_id, tables_ref, metadata) in &rope_info {
+        if seen_tables_refs.contains(tables_ref) {
+            // Already inserted Const nodes for this tables_ref — skip
+            result.rope_converted += 1;
+            continue;
+        }
+        seen_tables_refs.insert(tables_ref.clone());
+
         let tables = &["sin_tab", "cos_tab", "eye_tab", "mask_tab"];
         for &table_name in tables {
-            let const_id = SirNodeId(format!("sir_static_{}_{}", table_name, node_id));
+            let const_id = SirNodeId(format!("sir_static_{}_{}", table_name, tables_ref));
             let const_node = SirNode {
                 id: const_id,
                 op: SirOp::Const {
                     value_path: format!("static_tables/{}/{}", tables_ref, table_name),
                     dtype: ane_ir::mir::MilDtype::Fp16,
                 },
-                name: format!("static_{}_{}", table_name, node_id),
+                name: format!("static_{}_{}", table_name, tables_ref),
                 metadata: metadata.clone(),
             };
             new_const_nodes.push(const_node);
@@ -93,7 +99,7 @@ mod tests {
                 id: SirNodeId("rope_0".to_string()),
                 op: SirOp::RoPETransform {
                     input: SirNodeId("input_0".to_string()),
-                    tables: "rope_tables_0".to_string(),
+                    tables: "rope_tables_shared".to_string(),
                 },
                 name: "rope_0".to_string(),
                 metadata: SirMetadata {
@@ -138,5 +144,68 @@ mod tests {
             first_const_idx,
             rope_idx
         );
+    }
+
+    #[test]
+    fn test_static_tables_deduplicates_shared_refs() {
+        // Multiple RoPE nodes sharing the same tables_ref should only
+        // produce one set of Const nodes (4, not 12).
+        let mut graph = SirGraph {
+            nodes: vec![
+                SirNode {
+                    id: SirNodeId("rope_q_0".to_string()),
+                    op: SirOp::RoPETransform {
+                        input: SirNodeId("q_0".to_string()),
+                        tables: "rope_tables_shared".to_string(),
+                    },
+                    name: "rope_q_0".to_string(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("rope_k_0".to_string()),
+                    op: SirOp::RoPETransform {
+                        input: SirNodeId("k_0".to_string()),
+                        tables: "rope_tables_shared".to_string(),
+                    },
+                    name: "rope_k_0".to_string(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("rope_q_1".to_string()),
+                    op: SirOp::RoPETransform {
+                        input: SirNodeId("q_1".to_string()),
+                        tables: "rope_tables_shared".to_string(),
+                    },
+                    name: "rope_q_1".to_string(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+            ],
+            inputs: vec![],
+            outputs: vec![],
+        };
+
+        let result = run_static_tables_pass(&mut graph);
+
+        assert_eq!(result.rope_converted, 3); // 3 RoPE patterns found
+        assert_eq!(result.tables_inserted, 4); // only 1 set of 4 tables (deduped)
+
+        let const_count =
+            graph.nodes.iter().filter(|n| matches!(n.op, SirOp::Const { .. })).count();
+        assert_eq!(const_count, 4);
     }
 }
