@@ -957,6 +957,7 @@ fn run_compile_full(
     use ane_passes::precision_policy::PrecisionPolicyPass;
     use ane_passes::risk_annotate::RiskAnnotatePass;
     use ane_passes::shard_plan::ShardPlanPass;
+    use ane_passes::static_tables::run_static_tables_pass;
     use ane_passes::staticize::StaticizePass;
 
     println!("=== MILLer — Full Pass Pipeline Compile ===\n");
@@ -1048,8 +1049,19 @@ fn run_compile_full(
     // Step 4: Run StaticizePass on SIR (pass-through for now)
     println!("[4/13] Running StaticizePass...");
     let staticize = StaticizePass::new();
-    let sir = staticize.run(sir).map_err(|e| format!("StaticizePass failed: {}", e))?;
+    let mut sir = staticize.run(sir).map_err(|e| format!("StaticizePass failed: {}", e))?;
     println!("  Staticize: {} nodes (pass-through for linear projection)", sir.nodes.len());
+
+    // Step 4a: Run static_tables pass on SIR — inserts Const nodes for
+    // pre-computed RoPE cos/sin/eye/mask tables. This must run before
+    // LegalityRewrite so the Const nodes are in the sir_to_air map when
+    // decompose_rope looks for them.
+    println!("[4a/13] Running StaticTablesPass...");
+    let static_tables_result = run_static_tables_pass(&mut sir);
+    println!(
+        "  StaticTables: {} RoPE pattern(s) converted, {} table constant(s) inserted",
+        static_tables_result.rope_converted, static_tables_result.tables_inserted
+    );
 
     // Step 4b: Run PrecisionPolicyPass (SIR→SIR with dtype adaptation)
     // This is the first pass that materially changes a compilation decision
@@ -1843,6 +1855,7 @@ fn run_compile_full_sharded(
         use ane_passes::legality_rewrite::{DecompositionContext, LegalityRewritePass};
         use ane_passes::precision_policy::PrecisionPolicyPass;
         use ane_passes::risk_annotate::RiskAnnotatePass;
+        use ane_passes::static_tables::run_static_tables_pass;
         use ane_passes::staticize::StaticizePass;
 
         let canonicalize = CanonicalizePass::new();
@@ -1851,9 +1864,16 @@ fn run_compile_full_sharded(
         })?;
 
         let staticize = StaticizePass::new();
-        let shard_sir = staticize.run(shard_sir).map_err(|e| {
+        let mut shard_sir = staticize.run(shard_sir).map_err(|e| {
             format!("StaticizePass failed for shard {}: {}", shard_spec.shard_name, e)
         })?;
+
+        // Run static_tables pass — inserts Const nodes for RoPE tables
+        let static_tables_result = run_static_tables_pass(&mut shard_sir);
+        if static_tables_result.rope_converted > 0 {
+            println!("    StaticTables: {} RoPE pattern(s), {} const node(s)",
+                static_tables_result.rope_converted, static_tables_result.tables_inserted);
+        }
 
         let mut precision_policy = PrecisionPolicyPass::new();
         let shard_sir = match &knowledge_store {
@@ -3887,10 +3907,12 @@ fn run_trace_compile(
         emit_mir_graph_proto_direct_with_resolver, validate_proto_direct_package,
     };
     use ane_bridge::safetensors_resolver::SafetensorsWeightResolver;
+    use ane_bridge::static_table_resolver::{ChainedResolver, RopeTableConfig, StaticTableResolver};
     use ane_passes::knowledge_query::NoKnowledge;
     use ane_passes::legality_rewrite::{DecompositionContext, LegalityRewritePass};
     use ane_passes::mil_lower::MilLowerPass;
     use ane_passes::shard_plan::ShardPlan;
+    use ane_passes::static_tables::run_static_tables_pass;
     use ane_trace::config::{InputShape, TraceConfig, TraceTarget};
     use ane_trace::sir_build::build_sir_from_trace;
     use ane_trace::subprocess::trace_model;
@@ -3943,7 +3965,7 @@ fn run_trace_compile(
 
     // Step 3: Build SIR from traced graph
     println!("[3/10] Building SIR from traced graph...");
-    let sir = build_sir_from_trace(&traced_graph, family)?;
+    let mut sir = build_sir_from_trace(&traced_graph, family)?;
     println!(
         "  SIR: {} nodes, {} inputs, {} outputs",
         sir.nodes.len(),
@@ -3976,6 +3998,37 @@ fn run_trace_compile(
         for v in &result.report.violations {
             println!("    - [{}] {} ({})", v.severity_str(), v.op_name, v.message);
         }
+    }
+
+    // Step 4b: Run static_tables pass on SIR — inserts Const nodes for
+    // pre-computed RoPE cos/sin/eye/mask tables. Without this pass, the
+    // decompose_rope function falls back to AirOp::Cos/AirOp::Sin which
+    // reference unresolved rope_tables symbols and cause Core ML to reject
+    // the model (unknown op type "cos"/"sin" in ML Program format).
+    println!("[4b/10] Running StaticTablesPass (SIR→SIR)...");
+    let static_tables_result = run_static_tables_pass(&mut sir);
+    println!(
+        "  StaticTables: {} RoPE pattern(s) converted, {} table constant(s) inserted",
+        static_tables_result.rope_converted, static_tables_result.tables_inserted
+    );
+
+    // Collect the rope table references from the SIR for static table pre-computation.
+    // These are the `tables` field values from SirOp::RoPETransform nodes.
+    let rope_tables_refs: Vec<String> = sir.nodes.iter()
+        .filter_map(|node| match &node.op {
+            ane_ir::sir::SirOp::RoPETransform { tables, .. } => Some(tables.clone()),
+            _ => None,
+        })
+        .collect();
+    let unique_rope_refs: Vec<String> = {
+        let mut refs = rope_tables_refs.clone();
+        refs.sort();
+        refs.dedup();
+        refs
+    };
+    if !unique_rope_refs.is_empty() {
+        println!("  RoPE table references: {} unique (from {} RoPE ops)",
+            unique_rope_refs.len(), rope_tables_refs.len());
     }
 
     // Step 5: Run LegalityRewritePass (SIR→AIR)
@@ -4062,12 +4115,38 @@ fn run_trace_compile(
         println!("  Loaded {} tensor(s) from safetensors", weight_resolver.len());
     }
 
+    // Build static table resolver for RoPE cos/sin/eye/mask constants.
+    // The static_tables pass inserted SirOp::Const nodes with value_path like
+    // "static_tables/rope_tables_layer_0_self_attn/sin_tab" — this resolver
+    // computes the actual tensor data in float64 precision and stores as fp16.
+    // The ChainedResolver will try static tables first, then fall through to
+    // the safetensors resolver for model weights.
+    let rope_theta = 1_000_000.0; // Qwen3 default; TODO: read from model config
+    let mut static_table_resolver = StaticTableResolver::new(RopeTableConfig::new(
+        rope_theta,
+        head_dim,
+        seq_len,
+    ));
+    // Pre-compute all static tables for every unique rope reference
+    for rope_ref in &unique_rope_refs {
+        static_table_resolver.ensure_tables_computed(rope_ref);
+    }
+    if !unique_rope_refs.is_empty() {
+        println!("  Pre-computed {} static table set(s) (sin/cos/eye/mask per rope ref)",
+            unique_rope_refs.len());
+    }
+
+    // Build the chained resolver: static tables first, then safetensors fallback
+    let chained_resolver = ChainedResolver::new(static_table_resolver, weight_resolver);
+
     // Build weight_shapes for mil_lower, merging resolved weights with config-derived
     // shapes. When safetensors files aren't available (e.g., pre-traced JSON fixtures),
     // we still need the embedding weight shape for the Gather op's output shape
     // inference. Also add the alias "embed_weight_embed_tokens" → model.embed_tokens.weight.
+    // Also seed static table shapes so shape inference knows the dimensions of
+    // cos_tab/sin_tab Const nodes.
     let mut weight_shapes: std::collections::HashMap<String, Vec<usize>> =
-        weight_resolver.weight_shapes();
+        chained_resolver.fallback().weight_shapes();
     if !weight_shapes.contains_key("model.embed_tokens.weight") {
         weight_shapes.insert(
             "model.embed_tokens.weight".to_string(),
@@ -4078,6 +4157,25 @@ fn run_trace_compile(
         weight_shapes.insert(
             "embed_weight_embed_tokens".to_string(),
             vec![traced_graph.model_config.vocab_size, traced_graph.model_config.hidden_size],
+        );
+    }
+    // Add static table shapes for shape inference
+    for rope_ref in &unique_rope_refs {
+        weight_shapes.insert(
+            format!("static_tables/{}/sin_tab", rope_ref),
+            vec![seq_len, 1, 1, head_dim],
+        );
+        weight_shapes.insert(
+            format!("static_tables/{}/cos_tab", rope_ref),
+            vec![seq_len, 1, 1, head_dim],
+        );
+        weight_shapes.insert(
+            format!("static_tables/{}/eye_tab", rope_ref),
+            vec![seq_len, seq_len],
+        );
+        weight_shapes.insert(
+            format!("static_tables/{}/mask_tab", rope_ref),
+            vec![seq_len, seq_len],
         );
     }
 
@@ -4100,16 +4198,15 @@ fn run_trace_compile(
     let output_path = PathBuf::from(output);
     fs::create_dir_all(&output_path).map_err(|e| format!("Failed to create output dir: {}", e))?;
 
-    // Weight resolver was already loaded in Step 6 for shape inference.
-    // Print detailed stats here for the user.
-    if !weight_resolver.is_empty() {
-        let names = weight_resolver.tensor_names();
+    // Print weight stats (from the fallback safetensors resolver)
+    if !chained_resolver.fallback().is_empty() {
+        let names = chained_resolver.fallback().tensor_names();
         let sample: Vec<&str> = names.iter().take(5).map(|s| s.as_str()).collect();
         println!("  Sample tensor names: {:?}", sample);
         println!(
             "  Total weight data: {} bytes ({:.1} MB)",
-            weight_resolver.total_weight_bytes(),
-            weight_resolver.total_weight_bytes() as f64 / 1e6
+            chained_resolver.fallback().total_weight_bytes(),
+            chained_resolver.fallback().total_weight_bytes() as f64 / 1e6
         );
     }
 
@@ -4120,7 +4217,7 @@ fn run_trace_compile(
     let emit_result = emit_mir_graph_proto_direct_with_resolver(
         &mirs[0],
         mlpackage_dir.to_str().unwrap_or(""),
-        &weight_resolver,
+        &chained_resolver,
     )
     .map_err(|e| format!("Proto-direct emission failed: {}", e))?;
     println!("  Emitted: {}", mlpackage_dir.display());
