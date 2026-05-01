@@ -2637,6 +2637,370 @@ impl MilLowerPass {
             node_shapes.insert(air_node.id.clone(), shape);
         }
 
+        // ─── Post-lowering: decompose SDPA into manual GQA matmul chains ───
+        // The ANE execution planner fails with error -5 on the
+        // `scaled_dot_product_attention` op when used with GQA-tiled K/V.
+        // The reference implementation (pkhairkh/qwen3-coreml-palettized)
+        // avoids SDPA entirely and decomposes attention into per-head-group
+        // matmul + softmax + matmul chains that the ANE can individually
+        // schedule.
+        //
+        // For each SDPA node with Q=[B,Hq,1,Hd], K=[B,Hk,S,Hd], V=[B,Hk,S,Hd]:
+        //   1. Split Q into Hq heads → q_0..q_{Hq-1}, each [B,1,1,Hd]
+        //   2. Split K into Hk kv-heads → k_0..k_{Hk-1}, each [B,1,S,Hd]
+        //   3. Split V into Hk kv-heads → v_0..v_{Hk-1}, each [B,1,S,Hd]
+        //   4. For each q_i: kv_idx = i * Hk / Hq
+        //      logits_i = matmul(q_i, k_{kv_idx}, transpose_y=True) → [B,1,1,S]
+        //      scaled_i = mul(logits_i, scale) → [B,1,1,S]
+        //      masked_i = add(scaled_i, mask) → [B,1,1,S]  (if mask present)
+        //      weights_i = softmax(masked_i, axis=-1) → [B,1,1,S]
+        //      ctx_i = matmul(weights_i, v_{kv_idx}) → [B,1,1,Hd]
+        //   5. concat(ctx_0..ctx_{Hq-1}, axis=1) → [B,Hq,1,Hd]
+        {
+            let mut sdpa_replacements: Vec<(usize, Vec<MirNode>)> = Vec::new();
+            let mut extra_shapes: Vec<(AirNodeId, Vec<usize>)> = Vec::new();
+
+            for (idx, node) in mir_nodes.iter().enumerate() {
+                if let MirOp::MILScaledDotProductAttention {
+                    name,
+                    query,
+                    key,
+                    value,
+                    attention_mask,
+                    scale,
+                } = &node.op
+                {
+                    // Look up shapes from node_shapes
+                    let q_shape = node_shapes.get(&AirNodeId(query.0.clone())).cloned().unwrap_or_default();
+                    let k_shape = node_shapes.get(&AirNodeId(key.0.clone())).cloned().unwrap_or_default();
+
+                    if q_shape.len() < 4 || k_shape.len() < 4 {
+                        eprintln!(
+                            "  [SDPA decompose] Skipping '{}': Q shape {:?} or K shape {:?} is not 4D",
+                            name, q_shape, k_shape
+                        );
+                        continue;
+                    }
+
+                    let hq = q_shape[1]; // number of query heads
+                    let hk = k_shape[1]; // number of kv heads
+                    let hd = q_shape[3]; // head dimension
+
+                    if hq == 0 || hk == 0 || hd == 0 {
+                        eprintln!(
+                            "  [SDPA decompose] Skipping '{}': zero dimension hq={} hk={} hd={}",
+                            name, hq, hk, hd
+                        );
+                        continue;
+                    }
+
+                    let fanout = hq / hk; // GQA fan-out
+                    let scale_val = scale.unwrap_or(1.0 / (hd as f32).sqrt());
+
+                    eprintln!(
+                        "  [SDPA decompose] '{}': hq={} hk={} hd={} fanout={} scale={:.6}",
+                        name, hq, hk, hd, fanout, scale_val
+                    );
+
+                    let sdpa_id = &node.id;
+                    let sdpa_dtype = &node.dtype;
+                    let sdpa_compute = &node.compute_unit_hint;
+                    let sdpa_air = &node.air_source;
+
+                    // Step 1: Split Q into hq heads along axis 1
+                    let q_split_id = MirNodeId(format!("{}_q_split", sdpa_id.0));
+                    let q_split_node = MirNode {
+                        id: q_split_id.clone(),
+                        op: MirOp::MILSplit {
+                            name: format!("{}_q_split", name),
+                            x: query.clone(),
+                            axis: 1,
+                            num_splits: hq,
+                        },
+                        dtype: sdpa_dtype.clone(),
+                        shape: vec![1, 1, 1, hd], // per-split output shape
+                        compute_unit_hint: sdpa_compute.clone(),
+                        air_source: None,
+                    };
+                    let mut new_nodes = vec![q_split_node];
+                    extra_shapes.push((AirNodeId(format!("{}_q_split", sdpa_id.0)), vec![1, 1, 1, hd]));
+
+                    // Step 2: Split K into hk heads along axis 1
+                    let k_split_id = MirNodeId(format!("{}_k_split", sdpa_id.0));
+                    let k_split_node = MirNode {
+                        id: k_split_id.clone(),
+                        op: MirOp::MILSplit {
+                            name: format!("{}_k_split", name),
+                            x: key.clone(),
+                            axis: 1,
+                            num_splits: hk,
+                        },
+                        dtype: sdpa_dtype.clone(),
+                        shape: vec![1, 1, k_shape.get(2).copied().unwrap_or(0), hd],
+                        compute_unit_hint: sdpa_compute.clone(),
+                        air_source: None,
+                    };
+                    new_nodes.push(k_split_node);
+                    extra_shapes.push((AirNodeId(format!("{}_k_split", sdpa_id.0)), vec![1, 1, k_shape.get(2).copied().unwrap_or(0), hd]));
+
+                    // Step 3: Split V into hk heads along axis 1
+                    let v_split_id = MirNodeId(format!("{}_v_split", sdpa_id.0));
+                    let v_split_node = MirNode {
+                        id: v_split_id.clone(),
+                        op: MirOp::MILSplit {
+                            name: format!("{}_v_split", name),
+                            x: value.clone(),
+                            axis: 1,
+                            num_splits: hk,
+                        },
+                        dtype: sdpa_dtype.clone(),
+                        shape: vec![1, 1, k_shape.get(2).copied().unwrap_or(0), hd],
+                        compute_unit_hint: sdpa_compute.clone(),
+                        air_source: None,
+                    };
+                    new_nodes.push(v_split_node);
+                    extra_shapes.push((AirNodeId(format!("{}_v_split", sdpa_id.0)), vec![1, 1, k_shape.get(2).copied().unwrap_or(0), hd]));
+
+                    // Step 4: For each query head, compute attention
+                    let seq_len = k_shape.get(2).copied().unwrap_or(0);
+                    let mut ctx_ids: Vec<MirNodeId> = Vec::new();
+
+                    for qi in 0..hq {
+                        let kv_idx = qi / fanout;
+                        let q_head_id = MirNodeId(format!("{}_q_head_{}", sdpa_id.0, qi));
+                        let k_head_id = MirNodeId(format!("{}_k_head_{}", sdpa_id.0, kv_idx));
+                        let v_head_id = MirNodeId(format!("{}_v_head_{}", sdpa_id.0, kv_idx));
+
+                        // Gather individual Q head from split output
+                        // q_head_i = slice_by_index(q_split, begin=[0,qi,0,0], end=[0,qi+1,0,0], squeeze_mask=[0,1,0,0])
+                        // → shape [1, 1, 1, hd]
+                        let q_gather_node = MirNode {
+                            id: q_head_id.clone(),
+                            op: MirOp::MILSliceByIndex {
+                                name: format!("{}_q_head_{}", name, qi),
+                                x: q_split_id.clone(),
+                                begin: vec![0, qi as i64, 0, 0],
+                                end: vec![0, (qi + 1) as i64, 0, 0],
+                                stride: vec![1, 1, 1, 1],
+                                begin_mask: vec![false, false, true, true],
+                                end_mask: vec![false, false, true, true],
+                                squeeze_mask: vec![false, true, false, false],
+                            },
+                            dtype: sdpa_dtype.clone(),
+                            shape: vec![1, 1, 1, hd],
+                            compute_unit_hint: sdpa_compute.clone(),
+                            air_source: None,
+                        };
+                        new_nodes.push(q_gather_node);
+                        extra_shapes.push((AirNodeId(q_head_id.0.clone()), vec![1, 1, 1, hd]));
+
+                        // Gather K head from split output
+                        if qi == 0 || qi % fanout == 0 {
+                            let k_gather_node = MirNode {
+                                id: k_head_id.clone(),
+                                op: MirOp::MILSliceByIndex {
+                                    name: format!("{}_k_head_{}", name, kv_idx),
+                                    x: k_split_id.clone(),
+                                    begin: vec![0, kv_idx as i64, 0, 0],
+                                    end: vec![0, (kv_idx + 1) as i64, 0, 0],
+                                    stride: vec![1, 1, 1, 1],
+                                    begin_mask: vec![false, false, true, true],
+                                    end_mask: vec![false, false, true, true],
+                                    squeeze_mask: vec![false, true, false, false],
+                                },
+                                dtype: sdpa_dtype.clone(),
+                                shape: vec![1, 1, seq_len, hd],
+                                compute_unit_hint: sdpa_compute.clone(),
+                                air_source: None,
+                            };
+                            new_nodes.push(k_gather_node);
+                            extra_shapes.push((AirNodeId(k_head_id.0.clone()), vec![1, 1, seq_len, hd]));
+
+                            let v_gather_node = MirNode {
+                                id: v_head_id.clone(),
+                                op: MirOp::MILSliceByIndex {
+                                    name: format!("{}_v_head_{}", name, kv_idx),
+                                    x: v_split_id.clone(),
+                                    begin: vec![0, kv_idx as i64, 0, 0],
+                                    end: vec![0, (kv_idx + 1) as i64, 0, 0],
+                                    stride: vec![1, 1, 1, 1],
+                                    begin_mask: vec![false, false, true, true],
+                                    end_mask: vec![false, false, true, true],
+                                    squeeze_mask: vec![false, true, false, false],
+                                },
+                                dtype: sdpa_dtype.clone(),
+                                shape: vec![1, 1, seq_len, hd],
+                                compute_unit_hint: sdpa_compute.clone(),
+                                air_source: None,
+                            };
+                            new_nodes.push(v_gather_node);
+                            extra_shapes.push((AirNodeId(v_head_id.0.clone()), vec![1, 1, seq_len, hd]));
+                        }
+
+                        // matmul(q_head, k_head, transpose_y=True) → [1, 1, 1, seq_len]
+                        let logits_id = MirNodeId(format!("{}_logits_{}", sdpa_id.0, qi));
+                        let logits_node = MirNode {
+                            id: logits_id.clone(),
+                            op: MirOp::MILMatMul {
+                                name: format!("{}_logits_{}", name, qi),
+                                x: q_head_id.clone(),
+                                y: k_head_id.clone(),
+                                transpose_y: true,
+                            },
+                            dtype: sdpa_dtype.clone(),
+                            shape: vec![1, 1, 1, seq_len],
+                            compute_unit_hint: sdpa_compute.clone(),
+                            air_source: None,
+                        };
+                        new_nodes.push(logits_node);
+                        extra_shapes.push((AirNodeId(logits_id.0.clone()), vec![1, 1, 1, seq_len]));
+
+                        // mul(logits, scale) → [1, 1, 1, seq_len]
+                        // Create a scalar constant for the attention scale factor
+                        let scaled_id = MirNodeId(format!("{}_scaled_{}", sdpa_id.0, qi));
+                        let scale_const_id = MirNodeId(format!("{}_scale_{}", sdpa_id.0, qi));
+                        let scale_const_node = MirNode {
+                            id: scale_const_id.clone(),
+                            op: MirOp::MILFill {
+                                name: format!("{}_scale_{}", name, qi),
+                                shape: vec![1],
+                                value: scale_val,
+                                dtype: sdpa_dtype.clone(),
+                            },
+                            dtype: sdpa_dtype.clone(),
+                            shape: vec![1],
+                            compute_unit_hint: sdpa_compute.clone(),
+                            air_source: None,
+                        };
+                        new_nodes.push(scale_const_node);
+                        extra_shapes.push((AirNodeId(scale_const_id.0.clone()), vec![1]));
+
+                        let scaled_node = MirNode {
+                            id: scaled_id.clone(),
+                            op: MirOp::MILMul {
+                                name: format!("{}_scaled_{}", name, qi),
+                                x: logits_id,
+                                y: scale_const_id,
+                            },
+                            dtype: sdpa_dtype.clone(),
+                            shape: vec![1, 1, 1, seq_len],
+                            compute_unit_hint: sdpa_compute.clone(),
+                            air_source: None,
+                        };
+                        new_nodes.push(scaled_node);
+                        extra_shapes.push((AirNodeId(scaled_id.0.clone()), vec![1, 1, 1, seq_len]));
+
+                        // If there's an attention mask, add it
+                        let after_mask_id = if let Some(mask_id) = attention_mask {
+                            let masked_id = MirNodeId(format!("{}_masked_{}", sdpa_id.0, qi));
+                            let masked_node = MirNode {
+                                id: masked_id.clone(),
+                                op: MirOp::MILAdd {
+                                    name: format!("{}_masked_{}", name, qi),
+                                    x: scaled_id,
+                                    y: mask_id.clone(),
+                                },
+                                dtype: sdpa_dtype.clone(),
+                                shape: vec![1, 1, 1, seq_len],
+                                compute_unit_hint: sdpa_compute.clone(),
+                                air_source: None,
+                            };
+                            new_nodes.push(masked_node);
+                            extra_shapes.push((AirNodeId(masked_id.0.clone()), vec![1, 1, 1, seq_len]));
+                            masked_id
+                        } else {
+                            scaled_id
+                        };
+
+                        // softmax(scaled, axis=-1) → [1, 1, 1, seq_len]
+                        let weights_id = MirNodeId(format!("{}_weights_{}", sdpa_id.0, qi));
+                        let weights_node = MirNode {
+                            id: weights_id.clone(),
+                            op: MirOp::MILSoftmax {
+                                name: format!("{}_weights_{}", name, qi),
+                                x: after_mask_id,
+                                axis: -1,
+                            },
+                            dtype: sdpa_dtype.clone(),
+                            shape: vec![1, 1, 1, seq_len],
+                            compute_unit_hint: sdpa_compute.clone(),
+                            air_source: None,
+                        };
+                        new_nodes.push(weights_node);
+                        extra_shapes.push((AirNodeId(weights_id.0.clone()), vec![1, 1, 1, seq_len]));
+
+                        // matmul(weights, v_head) → [1, 1, 1, hd]
+                        let ctx_id = MirNodeId(format!("{}_ctx_{}", sdpa_id.0, qi));
+                        let ctx_node = MirNode {
+                            id: ctx_id.clone(),
+                            op: MirOp::MILMatMul {
+                                name: format!("{}_ctx_{}", name, qi),
+                                x: weights_id,
+                                y: v_head_id.clone(),
+                                transpose_y: false,
+                            },
+                            dtype: sdpa_dtype.clone(),
+                            shape: vec![1, 1, 1, hd],
+                            compute_unit_hint: sdpa_compute.clone(),
+                            air_source: None,
+                        };
+                        new_nodes.push(ctx_node);
+                        extra_shapes.push((AirNodeId(ctx_id.0.clone()), vec![1, 1, 1, hd]));
+
+                        ctx_ids.push(ctx_id);
+                    }
+
+                    // Step 5: concat all context heads → [B, Hq, 1, Hd]
+                    let concat_id = MirNodeId(format!("{}_ctx_concat", sdpa_id.0));
+                    let concat_node = MirNode {
+                        id: concat_id.clone(),
+                        op: MirOp::MILConcat {
+                            name: format!("{}_ctx_concat", name),
+                            values: ctx_ids,
+                            axis: 1,
+                        },
+                        dtype: sdpa_dtype.clone(),
+                        shape: vec![1, hq, 1, hd],
+                        compute_unit_hint: sdpa_compute.clone(),
+                        air_source: sdpa_air.clone(),
+                    };
+                    new_nodes.push(concat_node);
+                    extra_shapes.push((AirNodeId(concat_id.0.clone()), vec![1, hq, 1, hd]));
+
+                    // The concat output replaces the SDPA output.
+                    // Reuse the SDPA node's ID so downstream references still work.
+                    // Create an identity node mapping concat → sdpa_id
+                    let identity_node = MirNode {
+                        id: sdpa_id.clone(),
+                        op: MirOp::MILIdentity {
+                            name: format!("{}_identity", name),
+                            x: concat_id,
+                        },
+                        dtype: sdpa_dtype.clone(),
+                        shape: node.shape.clone(),
+                        compute_unit_hint: sdpa_compute.clone(),
+                        air_source: None,
+                    };
+                    new_nodes.push(identity_node);
+
+                    sdpa_replacements.push((idx, new_nodes));
+                }
+            }
+
+            // Apply replacements in reverse order to preserve indices
+            for (idx, new_nodes) in sdpa_replacements.into_iter().rev() {
+                mir_nodes.remove(idx);
+                for (i, node) in new_nodes.into_iter().enumerate() {
+                    mir_nodes.insert(idx + i, node);
+                }
+            }
+
+            // Insert all extra shapes
+            for (id, shape) in extra_shapes {
+                node_shapes.insert(id, shape);
+            }
+        }
+
         // ─── Post-lowering: slice hidden state before lm_head ──────────
         // The lm_head linear projects all sequence positions to the full vocabulary,
         // producing a massive [1, S, V] logits intermediate (e.g., [1, 512, 151936]
