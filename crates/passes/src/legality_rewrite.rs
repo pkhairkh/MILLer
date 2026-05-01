@@ -3442,16 +3442,17 @@ mod tests {
         let input_shapes = std::collections::HashMap::new();
         let mirs = mil_lower.run(&air, &shard_plan, &input_shapes).unwrap();
 
-        // After the fix, Conv1x1AsLinear → MILLinear (not MatMul)
-        let linear_node = mirs[0]
+        // After the ANE legality rewrite, Conv1x1AsLinear → MILLinear → MILMatMul
+        // (MILLinear is replaced with MILMatMul by the post-lowering rewrite)
+        let matmul_node = mirs[0]
             .nodes
             .iter()
-            .find(|n| matches!(n.op, MirOp::MILLinear { .. }))
-            .expect("Expected MILLinear node");
+            .find(|n| matches!(n.op, MirOp::MILMatMul { .. }))
+            .expect("Expected MILMatMul node (replaced from MILLinear by ANE legality rewrite)");
         assert_eq!(
-            linear_node.dtype,
+            matmul_node.dtype,
             MilDtype::Fp32,
-            "MILLinear node dtype must be fp32 when AIR precision_override is fp32"
+            "MILMatMul node dtype must be fp32 when AIR precision_override is fp32"
         );
     }
 
