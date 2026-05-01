@@ -402,6 +402,14 @@ pub mod mir_compat {
             /// INT64 for begin/end, same dtype restriction as reshape.shape.
             begin: Vec<i32>,
             end: Vec<i32>,
+            /// INT32 stride values. Empty = all 1s (default).
+            stride: Vec<i32>,
+            /// Bitmask for begin: bit N set means "ignore begin[N], start at 0".
+            /// Encoded as INT32 immediate scalar.
+            begin_mask: i32,
+            /// Bitmask for end: bit N set means "ignore end[N], go to full extent".
+            /// Encoded as INT32 immediate scalar.
+            end_mask: i32,
         },
         SliceUpdate {
             name: String,
@@ -597,7 +605,8 @@ pub mod mir_compat {
             value: f32,
             dtype: MilDtypeCompat,
         },
-        /// Neg: arithmetic negation. Core ML MIL program op type: "neg".
+        /// Neg: arithmetic negation. Lowered to mul(x, -1) because
+        /// Core ML has no "neg" op in the ML Program op set.
         /// Needed for RoPE rotate_half: -x[..., d//2:].
         Neg {
             name: String,
@@ -1031,7 +1040,25 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             MirOp::MILFlatten2d { name, .. } => unsupported("flatten2d", &name, &op_json),
             MirOp::MILReverse { name, .. } => unsupported("reverse", &name, &op_json),
             MirOp::MILReverseSequence { name, .. } => unsupported("reverse_sequence", &name, &op_json),
-            MirOp::MILSliceByIndex { name, x, begin, end, .. } => mir_compat::MirOpCompat::SliceByIndex { name, x: nid(x), begin: begin.into_iter().map(|v| v as i32).collect(), end: end.into_iter().map(|v| v as i32).collect() },
+            MirOp::MILSliceByIndex { name, x, begin, end, stride, begin_mask, end_mask, .. } => {
+                let bm: i32 = begin_mask.iter().enumerate()
+                    .filter(|&(_, &m)| m)
+                    .map(|(i, _)| 1i32 << i)
+                    .sum();
+                let em: i32 = end_mask.iter().enumerate()
+                    .filter(|&(_, &m)| m)
+                    .map(|(i, _)| 1i32 << i)
+                    .sum();
+                mir_compat::MirOpCompat::SliceByIndex {
+                    name,
+                    x: nid(x),
+                    begin: begin.into_iter().map(|v| v as i32).collect(),
+                    end: end.into_iter().map(|v| v as i32).collect(),
+                    stride: stride.into_iter().map(|v| v as i32).collect(),
+                    begin_mask: bm,
+                    end_mask: em,
+                }
+            }
             MirOp::MILSliceBySize { name, .. } => unsupported("slice_by_size", &name, &op_json),
             MirOp::MILSliceUpdate { name, x, update, begin, end } => mir_compat::MirOpCompat::SliceUpdate { name, x: nid(x), update: nid(update), begin: begin.into_iter().map(|v| v as i32).collect(), end: end.into_iter().map(|v| v as i32).collect() },
             MirOp::MILSlidingWindows { name, .. } => unsupported("sliding_windows", &name, &op_json),
@@ -1422,15 +1449,15 @@ pub fn mir_op_to_proto_op(
                 perm: perm.iter().map(|&d| d as i64).collect(),
             }),
         ),
-        mir_compat::MirOpCompat::SliceByIndex { name, x, begin, end } => (
+        mir_compat::MirOpCompat::SliceByIndex { name, x, begin, end, stride, begin_mask, end_mask } => (
             name.clone(),
             proto::mil_operation::Operation::SliceByIndexOp(proto::MilSliceByIndexOp {
                 x: Some(proto::OperandRef { name: x.clone() }),
                 begin: begin.iter().map(|&d| d as i64).collect(),
                 end: end.iter().map(|&d| d as i64).collect(),
-                stride: vec![],
-                begin_mask: 0,
-                end_mask: 0,
+                stride: stride.iter().map(|&d| d as i64).collect(),
+                begin_mask: *begin_mask as i64,
+                end_mask: *end_mask as i64,
             }),
         ),
         mir_compat::MirOpCompat::SliceUpdate { name, x, update, begin, end } => (
@@ -1705,8 +1732,9 @@ pub fn mir_op_to_proto_op(
         }
         mir_compat::MirOpCompat::Neg { name, x } => {
             // Legacy proto has no MilNegOp variant; emit as identity.
-            // The Apple wire-format emitter (mir_op_to_apple_ops) handles
-            // the real "neg" MIL operation encoding for production use.
+            // The Apple wire-format emitter (mir_op_to_apple_ops) lowers
+            // Neg to mul(x, -1), which is the production path.
+            // Legacy format is not used for ML Program packages.
             (
                 name.clone(),
                 proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
@@ -2588,7 +2616,7 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
-        mir_compat::MirOpCompat::SliceByIndex { name, x, begin, end } => {
+        mir_compat::MirOpCompat::SliceByIndex { name, x, begin, end, stride, begin_mask, end_mask } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
@@ -2609,6 +2637,39 @@ fn mir_op_to_apple_ops(
                     &[end.len() as u64],
                 )),
             );
+
+            // stride as INT32 immediate (omit if all 1s — Core ML defaults to 1)
+            if !stride.is_empty() && stride.iter().any(|&s| s != 1) {
+                inputs.insert(
+                    "stride".to_string(),
+                    make_value_arg(make_immediate_int32_value(
+                        stride.clone(),
+                        &[stride.len() as u64],
+                    )),
+                );
+            }
+
+            // begin_mask as INT32 scalar — bit N set means "ignore begin[N]"
+            if *begin_mask != 0 {
+                inputs.insert(
+                    "begin_mask".to_string(),
+                    make_value_arg(make_immediate_int32_value(
+                        vec![*begin_mask],
+                        &[1u64],
+                    )),
+                );
+            }
+
+            // end_mask as INT32 scalar — bit N set means "ignore end[N]"
+            if *end_mask != 0 {
+                inputs.insert(
+                    "end_mask".to_string(),
+                    make_value_arg(make_immediate_int32_value(
+                        vec![*end_mask],
+                        &[1u64],
+                    )),
+                );
+            }
 
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
@@ -3493,15 +3554,25 @@ fn mir_op_to_apple_ops(
             }]
         }
         mir_compat::MirOpCompat::Neg { name, x } => {
-            // Core ML MIL "neg" op: neg(x) → -x (arithmetic negation).
+            // Core ML does NOT have a "neg" op. Lower to mul(x, -1).
+            // This matches coremltools' own Torch frontend lowering:
+            //   neg(x) → mb.mul(x=x, y=-1)
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
+            // y = -1.0 as FP16 immediate scalar (broadcast-compatible)
+            inputs.insert(
+                "y".to_string(),
+                make_value_arg(make_immediate_float_value(
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    -1.0,
+                )),
+            );
 
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
 
             vec![apple_proto::mil_spec::Operation {
-                r#type: "neg".to_string(),
+                r#type: "mul".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
                     name,
@@ -4735,6 +4806,9 @@ mod tests {
                 x: "x".to_string(),
                 begin: vec![0],
                 end: vec![1],
+                stride: vec![],
+                begin_mask: 0,
+                end_mask: 0,
             },
             mir_compat::MirOpCompat::SliceUpdate {
                 name: "su".to_string(),

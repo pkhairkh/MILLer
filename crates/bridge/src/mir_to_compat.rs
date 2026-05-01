@@ -575,8 +575,8 @@ fn remap_compat_inputs(
         MirOpCompat::Transpose { name, x, perm } => {
             MirOpCompat::Transpose { name, x: remap_name(x, aliases), perm }
         }
-        MirOpCompat::SliceByIndex { name, x, begin, end } => {
-            MirOpCompat::SliceByIndex { name, x: remap_name(x, aliases), begin, end }
+        MirOpCompat::SliceByIndex { name, x, begin, end, stride, begin_mask, end_mask } => {
+            MirOpCompat::SliceByIndex { name, x: remap_name(x, aliases), begin, end, stride, begin_mask, end_mask }
         }
         MirOpCompat::SliceUpdate { name, x, update, begin, end } => MirOpCompat::SliceUpdate {
             name,
@@ -817,8 +817,8 @@ fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
         MirOpCompat::Transpose { name: _, x, perm } => {
             MirOpCompat::Transpose { name: new_name, x, perm }
         }
-        MirOpCompat::SliceByIndex { name: _, x, begin, end } => {
-            MirOpCompat::SliceByIndex { name: new_name, x, begin, end }
+        MirOpCompat::SliceByIndex { name: _, x, begin, end, stride, begin_mask, end_mask } => {
+            MirOpCompat::SliceByIndex { name: new_name, x, begin, end, stride, begin_mask, end_mask }
         }
         MirOpCompat::SliceUpdate { name: _, x, update, begin, end } => {
             MirOpCompat::SliceUpdate { name: new_name, x, update, begin, end }
@@ -1350,16 +1350,29 @@ pub fn mir_op_to_compat(
             x,
             begin,
             end,
-            stride: _,
-            begin_mask: _,
-            end_mask: _,
+            stride,
+            begin_mask,
+            end_mask,
             squeeze_mask: _,
-        } => Ok(MirOpCompat::SliceByIndex {
-            name: name.clone(),
-            x: x.0.clone(),
-            begin: begin.iter().map(|&d| d as i32).collect(),
-            end: end.iter().map(|&d| d as i32).collect(),
-        }),
+        } => {
+            let bm: i32 = begin_mask.iter().enumerate()
+                .filter(|&(_, &m)| m)
+                .map(|(i, _)| 1i32 << i)
+                .sum();
+            let em: i32 = end_mask.iter().enumerate()
+                .filter(|&(_, &m)| m)
+                .map(|(i, _)| 1i32 << i)
+                .sum();
+            Ok(MirOpCompat::SliceByIndex {
+                name: name.clone(),
+                x: x.0.clone(),
+                begin: begin.iter().map(|&d| d as i32).collect(),
+                end: end.iter().map(|&d| d as i32).collect(),
+                stride: stride.iter().map(|&d| d as i32).collect(),
+                begin_mask: bm,
+                end_mask: em,
+            })
+        }
 
         MirOp::MILConcat { name, values, axis } => Ok(MirOpCompat::Concat {
             name: name.clone(),
