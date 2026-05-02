@@ -816,7 +816,7 @@ impl LegalityRewritePass {
     ///   k_t: Transpose(k_4d, [0, 2, 1, 3])
     ///   v_t: Transpose(v_4d, [0, 2, 1, 3])
     ///   attn: ScaledDotProductAttention(q_t, k_t, v_t)
-    ///   attn_flat: Reshape(attn, [batch, seq, embed])
+    ///   attn_flat: Reshape(attn, [batch, seq, heads*head_dim])
     ///   output: Conv1x1AsLinear(attn_flat, W_out)
     ///
     /// When `ctx` is `Some`, the SliceByIndex bounds and Reshape target shapes
@@ -1131,12 +1131,17 @@ impl LegalityRewritePass {
             sir_node, "mb.concat", kq,
         ));
 
-        // Step 8: Reshape back to [batch, seq, embed]
+        // Step 8: Reshape back to [batch, seq, num_heads * head_dim]
+        // CRITICAL: Use heads * head_dim, NOT embed_dim. For models where
+        // num_heads * head_dim != hidden_size (e.g., Qwen3-0.6B: 16*128=2048 ≠ 1024),
+        // using embed_dim produces an impossible reshape because the concat output
+        // has num_heads * head_dim elements, not embed_dim elements.
+        let attn_flat_dim = heads * head_dim;
         nodes.push(Self::make_air_node(
             attn_flat_id.clone(),
             AirOp::Reshape {
                 input: ctx_concat_id,
-                target_shape: vec![batch as usize, seq as usize, embed as usize],
+                target_shape: vec![batch as usize, seq as usize, attn_flat_dim as usize],
             },
             sir_node,
             "mb.reshape",
@@ -1248,7 +1253,7 @@ impl LegalityRewritePass {
     ///     ctx: Concat(ctx_0..ctx_{heads-1}, axis=1)
     ///
     ///   ── Output ────────────────────────────────────────────────────
-    ///     attn_flat: Reshape(attn, [batch, embed])
+    ///     attn_flat: Reshape(attn, [batch, heads*head_dim])
     ///     output: Conv1x1AsLinear(attn_flat, out_weight)
     ///     k_update: StateWriteFixed(k_state, k_new)
     ///     v_update: StateWriteFixed(v_state, v_new)
@@ -1988,13 +1993,19 @@ impl LegalityRewritePass {
             sir_node, "mb.concat", kq,
         ));
 
-        // Step 7: Reshape back to flat [B, embed_dim]
+        // Step 7: Reshape back to flat [B, num_heads * head_dim]
+        // CRITICAL: Use heads * head_dim, NOT embed_dim. For models where
+        // num_heads * head_dim != hidden_size (e.g., Qwen3-0.6B: 16*128=2048 ≠ 1024),
+        // using embed_dim produces an impossible reshape because the concat output
+        // has num_heads * head_dim elements, not embed_dim elements. The output
+        // projection (o_proj) then maps from num_heads*head_dim back to embed_dim.
+        let attn_flat_dim = heads * head_dim;
         let attn_flat_id = AirNodeId(format!("{base}_attn_flat"));
         nodes.push(Self::make_air_node(
             attn_flat_id.clone(),
             AirOp::Reshape {
                 input: ctx_concat_id,
-                target_shape: vec![batch as usize, embed as usize],
+                target_shape: vec![batch as usize, attn_flat_dim as usize],
             },
             sir_node, "mb.reshape", kq,
         ));
@@ -4688,7 +4699,11 @@ mod tests {
         assert!(!has_sdpa, "Split-based attention must NOT include SDPA");
         assert!(!has_tile, "Split-based attention must NOT include Tile");
 
-        // Verify attn_flat reshape has [batch, seq, embed]
+        // Verify attn_flat reshape has [batch, seq, heads*head_dim]
+        // Note: For this test config, heads*head_dim = 4*32 = 128 = embed_dim,
+        // so it happens to match. For models like Qwen3-0.6B where
+        // heads*head_dim (16*128=2048) != embed_dim (1024), the reshape
+        // MUST use heads*head_dim, not embed_dim.
         let attn_flat = air
             .nodes
             .iter()
@@ -4699,7 +4714,7 @@ mod tests {
                 assert_eq!(
                     target_shape,
                     &vec![2, 16, 128],
-                    "attn_flat reshape should be [batch, seq, embed] = [2, 16, 128]"
+                    "attn_flat reshape should be [batch, seq, heads*head_dim] = [2, 16, 4*32]"
                 );
             }
             other => panic!("Expected Reshape for attn_attn_flat, got {:?}", other),
@@ -4850,7 +4865,10 @@ mod tests {
             other => panic!("Expected Reshape for decode_k_4d, got {:?}", other),
         }
 
-        // attn_flat reshape: [batch, embed] = [1, 128]
+        // attn_flat reshape: [batch, heads*head_dim] = [1, 128]
+        // For this test config: heads*head_dim = 4*32 = 128 = embed_dim.
+        // For models like Qwen3-0.6B where heads*head_dim (16*128=2048) != embed_dim (1024),
+        // the reshape MUST use heads*head_dim, not embed_dim.
         let attn_flat = air
             .nodes
             .iter()
@@ -4861,7 +4879,7 @@ mod tests {
                 assert_eq!(
                     target_shape,
                     &vec![1, 128],
-                    "attn_flat reshape should be [batch, embed] = [1, 128]"
+                    "attn_flat reshape should be [batch, heads*head_dim] = [1, 4*32]"
                 );
             }
             other => panic!("Expected Reshape for decode_attn_flat, got {:?}", other),
