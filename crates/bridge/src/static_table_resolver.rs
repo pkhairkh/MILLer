@@ -169,27 +169,43 @@ impl StaticTableResolver {
         }
 
         // Step 3: Compute identity table (eye_tab) — [seq, seq] fp16
-        let mut eye_bytes = Vec::with_capacity(seq * seq * 2);
-        for row in 0..seq {
-            for col in 0..seq {
-                let val = half::f16::from_f64(if row == col { 1.0 } else { 0.0 });
-                eye_bytes.extend_from_slice(&val.to_bits().to_le_bytes());
+        // ONLY compute when seq_len is small enough to be practical.
+        // For seq_len > 4096, the eye_tab would be > 32 MB (seq×seq×2 bytes)
+        // which is wasteful and never used by the decode_step path (which uses
+        // arange_tab + Equal/LessEqual instead). The embedding path (small seq_len)
+        // still uses eye_tab for prefill attention masking.
+        let compute_large_tables = seq <= 4096;
+
+        let mut eye_bytes = Vec::new();
+        if compute_large_tables {
+            eye_bytes = Vec::with_capacity(seq * seq * 2);
+            for row in 0..seq {
+                for col in 0..seq {
+                    let val = half::f16::from_f64(if row == col { 1.0 } else { 0.0 });
+                    eye_bytes.extend_from_slice(&val.to_bits().to_le_bytes());
+                }
             }
         }
 
         // Step 4: Compute causal mask (mask_tab) — [seq, seq] fp16
-        // Upper-triangular: the last (idx+1) positions are unmasked (0.0),
-        // the rest are -inf. This matches the reversed ring-buffer pattern
-        // from the HuggingFace reference.
-        // mask_tab[idx, seq-(idx+1):] = 0.0, rest = -inf
-        let neg_inf_f16 = half::f16::from_f64(f64::NEG_INFINITY);
-        let zero_f16 = half::f16::from_f64(0.0);
-        let mut mask_bytes = Vec::with_capacity(seq * seq * 2);
-        for idx in 0..seq {
-            let unmask_start = seq - (idx + 1);
-            for col in 0..seq {
-                let val = if col >= unmask_start { zero_f16 } else { neg_inf_f16 };
-                mask_bytes.extend_from_slice(&val.to_bits().to_le_bytes());
+        // Same seq_len guard as eye_tab — mask_tab is [seq, seq] and grows
+        // quadratically. The decode_step uses computed masks (arange_tab +
+        // LessEqual + Select) instead.
+        let mut mask_bytes = Vec::new();
+        if compute_large_tables {
+            // Upper-triangular: the last (idx+1) positions are unmasked (0.0),
+            // the rest are -inf. This matches the reversed ring-buffer pattern
+            // from the HuggingFace reference.
+            // mask_tab[idx, seq-(idx+1):] = 0.0, rest = -inf
+            let neg_inf_f16 = half::f16::from_f64(f64::NEG_INFINITY);
+            let zero_f16 = half::f16::from_f64(0.0);
+            mask_bytes = Vec::with_capacity(seq * seq * 2);
+            for idx in 0..seq {
+                let unmask_start = seq - (idx + 1);
+                for col in 0..seq {
+                    let val = if col >= unmask_start { zero_f16 } else { neg_inf_f16 };
+                    mask_bytes.extend_from_slice(&val.to_bits().to_le_bytes());
+                }
             }
         }
 
@@ -212,14 +228,16 @@ impl StaticTableResolver {
             format!("static_tables/{}/cos_tab", tables_ref),
             WeightData { data: cos_bytes, shape: vec![1, 1, seq, hd] },
         );
-        self.cache.insert(
-            format!("static_tables/{}/eye_tab", tables_ref),
-            WeightData { data: eye_bytes, shape: vec![seq, seq] },
-        );
-        self.cache.insert(
-            format!("static_tables/{}/mask_tab", tables_ref),
-            WeightData { data: mask_bytes, shape: vec![seq, seq] },
-        );
+        if compute_large_tables {
+            self.cache.insert(
+                format!("static_tables/{}/eye_tab", tables_ref),
+                WeightData { data: eye_bytes, shape: vec![seq, seq] },
+            );
+            self.cache.insert(
+                format!("static_tables/{}/mask_tab", tables_ref),
+                WeightData { data: mask_bytes, shape: vec![seq, seq] },
+            );
+        }
         // arange shape: [seq_len] int32 — position indices for mask computation
         self.cache.insert(
             format!("static_tables/{}/arange_tab", tables_ref),

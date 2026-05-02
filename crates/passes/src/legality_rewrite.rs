@@ -945,15 +945,17 @@ impl LegalityRewritePass {
         } else {
             1.0 / (128.0_f32).sqrt()
         };
-        let scale_const_id = AirNodeId(format!("{base}_attn_scale"));
-        nodes.push(Self::make_air_node(
-            scale_const_id.clone(),
-            AirOp::Const {
-                value_path: format!("_attn_scale_{}", base),
-                dtype: MilDtype::Fp16,
-            },
-            sir_node, "mb.const", kq,
-        ));
+        let scale_const_id = AirNodeId("shared_attn_scale".to_string());
+        if !sir_to_air.values().any(|v| v == &scale_const_id) {
+            nodes.push(Self::make_air_node(
+                scale_const_id.clone(),
+                AirOp::Const {
+                    value_path: "_attn_scale".to_string(),
+                    dtype: MilDtype::Fp16,
+                },
+                sir_node, "mb.const", kq,
+            ));
+        }
 
         // Pre-slice K and V heads — one slice per KV head, not per Q head.
         // This avoids duplicate MIL output names when GQA fan_out > 1.
@@ -1620,15 +1622,18 @@ impl LegalityRewritePass {
             ));
 
             // mask_keep = 1.0 - mask_write
-            let one_const_id = AirNodeId(format!("{base}_one_const"));
-            nodes.push(Self::make_air_node(
-                one_const_id.clone(),
-                AirOp::Const {
-                    value_path: format!("_scalar_one_{}", base),
-                    dtype: MilDtype::Fp16,
-                },
-                sir_node, "mb.const", kq,
-            ));
+            let one_const_id = AirNodeId("shared_scalar_one".to_string());
+            // Only emit the one-const once per function (not per layer)
+            if !sir_to_air.values().any(|v| v == &one_const_id) {
+                nodes.push(Self::make_air_node(
+                    one_const_id.clone(),
+                    AirOp::Const {
+                        value_path: "_scalar_one".to_string(),
+                        dtype: MilDtype::Fp16,
+                    },
+                    sir_node, "mb.const", kq,
+                ));
+            }
 
             let mask_keep_id = AirNodeId(format!("{base}_mask_keep"));
             nodes.push(Self::make_air_node(
@@ -1865,15 +1870,19 @@ impl LegalityRewritePass {
             ));
 
             // logits *= scale
-            let scale_const_id = AirNodeId(format!("{base}_scale_{}", hi));
-            nodes.push(Self::make_air_node(
-                scale_const_id.clone(),
-                AirOp::Const {
-                    value_path: format!("_attn_scale_{}", base),
-                    dtype: MilDtype::Fp16,
-                },
-                sir_node, "mb.const", kq,
-            ));
+            // Shared scale constant: same value for every Q head in every layer.
+            // Emit once per function, not per head per layer.
+            let scale_const_id = AirNodeId("shared_attn_scale".to_string());
+            if !sir_to_air.values().any(|v| v == &scale_const_id) {
+                nodes.push(Self::make_air_node(
+                    scale_const_id.clone(),
+                    AirOp::Const {
+                        value_path: "_attn_scale".to_string(),
+                        dtype: MilDtype::Fp16,
+                    },
+                    sir_node, "mb.const", kq,
+                ));
+            }
 
             let scaled_logits_id = AirNodeId(format!("{base}_scaled_logits_{}", hi));
             nodes.push(Self::make_air_node(
@@ -2189,44 +2198,57 @@ impl LegalityRewritePass {
         // Check if the static_tables pass already inserted Const nodes.
         // When the static_tables pass has run (embedding graph), the nodes
         // are named "sir_static_cos_tab_{tables_ref}". For decode_step,
-        // the static_tables pass may not have run, so we emit per-layer
-        // const nodes with unique IDs using the `base` prefix to avoid
-        // duplicate output names when multiple layers share the same
-        // tables_ref (e.g., "rope_tables_shared").
+        // the static_tables pass may not have run, so we emit SHARED Const
+        // nodes keyed by tables_ref (not per-layer). This ensures that all
+        // 28 layers in a decode_step function share the same cos_tab, sin_tab,
+        // and arange_tab Const nodes — avoiding 28× weight duplication.
+        //
+        // The trick: we use the same AirNodeId across all layers. The first
+        // layer that calls apply_rope_decode emits the Const node; subsequent
+        // layers skip the emission because sir_to_air already contains the
+        // shared ID. The AirNodeId uses "shared_rope_{tables_ref}" as a prefix
+        // instead of the per-layer {base} prefix.
         let cos_tab_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_cos_tab_{}", tables_ref));
         let sin_tab_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_sin_tab_{}", tables_ref));
+
+        // Shared AIR node IDs — same across all layers within a function
+        let shared_cos_id = AirNodeId(format!("shared_rope_{}_cos_tab", tables_ref));
+        let shared_sin_id = AirNodeId(format!("shared_rope_{}_sin_tab", tables_ref));
+        let shared_arange_id = AirNodeId(format!("shared_rope_{}_arange_tab", tables_ref));
 
         let cos_id = if sir_to_air.contains_key(&cos_tab_sir_id) {
             // Const node already exists from static_tables pass
             AirNodeId(cos_tab_sir_id.0.clone())
+        } else if sir_to_air.values().any(|v| v == &shared_cos_id) {
+            // Shared Const already emitted by a previous layer's apply_rope_decode call
+            shared_cos_id
         } else {
-            // Emit per-layer Const node for cos_tab with unique ID.
-            // Using {base} prefix ensures no duplicates across layers.
-            let const_id = AirNodeId(format!("{}_cos_tab", base));
+            // First layer: emit the shared Const node for cos_tab
             nodes.push(Self::make_air_node(
-                const_id.clone(),
+                shared_cos_id.clone(),
                 AirOp::Const {
                     value_path: format!("static_tables/{}/cos_tab", tables_ref),
                     dtype: MilDtype::Fp16,
                 },
                 sir_node, "mb.const", kq,
             ));
-            const_id
+            shared_cos_id
         };
 
         let sin_id = if sir_to_air.contains_key(&sin_tab_sir_id) {
             AirNodeId(sin_tab_sir_id.0.clone())
+        } else if sir_to_air.values().any(|v| v == &shared_sin_id) {
+            shared_sin_id
         } else {
-            let const_id = AirNodeId(format!("{}_sin_tab", base));
             nodes.push(Self::make_air_node(
-                const_id.clone(),
+                shared_sin_id.clone(),
                 AirOp::Const {
                     value_path: format!("static_tables/{}/sin_tab", tables_ref),
                     dtype: MilDtype::Fp16,
                 },
                 sir_node, "mb.const", kq,
             ));
-            const_id
+            shared_sin_id
         };
 
         // Also emit a Const node for arange_tab used by the computed mask pattern.
@@ -2240,17 +2262,18 @@ impl LegalityRewritePass {
             let arange_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_arange_tab_{}", tables_ref));
             if sir_to_air.contains_key(&arange_sir_id) {
                 AirNodeId(arange_sir_id.0.clone())
+            } else if sir_to_air.values().any(|v| v == &shared_arange_id) {
+                shared_arange_id
             } else {
-                let const_id = AirNodeId(format!("{}_arange_tab", base));
                 nodes.push(Self::make_air_node(
-                    const_id.clone(),
+                    shared_arange_id.clone(),
                     AirOp::Const {
                         value_path: format!("static_tables/{}/arange_tab", tables_ref),
                         dtype: MilDtype::Int32,
                     },
                     sir_node, "mb.const", kq,
                 ));
-                const_id
+                shared_arange_id
             }
         };
 
