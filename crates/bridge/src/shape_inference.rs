@@ -276,6 +276,79 @@ pub fn compat_output_shape(
         | MirOp::MILReduceProd { x, axes, keep_dims, .. } => {
             reduce_shape(x, axes, *keep_dims, node_shapes)
         }
+        // ─── Concat: sum input dims along the concat axis ───────────────
+        // CRITICAL: This was the root cause of the "cannot reshape tensor
+        // of size 1 into shape [1, 512, 2048]" error. Without this case,
+        // MILConcat fell through to the catch-all `_ => vec![]`, producing
+        // an empty shape (scalar) for multi-input attention concats.
+        MirOp::MILConcat { values, axis, .. } => {
+            if let Some(first_shape) = values.first().and_then(|id| node_shapes.get(&id.0)) {
+                let mut out = first_shape.clone();
+                let ax = *axis as usize;
+                if ax < out.len() {
+                    let mut total_dim = 0usize;
+                    for id in values {
+                        if let Some(shape) = node_shapes.get(&id.0) {
+                            if let Some(&dim) = shape.get(ax) {
+                                total_dim += dim;
+                            }
+                        }
+                    }
+                    out[ax] = total_dim;
+                }
+                out
+            } else {
+                vec![]
+            }
+        }
+        // Where: broadcast of condition, x, y (like a ternary elementwise)
+        MirOp::MILWhere { condition, x, y, .. } => {
+            let shape_c = node_shapes.get(&condition.0).cloned().unwrap_or_default();
+            let shape_a = node_shapes.get(&x.0).cloned().unwrap_or_default();
+            let shape_b = node_shapes.get(&y.0).cloned().unwrap_or_default();
+            // Try broadcasting all three; fall back to x's shape
+            if !shape_a.is_empty() && !shape_b.is_empty() && !shape_c.is_empty() {
+                broadcast_shape_compat(&shape_a, &shape_b)
+                    .and_then(|ab| broadcast_shape_compat(&ab, &shape_c))
+                    .unwrap_or_else(|| shape_a.clone())
+            } else if !shape_a.is_empty() {
+                shape_a
+            } else if !shape_c.is_empty() {
+                shape_c
+            } else {
+                shape_b
+            }
+        }
+        // LayerNorm: output shape = input shape
+        MirOp::MILLayerNorm { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
+        // Topk: output shape = input shape with axis dim replaced by k
+        MirOp::MILTopk { x, k, axis, .. } => {
+            if let Some(input_shape) = node_shapes.get(&x.0) {
+                let mut out = input_shape.clone();
+                let ax = if *axis >= 0 { *axis as usize } else { out.len().saturating_add(*axis as usize) };
+                if ax < out.len() {
+                    out[ax] = *k;
+                }
+                out
+            } else {
+                vec![]
+            }
+        }
+        // ScaledDotProductAttention: output shape = query shape
+        MirOp::MILScaledDotProductAttention { query, .. } => {
+            node_shapes.get(&query.0).cloned().unwrap_or_default()
+        }
+        // ReadState: shape is explicitly provided in the op
+        MirOp::MILReadState { shape, .. } => shape.clone(),
+        // CoremlUpdateState / StateWrite: propagate value shape
+        MirOp::MILCoremlUpdateState { value, .. } => {
+            node_shapes.get(&value.0).cloned().unwrap_or_default()
+        }
+        MirOp::MILStateWrite { value, .. } => {
+            node_shapes.get(&value.0).cloned().unwrap_or_default()
+        }
+        // Conv: propagate input shape (output_dim handled at AIR level)
+        MirOp::MILConv { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
         // Select: propagate first operand shape (like Where)
         MirOp::MILSelect { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
         MirOp::MILSplit { x, axis, num_splits, .. } => {

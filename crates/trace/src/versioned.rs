@@ -412,7 +412,9 @@ impl OpSupportMatrix {
                 "LogicalNot has no ANEC converter; falls back to CPU".to_string(),
             ),
             SirOp::Cast { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
-            SirOp::Select { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Select { .. } => OpSupport::CpuOnly(
+                "mb.select is ANE-illegal; must be replaced with mb.where during lowering".to_string(),
+            ),
             SirOp::Where { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
 
             // ─── Reduction: PE, with family restrictions ───────────
@@ -688,8 +690,12 @@ impl OpSupportMatrix {
             // ─── Special structural / utility ops ─────────────────
             SirOp::Const { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Identity { .. } => OpSupport::AneSupported(AneEngineSupport::Transpose),
-            SirOp::Fill { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
-            SirOp::FillLike { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Fill { .. } => OpSupport::CpuOnly(
+                "mb.fill is ANE-illegal; must be replaced with mb.where + Const during lowering".to_string(),
+            ),
+            SirOp::FillLike { .. } => OpSupport::CpuOnly(
+                "mb.fill_like is ANE-illegal; must be replaced with mb.where + Const during lowering".to_string(),
+            ),
             SirOp::Range1d { .. } => OpSupport::CpuOnly(
                 "Range1d has no ANEC converter; falls back to CPU".to_string(),
             ),

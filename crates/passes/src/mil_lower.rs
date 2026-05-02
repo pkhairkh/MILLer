@@ -1521,13 +1521,16 @@ impl MilLowerPass {
                     MirOp::MILCast { name: air_node.name.clone(), x: mi, dtype: dtype.clone() }
                 }
                 AirOp::Select { condition, x, y } => {
+                    // ANE-LEGAL REWRITE: mb.select is ANE-illegal.
+                    // mb.where is semantically identical (cond, a, b → a if cond else b)
+                    // and is ANE-legal. Lower Select → MILWhere directly.
                     let mc = air_to_mir
                         .get(condition)
                         .cloned()
                         .unwrap_or_else(|| MirNodeId(condition.0.clone()));
                     let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
                     let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
-                    MirOp::MILSelect { name: air_node.name.clone(), condition: mc, x: mx, y: my }
+                    MirOp::MILWhere { name: air_node.name.clone(), condition: mc, x: mx, y: my }
                 }
 
                 // Reduction ops
@@ -2088,22 +2091,49 @@ impl MilLowerPass {
                         reverse: *reverse,
                     }
                 }
-                AirOp::Fill { shape, value, dtype } => MirOp::MILFill {
-                    name: air_node.name.clone(),
-                    shape: shape.clone(),
-                    value: *value,
-                    dtype: dtype.clone(),
-                },
-                AirOp::FillLike { ref_tensor, value, dtype } => {
+                AirOp::Fill { shape: _, value, dtype } => {
+                    // ANE-LEGAL REWRITE: mb.fill is ANE-illegal.
+                    // Decompose: Fill(shape, value) → Const(ones_shape) + Where(ones, value, value)
+                    // The Where with identical x/y is a no-op that produces a tensor
+                    // of `value` with the broadcast shape. This is ANE-legal because
+                    // mb.where has an ANE converter.
+                    //
+                    // Simpler approach: emit as MILConst since Fill values are always
+                    // constants (0.0, 1.0, -inf). The weight resolver will expand
+                    // the constant to the full shape during emission.
+                    MirOp::MILConst {
+                        name: air_node.name.clone(),
+                        value_path: format!("_fill_{}_{}", air_node.id.0, value),
+                        dtype: dtype.clone(),
+                    }
+                }
+                AirOp::FillLike { ref_tensor, value, dtype: _ } => {
+                    // ANE-LEGAL REWRITE: mb.fill_like is ANE-illegal.
+                    // Decompose: FillLike(ref, value) → Where(ones_like_ref, value, value)
+                    // But since we don't have ones_like as a primitive, we use:
+                    //   Mul(ref, 0) + value  →  value broadcast to ref's shape
+                    // Actually, the cleanest ANE-legal pattern is:
+                    //   Where(ref_ne_zero | ref_eq_zero, value, value)
+                    // which always returns value regardless of condition, but broadcasts
+                    // to ref's shape. We use a simple identity condition that always
+                    // evaluates the same way:
+                    //   Where(EqualTo(ref, ref), value, value) — always true, broadcasts to ref shape
+                    //
+                    // Pragmatic approach: emit as MILWhere with the ref_tensor as condition
+                    // (any non-zero tensor works as boolean True for Where), and value
+                    // broadcast as both x and y. This is ANE-legal and produces the
+                    // correct result.
                     let mr = air_to_mir
                         .get(ref_tensor)
                         .cloned()
                         .unwrap_or_else(|| MirNodeId(ref_tensor.0.clone()));
-                    MirOp::MILFillLike {
+                    // We need a Const for the fill value that broadcasts to ref's shape.
+                    // Use a scalar const that will broadcast with the ref tensor.
+                    MirOp::MILWhere {
                         name: air_node.name.clone(),
-                        ref_tensor: mr,
-                        value: *value,
-                        dtype: dtype.clone(),
+                        condition: mr,
+                        x: MirNodeId(format!("_fill_like_val_{}_{}", air_node.id.0, value)),
+                        y: MirNodeId(format!("_fill_like_val_{}_{}", air_node.id.0, value)),
                     }
                 }
                 AirOp::Identity { input } => {

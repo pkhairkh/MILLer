@@ -84,6 +84,35 @@ pub fn convert_mir_to_proto_multifunction(
             );
         }
 
+        // Validation gate: reject ANE-illegal ops that should have been
+        // decomposed during lowering. These ops force CPU fallback and
+        // indicate a bug in the compilation pipeline.
+        {
+            let mut illegal_ops: Vec<String> = Vec::new();
+            for op in &graph.ops {
+                let illegal = match op {
+                    MirOpCompat::Fill { name, .. } => Some(format!("  {name}: mb.fill is ANE-illegal, should have been replaced with mb.where + Const")),
+                    MirOpCompat::FillLike { name, .. } => Some(format!("  {name}: mb.fill_like is ANE-illegal, should have been replaced with mb.where")),
+                    MirOpCompat::Select { name, .. } => Some(format!("  {name}: mb.select is ANE-illegal, should have been replaced with mb.where")),
+                    _ => None,
+                };
+                if let Some(msg) = illegal {
+                    illegal_ops.push(msg);
+                }
+            }
+            if !illegal_ops.is_empty() {
+                anyhow::bail!(
+                    "Cannot emit Core ML package: {} ANE-illegal operation(s) in function '{}'. \
+                     These ops force CPU fallback and should have been replaced during AIR→MIR lowering.\n\
+                     ANE-illegal ops:\n{}\n\
+                     Fix: ensure the mil_lower pass replaces Fill→Const, FillLike→Where, and Select→Where.",
+                    illegal_ops.len(),
+                    graph.function_name,
+                    illegal_ops.join("\n")
+                );
+            }
+        }
+
         // Validation gate: reject duplicate output names.
         // Core ML MIL is SSA-like: each output value name may be defined only once
         // in a block. If two operations produce the same output name, coremlcompiler
@@ -114,6 +143,80 @@ pub fn convert_mir_to_proto_multifunction(
                     duplicates.len(),
                     graph.function_name,
                     duplicates.join("\n  ")
+                );
+            }
+        }
+
+        // Validation gate: reject impossible reshapes.
+        // Core ML rejects reshapes where input element count ≠ target element count.
+        // A scalar (empty shape) being reshaped into a large tensor is the canonical
+        // failure mode — it indicates that shape inference failed upstream (e.g., a
+        // concat whose output shape was never computed).
+        {
+            let mut bad_reshapes: Vec<String> = Vec::new();
+            for op in &graph.ops {
+                if let MirOpCompat::Reshape { name, x, shape } = op {
+                    let input_elements: usize = graph.node_shapes
+                        .get(x)
+                        .map(|s| s.iter().product::<usize>())
+                        .unwrap_or(0);
+                    let target_elements: usize = shape.iter().map(|&d| {
+                        if d > 0 { d as usize } else { 1 } // treat 0-dims as 1 for element count
+                    }).product();
+                    // Only validate when both are known and non-zero
+                    if input_elements > 0 && target_elements > 0 && input_elements != target_elements {
+                        bad_reshapes.push(format!(
+                            "  {name}: input '{}' has {} elements, target shape {:?} has {} elements",
+                            x, input_elements, shape, target_elements
+                        ));
+                    }
+                }
+            }
+            if !bad_reshapes.is_empty() {
+                anyhow::bail!(
+                    "Cannot emit Core ML package: {} impossible reshape(s) in function '{}'. \
+                     Core ML rejects reshapes where input element count ≠ target element count. \
+                     This typically indicates a shape inference bug (e.g., a concat whose output \
+                     was never computed, producing a scalar that gets reshaped).\nImpossible reshapes:\n{}\n\
+                     Fix: ensure all concats and other shape-propagating ops have correct output shapes \
+                     in the node_shapes map before emission.",
+                    bad_reshapes.len(),
+                    graph.function_name,
+                    bad_reshapes.join("\n")
+                );
+            }
+        }
+
+        // Validation gate: reject concats with scalar outputs.
+        // A concat of ranked tensors must produce a ranked tensor, not a scalar.
+        // This is the direct cause of the "cannot reshape tensor of size 1" error.
+        {
+            let mut bad_concats: Vec<String> = Vec::new();
+            for op in &graph.ops {
+                if let MirOpCompat::Concat { name, values, axis: _ } = op {
+                    let output_shape = graph.node_shapes.get(name);
+                    let has_ranked_inputs = values.iter().any(|v| {
+                        graph.node_shapes.get(v).map(|s| !s.is_empty()).unwrap_or(false)
+                    });
+                    let output_is_scalar = output_shape.map(|s| s.is_empty()).unwrap_or(true);
+                    if has_ranked_inputs && output_is_scalar {
+                        bad_concats.push(format!(
+                            "  {name}: concat of {} values (some ranked) but output is scalar (empty shape)",
+                            values.len()
+                        ));
+                    }
+                }
+            }
+            if !bad_concats.is_empty() {
+                anyhow::bail!(
+                    "Cannot emit Core ML package: {} concat(s) with scalar output in function '{}'. \
+                     A concat of ranked tensors must produce a ranked tensor. This causes \
+                     downstream reshapes to fail with 'cannot reshape tensor of size 1'.\n\
+                     Bad concats:\n{}\n\
+                     Fix: add MILConcat shape inference to the forward shape propagation pass.",
+                    bad_concats.len(),
+                    graph.function_name,
+                    bad_concats.join("\n")
                 );
             }
         }
