@@ -706,6 +706,29 @@ impl LegalityRewritePass {
             air_nodes.extend(decomposed_nodes);
         }
 
+        // ─── Deduplicate shared AIR nodes ─────────────────────────────────
+        // Shared nodes (e.g., shared_attn_scale, shared_scalar_one,
+        // shared_rope_*_cos_tab/sin_tab/arange_tab) use the same AirNodeId
+        // across multiple layers. The dedup checks inside decompose_* functions
+        // check `sir_to_air.values()`, but shared IDs are intermediate nodes
+        // that are never the final AirNodeId of a SIR node, so the checks
+        // always fail and the shared node is emitted once per layer call.
+        //
+        // This produces N copies of each shared node (N = number of layers),
+        // all with the same AirNodeId, violating CoreML MIL's SSA rule that
+        // each output name must be defined exactly once.
+        //
+        // Fix: after all nodes are collected, deduplicate by AirNodeId.0,
+        // keeping only the first occurrence. Subsequent duplicates are
+        // harmless — they would produce the same value, so removing them
+        // doesn't change semantics. All references to the shared ID from
+        // other nodes point to the AirNodeId string (not a position index),
+        // so the first occurrence is the canonical definition.
+        {
+            let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+            air_nodes.retain(|node| seen_ids.insert(node.id.0.clone()));
+        }
+
         let air_inputs: Vec<AirNodeId> = input
             .inputs
             .iter()
@@ -945,17 +968,18 @@ impl LegalityRewritePass {
         } else {
             1.0 / (128.0_f32).sqrt()
         };
+        // Shared scale constant: 1/√d_k
+        // Emitted unconditionally; duplicates are removed by the global
+        // AirNodeId dedup at the end of LegalityRewritePass::run().
         let scale_const_id = AirNodeId("shared_attn_scale".to_string());
-        if !sir_to_air.values().any(|v| v == &scale_const_id) {
-            nodes.push(Self::make_air_node(
-                scale_const_id.clone(),
-                AirOp::Const {
-                    value_path: "_attn_scale".to_string(),
-                    dtype: MilDtype::Fp16,
-                },
-                sir_node, "mb.const", kq,
-            ));
-        }
+        nodes.push(Self::make_air_node(
+            scale_const_id.clone(),
+            AirOp::Const {
+                value_path: "_attn_scale".to_string(),
+                dtype: MilDtype::Fp16,
+            },
+            sir_node, "mb.const", kq,
+        ));
 
         // Pre-slice K and V heads — one slice per KV head, not per Q head.
         // This avoids duplicate MIL output names when GQA fan_out > 1.
@@ -1622,18 +1646,18 @@ impl LegalityRewritePass {
             ));
 
             // mask_keep = 1.0 - mask_write
+            // Shared scalar one constant: 1.0 for mask_keep = 1.0 - mask_write
+            // Emitted unconditionally; duplicates are removed by the global
+            // AirNodeId dedup at the end of LegalityRewritePass::run().
             let one_const_id = AirNodeId("shared_scalar_one".to_string());
-            // Only emit the one-const once per function (not per layer)
-            if !sir_to_air.values().any(|v| v == &one_const_id) {
-                nodes.push(Self::make_air_node(
-                    one_const_id.clone(),
-                    AirOp::Const {
-                        value_path: "_scalar_one".to_string(),
-                        dtype: MilDtype::Fp16,
-                    },
-                    sir_node, "mb.const", kq,
-                ));
-            }
+            nodes.push(Self::make_air_node(
+                one_const_id.clone(),
+                AirOp::Const {
+                    value_path: "_scalar_one".to_string(),
+                    dtype: MilDtype::Fp16,
+                },
+                sir_node, "mb.const", kq,
+            ));
 
             let mask_keep_id = AirNodeId(format!("{base}_mask_keep"));
             nodes.push(Self::make_air_node(
@@ -1871,18 +1895,17 @@ impl LegalityRewritePass {
 
             // logits *= scale
             // Shared scale constant: same value for every Q head in every layer.
-            // Emit once per function, not per head per layer.
+            // Emitted unconditionally; duplicates are removed by the global
+            // AirNodeId dedup at the end of LegalityRewritePass::run().
             let scale_const_id = AirNodeId("shared_attn_scale".to_string());
-            if !sir_to_air.values().any(|v| v == &scale_const_id) {
-                nodes.push(Self::make_air_node(
-                    scale_const_id.clone(),
-                    AirOp::Const {
-                        value_path: "_attn_scale".to_string(),
-                        dtype: MilDtype::Fp16,
-                    },
-                    sir_node, "mb.const", kq,
-                ));
-            }
+            nodes.push(Self::make_air_node(
+                scale_const_id.clone(),
+                AirOp::Const {
+                    value_path: "_attn_scale".to_string(),
+                    dtype: MilDtype::Fp16,
+                },
+                sir_node, "mb.const", kq,
+            ));
 
             let scaled_logits_id = AirNodeId(format!("{base}_scaled_logits_{}", hi));
             nodes.push(Self::make_air_node(
@@ -2203,10 +2226,10 @@ impl LegalityRewritePass {
         // 28 layers in a decode_step function share the same cos_tab, sin_tab,
         // and arange_tab Const nodes — avoiding 28× weight duplication.
         //
-        // The trick: we use the same AirNodeId across all layers. The first
-        // layer that calls apply_rope_decode emits the Const node; subsequent
-        // layers skip the emission because sir_to_air already contains the
-        // shared ID. The AirNodeId uses "shared_rope_{tables_ref}" as a prefix
+        // We use the same AirNodeId across all layers. Each layer unconditionally
+        // emits the shared Const node, and the global AirNodeId dedup at the end
+        // of LegalityRewritePass::run() removes duplicates, keeping only the first
+        // occurrence. The AirNodeId uses "shared_rope_{tables_ref}" as a prefix
         // instead of the per-layer {base} prefix.
         let cos_tab_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_cos_tab_{}", tables_ref));
         let sin_tab_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_sin_tab_{}", tables_ref));
@@ -2219,11 +2242,9 @@ impl LegalityRewritePass {
         let cos_id = if sir_to_air.contains_key(&cos_tab_sir_id) {
             // Const node already exists from static_tables pass
             AirNodeId(cos_tab_sir_id.0.clone())
-        } else if sir_to_air.values().any(|v| v == &shared_cos_id) {
-            // Shared Const already emitted by a previous layer's apply_rope_decode call
-            shared_cos_id
         } else {
-            // First layer: emit the shared Const node for cos_tab
+            // Emit shared cos_tab Const. Duplicates across layers are
+            // removed by the global AirNodeId dedup in LegalityRewritePass::run().
             nodes.push(Self::make_air_node(
                 shared_cos_id.clone(),
                 AirOp::Const {
@@ -2237,9 +2258,9 @@ impl LegalityRewritePass {
 
         let sin_id = if sir_to_air.contains_key(&sin_tab_sir_id) {
             AirNodeId(sin_tab_sir_id.0.clone())
-        } else if sir_to_air.values().any(|v| v == &shared_sin_id) {
-            shared_sin_id
         } else {
+            // Emit shared sin_tab Const. Duplicates across layers are
+            // removed by the global AirNodeId dedup in LegalityRewritePass::run().
             nodes.push(Self::make_air_node(
                 shared_sin_id.clone(),
                 AirOp::Const {
@@ -2262,9 +2283,9 @@ impl LegalityRewritePass {
             let arange_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_arange_tab_{}", tables_ref));
             if sir_to_air.contains_key(&arange_sir_id) {
                 AirNodeId(arange_sir_id.0.clone())
-            } else if sir_to_air.values().any(|v| v == &shared_arange_id) {
-                shared_arange_id
             } else {
+                // Emit shared arange_tab Const. Duplicates across layers are
+                // removed by the global AirNodeId dedup in LegalityRewritePass::run().
                 nodes.push(Self::make_air_node(
                     shared_arange_id.clone(),
                     AirOp::Const {
