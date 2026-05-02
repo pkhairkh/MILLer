@@ -958,7 +958,7 @@ impl LegalityRewritePass {
         ));
 
         // Scale constant: 1/√d_k
-        let scale_val = if head_dim > 0 {
+        let _scale_val = if head_dim > 0 {
             1.0 / (head_dim as f32).sqrt()
         } else {
             1.0 / (128.0_f32).sqrt()
@@ -972,6 +972,60 @@ impl LegalityRewritePass {
             },
             sir_node, "mb.const", kq,
         ));
+
+        // Pre-slice K and V heads — one slice per KV head, not per Q head.
+        // This avoids duplicate MIL output names when GQA fan_out > 1.
+        // (Same fix as decompose_decode_step — see CRITICAL comment there.)
+        let mut k_head_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads.max(1) as usize);
+        for kv_idx in 0..(kv_heads.max(1) as usize) {
+            let k_i_id = AirNodeId(format!("{base}_k_head_{}", kv_idx));
+            nodes.push(Self::make_air_node(
+                k_i_id.clone(),
+                AirOp::SliceByIndex {
+                    input: k_split_id.clone(),
+                    begin: vec![0, kv_idx as i64, 0, 0],
+                    end: vec![0, (kv_idx as i64) + 1, 0, 0],
+                    stride: vec![1, 1, 1, 1],
+                    begin_mask: vec![true, false, true, true],
+                    end_mask: vec![true, false, true, true],
+                    squeeze_mask: vec![false, true, false, false],
+                },
+                sir_node, "mb.slice_by_index", kq,
+            ));
+            k_head_ids.push(k_i_id);
+        }
+
+        let mut v_head_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads.max(1) as usize);
+        for kv_idx in 0..(kv_heads.max(1) as usize) {
+            let v_i_id = AirNodeId(format!("{base}_v_head_{}", kv_idx));
+            nodes.push(Self::make_air_node(
+                v_i_id.clone(),
+                AirOp::SliceByIndex {
+                    input: v_split_id.clone(),
+                    begin: vec![0, kv_idx as i64, 0, 0],
+                    end: vec![0, (kv_idx as i64) + 1, 0, 0],
+                    stride: vec![1, 1, 1, 1],
+                    begin_mask: vec![true, false, true, true],
+                    end_mask: vec![true, false, true, true],
+                    squeeze_mask: vec![false, true, false, false],
+                },
+                sir_node, "mb.slice_by_index", kq,
+            ));
+            v_head_ids.push(v_i_id);
+        }
+
+        // Also pre-slice the K transposes, since each KV head only needs one transpose
+        // and multiple Q heads may reference the same transposed K.
+        let mut k_head_t_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads.max(1) as usize);
+        for kv_idx in 0..(kv_heads.max(1) as usize) {
+            let k_i_t_id = AirNodeId(format!("{base}_k_head_{}_t", kv_idx));
+            nodes.push(Self::make_air_node(
+                k_i_t_id.clone(),
+                AirOp::Transpose { input: k_head_ids[kv_idx].clone(), perm: vec![0, 2, 1] },
+                sir_node, "mb.transpose", kq,
+            ));
+            k_head_t_ids.push(k_i_t_id);
+        }
 
         // Per-head attention loop
         let mut ctx_parts: Vec<AirNodeId> = Vec::with_capacity(heads as usize);
@@ -996,48 +1050,14 @@ impl LegalityRewritePass {
                 sir_node, "mb.slice_by_index", kq,
             ));
 
-            // Extract K head: SliceByIndex from k_split output
-            let k_i_id = AirNodeId(format!("{base}_k_head_{}", kv_idx));
-            nodes.push(Self::make_air_node(
-                k_i_id.clone(),
-                AirOp::SliceByIndex {
-                    input: k_split_id.clone(),
-                    begin: vec![0, kv_idx as i64, 0, 0],
-                    end: vec![0, (kv_idx as i64) + 1, 0, 0],
-                    stride: vec![1, 1, 1, 1],
-                    begin_mask: vec![true, false, true, true],
-                    end_mask: vec![true, false, true, true],
-                    squeeze_mask: vec![false, true, false, false],
-                },
-                sir_node, "mb.slice_by_index", kq,
-            ));
-
-            // Extract V head: SliceByIndex from v_split output
-            let v_i_id = AirNodeId(format!("{base}_v_head_{}", kv_idx));
-            nodes.push(Self::make_air_node(
-                v_i_id.clone(),
-                AirOp::SliceByIndex {
-                    input: v_split_id.clone(),
-                    begin: vec![0, kv_idx as i64, 0, 0],
-                    end: vec![0, (kv_idx as i64) + 1, 0, 0],
-                    stride: vec![1, 1, 1, 1],
-                    begin_mask: vec![true, false, true, true],
-                    end_mask: vec![true, false, true, true],
-                    squeeze_mask: vec![false, true, false, false],
-                },
-                sir_node, "mb.slice_by_index", kq,
-            ));
+            // Reuse pre-sliced K and V heads (no duplicate output names)
+            let _k_i_id = k_head_ids[kv_idx].clone();
+            let v_i_id = v_head_ids[kv_idx].clone();
+            let k_i_t_id = k_head_t_ids[kv_idx].clone();
 
             // logits = matmul(q_i, k_i^T)
-            // q_i: [B, S, D], k_i: [B, S, D] → transpose k_i → [B, D, S]
+            // q_i: [B, S, D], k_i_t: [B, D, S] (pre-transposed)
             // matmul: [B, S, D] @ [B, D, S] = [B, S, S]
-            let k_i_t_id = AirNodeId(format!("{base}_k_head_{}_t", kv_idx));
-            nodes.push(Self::make_air_node(
-                k_i_t_id.clone(),
-                AirOp::Transpose { input: k_i_id, perm: vec![0, 2, 1] },
-                sir_node, "mb.transpose", kq,
-            ));
-
             let logits_id = AirNodeId(format!("{base}_logits_{}", head_idx));
             nodes.push(Self::make_air_node(
                 logits_id.clone(),
@@ -1751,6 +1771,57 @@ impl LegalityRewritePass {
         // directly, we use SliceByIndex to extract each head from the
         // split output. This is equivalent to the reference model's
         // k_blocks[kv_idx] pattern.
+        //
+        // CRITICAL: For GQA (fan_out > 1), multiple Q heads share the
+        // same KV head. Each KV head must be sliced EXACTLY ONCE and
+        // the result reused by all Q heads that map to it. If we slice
+        // the same KV head multiple times inside the Q-head loop, we
+        // produce duplicate MIL output names (e.g., "k_head_0" twice),
+        // which violates MIL's SSA rule and causes coremlcompiler to
+        // reject the model with "Block redefines I/O name".
+        //
+        // Pre-slice all KV heads OUTSIDE the per-Q-head loop, then
+        // reference them by index inside the loop.
+
+        // Pre-slice K and V heads — one slice per KV head, not per Q head.
+        // This avoids duplicate output names when GQA fan_out > 1.
+        let mut k_head_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads as usize);
+        for kv_idx in 0..(kv_heads as usize) {
+            let k_i_id = AirNodeId(format!("{base}_k_head_{}", kv_idx));
+            nodes.push(Self::make_air_node(
+                k_i_id.clone(),
+                AirOp::SliceByIndex {
+                    input: k_split_id.clone(),
+                    begin: vec![0, kv_idx as i64, 0, 0],
+                    end: vec![0, (kv_idx as i64) + 1, 0, 0],
+                    stride: vec![1, 1, 1, 1],
+                    begin_mask: vec![true, false, true, true],
+                    end_mask: vec![true, false, true, true],
+                    squeeze_mask: vec![false, true, false, false],
+                },
+                sir_node, "mb.slice_by_index", kq,
+            ));
+            k_head_ids.push(k_i_id);
+        }
+
+        let mut v_head_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads as usize);
+        for kv_idx in 0..(kv_heads as usize) {
+            let v_i_id = AirNodeId(format!("{base}_v_head_{}", kv_idx));
+            nodes.push(Self::make_air_node(
+                v_i_id.clone(),
+                AirOp::SliceByIndex {
+                    input: v_split_id.clone(),
+                    begin: vec![0, kv_idx as i64, 0, 0],
+                    end: vec![0, (kv_idx as i64) + 1, 0, 0],
+                    stride: vec![1, 1, 1, 1],
+                    begin_mask: vec![true, false, true, true],
+                    end_mask: vec![true, false, true, true],
+                    squeeze_mask: vec![false, true, false, false],
+                },
+                sir_node, "mb.slice_by_index", kq,
+            ));
+            v_head_ids.push(v_i_id);
+        }
 
         let mut ctx_parts: Vec<AirNodeId> = Vec::with_capacity(heads as usize);
 
@@ -1775,38 +1846,9 @@ impl LegalityRewritePass {
                 sir_node, "mb.slice_by_index", kq,
             ));
 
-            // Extract K head: SliceByIndex from k_split output
-            // K shape per KV head: [B, 1, seq, hd]
-            let k_i_id = AirNodeId(format!("{base}_k_head_{}", kv_idx));
-            nodes.push(Self::make_air_node(
-                k_i_id.clone(),
-                AirOp::SliceByIndex {
-                    input: k_split_id.clone(),
-                    begin: vec![0, kv_idx as i64, 0, 0],
-                    end: vec![0, (kv_idx as i64) + 1, 0, 0],
-                    stride: vec![1, 1, 1, 1],
-                    begin_mask: vec![true, false, true, true],
-                    end_mask: vec![true, false, true, true],
-                    squeeze_mask: vec![false, true, false, false],
-                },
-                sir_node, "mb.slice_by_index", kq,
-            ));
-
-            // Extract V head: SliceByIndex from v_split output
-            let v_i_id = AirNodeId(format!("{base}_v_head_{}", kv_idx));
-            nodes.push(Self::make_air_node(
-                v_i_id.clone(),
-                AirOp::SliceByIndex {
-                    input: v_split_id.clone(),
-                    begin: vec![0, kv_idx as i64, 0, 0],
-                    end: vec![0, (kv_idx as i64) + 1, 0, 0],
-                    stride: vec![1, 1, 1, 1],
-                    begin_mask: vec![true, false, true, true],
-                    end_mask: vec![true, false, true, true],
-                    squeeze_mask: vec![false, true, false, false],
-                },
-                sir_node, "mb.slice_by_index", kq,
-            ));
+            // Reuse pre-sliced K and V heads (no duplicate output names)
+            let k_i_id = k_head_ids[kv_idx].clone();
+            let v_i_id = v_head_ids[kv_idx].clone();
 
             // logits = matmul(q_i, k_i, transpose_y=True)
             // q_i: [B, 1, 1, hd], k_i: [B, 1, seq, hd]

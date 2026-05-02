@@ -84,6 +84,40 @@ pub fn convert_mir_to_proto_multifunction(
             );
         }
 
+        // Validation gate: reject duplicate output names.
+        // Core ML MIL is SSA-like: each output value name may be defined only once
+        // in a block. If two operations produce the same output name, coremlcompiler
+        // rejects the model with "Block redefines I/O name:<name>".
+        // This commonly happens with GQA when the same KV head is sliced multiple
+        // times in a per-Q-head loop instead of being sliced once and reused.
+        {
+            let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut duplicates: Vec<String> = Vec::new();
+            for op in &graph.ops {
+                let output_names = op_output_names(op);
+                for name in output_names {
+                    if !seen_names.insert(name.clone()) {
+                        duplicates.push(name.clone());
+                    }
+                }
+            }
+            if !duplicates.is_empty() {
+                // Deduplicate the error list for readability
+                duplicates.sort();
+                duplicates.dedup();
+                anyhow::bail!(
+                    "Cannot emit Core ML package: {} duplicate output name(s) in function '{}'. \
+                     Core ML MIL requires each output name to be defined exactly once in a block. \
+                     Duplicate names:\n  {}\n\
+                     This is typically caused by GQA KV-head slicing inside a per-Q-head loop \
+                     instead of pre-slicing each KV head once and reusing the result.",
+                    duplicates.len(),
+                    graph.function_name,
+                    duplicates.join("\n  ")
+                );
+            }
+        }
+
         // Extract weights from constants
         let mut graph_weights = Vec::new();
         let mut graph_inputs = Vec::new();
@@ -402,6 +436,36 @@ pub fn build_multifunction_shared_weights_mir(
     let shared_weight_names = vec!["shared_projection_weight".to_string()];
 
     (vec![embedding_graph, decode_step_graph], shared_weight_names)
+}
+
+/// Extract the output name(s) from a `MirOpCompat` operation.
+///
+/// Every `MirOpCompat` variant defines one output value in the MIL block.
+/// The `name` field serves as the SSA value name that other ops reference.
+/// For duplicate detection, we return a single-element Vec with the name.
+fn op_output_names(op: &MirOpCompat) -> Vec<String> {
+    // Every variant has a `name` field (except Unsupported which has `name` too).
+    // Use a macro to avoid repeating the same pattern for every variant.
+    macro_rules! name_vec {
+        ($($variant:ident),* $(,)?) => {
+            match op {
+                $(MirOpCompat::$variant { name, .. } => vec![name.clone()],)*
+                MirOpCompat::Unsupported { name, .. } => vec![name.clone()],
+            }
+        };
+    }
+    name_vec!(
+        Const, Linear, MatMul, Add, Mul, Sub, Abs, Maximum, Minimum,
+        Reshape, Transpose, SliceByIndex, SliceUpdate, Concat, Softmax,
+        Gelu, ScaledDotProductAttention, ReadState, CoremlUpdateState,
+        Gather, ReduceMean, ReduceSum, Conv, StateWrite, Rsqrt, RealDiv,
+        LayerNorm, Topk, Cos, Sin, Cast, Split, Exp, Sigmoid, Tanh,
+        Relu, Where, Silu, Identity, Placeholder, Tile, Fill, FillLike,
+        Neg, ExpandDims, Squeeze, Sqrt, Pow, Clip, Equal, NotEqual,
+        Greater, GreaterEqual, Less, LessEqual, LogicalNot, LogicalAnd,
+        LogicalOr, Pad, ReduceMax, ReduceMin, ReduceProd, Select,
+        LeakyRelu, FloorDiv, Mod, Ceil, Floor, Round, Sign, Log,
+    )
 }
 
 /// Generate deterministic data for weight tensors.
@@ -777,5 +841,62 @@ mod tests {
         // All ops should have attributes["name"]
         assert!(read_state_op.attributes.contains_key("name"));
         assert!(write_state_op.attributes.contains_key("name"));
+    }
+
+    #[test]
+    fn test_duplicate_output_names_rejected() {
+        // Build a graph with two ops producing the same output name.
+        // This simulates the GQA KV-head duplicate bug where the same
+        // k_head_0 is sliced twice in a per-Q-head loop.
+        let ops = vec![
+            MirOpCompat::SliceByIndex {
+                name: "k_head_0".to_string(), // First definition
+                x: "k_split".to_string(),
+                begin: vec![0, 0, 0, 0],
+                end: vec![0, 1, 0, 0],
+                stride: vec![1, 1, 1, 1],
+                begin_mask: vec![true, false, true, true],
+                end_mask: vec![true, false, true, true],
+                squeeze_mask: vec![false, true, false, false],
+            },
+            MirOpCompat::SliceByIndex {
+                name: "k_head_0".to_string(), // DUPLICATE — same name!
+                x: "k_split".to_string(),
+                begin: vec![0, 0, 0, 0],
+                end: vec![0, 1, 0, 0],
+                stride: vec![1, 1, 1, 1],
+                begin_mask: vec![true, false, true, true],
+                end_mask: vec![true, false, true, true],
+                squeeze_mask: vec![false, true, false, false],
+            },
+        ];
+
+        let graph = MirGraphCompat {
+            ops,
+            inputs: vec!["k_split".to_string()],
+            outputs: vec!["k_head_0".to_string()],
+            opset_version: "iOS18".to_string(),
+            function_name: "decode_step".to_string(),
+            input_descs: vec![],
+            output_descs: vec![],
+            node_shapes: std::collections::HashMap::new(),
+        };
+
+        let result = convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe);
+
+        assert!(result.is_err(), "Duplicate output names should be rejected");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("duplicate output name"),
+            "Error should mention duplicate output names, got: {}", err_msg
+        );
+        assert!(
+            err_msg.contains("k_head_0"),
+            "Error should mention the specific duplicate name, got: {}", err_msg
+        );
+        assert!(
+            err_msg.contains("decode_step"),
+            "Error should mention the function name, got: {}", err_msg
+        );
     }
 }
