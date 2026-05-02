@@ -3147,7 +3147,8 @@ fn mir_op_to_apple_ops(
         }
         mir_compat::MirOpCompat::StateWrite { name, state_ref, value } => {
             let mut inputs = HashMap::new();
-            // Apple's format: state input is a name reference
+            // Core ML schema: same as coreml_update_state
+            // mb.coreml_update_state(state=..., value=...)
             inputs.insert("state".to_string(), make_name_arg(state_ref));
             inputs.insert("value".to_string(), make_name_arg(value));
 
@@ -3155,7 +3156,7 @@ fn mir_op_to_apple_ops(
             add_name_attribute(&mut attributes, name);
 
             vec![apple_proto::mil_spec::Operation {
-                r#type: "write_state".to_string(),
+                r#type: "coreml_update_state".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
                     name,
