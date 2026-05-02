@@ -247,12 +247,22 @@ pub fn convert_mir_to_proto_multifunction(
         }
     }
 
-    // Default function name
-    let default_function_name =
-        graphs.first().map(|g| g.function_name.clone()).unwrap_or_else(|| "main".to_string());
+    // Default function name and model-level I/O description.
+    // For multi-function models (e.g., embedding + decode_step with KV cache),
+    // the default function should be the one used repeatedly at inference time,
+    // which is typically the last function (decode_step). The embedding function
+    // is called only once during prefill.
+    // For single-function models, just use the first (only) function.
+    let default_function_name = if graphs.len() > 1 {
+        // Multi-function: prefer the last function as default (typically decode_step)
+        graphs.last().map(|g| g.function_name.clone()).unwrap_or_else(|| "main".to_string())
+    } else {
+        graphs.first().map(|g| g.function_name.clone()).unwrap_or_else(|| "main".to_string())
+    };
 
     // Model description uses the default function's I/O
-    let default_fn = functions.first();
+    let default_fn = functions.iter().find(|f| f.name == default_function_name)
+        .or_else(|| functions.first());
     let description = ModelDescriptionCompat {
         inputs: default_fn.map(|f| f.inputs.clone()).unwrap_or_default(),
         outputs: default_fn.map(|f| f.outputs.clone()).unwrap_or_default(),

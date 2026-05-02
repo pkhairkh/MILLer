@@ -97,6 +97,9 @@ pub enum TaskOp {
         head_dim: usize,
         kv_len: usize,
         batch_size: usize,
+        kv_heads: usize,
+        intermediate_size: usize,
+        vocab_size: usize,
         dtype: String,
     },
     /// Sharded decode step: a decode step decomposed into multiple shards.
@@ -118,6 +121,9 @@ pub enum TaskOp {
         head_dim: usize,
         kv_len: usize,
         batch_size: usize,
+        kv_heads: usize,
+        intermediate_size: usize,
+        vocab_size: usize,
         dtype: String,
     },
     /// MLP Block: fused feed-forward network block (linear_up + activation + linear_down).
@@ -260,9 +266,9 @@ impl TaskOp {
                 format!("LutProjection:vocab_size={},embed_dim={},num_groups={},lut_bitwidth={},batch_size={},dtype={}",
                     vocab_size, embed_dim, num_groups, lut_bitwidth, batch_size, dtype)
             }
-            TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, dtype } => {
-                format!("DecodeStep:embed_dim={},num_heads={},head_dim={},kv_len={},batch_size={},dtype={}",
-                    embed_dim, num_heads, head_dim, kv_len, batch_size, dtype)
+            TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, kv_heads, intermediate_size, vocab_size, dtype } => {
+                format!("DecodeStep:embed_dim={},num_heads={},head_dim={},kv_len={},batch_size={},kv_heads={},intermediate_size={},vocab_size={},dtype={}",
+                    embed_dim, num_heads, head_dim, kv_len, batch_size, kv_heads, intermediate_size, vocab_size, dtype)
             }
             TaskOp::ShardedDecodeStep {
                 embed_dim,
@@ -270,10 +276,13 @@ impl TaskOp {
                 head_dim,
                 kv_len,
                 batch_size,
+                kv_heads,
+                intermediate_size,
+                vocab_size,
                 dtype,
             } => {
-                format!("ShardedDecodeStep:embed_dim={},num_heads={},head_dim={},kv_len={},batch_size={},dtype={}",
-                    embed_dim, num_heads, head_dim, kv_len, batch_size, dtype)
+                format!("ShardedDecodeStep:embed_dim={},num_heads={},head_dim={},kv_len={},batch_size={},kv_heads={},intermediate_size={},vocab_size={},dtype={}",
+                    embed_dim, num_heads, head_dim, kv_len, batch_size, kv_heads, intermediate_size, vocab_size, dtype)
             }
             TaskOp::MlpBlock {
                 input_dim,
@@ -388,13 +397,16 @@ impl TaskOp {
                     "dtype": dtype,
                 })
             }
-            TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, dtype } => {
+            TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, kv_heads, intermediate_size, vocab_size, dtype } => {
                 serde_json::json!({
                     "embed_dim": embed_dim,
                     "num_heads": num_heads,
                     "head_dim": head_dim,
                     "kv_len": kv_len,
                     "batch_size": batch_size,
+                    "kv_heads": kv_heads,
+                    "intermediate_size": intermediate_size,
+                    "vocab_size": vocab_size,
                     "dtype": dtype,
                 })
             }
@@ -404,6 +416,9 @@ impl TaskOp {
                 head_dim,
                 kv_len,
                 batch_size,
+                kv_heads,
+                intermediate_size,
+                vocab_size,
                 dtype,
             } => {
                 serde_json::json!({
@@ -412,6 +427,9 @@ impl TaskOp {
                     "head_dim": head_dim,
                     "kv_len": kv_len,
                     "batch_size": batch_size,
+                    "kv_heads": kv_heads,
+                    "intermediate_size": intermediate_size,
+                    "vocab_size": vocab_size,
                     "dtype": dtype,
                 })
             }
@@ -956,7 +974,17 @@ fn parse_decode_step(
     }
     let head_dim = embed_dim / num_heads;
 
-    let op = TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, dtype };
+    let op = TaskOp::DecodeStep {
+        embed_dim,
+        num_heads,
+        head_dim,
+        kv_len,
+        batch_size,
+        kv_heads: num_heads,
+        intermediate_size: embed_dim * 4,
+        vocab_size: 0,
+        dtype,
+    };
 
     let measurement = parse_measurement(root);
 
@@ -1024,8 +1052,17 @@ fn parse_sharded_decode_step(
     }
     let head_dim = embed_dim / num_heads;
 
-    let op =
-        TaskOp::ShardedDecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, dtype };
+    let op = TaskOp::ShardedDecodeStep {
+        embed_dim,
+        num_heads,
+        head_dim,
+        kv_len,
+        batch_size,
+        kv_heads: num_heads,
+        intermediate_size: embed_dim * 4,
+        vocab_size: 0,
+        dtype,
+    };
 
     let measurement = parse_measurement(root);
 
@@ -1197,7 +1234,7 @@ metrics = ["Latency"]
         assert_eq!(spec.name, "test_decode");
         assert_eq!(spec.family, "DecodeStep");
         match spec.op {
-            TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, dtype } => {
+            TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, dtype, .. } => {
                 assert_eq!(embed_dim, 128);
                 assert_eq!(num_heads, 4);
                 assert_eq!(head_dim, 32); // 128 / 4
@@ -1261,6 +1298,7 @@ metrics = ["Latency"]
                 kv_len,
                 batch_size,
                 dtype,
+                ..
             } => {
                 assert_eq!(embed_dim, 128);
                 assert_eq!(num_heads, 4);

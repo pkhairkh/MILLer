@@ -191,6 +191,9 @@ impl ShardSurvivalFamily {
                                     head_dim: *head_dim,
                                     kv_len: *kv_len,
                                     batch_size: *batch_size,
+                                    kv_heads: *num_heads,
+                                    intermediate_size: *embed_dim * 4,
+                                    vocab_size: 0,
                                     dtype: dtype.clone(),
                                 },
                                 format!(

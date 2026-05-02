@@ -1126,13 +1126,21 @@ fn run_compile_full(
             head_dim,
             kv_len,
             batch_size,
+            kv_heads,
+            intermediate_size,
+            vocab_size,
             ..
-        } => Some(DecompositionContext::for_decode_step(
+        } => Some(DecompositionContext::for_decode_step_full(
             *batch_size,
             *embed_dim,
             *num_heads,
             *head_dim,
             *kv_len,
+            *kv_heads,
+            *intermediate_size,
+            *vocab_size,
+            true,  // uses_rope
+            false, // has_qk_norm
         )),
         ane_ir::task_spec::TaskOp::ShardedDecodeStep {
             embed_dim,
@@ -1140,13 +1148,21 @@ fn run_compile_full(
             head_dim,
             kv_len,
             batch_size,
+            kv_heads,
+            intermediate_size,
+            vocab_size,
             ..
-        } => Some(DecompositionContext::for_decode_step(
+        } => Some(DecompositionContext::for_decode_step_full(
             *batch_size,
             *embed_dim,
             *num_heads,
             *head_dim,
             *kv_len,
+            *kv_heads,
+            *intermediate_size,
+            *vocab_size,
+            true,  // uses_rope
+            false, // has_qk_norm
         )),
         _ => None,
     };
@@ -1675,6 +1691,7 @@ fn run_compile_full_sharded(
             kv_len,
             batch_size,
             dtype,
+            ..
         } => ane_ir::pir::ShardPipelineSpec::three_shard_decode_step(
             &spec.name,
             *embed_dim,
@@ -1908,13 +1925,21 @@ fn run_compile_full_sharded(
                 head_dim,
                 kv_len,
                 batch_size,
+                kv_heads,
+                intermediate_size,
+                vocab_size,
                 ..
-            } => Some(DecompositionContext::for_decode_step(
+            } => Some(DecompositionContext::for_decode_step_full(
                 *batch_size,
                 *embed_dim,
                 *num_heads,
                 *head_dim,
                 *kv_len,
+                *kv_heads,
+                *intermediate_size,
+                *vocab_size,
+                true,  // uses_rope
+                false, // has_qk_norm
             )),
             _ => None,
         };
@@ -2539,6 +2564,7 @@ fn run_compile_sharded(
             kv_len,
             batch_size,
             dtype,
+            ..
         } => ane_ir::pir::ShardPipelineSpec::three_shard_decode_step(
             &spec.name,
             *embed_dim,

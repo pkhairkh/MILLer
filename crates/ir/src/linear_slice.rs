@@ -186,6 +186,7 @@ pub fn lower_linear_projection_to_mir(
         outputs: vec![add_id],
         opset_version: crate::DEFAULT_OPSET_VERSION.into(),
         shard_name: shard_name.into(),
+        input_shapes: std::collections::HashMap::new(),
     })
 }
 
@@ -676,6 +677,9 @@ mod tests {
                 head_dim: 32,
                 kv_len: 64,
                 batch_size: 1,
+                kv_heads: 4,       // num_heads (no GQA)
+                intermediate_size: 512, // embed_dim * 4
+                vocab_size: 0,
                 dtype: "fp16".into(),
             },
             measurement: MeasurementConfig {

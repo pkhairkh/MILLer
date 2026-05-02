@@ -174,6 +174,9 @@ impl DecodeStepFamily {
                                     head_dim,
                                     kv_len: *kv_len,
                                     batch_size: *batch_size,
+                                    kv_heads: *num_heads,
+                                    intermediate_size: *embed_dim * 4,
+                                    vocab_size: 0,
                                     dtype: dtype.clone(),
                                 },
                                 measurement: MeasurementConfig {
@@ -252,6 +255,7 @@ mod tests {
                         kv_len: kv1,
                         batch_size: b1,
                         dtype: d1,
+                        ..
                     },
                     TaskOp::DecodeStep {
                         embed_dim: e2,
@@ -260,6 +264,7 @@ mod tests {
                         kv_len: kv2,
                         batch_size: b2,
                         dtype: d2,
+                        ..
                     },
                 ) => {
                     assert_eq!((e1, h1, hd1, kv1, b1, d1), (e2, h2, hd2, kv2, b2, d2));
@@ -362,6 +367,7 @@ mod tests {
                         kv_len: kv1,
                         batch_size: b1,
                         dtype: d1,
+                        ..
                     },
                     TaskOp::DecodeStep {
                         embed_dim: e2,
@@ -370,6 +376,7 @@ mod tests {
                         kv_len: kv2,
                         batch_size: b2,
                         dtype: d2,
+                        ..
                     },
                 ) => {
                     assert_eq!((e1, h1, hd1, kv1, b1, d1), (e2, h2, hd2, kv2, b2, d2));

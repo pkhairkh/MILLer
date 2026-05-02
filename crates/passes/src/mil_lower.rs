@@ -3044,8 +3044,12 @@ impl MilLowerPass {
                     lm_id.0, input_mir_id.0, input_shape,
                 );
 
-                // The hidden state shape is [B, S, D]. We need S >= 2 to slice.
-                if input_shape.len() >= 2 && input_shape[1] > 1 {
+                // The hidden state shape is [B, S, D] (3D, embedding/prefill) or
+                // [B, D] (2D, decode_step with single token).
+                // For 3D inputs with S >= 2, we slice the last token.
+                // For 2D inputs (decode_step), the hidden state is already a single
+                // token, so no slicing is needed.
+                if input_shape.len() >= 3 && input_shape[1] > 1 {
                     let seq_len = input_shape[1] as i64;
                     let rank = input_shape.len();
 
@@ -3182,23 +3186,48 @@ impl MilLowerPass {
                     }
                 };
 
-                // Get the input hidden state shape (should be [1, 1, D] after slice-before)
+                // Get the input hidden state shape (should be [1, 1, D] after slice-before,
+                // or [1, D] for decode_step with single-token input)
                 let input_shape = mir_nodes.iter()
                     .find(|n| n.id.0 == input_mir_id.0)
                     .map(|n| n.shape.clone())
                     .unwrap_or_default();
 
-                let hidden_dim = input_shape.get(2).copied().unwrap_or(0);
-                let vocab_size = output_shape.get(2).copied().unwrap_or(0);
+                // Extract hidden_dim and vocab_size depending on input rank:
+                //   3D [1, 1, D]: hidden_dim = input_shape[2], vocab_size = output_shape[2]
+                //   2D [1, D]:    hidden_dim = input_shape[1], vocab_size = output_shape[1]
+                let hidden_dim = if input_shape.len() >= 3 {
+                    input_shape.get(2).copied().unwrap_or(0)
+                } else if input_shape.len() >= 2 {
+                    input_shape.get(1).copied().unwrap_or(0)
+                } else {
+                    0
+                };
+                let vocab_size = if output_shape.len() >= 3 {
+                    output_shape.get(2).copied().unwrap_or(0)
+                } else if output_shape.len() >= 2 {
+                    output_shape.get(1).copied().unwrap_or(0)
+                } else {
+                    0
+                };
 
                 eprintln!(
                     "  [lm_head matmul] Converting linear → matmul: input_shape={:?}, hidden_dim={}, vocab_size={}, weight={}",
                     input_shape, hidden_dim, vocab_size, weight_name
                 );
 
-                // Step 1: Reshape [1,1,D] → [1,D] (2D for matmul, matching reference)
-                let reshape_id = MirNodeId(format!("{}_2d", input_mir_id.0));
-                let reshape_shape = if hidden_dim > 0 { vec![1, hidden_dim] } else { vec![1] };
+                // Step 1: Reshape to 2D [1, D] for matmul (matching reference).
+                // If the input is already 2D (decode_step: [1, D]), skip the reshape
+                // and use the input directly. If 3D (embedding: [1, 1, D]), reshape.
+                let (reshape_id, reshape_shape, needs_reshape) = if input_shape.len() >= 3 {
+                    // 3D input: need reshape [1, 1, D] → [1, D]
+                    let rid = MirNodeId(format!("{}_2d", input_mir_id.0));
+                    let rshape = if hidden_dim > 0 { vec![1, hidden_dim] } else { vec![1] };
+                    (rid, rshape, true)
+                } else {
+                    // 2D input: already [1, D], use directly — no reshape needed
+                    (input_mir_id.clone(), input_shape.clone(), false)
+                };
                 let reshape_node = MirNode {
                     id: reshape_id.clone(),
                     op: MirOp::MILReshape {
@@ -3232,15 +3261,22 @@ impl MilLowerPass {
                 };
 
                 // Replace the original lm_head node with reshape + matmul
+                // (or just matmul if input is already 2D)
                 mir_nodes.remove(lm_idx);
-                mir_nodes.insert(lm_idx, reshape_node);
-                mir_nodes.insert(lm_idx + 1, matmul_node);
+                if needs_reshape {
+                    mir_nodes.insert(lm_idx, reshape_node);
+                    mir_nodes.insert(lm_idx + 1, matmul_node);
+                } else {
+                    mir_nodes.insert(lm_idx, matmul_node);
+                }
 
                 // Update node_shapes
-                node_shapes.insert(
-                    AirNodeId(format!("{}_2d", input_mir_id.0)),
-                    reshape_shape,
-                );
+                if needs_reshape {
+                    node_shapes.insert(
+                        AirNodeId(format!("{}_2d", input_mir_id.0)),
+                        reshape_shape,
+                    );
+                }
                 if let Some(air_id) = lm_air_source {
                     node_shapes.insert(air_id, matmul_output_shape.clone());
                 }
@@ -3327,10 +3363,8 @@ impl MilLowerPass {
                 }
 
                 eprintln!(
-                    "  [lm_head matmul] Applied: reshape [{},{},{}] → [1,{}] → matmul(y={}, transpose_y=True) → [1,{}] → cast → [1,{}] fp32",
-                    input_shape.get(0).unwrap_or(&0),
-                    input_shape.get(1).unwrap_or(&0),
-                    input_shape.get(2).unwrap_or(&0),
+                    "  [lm_head matmul] Applied: {} → [1,{}] → matmul(y={}, transpose_y=True) → [1,{}] → cast → [1,{}] fp32",
+                    if needs_reshape { format!("reshape [{},{},{}] → [1,{}]", input_shape.get(0).unwrap_or(&0), input_shape.get(1).unwrap_or(&0), input_shape.get(2).unwrap_or(&0), hidden_dim) } else { format!("direct [{},{}] (already 2D)", input_shape.get(0).unwrap_or(&0), input_shape.get(1).unwrap_or(&0)) },
                     hidden_dim,
                     weight_name,
                     vocab_size,
@@ -3885,12 +3919,28 @@ impl MilLowerPass {
         let shard_name =
             shard_plan.shard_names.first().cloned().unwrap_or_else(|| "shard_0".to_string());
 
+        // Populate input_shapes from the externally-provided input shapes.
+        // This preserves shape information for graph inputs that don't have
+        // corresponding MirNode entries (e.g., "sir_hidden_input" in decode_step).
+        // Without this, mir_to_compat falls back to shape [1] which breaks
+        // all downstream shape inference.
+        let mir_input_shapes: std::collections::HashMap<MirNodeId, Vec<usize>> =
+            input_shapes.iter()
+                .map(|(air_id, shape)| {
+                    let mir_id = air_to_mir.get(air_id)
+                        .cloned()
+                        .unwrap_or_else(|| MirNodeId(air_id.0.clone()));
+                    (mir_id, shape.clone())
+                })
+                .collect();
+
         Ok(vec![MirGraph {
             nodes: mir_nodes,
             inputs: mir_inputs,
             outputs: mir_outputs,
             opset_version: "iOS18".into(),
             shard_name,
+            input_shapes: mir_input_shapes,
         }])
     }
 }

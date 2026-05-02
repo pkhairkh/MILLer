@@ -156,6 +156,11 @@ impl DecompositionContext {
     }
 
     /// Construct a context for a DecodeStep with full dimensions and feature flags.
+    ///
+    /// Includes `intermediate_size` and `vocab_size` so that `output_dim_for_weight`
+    /// can resolve MLP gate/up/down projections and lm_head correctly.
+    /// Without these, the Conv1x1AsLinear output_dim for lm_head would be 0,
+    /// causing shape inference to produce wrong dimensions for the decode_step.
     pub fn for_decode_step_full(
         batch_size: usize,
         embed_dim: usize,
@@ -163,6 +168,8 @@ impl DecompositionContext {
         head_dim: usize,
         kv_len: usize,
         kv_heads: usize,
+        intermediate_size: usize,
+        vocab_size: usize,
         uses_rope: bool,
         has_qk_norm: bool,
     ) -> Self {
@@ -173,8 +180,8 @@ impl DecompositionContext {
             head_dim,
             seq_len: kv_len,
             kv_heads,
-            intermediate_size: 0,
-            vocab_size: 0,
+            intermediate_size,
+            vocab_size,
             uses_rope,
             has_qk_norm,
             uses_gqa: kv_heads > 0 && kv_heads < num_heads,
@@ -1823,6 +1830,24 @@ impl LegalityRewritePass {
             v_head_ids.push(v_i_id);
         }
 
+        // Pre-transpose K heads for the Q×K^T matmul.
+        // After slicing, each K head has shape [1, seq, hd] (3D from squeeze).
+        // Transposing axes [0,2,1] gives [1, hd, seq], so the matmul becomes:
+        //   [1, 1, hd] × [1, hd, seq] = [1, 1, seq]  ← correct attention scores
+        // Without this transpose, the matmul would be:
+        //   [1, 1, hd] × [1, seq, hd]  ← inner dims mismatch (hd ≠ seq)
+        // This matches the pattern used in decompose_attention_block (line 1017-1028).
+        let mut k_head_t_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads as usize);
+        for kv_idx in 0..(kv_heads as usize) {
+            let k_i_t_id = AirNodeId(format!("{base}_k_head_{}_t", kv_idx));
+            nodes.push(Self::make_air_node(
+                k_i_t_id.clone(),
+                AirOp::Transpose { input: k_head_ids[kv_idx].clone(), perm: vec![0, 2, 1] },
+                sir_node, "mb.transpose", kq,
+            ));
+            k_head_t_ids.push(k_i_t_id);
+        }
+
         let mut ctx_parts: Vec<AirNodeId> = Vec::with_capacity(heads as usize);
 
         for head_idx in 0..(heads as usize) {
@@ -1846,17 +1871,18 @@ impl LegalityRewritePass {
                 sir_node, "mb.slice_by_index", kq,
             ));
 
-            // Reuse pre-sliced K and V heads (no duplicate output names)
-            let k_i_id = k_head_ids[kv_idx].clone();
+            // Reuse pre-sliced V heads (no duplicate output names)
             let v_i_id = v_head_ids[kv_idx].clone();
+            // Use pre-transposed K head: k_i^T shape [B, hd, seq]
+            let k_i_t_id = k_head_t_ids[kv_idx].clone();
 
-            // logits = matmul(q_i, k_i, transpose_y=True)
-            // q_i: [B, 1, 1, hd], k_i: [B, 1, seq, hd]
-            // matmul output: [B, 1, 1, seq]
+            // logits = matmul(q_i, k_i^T)
+            // q_i: [B, 1, hd] (3D from squeeze), k_i^T: [B, hd, seq] (pre-transposed)
+            // matmul output: [B, 1, seq]  ← correct attention score shape
             let logits_id = AirNodeId(format!("{base}_logits_{}", hi));
             nodes.push(Self::make_air_node(
                 logits_id.clone(),
-                AirOp::MatMul { a: q_i_id, b: k_i_id },
+                AirOp::MatMul { a: q_i_id, b: k_i_t_id },
                 sir_node, "mb.matmul", kq,
             ));
 
@@ -4352,6 +4378,8 @@ mod tests {
             128,  // head_dim
             512,  // kv_len
             8,    // kv_heads (GQA)
+            4096, // intermediate_size
+            151936, // vocab_size
             false, // uses_rope
             false, // has_qk_norm
         );

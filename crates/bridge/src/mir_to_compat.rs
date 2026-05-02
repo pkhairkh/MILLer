@@ -234,16 +234,32 @@ pub fn mir_graph_to_compat(
                     dtype: compat_input_dtype(&node.id.0, &node.dtype),
                 },
                 None => {
-                    // Input node not found in graph nodes — use default shape/dtype.
-                    // Core ML requires every input to have shape constraints.
-                    eprintln!(
-                        "  Warning: input node '{}' not found in MIR graph — using default shape [1]",
-                        id.0
-                    );
-                    TensorDescCompat {
-                        name: id.0.clone(),
-                        shape: vec![1],
-                        dtype: MilDtypeCompat::Fp16,
+                    // Input node not found in graph nodes — check if we have
+                    // explicit input_shapes from the MIR graph. This happens for
+                    // multi-function models where inputs like "sir_hidden_input"
+                    // are referenced by ops but don't have their own MirNode.
+                    if let Some(shape) = graph.input_shapes.get(id) {
+                        TensorDescCompat {
+                            name: id.0.clone(),
+                            shape: shape.clone(),
+                            dtype: if id.0.contains("position") || id.0.contains("pos") {
+                                MilDtypeCompat::Int32
+                            } else {
+                                MilDtypeCompat::Fp16
+                            },
+                        }
+                    } else {
+                        // Last resort: default shape [1].
+                        // Core ML requires every input to have shape constraints.
+                        eprintln!(
+                            "  Warning: input node '{}' not found in MIR graph — using default shape [1]",
+                            id.0
+                        );
+                        TensorDescCompat {
+                            name: id.0.clone(),
+                            shape: vec![1],
+                            dtype: MilDtypeCompat::Fp16,
+                        }
                     }
                 }
             }
@@ -272,6 +288,10 @@ pub fn mir_graph_to_compat(
             if !shape.is_empty() {
                 node_shapes.insert(node.id.0.clone(), shape);
             }
+        } else if let Some(shape) = graph.input_shapes.get(id) {
+            // Use explicit input_shapes from the MIR graph for inputs that
+            // don't have MirNode entries (e.g., "sir_hidden_input").
+            node_shapes.insert(id.0.clone(), shape.clone());
         }
     }
 
@@ -1929,6 +1949,7 @@ mod tests {
             outputs: vec![MirNodeId("output".to_string())],
             opset_version: "iOS18".to_string(),
             shard_name: "main".to_string(),
+            input_shapes: std::collections::HashMap::new(),
         }
     }
 

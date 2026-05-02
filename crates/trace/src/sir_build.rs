@@ -1059,6 +1059,11 @@ impl<'a> SirBuildContext<'a> {
         // Track already-created K/V head slices to avoid duplicates in GQA
         let mut k_head_ids: std::collections::HashMap<usize, SirNodeId> = std::collections::HashMap::new();
         let mut v_head_ids: std::collections::HashMap<usize, SirNodeId> = std::collections::HashMap::new();
+        // Also deduplicate K head transposes — each KV head only needs one transpose,
+        // and multiple Q heads sharing the same KV head must reuse the same transposed K.
+        // Without this, GQA with fan_out > 1 produces duplicate MIL output names
+        // (e.g., "k_head_0_transpose" twice), violating MIL's SSA rule.
+        let mut k_head_t_ids: std::collections::HashMap<usize, SirNodeId> = std::collections::HashMap::new();
 
         for head_idx in 0..num_heads {
             let kv_idx = head_idx / fan_out;
@@ -1125,11 +1130,21 @@ impl<'a> SirBuildContext<'a> {
             // q_i: [B, S, D], k_i: [B, S, D]
             // After transpose of k_i: [B, D, S]
             // matmul: [B, S, D] @ [B, D, S] = [B, S, S]
-            let k_i_t_id = SirNodeId(format!("sir_k_head_{}_transpose_{}", kv_idx, node.id));
-            ops.push((
-                SirOp::Transpose { input: k_i_id, perm: vec![0, 2, 1] },
-                format!("k_head_{}_transpose", kv_idx),
-            ));
+            //
+            // CRITICAL: Deduplicate the K head transpose using the same HashMap
+            // pattern as the K head slice. When GQA fan_out > 1, multiple Q heads
+            // share the same KV head, so the transpose only needs to be created once.
+            let k_i_t_id = if let Some(existing) = k_head_t_ids.get(&kv_idx) {
+                existing.clone()
+            } else {
+                let id = SirNodeId(format!("sir_k_head_{}_transpose_{}", kv_idx, node.id));
+                ops.push((
+                    SirOp::Transpose { input: k_i_id, perm: vec![0, 2, 1] },
+                    format!("k_head_{}_transpose", kv_idx),
+                ));
+                k_head_t_ids.insert(kv_idx, id.clone());
+                id
+            };
 
             let logits_id = SirNodeId(format!("sir_logits_{}_{}", head_idx, node.id));
             ops.push((

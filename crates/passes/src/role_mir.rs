@@ -165,6 +165,7 @@ impl RoleMirBuilder {
                     outputs: vec![output_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
+                    input_shapes: std::collections::HashMap::new(),
                 })
             }
 
@@ -256,6 +257,7 @@ impl RoleMirBuilder {
                     outputs: vec![output_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
+                    input_shapes: std::collections::HashMap::new(),
                 })
             }
 
@@ -330,6 +332,7 @@ impl RoleMirBuilder {
                     outputs: vec![ln_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
+                    input_shapes: std::collections::HashMap::new(),
                 })
             }
 
@@ -387,6 +390,7 @@ impl RoleMirBuilder {
                     outputs: vec![split_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
+                    input_shapes: std::collections::HashMap::new(),
                 })
             }
 
@@ -478,6 +482,7 @@ impl RoleMirBuilder {
                     outputs: vec![attn_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
+                    input_shapes: std::collections::HashMap::new(),
                 })
             }
 
@@ -554,6 +559,7 @@ impl RoleMirBuilder {
                     outputs: vec![output_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
+                    input_shapes: std::collections::HashMap::new(),
                 })
             }
 
@@ -600,6 +606,7 @@ impl RoleMirBuilder {
                     outputs: vec![gather_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
+                    input_shapes: std::collections::HashMap::new(),
                 })
             }
 
@@ -635,6 +642,7 @@ impl RoleMirBuilder {
                     outputs: vec![softmax_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
+                    input_shapes: std::collections::HashMap::new(),
                 })
             }
 
@@ -689,6 +697,7 @@ impl RoleMirBuilder {
                     outputs: vec![linear_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
+                    input_shapes: std::collections::HashMap::new(),
                 })
             }
         }

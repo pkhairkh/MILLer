@@ -39,6 +39,7 @@ fn test_mir_graph_duplicate_node_ids_panics() {
         outputs: vec![nid("dup")],
         opset_version: "iOS18".into(),
         shard_name: "test".into(),
+        input_shapes: std::collections::HashMap::new(),
     };
 
     // Validate the graph — should panic due to duplicate IDs
@@ -74,6 +75,7 @@ fn test_mir_graph_output_references_unknown_node_panics() {
         outputs: vec![nid("nonexistent")], // References node that doesn't exist!
         opset_version: "iOS18".into(),
         shard_name: "test".into(),
+        input_shapes: std::collections::HashMap::new(),
     };
 
     validate_mir_graph_refs(&graph);
@@ -107,6 +109,7 @@ fn test_mir_node_access_out_of_bounds_panics() {
         outputs: vec![],
         opset_version: "iOS18".into(),
         shard_name: "test".into(),
+        input_shapes: std::collections::HashMap::new(),
     };
 
     // Accessing a node from an empty graph should panic

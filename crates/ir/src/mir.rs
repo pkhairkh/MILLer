@@ -1272,4 +1272,12 @@ pub struct MirGraph {
     pub outputs: Vec<MirNodeId>,
     pub opset_version: String,
     pub shard_name: String,
+    /// Explicit input shapes for graph inputs that don't have corresponding
+    /// MirNode entries. This is critical for multi-function models like
+    /// decode_step where the inputs (e.g., "sir_hidden_input") are
+    /// referenced by ops but aren't MirNode themselves. Without this,
+    /// mir_to_compat falls back to shape [1] which breaks all downstream
+    /// shape inference.
+    #[serde(default)]
+    pub input_shapes: std::collections::HashMap<MirNodeId, Vec<usize>>,
 }

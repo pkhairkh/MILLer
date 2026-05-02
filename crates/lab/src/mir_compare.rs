@@ -816,6 +816,7 @@ mod tests {
             outputs: vec![MirNodeId("linear".into())],
             opset_version: "iOS18".into(),
             shard_name: "shard_0".into(),
+            input_shapes: std::collections::HashMap::new(),
         }
     }
 
@@ -890,6 +891,7 @@ mod tests {
             outputs: vec![],
             opset_version: "iOS18".into(),
             shard_name: "shard_0".into(),
+            input_shapes: std::collections::HashMap::new(),
         };
         let result = compare_mir_vs_structure(&mir, &[]);
         assert!((result.op_fidelity_score - 1.0).abs() < 1e-10);

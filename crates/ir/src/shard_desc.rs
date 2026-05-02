@@ -154,6 +154,7 @@ pub fn lower_shard_to_mir(
         outputs: vec![add_id],
         opset_version: crate::DEFAULT_OPSET_VERSION.into(),
         shard_name: shard.shard_name.clone(),
+        input_shapes: std::collections::HashMap::new(),
     })
 }
 
