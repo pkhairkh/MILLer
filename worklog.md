@@ -159,3 +159,36 @@ Stage Summary:
 - Existing Tile decomposition (Reshape+Mul+Reshape) kept as safety net for any remaining standalone Tile ops
 - Split-based attention matches reference model pattern: Split → SliceByIndex → per-head MatMul+Softmax+MatMul → Concat
 - Files changed: sir_build.rs, legality_rewrite.rs, mil_lower.rs, versioned.rs
+
+---
+Task ID: push-verify
+Agent: main
+Task: Pull from remote, commit, push to GitHub, and verify state pipeline end-to-end
+
+Work Log:
+- Pulled from remote (git pull origin main) — already up to date
+- Pushed local commit bf8e968 to origin/main successfully
+- Traced full state pipeline end-to-end through code review:
+  1. CLI: `--with-kv-cache` defaults to `true` (line 448 of main.rs)
+  2. `build_decode_step_sir()`: Produces `SirOp::DecodeStep` with `state_map` for each layer
+  3. `LegalityRewritePass::decompose_decode_step()`: Decomposes to `StateReadFixed` + `StateWriteFixed` with KV cache ops
+  4. `MilLowerPass`: Maps `StateReadFixed → MILReadState`, `StateWriteFixed → MILCoremlUpdateState`
+  5. `mir_graph_to_compat()`: Maps `MILReadState → ReadState`, `MILCoremlUpdateState → CoremlUpdateState`
+  6. `mir_to_proto.rs`: Extracts state declarations from ReadState/CoremlUpdateState ops into `graph_states`
+  7. `function_to_apple_proto()`: Adds state declarations to MIL function inputs as `StateType`-wrapped `NamedValueType`
+  8. `convert_to_apple_proto_model()`: Populates `FunctionDescription.state` and `ModelDescription.state`
+- Verified diagnostic checks at each pipeline stage in `run_trace_compile()` (AIR, MIR, Compat)
+- Ran all test suites:
+  - ane-coreml-emit: 38 tests pass (including test_apple_proto_state_ops)
+  - ane-bridge: 35 tests pass (including multifunction shared weights)
+  - ane-passes state tests: 2 pass (state_read_lowering, state_write_lowering)
+  - ane-passes decode_step tests: 6 pass (including decomposition with context)
+  - ane-coreml-proto: 1 state test pass
+- Build: `cargo build --bin ane-cli` succeeds
+- CLI help confirms `--with-kv-cache` is enabled by default
+
+Stage Summary:
+- Commit bf8e968 successfully pushed to https://github.com/pkhairkh/MILLer
+- State pipeline is complete and correct at every stage from SIR through proto emission
+- All tests pass, no regressions
+- User needs to rebuild and recompile on their Mac with the latest code
