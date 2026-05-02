@@ -1532,47 +1532,10 @@ impl LegalityRewritePass {
         };
         let _uses_gqa = (kv_heads as i64) < heads; // used for diagnostics only
 
-        // Step 5a: Apply RoPE to Q (and compute KV cache mask for cache write).
-        //
-        // K RoPE is applied AFTER the cache update (Step 5b) because the
-        // cache stores un-RoPE'd values and each position needs its own
-        // rotation from the full cos/sin tables.
-        let (q_for_attn, cos_tab_id, sin_tab_id, kv_mask_write_id, causal_mask_id) =
-            if let Some(tables_ref) = rope_tables {
-            let (q_rope, cos_tab, sin_tab, kv_mask, causal_mask) = Self::apply_rope_decode(
-                &q_4d_id,
-                &k_4d_id,
-                tables_ref,
-                position,
-                &sir_to_air,
-                base,
-                sir_node,
-                kq,
-                ctx,
-                &mut nodes,
-            );
-            (q_rope, cos_tab, sin_tab, kv_mask, causal_mask)
-        } else {
-            (q_4d_id, None, None, None, None)
-        };
-
-        // Step 5b: KV Cache write — masked blend (NOT SliceUpdate)
-        //
-        // The reference model's _append function:
-        //   def _append(old, new, mask_keep, mask_write):
-        //       return mb.add(x=mb.mul(x=old, y=mask_keep),
-        //                     y=mb.mul(x=new, y=mask_write))
-        //
-        // mask_write: 1-hot at write position, 0 elsewhere → [1, 1, seq, 1]
-        // mask_keep:  1 - mask_write → 0 at write position, 1 elsewhere
-        //
-        // next_k_cache = _append(k_cache, k_new_4d, mask_keep, mask_write)
-        // next_v_cache = _append(v_cache, v_new_4d, mask_keep, mask_write)
-        // mb.coreml_update_state(state=k_state, value=next_k_cache)
-        // mb.coreml_update_state(state=v_state, value=next_v_cache)
-
-        // Reshape the new K value for cache write:
+        // Step 5a-prep: Reshape the new K value BEFORE applying RoPE.
         // k_after_norm is [batch, kv_heads*head_dim] → [1, kv_heads, 1, head_dim]
+        // This reshape must happen before step 5a so we can apply RoPE to the
+        // new K token before writing it to cache.
         let k_new_4d_id = AirNodeId(format!("{base}_k_new_4d"));
         nodes.push(Self::make_air_node(
             k_new_4d_id.clone(),
@@ -1594,6 +1557,54 @@ impl LegalityRewritePass {
             },
             sir_node, "mb.reshape", kq,
         ));
+
+        // Step 5a: Apply RoPE to Q and the new K token.
+        //
+        // CRITICAL ARCHITECTURE DECISION: The KV cache stores PRE-RoPE'd
+        // K values. This means we only need to apply RoPE to the NEW K
+        // token (shape [1, hk, 1, hd]) before writing it to the cache,
+        // using the gathered cos/sin for the current position (shape
+        // [1, 1, 1, hd]). This avoids the broadcast-incompatibility
+        // problem that arises when trying to apply RoPE to the ENTIRE
+        // K cache using full cos/sin tables — the K cache has shape
+        // [1, hk, max_seq, hd] which is incompatible with tables shaped
+        // [1, 1, prefill_seq, hd].
+        //
+        // The Q RoPE uses the same gathered cos/sin (Q has seq_len=1
+        // for decode, so broadcast works: [1, hq, 1, hd] * [1, 1, 1, hd]).
+        let (q_for_attn, k_new_rope_id, kv_mask_write_id, causal_mask_id) =
+            if let Some(tables_ref) = rope_tables {
+            let (q_rope, _cos_tab, _sin_tab, k_new_rope, kv_mask, causal_mask) = Self::apply_rope_decode(
+                &q_4d_id,
+                &k_new_4d_id,
+                tables_ref,
+                position,
+                &sir_to_air,
+                base,
+                sir_node,
+                kq,
+                ctx,
+                &mut nodes,
+            );
+            (q_rope, k_new_rope, kv_mask, causal_mask)
+        } else {
+            (q_4d_id, k_new_4d_id.clone(), None, None)
+        };
+
+        // Step 5b: KV Cache write — masked blend (NOT SliceUpdate)
+        //
+        // The reference model's _append function:
+        //   def _append(old, new, mask_keep, mask_write):
+        //       return mb.add(x=mb.mul(x=old, y=mask_keep),
+        //                     y=mb.mul(x=new, y=mask_write))
+        //
+        // mask_write: 1-hot at write position, 0 elsewhere → [1, 1, seq, 1]
+        // mask_keep:  1 - mask_write → 0 at write position, 1 elsewhere
+        //
+        // next_k_cache = _append(k_cache, k_new_rope, mask_keep, mask_write)
+        // next_v_cache = _append(v_cache, v_new_4d, mask_keep, mask_write)
+        // mb.coreml_update_state(state=k_state, value=next_k_cache)
+        // mb.coreml_update_state(state=v_state, value=next_v_cache)
 
         // Compute masked blend for KV cache writes
         let (next_k_cache_id, next_v_cache_id) = if let Some(ref kv_mask_row) = kv_mask_write_id {
@@ -1626,10 +1637,9 @@ impl LegalityRewritePass {
                 sir_node, "mb.sub", kq,
             ));
 
-            // K cache: _append(k_cache, k_new_4d, mask_keep, mask_write)
-            // Use the 4D reshaped K cache (not the raw 2D read) so that
-            // broadcasting with mask_keep [1,1,seq,1] produces correct shape
-            // [1, kv_heads, seq, head_dim] instead of [1,1,seq,kv_embed].
+            // K cache: _append(k_cache, k_new_rope, mask_keep, mask_write)
+            // Write PRE-RoPE'd K to the cache so we don't need to re-apply
+            // RoPE to the entire cache at every decode step.
             let k_old_masked_id = AirNodeId(format!("{base}_k_old_masked"));
             nodes.push(Self::make_air_node(
                 k_old_masked_id.clone(),
@@ -1640,7 +1650,7 @@ impl LegalityRewritePass {
             let k_new_masked_id = AirNodeId(format!("{base}_k_new_masked"));
             nodes.push(Self::make_air_node(
                 k_new_masked_id.clone(),
-                AirOp::Mul { x: k_new_4d_id, y: mask_write_id.clone() },
+                AirOp::Mul { x: k_new_rope_id, y: mask_write_id.clone() },
                 sir_node, "mb.mul", kq,
             ));
 
@@ -1693,22 +1703,15 @@ impl LegalityRewritePass {
             (k_4d_id.clone(), v_4d_id.clone())
         };
 
-        // Step 5c: Apply RoPE to the UPDATED K cache (after appending the new token)
+        // Step 5c: K cache now stores pre-RoPE'd values.
         //
-        // The KV cache stores un-RoPE'd values. For attention, we must apply
-        // RoPE to ALL positions using the FULL cos/sin tables [1, 1, seq_len, head_dim].
-        // Each position gets its own rotation. The Q RoPE was already applied above
-        // using gathered cos/sin (since Q has seq_len=1 for decode).
-        let k_for_attn = if let (Some(cos_tab), Some(sin_tab)) = (&cos_tab_id, &sin_tab_id) {
-            let head_dim_val = if head_dim > 0 { head_dim as usize } else { 128 };
-            let half = head_dim_val / 2;
-            Self::apply_rotary_half(
-                &next_k_cache_id, cos_tab, sin_tab, half, base, "_k_rope",
-                sir_node, kq, &mut nodes,
-            )
-        } else {
-            next_k_cache_id.clone()
-        };
+        // Since we applied RoPE to the new K token before writing it to
+        // the cache (Step 5a), the K cache already contains RoPE'd values
+        // for all positions. No full-cache RoPE re-application is needed.
+        // This eliminates the broadcast incompatibility that would arise
+        // from multiplying full cos/sin tables [1,1,prefill_seq,hd] with
+        // the entire K cache [1,hk,max_seq,hd].
+        let k_for_attn = next_k_cache_id.clone();
 
         // Step 5d: Split-based per-head attention (matching reference model)
         //
@@ -2126,27 +2129,28 @@ impl LegalityRewritePass {
         flat_id
     }
 
-    /// Apply RoPE to Q and K in the decode step.
+    /// Apply RoPE to Q and the new K token in the decode step.
     ///
-    /// For the decode step (seq_len=1), the Q tensor is [B, H, 1, D]
-    /// and the K tensor is [B, H, kv_len, D] (after potential GQA tiling).
+    /// For the decode step (seq_len=1), both Q and the new K token are
+    /// [B, H, 1, D]. When a position input is provided, we gather the
+    /// specific row from the cos/sin tables corresponding to the current
+    /// decode position, producing [1, 1, 1, D] which broadcasts correctly
+    /// with [B, H, 1, D].
     ///
-    /// When a position input is provided, we gather the specific row
-    /// from the cos/sin tables corresponding to the current decode
-    /// position. This produces [1, 1, 1, D] which broadcasts correctly
-    /// with [B, H, 1, D] for Q.
+    /// The K cache stores PRE-RoPE'd values. The new K token gets RoPE'd
+    /// here (before being written to cache), so no full-cache RoPE
+    /// re-application is needed later. This avoids the broadcast
+    /// incompatibility that would arise from applying full tables to the
+    /// entire K cache.
     ///
-    /// For K, the cache stores un-RoPE'd values and we need to apply
-    /// position-specific rotations to ALL positions. This requires the
-    /// FULL cos/sin tables [1, 1, seq_len, head_dim], not the gathered
-    /// single-position values. The caller is responsible for applying
-    /// RoPE to the UPDATED K cache (after appending the new token).
+    /// Returns (q_rope, cos_tab_id, sin_tab_id, k_new_rope, kv_mask_write, causal_mask).
     ///
-    /// When no position input is provided (prefill-style), the full
-    /// cos/sin table [1, 1, S, D] is used with broadcast.
+    /// The K RoPE is applied to the NEW K token (shape [1, hk, 1, hd]) using
+    /// gathered cos/sin values (shape [1, 1, 1, hd]). The cache stores PRE-RoPE'd
+    /// K values, so no full-cache RoPE re-application is needed.
     fn apply_rope_decode(
         q_4d_id: &AirNodeId,
-        _k_4d_id: &AirNodeId,  // unused — K RoPE is applied after cache update by the caller
+        k_new_4d_id: &AirNodeId,  // new K token to apply RoPE to
         tables_ref: &str,
         position: &Option<ane_ir::sir::SirNodeId>,
         sir_to_air: &std::collections::HashMap<ane_ir::sir::SirNodeId, AirNodeId>,
@@ -2155,7 +2159,7 @@ impl LegalityRewritePass {
         kq: &dyn PassKnowledgeQuery,
         ctx: Option<&DecompositionContext>,
         mut nodes: &mut Vec<AirNode>,
-    ) -> (AirNodeId, Option<AirNodeId>, Option<AirNodeId>, Option<AirNodeId>, Option<AirNodeId>) {
+    ) -> (AirNodeId, Option<AirNodeId>, Option<AirNodeId>, AirNodeId, Option<AirNodeId>, Option<AirNodeId>) {
         let head_dim = ctx.map(|c| c.head_dim).unwrap_or(0);
         let head_dim = if head_dim > 0 { head_dim } else {
             eprintln!("[WARN] apply_rope_decode without head_dim — using default 128");
@@ -2181,18 +2185,23 @@ impl LegalityRewritePass {
         // SIR graph. This makes the decomposition self-contained and
         // guarantees no Cos/Sin fallback is ever emitted.
 
-        // Check if the static_tables pass already inserted Const nodes
-        let cos_tab_air_id = AirNodeId(format!("sir_static_cos_tab_{}", tables_ref));
-        let sin_tab_air_id = AirNodeId(format!("sir_static_sin_tab_{}", tables_ref));
+        // Check if the static_tables pass already inserted Const nodes.
+        // When the static_tables pass has run (embedding graph), the nodes
+        // are named "sir_static_cos_tab_{tables_ref}". For decode_step,
+        // the static_tables pass may not have run, so we emit per-layer
+        // const nodes with unique IDs using the `base` prefix to avoid
+        // duplicate output names when multiple layers share the same
+        // tables_ref (e.g., "rope_tables_shared").
+        let cos_tab_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_cos_tab_{}", tables_ref));
+        let sin_tab_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_sin_tab_{}", tables_ref));
 
-        let cos_id = if sir_to_air.contains_key(
-            &ane_ir::sir::SirNodeId(cos_tab_air_id.0.clone())
-        ) {
+        let cos_id = if sir_to_air.contains_key(&cos_tab_sir_id) {
             // Const node already exists from static_tables pass
-            cos_tab_air_id
+            AirNodeId(cos_tab_sir_id.0.clone())
         } else {
-            // Emit Const node for cos_tab directly (ANE-legal, no Cos/Sin fallback)
-            let const_id = AirNodeId(format!("sir_static_cos_tab_{}", tables_ref));
+            // Emit per-layer Const node for cos_tab with unique ID.
+            // Using {base} prefix ensures no duplicates across layers.
+            let const_id = AirNodeId(format!("{}_cos_tab", base));
             nodes.push(Self::make_air_node(
                 const_id.clone(),
                 AirOp::Const {
@@ -2204,12 +2213,10 @@ impl LegalityRewritePass {
             const_id
         };
 
-        let sin_id = if sir_to_air.contains_key(
-            &ane_ir::sir::SirNodeId(sin_tab_air_id.0.clone())
-        ) {
-            sin_tab_air_id
+        let sin_id = if sir_to_air.contains_key(&sin_tab_sir_id) {
+            AirNodeId(sin_tab_sir_id.0.clone())
         } else {
-            let const_id = AirNodeId(format!("sir_static_sin_tab_{}", tables_ref));
+            let const_id = AirNodeId(format!("{}_sin_tab", base));
             nodes.push(Self::make_air_node(
                 const_id.clone(),
                 AirOp::Const {
@@ -2224,11 +2231,11 @@ impl LegalityRewritePass {
         // Also emit Const nodes for eye_tab and mask_tab needed by
         // the masked blend KV cache write pattern below.
         let eye_tab_id = {
-            let eye_air_id = AirNodeId(format!("sir_static_eye_tab_{}", tables_ref));
-            if sir_to_air.contains_key(&ane_ir::sir::SirNodeId(eye_air_id.0.clone())) {
-                eye_air_id
+            let eye_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_eye_tab_{}", tables_ref));
+            if sir_to_air.contains_key(&eye_sir_id) {
+                AirNodeId(eye_sir_id.0.clone())
             } else {
-                let const_id = AirNodeId(format!("sir_static_eye_tab_{}", tables_ref));
+                let const_id = AirNodeId(format!("{}_eye_tab", base));
                 nodes.push(Self::make_air_node(
                     const_id.clone(),
                     AirOp::Const {
@@ -2242,11 +2249,11 @@ impl LegalityRewritePass {
         };
 
         let mask_tab_id = {
-            let mask_air_id = AirNodeId(format!("sir_static_mask_tab_{}", tables_ref));
-            if sir_to_air.contains_key(&ane_ir::sir::SirNodeId(mask_air_id.0.clone())) {
-                mask_air_id
+            let mask_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_mask_tab_{}", tables_ref));
+            if sir_to_air.contains_key(&mask_sir_id) {
+                AirNodeId(mask_sir_id.0.clone())
             } else {
-                let const_id = AirNodeId(format!("sir_static_mask_tab_{}", tables_ref));
+                let const_id = AirNodeId(format!("{}_mask_tab", base));
                 nodes.push(Self::make_air_node(
                     const_id.clone(),
                     AirOp::Const {
@@ -2331,12 +2338,17 @@ impl LegalityRewritePass {
             sir_node, kq, &mut nodes,
         );
 
-        // K RoPE is NOT applied here. The caller must apply RoPE to the
-        // UPDATED K cache (after appending the new token) using the FULL
-        // cos/sin tables. The KV cache stores un-RoPE'd values, so each
-        // position needs its own rotation from the full tables.
-        // Return the full cos/sin table IDs so the caller can use them.
-        (q_rope, Some(cos_id), Some(sin_id), kv_mask_write, causal_mask)
+        // Apply RoPE to the NEW K token: output = k_new * cos + rotate_half(k_new) * sin
+        // K new has shape [1, hk, 1, hd] and cos/sin are [1, 1, 1, hd] (gathered).
+        // Broadcast: [1, hk, 1, hd] * [1, 1, 1, hd] → [1, hk, 1, hd] ✓
+        // The RoPE'd K is then written to the cache, so the cache stores
+        // pre-RoPE'd values and no full-cache RoPE re-application is needed.
+        let k_new_rope = Self::apply_rotary_half(
+            k_new_4d_id, &cos_for_q, &sin_for_q, half, base, "_k_new_rope",
+            sir_node, kq, &mut nodes,
+        );
+
+        (q_rope, Some(cos_id), Some(sin_id), k_new_rope, kv_mask_write, causal_mask)
     }
 
     /// Apply the RoPE rotation to a 4D tensor: output = x * cos + rotate_half(x) * sin
@@ -2843,16 +2855,15 @@ impl LegalityRewritePass {
         //
         // If the static_tables pass already inserted Const nodes in the
         // SIR graph, use those. Otherwise, emit Const nodes directly.
-        let cos_tab_air_id = AirNodeId(format!("sir_static_cos_tab_{}", tables));
-        let sin_tab_air_id = AirNodeId(format!("sir_static_sin_tab_{}", tables));
+        let cos_tab_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_cos_tab_{}", tables));
+        let sin_tab_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_sin_tab_{}", tables));
 
-        let cos_id = if sir_to_air.contains_key(&ane_ir::sir::SirNodeId(cos_tab_air_id.0.clone()))
-        {
+        let cos_id = if sir_to_air.contains_key(&cos_tab_sir_id) {
             // Use pre-computed cos table from static_tables pass
-            cos_tab_air_id
+            AirNodeId(cos_tab_sir_id.0.clone())
         } else {
-            // Emit Const node directly — ANE-legal, no Cos/Sin fallback
-            let const_id = AirNodeId(format!("sir_static_cos_tab_{}", tables));
+            // Emit per-node Const node with unique ID to avoid duplicates
+            let const_id = AirNodeId(format!("{}_cos_tab", base));
             nodes.push(Self::make_air_node(
                 const_id.clone(),
                 AirOp::Const {
@@ -2866,12 +2877,12 @@ impl LegalityRewritePass {
             const_id
         };
 
-        let sin_id = if sir_to_air.contains_key(&ane_ir::sir::SirNodeId(sin_tab_air_id.0.clone())) {
+        let sin_id = if sir_to_air.contains_key(&sin_tab_sir_id) {
             // Use pre-computed sin table from static_tables pass
-            sin_tab_air_id
+            AirNodeId(sin_tab_sir_id.0.clone())
         } else {
-            // Emit Const node directly — ANE-legal, no Cos/Sin fallback
-            let const_id = AirNodeId(format!("sir_static_sin_tab_{}", tables));
+            // Emit per-node Const node with unique ID to avoid duplicates
+            let const_id = AirNodeId(format!("{}_sin_tab", base));
             nodes.push(Self::make_air_node(
                 const_id.clone(),
                 AirOp::Const {
