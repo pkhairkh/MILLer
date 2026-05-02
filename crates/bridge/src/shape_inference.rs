@@ -289,10 +289,10 @@ pub fn compat_output_shape(
                 vec![]
             }
         }
-        // SliceByIndex: compute output shape respecting begin_mask/end_mask
-        MirOp::MILSliceByIndex { x, begin, end, begin_mask, end_mask, .. } => {
+        // SliceByIndex: compute output shape respecting begin_mask/end_mask/squeeze_mask
+        MirOp::MILSliceByIndex { x, begin, end, begin_mask, end_mask, squeeze_mask, .. } => {
             if let Some(input_shape) = node_shapes.get(&x.0) {
-                (0..begin.len())
+                let sliced: Vec<usize> = (0..begin.len())
                     .map(|i| {
                         let b = if begin_mask.get(i).copied().unwrap_or(false) {
                             0
@@ -309,7 +309,17 @@ pub fn compat_output_shape(
                         };
                         e.saturating_sub(b)
                     })
-                    .collect()
+                    .collect();
+                // Apply squeeze_mask: remove dimensions where squeeze_mask[i] is true
+                if !squeeze_mask.is_empty() {
+                    sliced.into_iter()
+                        .enumerate()
+                        .filter(|(i, _)| !squeeze_mask.get(*i).copied().unwrap_or(false))
+                        .map(|(_, d)| d)
+                        .collect()
+                } else {
+                    sliced
+                }
             } else {
                 vec![]
             }

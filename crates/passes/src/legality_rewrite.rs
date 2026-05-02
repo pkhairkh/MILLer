@@ -1557,12 +1557,14 @@ impl LegalityRewritePass {
         };
         let _uses_gqa = (kv_heads as i64) < heads; // used for diagnostics only
 
-        // Step 5a: Apply RoPE to Q and K (BEFORE splitting for GQA)
-        // The reference model applies RoPE BEFORE the split, to the
-        // full [B, H, 1, D] and [B, Hkv, seq, D] tensors.
-        let (q_for_attn, _k_for_rope, kv_mask_write_id, causal_mask_id) =
+        // Step 5a: Apply RoPE to Q (and compute KV cache mask for cache write).
+        //
+        // K RoPE is applied AFTER the cache update (Step 5b) because the
+        // cache stores un-RoPE'd values and each position needs its own
+        // rotation from the full cos/sin tables.
+        let (q_for_attn, cos_tab_id, sin_tab_id, kv_mask_write_id, causal_mask_id) =
             if let Some(tables_ref) = rope_tables {
-            let (q_rope, k_rope, kv_mask, causal_mask) = Self::apply_rope_decode(
+            let (q_rope, cos_tab, sin_tab, kv_mask, causal_mask) = Self::apply_rope_decode(
                 &q_4d_id,
                 &k_4d_id,
                 tables_ref,
@@ -1574,9 +1576,9 @@ impl LegalityRewritePass {
                 ctx,
                 &mut nodes,
             );
-            (q_rope, k_rope, kv_mask, causal_mask)
+            (q_rope, cos_tab, sin_tab, kv_mask, causal_mask)
         } else {
-            (q_4d_id, k_4d_id, None, None)
+            (q_4d_id, None, None, None, None)
         };
 
         // Step 5b: KV Cache write — masked blend (NOT SliceUpdate)
@@ -1650,10 +1652,13 @@ impl LegalityRewritePass {
             ));
 
             // K cache: _append(k_cache, k_new_4d, mask_keep, mask_write)
+            // Use the 4D reshaped K cache (not the raw 2D read) so that
+            // broadcasting with mask_keep [1,1,seq,1] produces correct shape
+            // [1, kv_heads, seq, head_dim] instead of [1,1,seq,kv_embed].
             let k_old_masked_id = AirNodeId(format!("{base}_k_old_masked"));
             nodes.push(Self::make_air_node(
                 k_old_masked_id.clone(),
-                AirOp::Mul { x: k_cache_id.clone(), y: mask_keep_id.clone() },
+                AirOp::Mul { x: k_4d_id.clone(), y: mask_keep_id.clone() },
                 sir_node, "mb.mul", kq,
             ));
 
@@ -1672,10 +1677,13 @@ impl LegalityRewritePass {
             ));
 
             // V cache: _append(v_cache, v_new_4d, mask_keep, mask_write)
+            // Use the 4D reshaped V cache (not the raw 2D read) so that
+            // broadcasting with mask_keep [1,1,seq,1] produces correct shape
+            // [1, kv_heads, seq, head_dim] instead of [1,1,seq,kv_embed].
             let v_old_masked_id = AirNodeId(format!("{base}_v_old_masked"));
             nodes.push(Self::make_air_node(
                 v_old_masked_id.clone(),
-                AirOp::Mul { x: v_cache_id.clone(), y: mask_keep_id },
+                AirOp::Mul { x: v_4d_id.clone(), y: mask_keep_id },
                 sir_node, "mb.mul", kq,
             ));
 
@@ -1695,28 +1703,47 @@ impl LegalityRewritePass {
 
             (next_k_id, next_v_id)
         } else {
-            // No position/mask info — fall back to simple overwrite
-            // (this path is used for non-decode or when no position is given)
-            (k_cache_id.clone(), v_cache_id.clone())
+            // No position/mask info — fall back to simple 4D cache write.
+            // Use the 4D reshaped K/V so the downstream split-based
+            // attention (which expects [1, kv_heads, seq, head_dim]) works
+            // correctly. The old 2D k_cache_id / v_cache_id shapes
+            // [kv_len, kv_embed] are incompatible with the Split axis=1.
+            //
+            // Since there's no mask, the "overwrite" is just the old cache
+            // with the new token already blended in via the reshape. We
+            // still need a proper add to merge old + new. But without
+            // position info we can't compute the mask, so we use the 4D
+            // old cache as the next cache (the new K will be written via
+            // StateWrite anyway).
+            (k_4d_id.clone(), v_4d_id.clone())
         };
 
-        // Step 5c: Split-based per-head attention (matching reference model)
+        // Step 5c: Apply RoPE to the UPDATED K cache (after appending the new token)
+        //
+        // The KV cache stores un-RoPE'd values. For attention, we must apply
+        // RoPE to ALL positions using the FULL cos/sin tables [1, 1, seq_len, head_dim].
+        // Each position gets its own rotation. The Q RoPE was already applied above
+        // using gathered cos/sin (since Q has seq_len=1 for decode).
+        let k_for_attn = if let (Some(cos_tab), Some(sin_tab)) = (&cos_tab_id, &sin_tab_id) {
+            let head_dim_val = if head_dim > 0 { head_dim as usize } else { 128 };
+            let half = head_dim_val / 2;
+            Self::apply_rotary_half(
+                &next_k_cache_id, cos_tab, sin_tab, half, base, "_k_rope",
+                sir_node, kq, &mut nodes,
+            )
+        } else {
+            next_k_cache_id.clone()
+        };
+
+        // Step 5d: Split-based per-head attention (matching reference model)
         //
         // Split Q into hq heads, K and V into hk heads.
         // For GQA (fan_out > 1), each group of `fan_out` Q heads shares
         // one KV head.
-
-        // Reshape the K for attention (after RoPE): [1, hk, seq, hd]
-        // k_for_rope is already [1, hk, seq, hd] from k_4d_id + RoPE
-        // v_for_attn is the next_v_cache (full KV cache including new token)
-        // But for attention computation, we use the ALREADY-WRITTEN cache
-        // which includes the new token. In the reference model:
-        //   next_k_cache = _append(k_cache, k_new, ...)  ← includes new K
-        //   k_blocks = mb.split(next_k_cache, num_splits=hk, axis=1)  ← split for attention
         //
-        // So for the split-based attention, we use:
+        // For the split-based attention, we use:
         //   - Q: q_for_attn (RoPE'd Q, shape [B, hq, 1, hd])
-        //   - K: next_k_cache (full K cache with new token, shape [1, hk, seq, hd])
+        //   - K: k_for_attn (RoPE'd full K cache with new token, shape [1, hk, seq, hd])
         //   - V: next_v_cache (full V cache with new token, shape [1, hk, seq, hd])
 
         // Attention scale factor: 1/√d_k
@@ -1740,11 +1767,12 @@ impl LegalityRewritePass {
         ));
 
         // Split K cache into per-KV-head blocks: [1, hk, seq, hd] → hk blocks of [1, 1, seq, hd]
+        // Use k_for_attn (RoPE'd) instead of next_k_cache_id (un-RoPE'd)
         let k_split_id = AirNodeId(format!("{base}_k_split"));
         nodes.push(Self::make_air_node(
             k_split_id.clone(),
             AirOp::Split {
-                input: next_k_cache_id.clone(),
+                input: k_for_attn,
                 axis: 1,
                 num_splits: kv_heads as usize,
             },
@@ -2159,13 +2187,19 @@ impl LegalityRewritePass {
     /// When a position input is provided, we gather the specific row
     /// from the cos/sin tables corresponding to the current decode
     /// position. This produces [1, 1, 1, D] which broadcasts correctly
-    /// with [B, H, 1, D] for Q and [B, H, kv_len, D] for K.
+    /// with [B, H, 1, D] for Q.
+    ///
+    /// For K, the cache stores un-RoPE'd values and we need to apply
+    /// position-specific rotations to ALL positions. This requires the
+    /// FULL cos/sin tables [1, 1, seq_len, head_dim], not the gathered
+    /// single-position values. The caller is responsible for applying
+    /// RoPE to the UPDATED K cache (after appending the new token).
     ///
     /// When no position input is provided (prefill-style), the full
     /// cos/sin table [1, 1, S, D] is used with broadcast.
     fn apply_rope_decode(
         q_4d_id: &AirNodeId,
-        k_4d_id: &AirNodeId,
+        _k_4d_id: &AirNodeId,  // unused — K RoPE is applied after cache update by the caller
         tables_ref: &str,
         position: &Option<ane_ir::sir::SirNodeId>,
         sir_to_air: &std::collections::HashMap<ane_ir::sir::SirNodeId, AirNodeId>,
@@ -2174,7 +2208,7 @@ impl LegalityRewritePass {
         kq: &dyn PassKnowledgeQuery,
         ctx: Option<&DecompositionContext>,
         mut nodes: &mut Vec<AirNode>,
-    ) -> (AirNodeId, AirNodeId, Option<AirNodeId>, Option<AirNodeId>) {
+    ) -> (AirNodeId, Option<AirNodeId>, Option<AirNodeId>, Option<AirNodeId>) {
         let head_dim = ctx.map(|c| c.head_dim).unwrap_or(0);
         let head_dim = if head_dim > 0 { head_dim } else {
             eprintln!("[WARN] apply_rope_decode without head_dim — using default 128");
@@ -2343,18 +2377,19 @@ impl LegalityRewritePass {
         };
 
         // Apply RoPE to Q: output = q * cos + rotate_half(q) * sin
+        // Q has shape [B, H, 1, D] and cos/sin are [1, 1, 1, D] (gathered)
+        // or [1, 1, seq_len, D] (full broadcast for prefill).
         let q_rope = Self::apply_rotary_half(
             q_4d_id, &cos_for_q, &sin_for_q, half, base, "_q_rope",
             sir_node, kq, &mut nodes,
         );
 
-        // Apply RoPE to K
-        let k_rope = Self::apply_rotary_half(
-            k_4d_id, &cos_for_q, &sin_for_q, half, base, "_k_rope",
-            sir_node, kq, &mut nodes,
-        );
-
-        (q_rope, k_rope, kv_mask_write, causal_mask)
+        // K RoPE is NOT applied here. The caller must apply RoPE to the
+        // UPDATED K cache (after appending the new token) using the FULL
+        // cos/sin tables. The KV cache stores un-RoPE'd values, so each
+        // position needs its own rotation from the full tables.
+        // Return the full cos/sin table IDs so the caller can use them.
+        (q_rope, Some(cos_id), Some(sin_id), kv_mask_write, causal_mask)
     }
 
     /// Apply the RoPE rotation to a 4D tensor: output = x * cos + rotate_half(x) * sin

@@ -385,12 +385,13 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 vec![]
             }
         }
-        AirOp::SliceByIndex { input, begin, end, begin_mask, end_mask, .. } => {
-            // Compute the output shape respecting begin_mask and end_mask.
+        AirOp::SliceByIndex { input, begin, end, begin_mask, end_mask, squeeze_mask, .. } => {
+            // Compute the output shape respecting begin_mask, end_mask, and squeeze_mask.
             // begin_mask[i]=true  → ignore begin[i], start from 0
             // end_mask[i]=true    → ignore end[i], go to full extent of dimension
+            // squeeze_mask[i]=true → remove this dimension from the output (size must be 1)
             if let Some(input_shape) = node_shapes.get(input) {
-                (0..begin.len())
+                let sliced: Vec<usize> = (0..begin.len())
                     .map(|i| {
                         let b = if begin_mask.get(i).copied().unwrap_or(false) {
                             0
@@ -408,16 +409,35 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                         };
                         e.saturating_sub(b)
                     })
-                    .collect()
+                    .collect();
+                // Apply squeeze_mask: remove dimensions where squeeze_mask[i] is true
+                if !squeeze_mask.is_empty() {
+                    sliced.into_iter()
+                        .enumerate()
+                        .filter(|(i, _)| !squeeze_mask.get(*i).copied().unwrap_or(false))
+                        .map(|(_, d)| d)
+                        .collect()
+                } else {
+                    sliced
+                }
             } else if begin.iter().all(|v| *v >= 0)
                 && end.iter().all(|v| *v >= 0)
                 && begin.len() == end.len()
             {
                 // Fallback: no input shape available, no masks, all positive.
-                end.iter()
+                let sliced: Vec<usize> = end.iter()
                     .zip(begin.iter())
                     .map(|(e, b)| (*e as usize).saturating_sub(*b as usize))
-                    .collect()
+                    .collect();
+                if !squeeze_mask.is_empty() {
+                    sliced.into_iter()
+                        .enumerate()
+                        .filter(|(i, _)| !squeeze_mask.get(*i).copied().unwrap_or(false))
+                        .map(|(_, d)| d)
+                        .collect()
+                } else {
+                    sliced
+                }
             } else {
                 vec![]
             }
@@ -3312,8 +3332,11 @@ impl MilLowerPass {
                     air_source: None,
                 };
 
-                // Insert the cast node after the matmul (which is at lm_idx + 1)
-                mir_nodes.insert(lm_idx + 2, cast_node);
+                // Insert the cast node after the matmul.
+                // When needs_reshape: reshape at lm_idx, matmul at lm_idx+1 → cast at lm_idx+2
+                // When !needs_reshape: matmul at lm_idx → cast at lm_idx+1
+                let cast_insert_idx = if needs_reshape { lm_idx + 2 } else { lm_idx + 1 };
+                mir_nodes.insert(cast_insert_idx, cast_node);
 
                 // Update node_shapes for the cast output
                 node_shapes.insert(
