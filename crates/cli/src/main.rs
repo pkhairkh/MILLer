@@ -4043,10 +4043,12 @@ fn run_trace_compile(
     );
 
     // Collect the rope table references from the SIR for static table pre-computation.
-    // These are the `tables` field values from SirOp::RoPETransform nodes.
+    // These are the `tables` field values from SirOp::RoPETransform nodes and
+    // the `rope_tables` field from SirOp::DecodeStep nodes.
     let rope_tables_refs: Vec<String> = sir.nodes.iter()
         .filter_map(|node| match &node.op {
             ane_ir::sir::SirOp::RoPETransform { tables, .. } => Some(tables.clone()),
+            ane_ir::sir::SirOp::DecodeStep { rope_tables: Some(tables), .. } => Some(tables.clone()),
             _ => None,
         })
         .collect();
@@ -4696,7 +4698,7 @@ fn build_decode_step_sir(
                 k_weight: Some(format!("{}.k_proj.weight", attn_prefix)),
                 v_weight: Some(format!("{}.v_proj.weight", attn_prefix)),
                 out_weight: Some(format!("{}.o_proj.weight", attn_prefix)),
-                rope_tables: Some(format!("rope_tables_layer_{}_self_attn", layer_idx)),
+                rope_tables: Some("rope_tables_shared".to_string()),
                 position: Some(position_input_id.clone()),
                 q_norm_weight: Some(format!("{}.q_norm.weight", attn_prefix)),
                 k_norm_weight: Some(format!("{}.k_norm.weight", attn_prefix)),

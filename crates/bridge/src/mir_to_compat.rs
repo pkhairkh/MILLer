@@ -1263,11 +1263,21 @@ pub fn mir_op_to_compat(
     match op {
         MirOp::MILConst { name, value_path, dtype } => {
             let compat_dtype = mil_dtype_to_compat(dtype);
-            let shape = node_shape.to_vec();
+            let mut shape = node_shape.to_vec();
 
-            // Try to resolve weight data; if unavailable, use zeros
+            // Try to resolve weight data; if unavailable, use zeros.
+            // If the resolver returns data with a non-empty shape but our
+            // node_shape is empty (shape was lost during inference), use
+            // the resolver's shape as a fallback. This prevents emitting
+            // scalar constants where ranked tensors are expected (e.g.,
+            // RoPE cos/sin tables used as gather inputs).
             let data = match resolver.resolve(value_path) {
-                Some(wd) => wd.data,
+                Some(wd) => {
+                    if shape.is_empty() && !wd.shape.is_empty() {
+                        shape = wd.shape.clone();
+                    }
+                    wd.data
+                }
                 None => {
                     // Compute expected size from shape and dtype
                     let element_size = compat_dtype_element_size(&compat_dtype);
