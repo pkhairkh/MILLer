@@ -4330,8 +4330,49 @@ fn run_trace_compile(
         let decode_step_air = legality
             .run(decode_step_sir.clone(), &no_knowledge, Some(&decode_decomp_ctx))
             .map_err(|e| format!("LegalityRewritePass for decode_step failed: {}", e))?;
+
+        // DIAGNOSTIC: Verify that the decode_step AIR contains state ops
+        let ds_state_reads = decode_step_air.nodes.iter()
+            .filter(|n| matches!(n.op, ane_ir::air::AirOp::StateReadFixed { .. }))
+            .count();
+        let ds_state_writes = decode_step_air.nodes.iter()
+            .filter(|n| matches!(n.op, ane_ir::air::AirOp::StateWriteFixed { .. }))
+            .count();
+        println!("  Decode-step AIR: {} nodes, {} StateRead ops, {} StateWrite ops",
+            decode_step_air.nodes.len(), ds_state_reads, ds_state_writes);
+        if ds_state_reads == 0 || ds_state_writes == 0 {
+            return Err(format!(
+                "BUG: Decode-step AIR has no state ops (reads={}, writes={}). \
+                 The LegalityRewritePass must decompose DecodeStep into StateReadFixed/StateWriteFixed.",
+                ds_state_reads, ds_state_writes
+            ));
+        }
+
+        // Build proper input_shapes for the decode_step AIR graph.
+        // CRITICAL: The embedding's input_shapes has keys like "sir_0_input_ids"
+        // which don't match the decode_step's inputs like "sir_hidden_input"
+        // and "sir_position_input". Without this, shape inference for
+        // decode_step starts with empty shapes and produces a malformed MIR.
+        let mut decode_input_shapes: std::collections::HashMap<ane_ir::air::AirNodeId, Vec<usize>> =
+            std::collections::HashMap::new();
+        for input_id in &decode_step_air.inputs {
+            let shape = if input_id.0.contains("hidden") || input_id.0.contains("embed") {
+                // Hidden state input: [batch, hidden_size]
+                vec![batch_size, hidden_size]
+            } else if input_id.0.contains("position") || input_id.0.contains("pos") {
+                // Position index input: [1] (scalar int32)
+                vec![1]
+            } else {
+                // Fallback: use the embedding input shapes if the ID matches
+                input_shapes.get(input_id).cloned()
+                    .unwrap_or_else(|| vec![batch_size, hidden_size])
+            };
+            decode_input_shapes.insert(input_id.clone(), shape);
+        }
+        println!("  Decode-step input shapes: {} entries", decode_input_shapes.len());
+
         let decode_step_mirs = mil_lower
-            .run_with_weight_shapes(&decode_step_air, &shard_plan, &input_shapes, &weight_shapes)
+            .run_with_weight_shapes(&decode_step_air, &shard_plan, &decode_input_shapes, &weight_shapes)
             .map_err(|e| format!("MilLowerPass for decode_step failed: {}", e))?;
 
         if decode_step_mirs.is_empty() {
@@ -4340,6 +4381,14 @@ fn run_trace_compile(
 
         let decode_step_mir = &decode_step_mirs[0];
 
+        // DIAGNOSTIC: Verify that the decode_step MIR contains state ops
+        use ane_ir::mir::MirOp;
+        let mir_state_reads = decode_step_mir.nodes.iter()
+            .filter(|n| matches!(n.op, MirOp::MILReadState { .. }))
+            .count();
+        let mir_state_writes = decode_step_mir.nodes.iter()
+            .filter(|n| matches!(n.op, MirOp::MILCoremlUpdateState { .. }))
+            .count();
         println!(
             "  Embedding MIR: {} nodes, {} inputs, {} outputs",
             embedding_mir.nodes.len(),
@@ -4347,11 +4396,19 @@ fn run_trace_compile(
             embedding_mir.outputs.len()
         );
         println!(
-            "  Decode-step MIR: {} nodes, {} inputs, {} outputs",
+            "  Decode-step MIR: {} nodes, {} inputs, {} outputs, {} ReadState, {} WriteState",
             decode_step_mir.nodes.len(),
             decode_step_mir.inputs.len(),
-            decode_step_mir.outputs.len()
+            decode_step_mir.outputs.len(),
+            mir_state_reads, mir_state_writes
         );
+        if mir_state_reads == 0 || mir_state_writes == 0 {
+            return Err(format!(
+                "BUG: Decode-step MIR has no state ops (reads={}, writes={}). \
+                 The MilLowerPass must preserve StateRead/StateWrite from AIR to MIR.",
+                mir_state_reads, mir_state_writes
+            ));
+        }
 
         // Identify shared weights: embed_tokens and lm_head are used by
         // both embedding and decode_step functions.
@@ -4363,6 +4420,24 @@ fn run_trace_compile(
             .map_err(|e| format!("Embedding MIR compat conversion failed: {}", e))?;
         let decode_step_compat = mir_graph_to_compat(decode_step_mir, &chained_resolver)
             .map_err(|e| format!("Decode-step MIR compat conversion failed: {}", e))?;
+
+        // DIAGNOSTIC: Verify compat format preserves state ops
+        // Check for ReadState/CoremlUpdateState by looking at the debug format
+        // since MirOpCompat is private from this crate.
+        let compat_total = decode_step_compat.ops.len();
+        let compat_has_read_state = decode_step_compat.ops.iter()
+            .any(|op| format!("{:?}", op).contains("ReadState"));
+        let compat_has_write_state = decode_step_compat.ops.iter()
+            .any(|op| format!("{:?}", op).contains("CoremlUpdateState"));
+        println!("  Decode-step compat: {} ops, has_read_state={}, has_write_state={}",
+            compat_total, compat_has_read_state, compat_has_write_state);
+        if !compat_has_read_state || !compat_has_write_state {
+            return Err(format!(
+                "BUG: Decode-step compat has no state ops (has_read={}, has_write={}). \
+                 mir_graph_to_compat must preserve MILReadState/MILCoremlUpdateState.",
+                compat_has_read_state, compat_has_write_state
+            ));
+        }
 
         // Rename functions appropriately
         let mut embedding_compat = embedding_compat;
@@ -4378,6 +4453,14 @@ fn run_trace_compile(
         )
         .map_err(|e| format!("Multi-function proto-direct emission failed: {}", e))?
     } else {
+        // DIAGNOSTIC: Explain why the single-function path was taken
+        if !with_kv_cache {
+            println!("  WARNING: KV-cache DISABLED — emitting single-function stateless model.");
+            println!("           Use --with-kv-cache for stateful multi-function model.");
+        } else if mirs.len() != 1 {
+            println!("  WARNING: KV-cache enabled but mirs.len()={} (expected 1).", mirs.len());
+            println!("           Falling back to single-function emission.");
+        }
         emit_mir_graph_proto_direct_with_resolver(
             &mirs[0],
             mlpackage_dir.to_str().unwrap_or(""),

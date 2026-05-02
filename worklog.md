@@ -130,3 +130,32 @@ Stage Summary:
 - All 5 issues resolved: C-07 (expect→Result), C-08 (sanitize_id dedup), C-09 (scopes_overlap unification), W-04 (typed payload accessors), W-05 (confidence reconciliation)
 - `update.rs::initial_confidence` is now the sole authoritative source for confidence base values
 - Zero test failures across the entire workspace
+
+---
+Task ID: tile-elimination
+Agent: main
+Task: Eliminate all Tile ops from MILLer compiler, matching reference model (pkhairkh/qwen3-coreml-palettized) split-based per-head attention pattern
+
+Work Log:
+- Analyzed reference project (pkhairkh/qwen3-coreml-palettized) which uses split-based per-head attention instead of Tile+SDPA
+- Identified that Tile ops (56 total for Qwen3-0.6B) were created in sir_build.rs GQA expansion (lines 980-1002) for K/V head tiling
+- Replaced GQA Tile + SDPA path in sir_build.rs with split-based per-head attention: Split Q/K/V → per-head SliceByIndex → MatMul → scale → mask → Softmax → MatMul → ExpandDims → Concat
+- Added K/V head deduplication via HashMap to avoid duplicate SliceByIndex ops for GQA shared heads
+- Rewrote decompose_attention_block() in legality_rewrite.rs to use same split-based pattern
+- Added SDPA fallback when DecompositionContext is not available (heads=0, synthetic tests only)
+- Changed Tile fallback passthrough in legality_rewrite.rs from silent passthrough to panic!() — prevents Tile from ever reaching AIR/MIR
+- Updated mil_lower.rs validation checks: Tile warning upgraded to CRITICAL, SDPA check updated
+- Updated versioned.rs ANE support classification for Tile with detailed comments
+- Updated module docstring for legality_rewrite.rs with Tile elimination strategy
+- Fixed all stale comments referencing "GQA tile" and "SDPA" throughout sir_build.rs
+- Fixed SIR SSA alias resolution: per-head SirNodeId format must be sir_{name}_{node.id} where name includes head index
+- Updated 6 tests across ane-passes and ane-trace to match split-based attention pattern
+- All workspace tests passing (ane-passes: 148, ane-trace: 31, total ~500+)
+
+Stage Summary:
+- ALL Tile ops eliminated at source: sir_build.rs no longer produces SirOp::Tile for GQA
+- ALL SDPA ops eliminated from attention block: split-based per-head attention replaces both Tile AND SDPA
+- Tile fallback in legality_rewrite.rs now panics instead of silently passing through
+- Existing Tile decomposition (Reshape+Mul+Reshape) kept as safety net for any remaining standalone Tile ops
+- Split-based attention matches reference model pattern: Split → SliceByIndex → per-head MatMul+Softmax+MatMul → Concat
+- Files changed: sir_build.rs, legality_rewrite.rs, mil_lower.rs, versioned.rs
