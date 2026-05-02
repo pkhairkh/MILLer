@@ -3213,9 +3213,9 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::LayerNorm { name, x, weight_name, bias_name, epsilon, axes } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("weight".to_string(), make_name_arg(weight_name));
+            inputs.insert("gamma".to_string(), make_name_arg(weight_name));
             if let Some(bname) = bias_name {
-                inputs.insert("bias".to_string(), make_name_arg(bname));
+                inputs.insert("beta".to_string(), make_name_arg(bname));
             }
 
             inputs.insert(
@@ -3498,17 +3498,20 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
+        // Where → Select: CoreML MIL has no "where" op; use "select" instead.
+        // The MILWhere→MILSelect rewrite in mil_lower.rs should make this
+        // unreachable at runtime, but we handle it defensively.
         mir_compat::MirOpCompat::Where { name, condition, x, y } => {
             let mut inputs = HashMap::new();
-            inputs.insert("condition".to_string(), make_name_arg(condition));
-            inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("y".to_string(), make_name_arg(y));
+            inputs.insert("cond".to_string(), make_name_arg(condition));
+            inputs.insert("a".to_string(), make_name_arg(x));
+            inputs.insert("b".to_string(), make_name_arg(y));
 
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
 
             vec![apple_proto::mil_spec::Operation {
-                r#type: "where".to_string(),
+                r#type: "select".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
                     name,
@@ -3974,7 +3977,7 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::ExpandDims { name, x, axis } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("axis".to_string(), make_value_arg(make_immediate_int32_value(axis.clone(), &[axis.len() as u64])));
+            inputs.insert("axes".to_string(), make_value_arg(make_immediate_int32_value(axis.clone(), &[axis.len() as u64])));
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
             vec![apple_proto::mil_spec::Operation {
@@ -3989,7 +3992,7 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::Squeeze { name, x, axis } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("axis".to_string(), make_value_arg(make_immediate_int32_value(axis.clone(), &[axis.len() as u64])));
+            inputs.insert("axes".to_string(), make_value_arg(make_immediate_int32_value(axis.clone(), &[axis.len() as u64])));
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
             vec![apple_proto::mil_spec::Operation {
@@ -4004,8 +4007,8 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::Clip { name, x, min_val, max_val } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("min_val".to_string(), make_value_arg(make_immediate_float32_value(*min_val)));
-            inputs.insert("max_val".to_string(), make_value_arg(make_immediate_float32_value(*max_val)));
+            inputs.insert("alpha".to_string(), make_value_arg(make_immediate_float32_value(*min_val)));
+            inputs.insert("beta".to_string(), make_value_arg(make_immediate_float32_value(*max_val)));
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
             vec![apple_proto::mil_spec::Operation {
@@ -4084,9 +4087,9 @@ fn mir_op_to_apple_ops(
         // ─── Select ───
         mir_compat::MirOpCompat::Select { name, condition, x, y } => {
             let mut inputs = HashMap::new();
-            inputs.insert("condition".to_string(), make_name_arg(condition));
-            inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("y".to_string(), make_name_arg(y));
+            inputs.insert("cond".to_string(), make_name_arg(condition));
+            inputs.insert("a".to_string(), make_name_arg(x));
+            inputs.insert("b".to_string(), make_name_arg(y));
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
             vec![apple_proto::mil_spec::Operation {

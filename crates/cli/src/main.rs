@@ -4408,7 +4408,7 @@ fn run_trace_compile(
         // Create a separate DecompositionContext for decode_step with the
         // correct max_seq_len as kv_len, plus all dimensions needed for
         // MLP and lm_head weight output_dim resolution.
-        let decode_decomp_ctx = DecompositionContext::for_attention_full(
+        let decode_decomp_ctx = DecompositionContext::for_decode_step_full(
             batch_size,
             hidden_size,
             num_heads,
@@ -4417,6 +4417,8 @@ fn run_trace_compile(
             num_kv_heads,
             traced_graph.model_config.intermediate_size,
             traced_graph.model_config.vocab_size,
+            true,  // uses_rope: Qwen3 uses RoPE in decode
+            true,  // has_qk_norm: Qwen3 uses QK norm
         );
 
         let decode_step_air = legality

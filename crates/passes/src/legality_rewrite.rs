@@ -1855,6 +1855,19 @@ impl LegalityRewritePass {
             k_head_t_ids.push(k_i_t_id);
         }
 
+        // Shared attention scale constant: emitted once before the Q-head loop.
+        // Previously emitted inside the loop, causing duplicate output names
+        // (shared_attn_scale defined 16× per function with GQA).
+        let scale_const_id = AirNodeId("shared_attn_scale".to_string());
+        nodes.push(Self::make_air_node(
+            scale_const_id.clone(),
+            AirOp::Const {
+                value_path: "_attn_scale".to_string(),
+                dtype: MilDtype::Fp16,
+            },
+            sir_node, "mb.const", kq,
+        ));
+
         let mut ctx_parts: Vec<AirNodeId> = Vec::with_capacity(heads as usize);
 
         for head_idx in 0..(heads as usize) {
@@ -1893,24 +1906,11 @@ impl LegalityRewritePass {
                 sir_node, "mb.matmul", kq,
             ));
 
-            // logits *= scale
-            // Shared scale constant: same value for every Q head in every layer.
-            // Emitted unconditionally; duplicates are removed by the global
-            // AirNodeId dedup at the end of LegalityRewritePass::run().
-            let scale_const_id = AirNodeId("shared_attn_scale".to_string());
-            nodes.push(Self::make_air_node(
-                scale_const_id.clone(),
-                AirOp::Const {
-                    value_path: "_attn_scale".to_string(),
-                    dtype: MilDtype::Fp16,
-                },
-                sir_node, "mb.const", kq,
-            ));
-
+            // logits *= scale (using pre-hoisted shared_attn_scale)
             let scaled_logits_id = AirNodeId(format!("{base}_scaled_logits_{}", hi));
             nodes.push(Self::make_air_node(
                 scaled_logits_id.clone(),
-                AirOp::Mul { x: logits_id, y: scale_const_id },
+                AirOp::Mul { x: logits_id, y: scale_const_id.clone() },
                 sir_node, "mb.mul", kq,
             ));
 

@@ -3679,36 +3679,17 @@ impl MilLowerPass {
                 eprintln!("  [ANE legality] {} MILSliceUpdate remain (non-decode path, CPU-bound)", su_count);
             }
 
-            // ── 5. Replace MILFill/MILFillLike with ANE-legal alternatives ──
-            // MILFill is not used by the reference model. MILFillLike gets
-            // decomposed to mul(ref, 0) + add(zero, val) at emission time,
-            // but we should eliminate it at the MIR level to be safe.
-            // For MILFill: replace with MILConst (named constant).
-            // For MILFillLike: replace with mul(ref, 0) + add(zero_const, value).
+            // ── 5. MILFill / MILFillLike handling ──
+            // MILFill is ANE-supported (PE engine) and correctly handled by the
+            // compat layer (MirOpCompat::Fill) and proto emitter. Do NOT replace
+            // MILFill with MILConst — doing so loses the fill value (e.g.,
+            // NEG_INFINITY for causal masks becomes 0.0), which completely breaks
+            // causal attention masking. MILFillLike is also handled by the proto
+            // emitter decomposition.
             let fill_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILFill { .. })).count();
             let filllike_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILFillLike { .. })).count();
             if fill_count > 0 || filllike_count > 0 {
-                eprintln!("  [ANE legality] Replacing {} MILFill + {} MILFillLike", fill_count, filllike_count);
-
-                // Replace MILFill with MILConst
-                for node in mir_nodes.iter_mut() {
-                    if let MirOp::MILFill { name, shape, value: _, dtype: fill_dtype } = &node.op {
-                        eprintln!("    fill '{}' shape={:?} → const", name, shape);
-                        node.op = MirOp::MILConst {
-                            name: name.clone(),
-                            value_path: name.clone(),
-                            dtype: fill_dtype.clone(),
-                        };
-                        // Shape stays the same
-                    }
-                }
-
-                // Replace MILFillLike with: mul(ref, zero) → zeros_like, then add(zeros, value)
-                // But this is complex. For now, just log and skip.
-                // The proto emitter already decomposes FillLike, so it might work.
-                if filllike_count > 0 {
-                    eprintln!("    [WARN] {} MILFillLike nodes remain (proto emitter decomposes them)", filllike_count);
-                }
+                eprintln!("  [ANE legality] Keeping {} MILFill + {} MILFillLike (ANE-supported, proto handles emission)", fill_count, filllike_count);
             }
 
             // ── 6. Eliminate MILTranspose where possible ──
