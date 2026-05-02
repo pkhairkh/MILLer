@@ -1054,6 +1054,32 @@ impl<'a> SirBuildContext<'a> {
             "attn_scale_const".to_string(),
         ));
 
+        // Causal mask constant: lower-triangular [seq, seq] mask from static tables.
+        // The mask has -inf in masked positions and 0.0 in unmasked positions,
+        // matching the decode_step mask_tab pattern. For prefill/embedding,
+        // the full [seq, seq] mask is used (not a single gathered row).
+        // Reshaped to [1, 1, seq, seq] to broadcast with per-head logits [B, S, S].
+        //
+        // The name tags ("causal_mask" and "causal_mask_4d") must match the
+        // SirNodeId references so the alias resolution system can map them
+        // to the actual counter-based IDs (sir_N_traced_node_id).
+        let causal_mask_id = SirNodeId(format!("sir_causal_mask_{}", node.id));
+        let causal_mask_4d_id = SirNodeId(format!("sir_causal_mask_4d_{}", node.id));
+        ops.push((
+            SirOp::Const {
+                value_path: "static_tables/rope_tables_shared/mask_tab".to_string(),
+                dtype: MilDtype::Fp16,
+            },
+            "causal_mask".to_string(),
+        ));
+        ops.push((
+            SirOp::Reshape {
+                input: causal_mask_id,
+                target_shape: vec![1, 1, seq, seq],
+            },
+            "causal_mask_4d".to_string(),
+        ));
+
         // Per-head attention loop
         let mut ctx_parts: Vec<SirNodeId> = Vec::with_capacity(num_heads);
         // Track already-created K/V head slices to avoid duplicates in GQA
@@ -1159,14 +1185,14 @@ impl<'a> SirBuildContext<'a> {
                 format!("scaled_logits_{}", head_idx),
             ));
 
-            // Apply causal mask if available
-            // For the prefill/embedding path, the causal mask is applied per-head.
-            // The mask is a lower-triangular [S, S] matrix that broadcasts with [B, S, S].
+            // Apply causal mask: add the pre-computed [1, 1, seq, seq] mask to logits.
+            // The mask has 0.0 in unmasked positions and -inf in masked positions,
+            // so after softmax, masked positions get zero attention weight.
+            // Mask shape [1, 1, seq, seq] broadcasts with per-head logits [B, S, S].
             let masked_logits_id = {
-                let mask_ref = SirNodeId(format!("causal_mask_{}", node.id));
                 let ml_id = SirNodeId(format!("sir_masked_logits_{}_{}", head_idx, node.id));
                 ops.push((
-                    SirOp::Add { x: scaled_logits_id, y: mask_ref },
+                    SirOp::Add { x: scaled_logits_id, y: causal_mask_4d_id.clone() },
                     format!("masked_logits_{}", head_idx),
                 ));
                 ml_id
