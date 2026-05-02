@@ -192,3 +192,24 @@ Stage Summary:
 - State pipeline is complete and correct at every stage from SIR through proto emission
 - All tests pass, no regressions
 - User needs to rebuild and recompile on their Mac with the latest code
+
+---
+Task ID: gqa-dup-fix
+Agent: main
+Task: Fix GQA duplicate MIL output names causing coremlcompiler "Block redefines I/O name" error
+
+Work Log:
+- User provided detailed analysis: decode_step function had 448 duplicate output names (28 layers × 8 kv_heads × 2 k/v)
+- Root cause: In `decompose_decode_step()`, the per-Q-head loop sliced K/V heads using `kv_idx`, producing duplicate AirNodeIds like `{base}_k_head_0` for Q heads 0 and 1 that both map to KV head 0 in GQA (fan_out=2)
+- Fixed `decompose_decode_step()`: Pre-slice all KV heads OUTSIDE the per-Q-head loop into `k_head_ids[]` and `v_head_ids[]` arrays, then reference by index inside the loop
+- Applied same fix to `decompose_attention_block()`: Pre-slice K/V heads + K transposes outside the loop into `k_head_ids[]`, `v_head_ids[]`, `k_head_t_ids[]` arrays
+- Added pre-write validation in `mir_to_proto.rs`: Scans all ops in each function for duplicate output names and rejects the package with a clear error message before writing `model.mlmodel`
+- Added `op_output_names()` helper function to extract the output name from any `MirOpCompat` variant (uses macro for DRY)
+- Added `test_duplicate_output_names_rejected` test that verifies the validation catches the exact GQA duplicate pattern
+- All tests pass: ane-coreml-emit (39), ane-bridge (35), ane-passes (148)
+
+Stage Summary:
+- Commit ae74347 pushed to https://github.com/pkhairkh/MILLer
+- 448 duplicate output names eliminated: each KV head is now sliced exactly once and reused
+- Pre-write validation ensures any future duplicate output name bugs are caught at emission time
+- Files changed: legality_rewrite.rs, mir_to_proto.rs
