@@ -1,304 +1,374 @@
-# MILLer — Code Review Findings
+# MILLer Compiler — Issue Tracker
 
-> **Review scope**: Code Quality, Separation of Concerns, Recycling (Re-usability)
-> **Severity key**: 🔴 Critical · 🟡 Warning · 🟢 Suggestion · ✅ Resolved
-> **Convention**: Every finding cites concrete `file:line` references.
-
----
-
-## 🔴 Critical (14 findings — 12 resolved)
-
-### C-01 — No CI/CD Pipeline ✅
-- **Category**: Code Quality
-- **File**: `.github/workflows/` (does not exist)
-- No GitHub Actions, no Makefile, no CI script. The `rust-toolchain.toml` pins Rust 1.95 and `clippy.toml` sets a cognitive complexity threshold, but neither is enforced mechanically. Without CI there is no guarantee tests pass, clippy is clean, or rustfmt is respected.
-- **Resolution**: Added `.github/workflows/ci.yml` with check, fmt, clippy, and test jobs (T-02).
-
-### C-02 — Zero Integration Tests ✅
-- **Category**: Code Quality
-- **File**: All `crates/*/tests/` directories (none exist)
-- All 563 `#[test]` functions are inline `#[cfg(test)]` unit tests. No integration tests verify cross-crate behaviour — SIR→AIR→MIR→PIR pipeline, bridge dispatch, knowledge-store round-trip, or CLI end-to-end flows. `scripts/smoke_test.sh` is a partial substitute but requires Python/coremltools and is not gated by CI.
-- **Resolution**: Added integration tests in `crates/ir/tests/pipeline.rs`, `crates/knowledge/tests/round_trip.rs`, `crates/cli/tests/cli.rs` (T-09).
-
-### C-03 — Workspace Dependency Versions Not Centralised ✅
-- **Category**: Recycling
-- **Files & Lines**: `crates/ir/Cargo.toml:10`, `crates/bridge/Cargo.toml:16-17`, `crates/knowledge/Cargo.toml:15`, `crates/coreml-emit/Cargo.toml:14`, `crates/coreml-proto/Cargo.toml:8-9,14`, `crates/coreml-ffi/Cargo.toml:12`
-- `prost` appears in 3 crates with hardcoded `"0.12"`. `uuid` is declared in workspace but `ane-coreml-emit` re-declares it with a hardcoded version. `safetensors = "0.4"` is not in `[workspace.dependencies]` at all. Upgrading any of these requires editing 3+ files in lockstep.
-- **Resolution**: Added `safetensors`, `prost`, `prost-types`, `prost-build` to workspace dependencies; replaced all hardcoded versions with `workspace = true` (T-08).
-
-### C-04 — Massive Op Enum Duplication Across SIR / AIR / MIR (~3 000 lines of copy-paste) ✅
-- **Category**: Recycling / Code Quality
-- **Files & Lines**: `crates/ir/src/sir.rs:21-911`, `crates/ir/src/air.rs:12-876`, `crates/ir/src/mir.rs:29-1046`
-- `SirOp`, `AirOp`, `MirOp` contain ~70+ structurally identical variants each, differing only in (1) the `NodeId` type and (2) MIR's `MIL` prefix + `name` field.
-- **Resolution**: Created `crates/ir/src/common.rs` with shared types; added `IrNodeId` trait and `IrGraph` trait; genericised `serialize.rs` (T-03).
-
-### C-05 — `linear_slice.rs` Is a 1 650+ Line God Module ✅
-- **Category**: Separation of Concerns
-- **File**: `crates/ir/src/linear_slice.rs` (entire file)
-- Mixes 6+ distinct concerns: SIR graph construction, MIR graph lowering, 6 bridge-payload struct definitions, PIR graph construction, shard-descriptor logic, and bridge-payload construction.
-- **Resolution**: Extracted payloads to `payload.rs`, shard types to `shard_desc.rs`; added `#[deprecated]` to family-specific payloads; replaced hardcoded opset/seed (T-04).
-
-### C-06 — SIR Depends on MIR — Layering Violation ✅
-- **Category**: Separation of Concerns
-- **File**: `crates/ir/src/sir.rs:7, 80-81, 340-341, 642-643`
-- SIR (highest-level IR) imports `MilDtype` from MIR (lowest-level IR).
-- **Resolution**: Moved `MilDtype` to `common.rs`; SIR now imports from `common` instead of `mir` (T-03).
-
-### C-07 — `expect()` on HashMap Lookup After Insert — Library Code Can Panic ✅
-- **Category**: Code Quality
-- **File**: `crates/knowledge/src/store.rs:345`
-- **Resolution**: Replaced `expect()` with `ok_or_else()` returning proper `Result` (T-10).
-
-### C-08 — Duplicated `sanitize_id` Function With Identical Implementation ✅
-- **Category**: Recycling
-- **Files**: `crates/knowledge/src/store.rs:504`, `crates/knowledge/src/snapshot.rs:200`
-- **Resolution**: Extracted to shared `crates/knowledge/src/util.rs` (T-10).
-
-### C-09 — Duplicated `scopes_overlap` With Incompatible Signatures ✅
-- **Category**: Recycling / Separation of Concerns
-- **Files**: `crates/knowledge/src/store.rs:459-468`, `crates/knowledge/src/conflict.rs:180-190`
-- **Resolution**: Canonical version in `util.rs` taking `&KnowledgeScope`; `conflict.rs` delegates (T-10).
-
-### C-10 — Bridge Leaks Compiler Logic ✅
-- **Category**: Separation of Concerns
-- **File**: `crates/bridge/src/mir_to_compat.rs` (entire file)
-- **Resolution**: Extracted shape inference to `crates/bridge/src/shape_inference.rs`; added Qwen3-specific doc comment to `build_input_alias_map`; added boilerplate warning to `remap_compat_inputs` (T-12).
-
-### C-11 — FFI Validation Uses Wrong Directory Path for `model.mlmodel` ✅
-- **Category**: Code Quality
-- **Files**: `crates/coreml-ffi/src/capi.rs:377`, `crates/bridge/src/proto_direct.rs:254`
-- **Resolution**: Changed path from `Model/` to `Data/` (T-01).
-
-### C-12 — CLI Implements Lab Orchestration (~1 000 lines) ✅
-- **Category**: Separation of Concerns
-- **File**: `crates/cli/src/main.rs:3108-3637`
-- **Resolution**: Moved orchestration to `crates/lab/src/session.rs`; CLI now delegates (T-05).
-
-### C-13 — `mil_emitter.py` Is a 2 939-Line Monolith With 9× Boilerplate Duplication ✅
-- **Category**: Code Quality / Recycling
-- **File**: `python/mil_emitter.py:1-2939`
-- **Resolution**: Created `python/program_builder.py` with shared helpers; eliminated 9× `opset_map` duplication; reduced from 2,933 to 1,947 lines (−33.6%) (T-06).
-
-### C-14 — Hardcoded KV Cache Dimensions in `RoleMirBuilder` ✅
-- **Category**: Code Quality
-- **File**: `crates/passes/src/role_mir.rs:408-416, 428-434`
-- **Resolution**: Added `num_heads`, `head_dim`, `context_length` fields to `ShardOpProfile::AttentionComputation`; KV cache shape now derived from spec (T-07).
+*Last updated: 2026-05-03*
+*Reference implementation: https://huggingface.co/pkhairkh/qwen3-coreml-palettized*
 
 ---
 
-## 🟡 Warning (30 findings — 30 resolved)
+## P0 — Critical (Blocks Correct ANE Execution)
 
-### W-01 — Core IR Types Have Zero Tests ✅
-- **Category**: Code Quality
-- **Resolution**: Added exhaustive `MirOp` engine-assignment tests in `crates/ir/tests/` (T-11).
+### ISSUE-001: Mask path uses CPU-only ops, forcing entire attention subgraph off ANE
 
-### W-02 — Three Crates Have Zero Tests (cli, artifacts, report) ✅ (partial)
-- **Category**: Code Quality
-- **Resolution**: Added CLI integration tests in `crates/cli/tests/cli.rs` (T-11). Artifacts and report tests still pending.
+**Status:** Open
+**Files:** `crates/passes/src/legality_rewrite.rs` (lines 2334–2379)
+**Impact:** Entire attention subgraph falls off ANE to CPU. This is the single most impactful ANE-legality bug.
 
-### W-03 — Knowledge Store Is Effectively a Key-Value Store ✅
-- **Category**: Separation of Concerns
-- **Files**: `crates/knowledge/src/store.rs`, `crates/knowledge/src/query.rs`
-- Loads all entries into `HashMap<String, KnowledgeEntry>` and queries by iterating/filtering. No indexes by knowledge type, scope, or device class.
-- **Resolution**: Added secondary indexes (`type_index`, `source_index`) to `KnowledgeStore`; `query()` now uses indexed lookups for type and source filters, falling back to full scan only when no filter is specified. Added `query_by_type()` and `query_by_source()` public methods (T-21).
+**Current implementation:**
+```
+Equal(arange_tab, pos)       → bool KV write mask    (CPU-only op)
+Cast(bool → fp16)            → fp16 KV write mask    (int→fp16 cast, ANE-questionable)
+LessEqual(arange_tab, pos)   → bool causal mask      (CPU-only op)
+Fill([kv_len], 0.0)          → zeros tensor           (ANE-questionable, not const-folded)
+Fill([kv_len], -inf)         → neg_infs tensor        (ANE-questionable, not const-folded)
+Select(less_equal, zeros, neg_infs) → causal mask     (correct but inputs are CPU-only)
+```
 
-### W-04 — `claims_contradict` / `claims_agree` Use Untyped JSON Payload Access ✅
-- **Category**: Code Quality
-- **Resolution**: Added typed accessor helpers (`payload_ane_legal`, `payload_op_pattern`, etc.) in `util.rs` (T-10).
+**Reference implementation** (from `pkhairkh/qwen3-coreml-palettized`):
+```python
+# Precomputed at BUILD TIME:
+mask_tab = np.full((seq, seq), np.float16(-np.inf))   # (4096, 4096) fp16
+for idx in range(seq):
+    mask_tab[idx, seq - (idx + 1):] = np.float16(0.0) # Reversed layout
+eye_tab = np.eye(seq, dtype=np.float16)                # (4096, 4096) fp16
 
-### W-05 — Two Confidence Functions With Different Base Values ✅
-- **Category**: Code Quality
-- **Resolution**: Removed `compute_confidence` from `confidence.rs`; `initial_confidence` in `update.rs` is now sole authoritative source (T-10).
+# At RUNTIME (all ANE-legal ops):
+kv_mask_row = mb.gather(x=eye_tab, indices=write_idx, axis=0)    # gather: ANE-legal
+mask_row = mb.gather(x=mask_tab, indices=pos_mod, axis=0)        # gather: ANE-legal
+mask = mb.reshape(x=mask_row, shape=[1, 1, 1, seq])              # reshape: ANE-legal
+mask_write = mb.reshape(x=kv_mask_row, shape=[1, 1, seq, 1])    # reshape: ANE-legal
+mask_keep = mb.sub(x=1.0, y=mask_write)                          # sub: ANE-legal
+logits = mb.add(x=logits, y=mask)                                # add: ANE-legal ← THE masking op
+```
 
-### W-06 — `eprintln!` Used for Logging in Library Code ✅
-- **Category**: Code Quality
-- **Files**: `crates/knowledge/src/store.rs:266`, `crates/knowledge/src/snapshot.rs:101,103,131`, etc.
-- **Resolution**: Replaced all `eprintln!` in knowledge crate library code with `log::warn!` from the `log` crate. Added `log = "0.4"` to workspace dependencies and knowledge crate (T-21).
+**Key differences:**
+| Aspect | Current | Reference |
+|--------|---------|-----------|
+| Mask storage | Runtime computation via Equal/LessEqual/Fill | Precomputed static fp16 tables |
+| Ops used | Equal, LessEqual, Fill, Select, Cast | Gather, Const, Reshape, Sub, Add |
+| ANE legality | 4+ CPU-only ops | All ANE-legal |
+| Memory | Small runtime | Larger static table (seq² × fp16) |
+| KV mask | Same Equal+Cast pattern | Gather from eye_tab (identity matrix) |
 
-### W-07 — `build_input_alias_map` Hardcodes Qwen3-Specific Aliases ✅ (documented)
-- **Category**: Separation of Concerns
-- **Resolution**: Added prominent doc comment noting Qwen3-specific nature with suggestions for generalization (T-12).
-
-### W-08 — Hand-Rolled `f32_to_f16` Instead of Using the `half` Crate ✅
-- **Category**: Recycling
-- **Resolution**: Replaced with `half::f16::from_f32()` which correctly handles subnormals and NaN payloads (T-12).
-
-### W-09 — `WeightBinBuilder` Does Double-Pass With Redundant Offset Computation ✅
-- **Category**: Code Quality
-- **File**: `crates/coreml-emit/src/weights.rs:278-322`
-- **Resolution**: Removed the dead first-pass `total_size` calculation. The `build()` method now uses a single pass to build the binary while tracking offsets, eliminating the redundant computation (T-21).
-
-### W-10 — `MlPackageWriter::build_manifest` Generates Non-Deterministic UUIDs ✅
-- **Category**: Code Quality
-- **Resolution**: Replaced `uuid::Uuid::new_v4()` with `uuid::Uuid::new_v5()` using deterministic namespace (T-15).
-
-### W-11 — `coreml-proto` Has Both Legacy and Apple-Compatible Proto Definitions ✅
-- **Category**: Recycling / Separation of Concerns
-- **Resolution**: Added `#[deprecated]` to legacy `proto` module with removal plan (T-16).
-
-### W-12 — `mir_compat` Module Duplicates MIR Types ✅ (lightweight)
-- **Category**: Recycling
-- **Resolution**: Added `From<ane_ir::mir::MirOp> for MirOpCompat` conversion with test ensuring all variants are covered (T-17).
-
-### W-13 — `FfiError` Doesn't Implement `std::error::Error` Source Chain ✅
-- **Category**: Code Quality
-- **File**: `crates/coreml-ffi/src/error.rs`
-- **Resolution**: Added `source: Option<Box<dyn Error + Send + Sync>>` to all FfiError variants that can wrap underlying errors. Implemented `source()` method on the `Error` trait. Migrated to `thiserror` derive for consistent error definitions. Added tests for source chain traversal (T-21).
-
-### W-14 — Inconsistent Error Types Across Crates ✅
-- **Category**: Code Quality / Recycling
-- **Files**: All crates
-- **Resolution**: Added `thiserror = "1"` to workspace dependencies. Migrated `FfiError` to `thiserror` derive as reference implementation. Established convention: library crates use `thiserror`-derived error enums with `#[source]` annotations; application code (CLI, lab) uses `anyhow` (T-21).
-
-### W-15 — Inconsistent Validation Logic — Bridge vs FFI ✅ (partial)
-- **Category**: Separation of Concerns
-- **Resolution**: FFI path bug fixed (C-11/T-01); different error granularity remains.
-
-### W-16 — `MirOpCompat` Has 40+ Variants With No Trait-Based Dispatch ✅ (documented)
-- **Category**: Recycling
-- **Resolution**: Added doc comment recommending derive macro or visitor pattern; added `From<MirOp>` conversion (T-17).
-
-### W-17 — `compute_map` Dict Duplicated 5× Across Python Modules ✅
-- **Category**: Recycling
-- **Resolution**: Centralised in `python/common.py` as `COMPUTE_MAP` (T-13).
-
-### W-18 — `_error_result()` Defined Independently in `bridge.py` and `mil_emitter.py` ✅
-- **Category**: Recycling
-- **Resolution**: Centralised in `python/common.py` (T-13).
-
-### W-19 — Module-Level Mutable Global State in Python Modules ✅
-- **Category**: Code Quality
-- **Resolution**: Centralised `_ensure_coremltools()` in `python/common.py`; per-module globals replaced (T-13).
-
-### W-20 — `emit_decode_step` Misrouted to Stateless Path ✅
-- **Category**: Code Quality
-- **Resolution**: `emit_decode_step` now routes to stateful path (T-06).
-
-### W-21 — `handle_host_inspect` Reimplements What `model_structure.py` Already Does ✅
-- **Category**: Separation of Concerns
-- **Resolution**: Refactored to delegate to `model_structure.py` (~170→~80 lines) (T-14).
-
-### W-22 — `handle_profile` Duplicates `profiler.py` Input-Generation Logic ✅
-- **Category**: Separation of Concerns
-- **Resolution**: Delegated to `profiler.generate_inputs()` (T-14).
-
-### W-23 — CLI `main.rs` Is a 5 627-Line God File ✅
-- **Category**: Code Quality
-- **Resolution**: Lab orchestration extracted to lab crate (T-05); significant line reduction.
-
-### W-24 — `ShardPlanPass.run()` Hardcodes Shape Placeholders ✅ (partial)
-- **Category**: Code Quality
-- **Resolution**: KV cache shapes now derived from `AttentionComputation` fields (T-07); some placeholder shapes remain.
-
-### W-25 — `convert_stateful_milprogram` Duplicates `convert_milprogram` ✅
-- **Category**: Recycling
-- **Resolution**: Merged into `convert_milprogram` with `pass_pipeline` parameter (T-14).
-
-### W-26 — Python Modules Silently Swallow `ImportError` ✅
-- **Category**: Code Quality
-- **Resolution**: `_import_coremltools()` now raises `ImportError` instead of returning `(None, None, None, None)` (T-13).
-
-### W-27 — `emit_shard_decode_step` Duplicates Rust `RoleMirBuilder` Mapping ✅
-- **Category**: Code Quality
-- **Resolution**: Extracted shared `SHARD_ROLE_OP_MAP` in `program_builder.py` with doc comment noting Rust source of truth (T-06).
-
-### W-28 — `primary_op_pattern` Always Returns `"mb.matmul"` ✅
-- **Category**: Code Quality
-- **Resolution**: Now returns `"mb.scaled_dot_product_attention"` for attention shards (T-07).
-
-### W-29 — Duplicate `FunctionDescriptor`/`TensorDescriptor` vs PIR's `FunctionEntry`/`TensorSpec` ✅
-- **Category**: Recycling
-- **Resolution**: Extracted to `payload.rs` with proper documentation (T-04).
-
-### W-30 — Deprecated Family-Specific Payloads Still Present Without `#[deprecated]` ✅
-- **Category**: Recycling / Separation of Concerns
-- **Resolution**: Added `#[deprecated]` attributes (T-04).
+**Fix:** Replace the entire mask computation path with the reference pattern:
+1. Precompute `mask_tab` and `eye_tab` as static constant tensors at compile time
+2. Use `Gather` to select the correct row by position
+3. Use additive `Add(logits, mask)` for masking instead of `Select(condition, zeros, neg_infs)`
 
 ---
 
-## 🟢 Suggestion (15 findings — 15 resolved)
+### ISSUE-002: `fill` and `fill_like` survive to proto emission
 
-### S-01 — `KnowledgeEntry` Carries `KnowledgeUnit` Inline Rather Than by Reference ✅
-- **Category**: Code Quality
-- **File**: `crates/knowledge/src/store.rs:28-44`
-- **Resolution**: Changed `KnowledgeEntry.unit` from `KnowledgeUnit` to `Arc<KnowledgeUnit>`. Added `arc_knowledge_unit` serde helper module for transparent serialization. Cloning a `KnowledgeEntry` now only increments the Arc reference count instead of deep-copying the entire unit (T-21).
+**Status:** Open
+**Files:** `crates/passes/src/legality_rewrite.rs` (lines 2356–2368), `crates/coreml-proto/src/lib.rs` (line 3643)
+**Impact:** `fill`/`fill_like` are ANE-problematic. When `shape` is const and `value` is const, they should be const-folded (eliminated entirely). When shapes are dynamic, they force CPU fallback.
 
-### S-02 — `decay_confidence` Defined but Never Called ✅
-- **Category**: Code Quality
-- **File**: `crates/knowledge/src/confidence.rs:43-45`
-- **Resolution**: Marked `decay_confidence` with `#[deprecated(since = "0.2.0", note = "Not used in production code.")]` with guidance to integrate temporal decay into the update pipeline if needed (T-21).
+**Current state:**
+- The previous "fix" (commit 230c5e8) incorrectly stopped replacing `MILFill` with `MILConst`, claiming MILFill is "ANE-supported (PE engine)". This is wrong.
+- The proto emitter itself documents: `fill_like is ANE-illegal` (line 3643)
+- The reference model never uses `fill` or `fill_like` — all mask constants are precomputed
 
-### S-03 — `ConflictDetector` Always Runs O(n²) — No Early Termination ✅
-- **Category**: Code Quality
-- **File**: `crates/knowledge/src/conflict.rs:77-103`
-- **Resolution**: Refactored `detect()` to group entries by `KnowledgeType` first using a HashMap, then only compare pairs within the same type group. This reduces comparisons from O(n²) to O(n·k) where k is the average group size (T-21).
-
-### S-04 — `remap_compat_inputs` Is 180+ Lines of Boilerplate ✅ (documented)
-- **Category**: Recycling
-- **Resolution**: Added doc comment recommending derive macro or visitor pattern (T-12).
-
-### S-05 — Test in `package.rs` Writes to `/tmp/` Directly ✅
-- **Category**: Code Quality
-- **Resolution**: Replaced hardcoded `/tmp/main.mlpackage` path in test with `tempfile::tempdir()`-generated path. Test now uses a temporary directory that is automatically cleaned up (T-21).
-
-### S-06 — `FfiModel::Drop` Implementation Is a No-Op Comment ✅
-- **Category**: Code Quality
-- **Resolution**: Added proper `Drop` implementation that takes the handle and documents the macOS cleanup path (`MLModelDestroy`). Non-macOS builds safely ignore the handle. Removed the misleading comment-only implementation (T-21).
-
-### S-07 — No Shared Trait Abstraction for NodeId Types ✅
-- **Category**: Recycling
-- **Resolution**: Added `IrNodeId` trait in `common.rs` (T-03).
-
-### S-08 — No Shared Graph Trait — Identical Structure 4× Over ✅
-- **Category**: Recycling
-- **Resolution**: Added `IrGraph` trait in `common.rs` (T-03).
-
-### S-09 — `serialize.rs` Is Pure Copy-Paste Boilerplate ✅
-- **Category**: Recycling
-- **Resolution**: Replaced with generic `serialize_graph`/`deserialize_graph` (T-03).
-
-### S-10 — `DEFAULT_OPSET_VERSION` Defined but `"iOS18"` Hardcoded 12 Times ✅
-- **Category**: Code Quality
-- **Resolution**: Replaced with `crate::DEFAULT_OPSET_VERSION` (T-04).
-
-### S-11 — Magic Number `seed: 42` Hardcoded in 6 Payload Constructors ✅
-- **Category**: Code Quality
-- **Resolution**: Replaced with `DEFAULT_SEED` constant (T-04).
-
-### S-12 — `AneHwLimits::a12()` Is an Unverified Copy of A11 Values ✅ (documented)
-- **Category**: Code Quality
-- **Resolution**: Added doc comment noting values are estimated; added runtime warning when A12 limits are used (T-19).
-
-### S-13 — `ElementWise` / `ElementWiseOp` Marked Legacy but Still in Core Enums ✅
-- **Category**: Code Quality / Separation of Concerns
-- **Resolution**: Added `#[deprecated(since = "0.2.0")]` to `SirOp::ElementWise`, `AirOp::ElementWise`, and `ElementWiseOp` enum. All existing usages now produce deprecation warnings, providing a clear migration path to individual op variants (T-21).
-
-### S-14 — Duplicate `MockKnowledge` Implementations Across Pass Tests ✅
-- **Category**: Recycling
-- **Resolution**: Created shared `crates/passes/src/test_utils.rs` with a configurable `MockKnowledge` that replaces the 9+ duplicated mock implementations across pass test modules. Updated `risk_annotate` tests to use the shared mock. Other pass tests can be migrated incrementally (T-21).
-
-### S-15 — README Test Count Is Stale ✅
-- **Category**: Code Quality
-- **Resolution**: Updated from 440 to 637 (T-20).
+**Fix:**
+1. Replace all `Fill` ops with precomputed constant tensors (matching the reference pattern)
+2. If dynamic fills are ever needed, decompose to `mul(zeros_like(x), 0) + value` at the AIR level, not at proto emission
+3. Remove the `Fill`/`FillLike` proto emission paths once they are no longer needed
 
 ---
 
-## What the Project Does Well
+### ISSUE-003: `Equal` and `LessEqual` used on ANE path
 
-1. **Partial workspace dependency centralisation** — `serde`, `anyhow`, `serde_json`, `sha2`, `chrono`, `clap`, `zip`, `rmp-serde` all use `workspace = true` consistently. ✅ Now fully centralised.
-2. **`clippy.toml` cognitive complexity threshold (50)** and `rustfmt.toml` are good practices.
-3. **Thorough constraint-validation tests** — `op_constraints`, `dtype_constraints`, `ane_layout`, `ane_hw_limits`, `placement_validate` exercise both `.is_ok()` and `.is_err()` paths.
-4. **Honest `smoke_test.sh`** — reports limitations rather than faking success.
-5. **Good doc comments throughout IR types** — variant-level documentation is present and helpful.
-6. **`MirOpCompat` 27-variant emission path** — comprehensive coverage of ANE-compatible ops.
+**Status:** Open
+**Files:** `crates/passes/src/legality_rewrite.rs` (lines 2334, 2351)
+**Impact:** Both `"equal"` and `"less_equal"` are listed in `CPU_ONLY_OPS` (`crates/passes/src/cpu_only_ops.rs`, lines 144, 148). Using them in the attention mask path guarantees CPU fallback.
+
+**Fix:** Eliminated entirely by ISSUE-001 fix (precomputed mask tables + Gather).
 
 ---
 
-## Severity Summary
+## P1 — High (Incorrect Output or Broken for Non-Qwen Models)
 
-| Severity | Total | Resolved | Open |
-|----------|-------|----------|------|
-| 🔴 Critical | 14 | 14 | 0 |
-| 🟡 Warning | 30 | 30 | 0 |
-| 🟢 Suggestion | 15 | 15 | 0 |
-| **Total** | **59** | **59** | **0** |
+### ISSUE-004: `build_input_alias_map()` is Qwen3-specific
+
+**Status:** Open
+**Files:** `crates/bridge/src/mir_to_compat.rs` (lines 467–535)
+**Impact:** Non-Qwen3 models produce broken alias maps. Any model with different naming conventions (GPT-2's `c_attn`, Falcon's `query_key_value`, Mistral's different convention) will fail silently.
+
+**Current state:** The function's doc comment admits: *"Qwen3-specific: This function hardcodes aliases that match the Qwen3 transformer architecture"*. It contains string matches like:
+- `.contains(".self_attn.q_proj.weight")` — Qwen/Llama naming only
+- `name == "mlp_silu"` — Qwen3's SiLU gate naming
+- `name == "attn_qk"`, `"attn_softmax"`, `"attn_sv"` — synthetic names from Qwen3 decomposition
+
+**Fix:** Generalize to a config-driven alias system:
+1. Define a `WeightNamingScheme` enum (HuggingFaceLlama, HuggingFaceGPT2, etc.)
+2. Each scheme maps canonical role names (Q, K, V, O, Gate, Up, Down) to weight name patterns
+3. The SIR builder records the naming scheme used, and downstream passes use it
+
+---
+
+### ISSUE-005: `output_dim_for_weight()` parses HuggingFace weight names
+
+**Status:** Open
+**Files:** `crates/passes/src/legality_rewrite.rs` (lines 205–234)
+**Impact:** Unknown projections silently get `dim=0`, producing wrong shapes. This is a bridge-layer concern leaking into the legality rewrite pass.
+
+**Current state:** The `DecompositionContext::output_dim_for_weight()` method parses weight name strings to infer output dimensions. Returns 0 for any unrecognized weight name.
+
+**Fix:**
+1. Pass output dimensions explicitly through the SIR op or task spec
+2. The SIR-level `LinearProjection` op should carry its output dimension
+3. Remove `output_dim_for_weight()` from `DecompositionContext`
+
+---
+
+### ISSUE-006: Hardcoded model-specific constants in CLI
+
+**Status:** Open
+**Files:** `crates/cli/src/main.rs` (lines 4184, 4420–4421)
+**Impact:** Only Qwen3 produces correct output. Other models will have wrong RoPE frequencies, missing QK norm, etc.
+
+**Current state:**
+```rust
+let rope_theta = 1_000_000.0; // Qwen3 default; TODO: read from model config
+true,  // uses_rope: Qwen3 uses RoPE in decode
+true,  // has_qk_norm: Qwen3 uses QK norm
+```
+
+**Fix:** Read all model configuration from `TracedGraph.model_config`:
+- `rope_theta` from `config.rope_theta` (already in most HF configs)
+- `uses_rope` from `config.rope_scaling` or model architecture detection
+- `has_qk_norm` from checking for `q_norm`/`k_norm` weights in the model
+
+---
+
+### ISSUE-007: KV cache mask computation uses same CPU-only path as attention mask
+
+**Status:** Open
+**Files:** `crates/passes/src/legality_rewrite.rs` (lines 1636–1646)
+**Impact:** The KV cache write mask (`Equal(arange, pos) → Cast(bool, fp16)`) forces CPU fallback even for the KV cache update path, which is separate from the attention mask.
+
+**Current state:** Same `Equal+Cast` pattern as ISSUE-001 but for the KV write mask. Reference uses `Gather(eye_tab, write_idx)` instead.
+
+**Fix:** Eliminated by ISSUE-001 fix (use precomputed `eye_tab` + Gather for KV write mask).
+
+---
+
+## P2 — Medium (Architecture / Technical Debt)
+
+### ISSUE-008: Three uncoordinated mask implementations
+
+**Status:** Open
+**Files:** `crates/passes/src/kv_cache_rewrite.rs`, `crates/passes/src/legality_rewrite.rs`, `crates/trace/src/static_tables.rs`
+**Impact:** Maintenance burden, inconsistent ANE behavior, three different patterns for the same operation.
+
+**Current implementations:**
+1. `kv_cache_rewrite.rs`: `Where(valid_mask, new, cached)` — SIR level, uses `Where`
+2. `legality_rewrite.rs decompose_decode_step`: `Equal+Cast+Fill+Select` — AIR level, CPU-only
+3. `static_tables.rs`: Precomputed `mask_tab` constant — SIR level, but not used by decode step
+
+**Fix:** Unify on the reference pattern (precomputed tables + Gather). Remove `kv_cache_rewrite.rs` SIR pass (dead code) and the `static_tables.rs` approach in favor of the precomputed-constant + Gather approach in the AIR decomposition.
+
+---
+
+### ISSUE-009: `DecompositionContext` leaks model configuration across IR boundaries
+
+**Status:** Open
+**Files:** `crates/passes/src/legality_rewrite.rs` (lines 59–83)
+**Impact:** The SIR→AIR decomposition pass requires external dimension hints that should come from the SIR graph itself. This violates the IR layering principle.
+
+**Current state:** `DecompositionContext` carries `vocab_size`, `intermediate_size`, `uses_rope`, `has_qk_norm`, `uses_gqa` — model configuration that belongs at the SIR level.
+
+**Fix:**
+1. Enrich SIR ops with all needed dimension info (e.g., `LinearProjection` should carry output_dim)
+2. Extract model feature flags (uses_rope, has_qk_norm, uses_gqa) from the SIR graph during traversal
+3. Remove `DecompositionContext` or reduce it to only ANE-target information (seq_len, batch_size)
+
+---
+
+### ISSUE-010: JSON-based SIR alias resolution is fragile
+
+**Status:** Open
+**Files:** `crates/trace/src/sir_build.rs` (lines 257–272)
+**Impact:** Any change to JSON serialization or a string value that starts with `"sir_"` could break reference resolution. Also slow (serialize → scan → string substitution).
+
+**Current state:** The SIR builder resolves cross-node references by:
+1. Serializing each `SirOp` to JSON
+2. Scanning for `"sir_*"` string references
+3. Replacing dangling aliases with actual IDs via string substitution
+
+**Fix:** Use typed ID references (e.g., `SirNodeId`) instead of string scanning. Each SIR op should store its dependencies as `SirNodeId` values, not as string patterns that need post-hoc resolution.
+
+---
+
+### ISSUE-011: `Where` → `Select` double-rewrite
+
+**Status:** Open
+**Files:** `crates/passes/src/mil_lower.rs` (line 3413), `crates/coreml-proto/src/lib.rs` (line 3501)
+**Impact:** The `MILWhere` → `MILSelect` rewrite in `mil_lower.rs` makes the `Where` case in proto emission unreachable. The proto-level rewrite is defensive but adds dead code.
+
+**Fix:** Once the `Where` case is confirmed unreachable in practice, remove it from proto emission (or keep with a clear `unreachable!()` comment). The real fix is to ensure all `Where` ops are rewritten to `Select` at the MIR level.
+
+---
+
+### ISSUE-012: Shared node dedup is a post-hoc workaround
+
+**Status:** Open
+**Files:** `crates/passes/src/legality_rewrite.rs` (lines 727–730)
+**Impact:** The dedup masks a real bug: shared AIR nodes are emitted once per layer instead of once globally. The dedup works but wastes compile time generating N copies and discarding N-1.
+
+**Current state:**
+```rust
+let mut seen_ids: HashSet<String> = HashSet::new();
+air_nodes.retain(|node| seen_ids.insert(node.id.0.clone()));
+```
+
+**Fix:** Track shared nodes properly in the `sir_to_air` map so they are emitted once and referenced by ID from then on. Use a "prelude" emission phase before the per-layer loop.
+
+---
+
+### ISSUE-013: `RoPETableConfig::for_qwen3_0_6b()` factory method
+
+**Status:** Open
+**Files:** `crates/bridge/src/static_table_resolver.rs` (line 108)
+**Impact:** Hardcodes Qwen3-0.6B dimensions (theta=1_000_000, head_dim=128).
+
+**Fix:** Replace with a generic factory that reads rope parameters from `ModelConfig`:
+```rust
+RoPETableConfig::from_model_config(config: &ModelConfig, seq_len: usize)
+```
+
+---
+
+### ISSUE-014: Hardcoded shape in `role_mir.rs` IoEmbedding
+
+**Status:** Open
+**Files:** `crates/passes/src/role_mir.rs` (line 631)
+**Impact:** `shape: vec![32000, 128]` is only correct for Qwen3-0.6B.
+
+**Fix:** Derive embedding shape from task spec (vocab_size × embed_dim from ModelConfig).
+
+---
+
+### ISSUE-015: `kv_cache_rewrite.rs` SIR pass is dead code
+
+**Status:** Open
+**Files:** `crates/passes/src/kv_cache_rewrite.rs`
+**Impact:** The decode step decomposition in `legality_rewrite.rs` implements its own inline blend pattern, making this pass unreachable for the main compilation path. It also uses a different pattern (`Where` vs `Equal+Cast`).
+
+**Fix:** Remove the dead code path, or integrate it properly with the AIR-level decomposition if a SIR-level KV cache rewrite is desired.
+
+---
+
+## P3 — Low (Code Quality / Future Work)
+
+### ISSUE-016: RMSNorm implementation lacks fp16 overflow protection
+
+**Status:** Open
+**Files:** `crates/passes/src/legality_rewrite.rs` (RMSNorm decomposition)
+**Impact:** The reference model uses `rms_norm_dynamic_safe` with dynamic max-abs stabilization to prevent fp16 overflow when activations > 256. MILLer's RMSNorm decomposition may produce NaN for large activations on ANE.
+
+**Reference pattern:**
+```python
+abs_x = mb.abs(x=x)
+maxval = mb.reduce_max(x=abs_x, axes=[-1], keep_dims=True)
+max_clp = mb.clip(x=maxval, alpha=2**-14, beta=inf)
+z = mb.real_div(x=x, y=max_clp)        # Divide by max first
+sq = mb.mul(x=z, y=z)                   # Then square (no overflow)
+var = mb.reduce_mean(x=sq, axes=[-1], keep_dims=True)
+eps_eff = mb.real_div(x=eps, y=max_clp) # Double-division avoids forming max²
+eps_eff = mb.real_div(x=eps_eff, y=max_clp)
+inv_std = mb.rsqrt(x=mb.add(x=var, y=eps_eff))
+```
+
+**Fix:** Add dynamic max-abs scaling to the RMSNorm decomposition, matching the reference pattern.
+
+---
+
+### ISSUE-017: QK norm (SLaNC) not implemented
+
+**Status:** Open
+**Files:** N/A (missing feature)
+**Impact:** Qwen3 uses QK normalization with per-layer learned scales. Without it, the model produces incorrect outputs. The current code sets `has_qk_norm=true` in the context but doesn't implement QK norm in the decomposition.
+
+**Reference pattern:** `rms_norm_slanc_qk` in `rms_norm.py` — adds SLaNC pre-scaling with per-layer learned scales before the RMS computation.
+
+**Fix:** Implement QK norm as a separate pass or as part of the attention decomposition.
+
+---
+
+### ISSUE-018: No model architecture detection or configuration-driven compilation
+
+**Status:** Open
+**Files:** `crates/cli/src/main.rs`
+**Impact:** The compiler cannot adapt to different model architectures. All configuration is hardcoded for Qwen3.
+
+**Fix:** Implement a model architecture registry that:
+1. Detects the model type from HF config (`architectures` field)
+2. Selects the appropriate naming scheme, RoPE configuration, norm type, etc.
+3. Provides candidates for ANE decomposition strategies and chooses the best based on target hardware
+
+---
+
+### ISSUE-019: `cast` from bool/int to fp16 on ANE path
+
+**Status:** Open
+**Files:** `crates/passes/src/legality_rewrite.rs` (line 2341)
+**Impact:** Casting from bool or int types to fp16 on the ANE path is conditionally ANE-legal — it may work but often forces CPU fallback.
+
+**Fix:** Eliminated by ISSUE-001 fix (no more bool-to-fp16 casts needed with precomputed mask tables).
+
+---
+
+### ISSUE-020: Reverse ring-buffer KV cache layout not implemented
+
+**Status:** Open
+**Files:** `crates/passes/src/legality_rewrite.rs`
+**Impact:** The reference model uses a reverse ring-buffer layout where positions are written from the END of the sequence axis (`write_idx = seq-1 - pos`). This means active context always lives in a contiguous suffix, which is more cache-friendly and matches the precomputed mask table layout.
+
+**Current state:** MILLer writes positions starting from index 0, which requires a different mask table layout.
+
+**Fix:** Implement the reverse ring-buffer pattern matching the reference:
+1. Compute `write_idx = seq - 1 - pos_mod`
+2. Precompute mask tables in reversed layout
+3. Update the causal mask to match
+
+---
+
+## Summary Statistics
+
+| Priority | Count | Description |
+|----------|-------|-------------|
+| P0 | 3 | Blocks correct ANE execution |
+| P1 | 4 | Broken for non-Qwen models or incorrect output |
+| P2 | 8 | Architecture violations, technical debt |
+| P3 | 5 | Code quality, missing features |
+| **Total** | **20** | |
+
+## Dependency Graph
+
+```
+ISSUE-001 (mask CPU ops) ─── fixes ──→ ISSUE-002 (fill ops)
+                               └──→ ISSUE-003 (Equal/LessEqual)
+                               └──→ ISSUE-007 (KV mask)
+                               └──→ ISSUE-019 (bool→fp16 cast)
+
+ISSUE-004 (alias map) ─── independent
+ISSUE-005 (output_dim) ─── related to ISSUE-009
+ISSUE-006 (hardcoded config) ─── related to ISSUE-018
+
+ISSUE-008 (three masks) ─── superseded by ISSUE-001 fix
+ISSUE-009 (context leak) ─── related to ISSUE-005
+ISSUE-010 (JSON aliases) ─── independent
+
+ISSUE-016 (RMSNorm overflow) ─── independent
+ISSUE-017 (QK norm) ─── independent
+ISSUE-020 (reverse ring buffer) ─── related to ISSUE-001
+```
+
+## Recommended Fix Order
+
+1. **ISSUE-001** — Replace mask path with precomputed tables + Gather + Add (fixes 001, 002, 003, 007, 019, 020)
+2. **ISSUE-004** + **ISSUE-005** + **ISSUE-006** — Remove Qwen3 hardcoding (fixes 004, 005, 006, 013, 014)
+3. **ISSUE-008** + **ISSUE-015** — Clean up dead/uncoordinated mask code
+4. **ISSUE-009** — Fix `DecompositionContext` layering violation
+5. **ISSUE-016** + **ISSUE-017** — Implement proper RMSNorm and QK norm
+6. **ISSUE-010** — Replace JSON alias resolution with typed IDs
+7. **ISSUE-018** — Implement model architecture detection
