@@ -1129,6 +1129,8 @@ fn run_compile_full(
             kv_heads,
             intermediate_size,
             vocab_size,
+            uses_rope,
+            has_qk_norm,
             ..
         } => Some(DecompositionContext::for_decode_step_full(
             *batch_size,
@@ -1139,8 +1141,8 @@ fn run_compile_full(
             *kv_heads,
             *intermediate_size,
             *vocab_size,
-            true,  // uses_rope
-            false, // has_qk_norm
+            *uses_rope,
+            *has_qk_norm,
         )),
         ane_ir::task_spec::TaskOp::ShardedDecodeStep {
             embed_dim,
@@ -1151,6 +1153,8 @@ fn run_compile_full(
             kv_heads,
             intermediate_size,
             vocab_size,
+            uses_rope,
+            has_qk_norm,
             ..
         } => Some(DecompositionContext::for_decode_step_full(
             *batch_size,
@@ -1161,8 +1165,8 @@ fn run_compile_full(
             *kv_heads,
             *intermediate_size,
             *vocab_size,
-            true,  // uses_rope
-            false, // has_qk_norm
+            *uses_rope,
+            *has_qk_norm,
         )),
         _ => None,
     };
@@ -1928,6 +1932,8 @@ fn run_compile_full_sharded(
                 kv_heads,
                 intermediate_size,
                 vocab_size,
+                uses_rope,
+                has_qk_norm,
                 ..
             } => Some(DecompositionContext::for_decode_step_full(
                 *batch_size,
@@ -1938,8 +1944,8 @@ fn run_compile_full_sharded(
                 *kv_heads,
                 *intermediate_size,
                 *vocab_size,
-                true,  // uses_rope
-                false, // has_qk_norm
+                *uses_rope,
+                *has_qk_norm,
             )),
             _ => None,
         };

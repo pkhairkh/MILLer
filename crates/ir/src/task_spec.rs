@@ -101,6 +101,8 @@ pub enum TaskOp {
         intermediate_size: usize,
         vocab_size: usize,
         dtype: String,
+        uses_rope: bool,
+        has_qk_norm: bool,
     },
     /// Sharded decode step: a decode step decomposed into multiple shards.
     ///
@@ -125,6 +127,8 @@ pub enum TaskOp {
         intermediate_size: usize,
         vocab_size: usize,
         dtype: String,
+        uses_rope: bool,
+        has_qk_norm: bool,
     },
     /// MLP Block: fused feed-forward network block (linear_up + activation + linear_down).
     ///
@@ -266,9 +270,9 @@ impl TaskOp {
                 format!("LutProjection:vocab_size={},embed_dim={},num_groups={},lut_bitwidth={},batch_size={},dtype={}",
                     vocab_size, embed_dim, num_groups, lut_bitwidth, batch_size, dtype)
             }
-            TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, kv_heads, intermediate_size, vocab_size, dtype } => {
-                format!("DecodeStep:embed_dim={},num_heads={},head_dim={},kv_len={},batch_size={},kv_heads={},intermediate_size={},vocab_size={},dtype={}",
-                    embed_dim, num_heads, head_dim, kv_len, batch_size, kv_heads, intermediate_size, vocab_size, dtype)
+            TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, kv_heads, intermediate_size, vocab_size, dtype, uses_rope, has_qk_norm } => {
+                format!("DecodeStep:embed_dim={},num_heads={},head_dim={},kv_len={},batch_size={},kv_heads={},intermediate_size={},vocab_size={},dtype={},uses_rope={},has_qk_norm={}",
+                    embed_dim, num_heads, head_dim, kv_len, batch_size, kv_heads, intermediate_size, vocab_size, dtype, uses_rope, has_qk_norm)
             }
             TaskOp::ShardedDecodeStep {
                 embed_dim,
@@ -280,9 +284,11 @@ impl TaskOp {
                 intermediate_size,
                 vocab_size,
                 dtype,
+                uses_rope,
+                has_qk_norm,
             } => {
-                format!("ShardedDecodeStep:embed_dim={},num_heads={},head_dim={},kv_len={},batch_size={},kv_heads={},intermediate_size={},vocab_size={},dtype={}",
-                    embed_dim, num_heads, head_dim, kv_len, batch_size, kv_heads, intermediate_size, vocab_size, dtype)
+                format!("ShardedDecodeStep:embed_dim={},num_heads={},head_dim={},kv_len={},batch_size={},kv_heads={},intermediate_size={},vocab_size={},dtype={},uses_rope={},has_qk_norm={}",
+                    embed_dim, num_heads, head_dim, kv_len, batch_size, kv_heads, intermediate_size, vocab_size, dtype, uses_rope, has_qk_norm)
             }
             TaskOp::MlpBlock {
                 input_dim,
@@ -397,7 +403,7 @@ impl TaskOp {
                     "dtype": dtype,
                 })
             }
-            TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, kv_heads, intermediate_size, vocab_size, dtype } => {
+            TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, kv_heads, intermediate_size, vocab_size, dtype, uses_rope, has_qk_norm } => {
                 serde_json::json!({
                     "embed_dim": embed_dim,
                     "num_heads": num_heads,
@@ -408,6 +414,8 @@ impl TaskOp {
                     "intermediate_size": intermediate_size,
                     "vocab_size": vocab_size,
                     "dtype": dtype,
+                    "uses_rope": uses_rope,
+                    "has_qk_norm": has_qk_norm,
                 })
             }
             TaskOp::ShardedDecodeStep {
@@ -420,6 +428,8 @@ impl TaskOp {
                 intermediate_size,
                 vocab_size,
                 dtype,
+                uses_rope,
+                has_qk_norm,
             } => {
                 serde_json::json!({
                     "embed_dim": embed_dim,
@@ -431,6 +441,8 @@ impl TaskOp {
                     "intermediate_size": intermediate_size,
                     "vocab_size": vocab_size,
                     "dtype": dtype,
+                    "uses_rope": uses_rope,
+                    "has_qk_norm": has_qk_norm,
                 })
             }
             TaskOp::MlpBlock {
@@ -984,6 +996,8 @@ fn parse_decode_step(
         intermediate_size: embed_dim * 4,
         vocab_size: 0,
         dtype,
+        uses_rope: true,
+        has_qk_norm: false,
     };
 
     let measurement = parse_measurement(root);
@@ -1062,6 +1076,8 @@ fn parse_sharded_decode_step(
         intermediate_size: embed_dim * 4,
         vocab_size: 0,
         dtype,
+        uses_rope: true,
+        has_qk_norm: false,
     };
 
     let measurement = parse_measurement(root);

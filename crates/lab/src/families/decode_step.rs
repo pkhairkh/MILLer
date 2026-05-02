@@ -178,6 +178,8 @@ impl DecodeStepFamily {
                                     intermediate_size: *embed_dim * 4,
                                     vocab_size: 0,
                                     dtype: dtype.clone(),
+                                    uses_rope: true,
+                                    has_qk_norm: false,
                                 },
                                 measurement: MeasurementConfig {
                                     warmup_iterations: 5,

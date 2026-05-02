@@ -541,6 +541,108 @@ impl LegalityRewritePass {
                     )];
                     (air_id, nodes, "mb.mul")
                 }
+                // ─── ANE-ILLEGAL: Select / Where → arithmetic decomposition ───
+                // mb.select and mb.where are ANE-illegal (no ANE converter).
+                // Decompose: select/where(cond, x, y) → cond*x + (1-cond)*y
+                // using Const(1.0), Sub, Mul, Add — all fully ANE-legal.
+                SirOp::Select { condition, x, y } => {
+                    let cond_air = sir_to_air.get(condition).cloned().unwrap_or_else(|| AirNodeId(condition.0.clone()));
+                    let x_air = sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
+                    let y_air = sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
+                    let base = &sir_node.id.0;
+                    let mut nodes = Vec::new();
+
+                    // 1. Const scalar 1.0
+                    let one_id = AirNodeId(format!("{}_sel_one", base));
+                    nodes.push(Self::make_air_node(
+                        one_id.clone(),
+                        AirOp::Const { value_path: "scalar://fp16/1.0".to_string(), dtype: MilDtype::Fp16 },
+                        sir_node, "mb.const", knowledge_query,
+                    ));
+
+                    // 2. Sub: 1 - cond
+                    let one_minus_cond_id = AirNodeId(format!("{}_sel_sub", base));
+                    nodes.push(Self::make_air_node(
+                        one_minus_cond_id.clone(),
+                        AirOp::Sub { x: one_id, y: cond_air.clone() },
+                        sir_node, "mb.sub", knowledge_query,
+                    ));
+
+                    // 3. Mul: cond * x
+                    let cond_x_id = AirNodeId(format!("{}_sel_mul_x", base));
+                    nodes.push(Self::make_air_node(
+                        cond_x_id.clone(),
+                        AirOp::Mul { x: cond_air, y: x_air },
+                        sir_node, "mb.mul", knowledge_query,
+                    ));
+
+                    // 4. Mul: (1-cond) * y
+                    let one_minus_cond_y_id = AirNodeId(format!("{}_sel_mul_y", base));
+                    nodes.push(Self::make_air_node(
+                        one_minus_cond_y_id.clone(),
+                        AirOp::Mul { x: one_minus_cond_id, y: y_air },
+                        sir_node, "mb.mul", knowledge_query,
+                    ));
+
+                    // 5. Add: cond*x + (1-cond)*y (final result)
+                    let air_id = AirNodeId(sir_node.id.0.clone());
+                    nodes.push(Self::make_air_node(
+                        air_id.clone(),
+                        AirOp::Add { x: cond_x_id, y: one_minus_cond_y_id },
+                        sir_node, "mb.add", knowledge_query,
+                    ));
+
+                    (air_id, nodes, "ane.legal.select_decompose")
+                }
+                SirOp::Where { condition, x, y } => {
+                    let cond_air = sir_to_air.get(condition).cloned().unwrap_or_else(|| AirNodeId(condition.0.clone()));
+                    let x_air = sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
+                    let y_air = sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
+                    let base = &sir_node.id.0;
+                    let mut nodes = Vec::new();
+
+                    // 1. Const scalar 1.0
+                    let one_id = AirNodeId(format!("{}_where_one", base));
+                    nodes.push(Self::make_air_node(
+                        one_id.clone(),
+                        AirOp::Const { value_path: "scalar://fp16/1.0".to_string(), dtype: MilDtype::Fp16 },
+                        sir_node, "mb.const", knowledge_query,
+                    ));
+
+                    // 2. Sub: 1 - cond
+                    let one_minus_cond_id = AirNodeId(format!("{}_where_sub", base));
+                    nodes.push(Self::make_air_node(
+                        one_minus_cond_id.clone(),
+                        AirOp::Sub { x: one_id, y: cond_air.clone() },
+                        sir_node, "mb.sub", knowledge_query,
+                    ));
+
+                    // 3. Mul: cond * x
+                    let cond_x_id = AirNodeId(format!("{}_where_mul_x", base));
+                    nodes.push(Self::make_air_node(
+                        cond_x_id.clone(),
+                        AirOp::Mul { x: cond_air, y: x_air },
+                        sir_node, "mb.mul", knowledge_query,
+                    ));
+
+                    // 4. Mul: (1-cond) * y
+                    let one_minus_cond_y_id = AirNodeId(format!("{}_where_mul_y", base));
+                    nodes.push(Self::make_air_node(
+                        one_minus_cond_y_id.clone(),
+                        AirOp::Mul { x: one_minus_cond_id, y: y_air },
+                        sir_node, "mb.mul", knowledge_query,
+                    ));
+
+                    // 5. Add: cond*x + (1-cond)*y (final result)
+                    let air_id = AirNodeId(sir_node.id.0.clone());
+                    nodes.push(Self::make_air_node(
+                        air_id.clone(),
+                        AirOp::Add { x: cond_x_id, y: one_minus_cond_y_id },
+                        sir_node, "mb.add", knowledge_query,
+                    ));
+
+                    (air_id, nodes, "ane.legal.where_decompose")
+                }
                 SirOp::Abs { input } => {
                     let air_input = sir_to_air.get(input).cloned().unwrap_or_else(|| AirNodeId(input.0.clone()));
                     let air_id = AirNodeId(sir_node.id.0.clone());
@@ -3328,11 +3430,12 @@ impl LegalityRewritePass {
             SirOp::Cast { input, dtype } => {
                 (AirOp::Cast { input: aid(input), dtype: dtype.clone() }, "mb.cast")
             }
-            SirOp::Select { condition, x, y } => {
-                (AirOp::Select { condition: aid(condition), x: aid(x), y: aid(y) }, "mb.select")
-            }
-            SirOp::Where { condition, x, y } => {
-                (AirOp::Where { condition: aid(condition), x: aid(x), y: aid(y) }, "mb.where")
+            SirOp::Select { .. } | SirOp::Where { .. } => {
+                // UNREACHABLE: Select and Where are decomposed to arithmetic
+                // (cond*x + (1-cond)*y) in the main run() match above.
+                // If this panic fires, a new code path is producing Select/Where
+                // without going through the decomposition.
+                panic!("BUG: SirOp::Select/Where reached sir_to_air_passthrough — these must be decomposed to arithmetic in run(), not passed through. mb.select and mb.where are ANE-illegal.");
             }
             SirOp::Softmax { input, axis } => {
                 (AirOp::Softmax { input: aid(input), axis: *axis }, "mb.softmax")

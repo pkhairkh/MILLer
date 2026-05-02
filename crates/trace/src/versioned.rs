@@ -376,16 +376,12 @@ impl OpSupportMatrix {
                 "Inverse has no direct ANEC converter; decompose to RealDiv(Const(1), x)".to_string(),
             ),
             SirOp::Exp { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
-            SirOp::Exp2 { .. } => OpSupport::CpuOnly(
-                "Exp2 has no direct ANEC converter; decompose to Exp(Mul(Const(ln2), x))".to_string(),
-            ),
+            SirOp::Exp2 { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Log { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Ceil { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Floor { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Round { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
-            SirOp::Sign { .. } => OpSupport::CpuOnly(
-                "Sign has no direct ANEC converter; falls back to CPU".to_string(),
-            ),
+            SirOp::Sign { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Cos { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Sin { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Tan { .. } => OpSupport::CpuOnly(
@@ -403,20 +399,21 @@ impl OpSupportMatrix {
             SirOp::Atanh { .. } => OpSupport::CpuOnly(
                 "Atanh has no direct ANEC converter; falls back to CPU".to_string(),
             ),
-            SirOp::Erf { .. } => OpSupport::CpuOnly(
-                "Erf has no ANEC converter; required for exact Gelu but Gelu has its own ANEC path".to_string(),
-            ),
+            SirOp::Erf { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Abs { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Neg { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::LogicalNot { .. } => OpSupport::CpuOnly(
                 "LogicalNot has no ANEC converter; falls back to CPU".to_string(),
             ),
             SirOp::Cast { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
-            SirOp::Select { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
-            // mb.where: CoreML MIL has no native "where" op. The proto emitter
-            // converts Where → Select, which IS ANE-legal (anec.scaled_elementwise).
-            // Mark as AneSupported since the emitted form lands on ANE.
-            SirOp::Where { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            SirOp::Select { .. } => OpSupport::CpuOnly(
+                "mb.select is ANE-illegal in practice despite ConvertSelect in per-op matrix; decompose to cond*a + (1-cond)*b".to_string(),
+            ),
+            // mb.where: ANE-illegal for same reason as select.
+            // Decompose to arithmetic: where(cond, x, y) → cond*x + (1-cond)*y
+            SirOp::Where { .. } => OpSupport::CpuOnly(
+                "mb.where is ANE-illegal; decompose to cond*x + (1-cond)*y".to_string(),
+            ),
 
             // ─── Reduction: PE, with family restrictions ───────────
             SirOp::ReduceMean { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
@@ -692,10 +689,10 @@ impl OpSupportMatrix {
             SirOp::Const { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::Identity { .. } => OpSupport::AneSupported(AneEngineSupport::Transpose),
             SirOp::Fill { .. } => OpSupport::CpuOnly(
-                "mb.fill is ANE-illegal; must be replaced with mb.where + Const during lowering".to_string(),
+                "mb.fill is ANE-illegal; must be replaced with MILConst during lowering".to_string(),
             ),
             SirOp::FillLike { .. } => OpSupport::CpuOnly(
-                "mb.fill_like is ANE-illegal; must be replaced with mb.where + Const during lowering".to_string(),
+                "mb.fill_like is ANE-illegal; decompose to mul(ref, 0) + add(0, val) at MIR level".to_string(),
             ),
             SirOp::Range1d { .. } => OpSupport::CpuOnly(
                 "Range1d has no ANEC converter; falls back to CPU".to_string(),

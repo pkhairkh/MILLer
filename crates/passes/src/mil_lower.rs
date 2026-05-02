@@ -494,6 +494,20 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 vec![]
             }
         }
+        // ─── Stack: like Concat but inserts a new dimension at `axis` ───
+        // Stack([t1, t2, ..., tN], axis) → shape is same as t1 but with a new
+        // dim of size N inserted at `axis`. E.g. Stack([a,b], axis=0) where
+        // a=[3,4] → [2,3,4].
+        AirOp::Stack { values, axis } => {
+            if let Some(first_shape) = values.first().and_then(|id| node_shapes.get(id)) {
+                let mut out = first_shape.clone();
+                let ax = if *axis <= out.len() { *axis } else { out.len() };
+                out.insert(ax, values.len());
+                out
+            } else {
+                vec![]
+            }
+        }
         // All remaining AIR ops: conservatively return empty shape
         _ => vec![],
     }
@@ -1076,21 +1090,15 @@ impl MilLowerPass {
                         .unwrap_or_else(|| MirNodeId(input.0.clone()));
                     MirOp::MILTanh { name: air_node.name.clone(), x: mir_input }
                 }
-                AirOp::Where { condition, x, y } => {
-                    let mir_condition = air_to_mir
-                        .get(condition)
-                        .cloned()
-                        .unwrap_or_else(|| MirNodeId(condition.0.clone()));
-                    let mir_x =
-                        air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
-                    let mir_y =
-                        air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
-                    MirOp::MILWhere {
-                        name: air_node.name.clone(),
-                        condition: mir_condition,
-                        x: mir_x,
-                        y: mir_y,
-                    }
+                AirOp::Where { .. } => {
+                    // UNREACHABLE: mb.where is ANE-illegal (no ANE converter).
+                    // Where is decomposed to arithmetic (cond*x + (1-cond)*y)
+                    // at the SIR→AIR level in legality_rewrite.rs.
+                    // If this panic fires, a Where op leaked through the
+                    // legality rewrite pass without being decomposed.
+                    panic!(
+                        "BUG: AirOp::Where reached AIR→MIR lowering — where must be decomposed to arithmetic at SIR→AIR level. mb.where is ANE-illegal."
+                    );
                 }
                 // Sprint 57: StaticLUTProjection lowers to MILGather as a de-scoped
                 // approximation. The op is not used by any active SIR/task path;
@@ -1551,17 +1559,15 @@ impl MilLowerPass {
                         .unwrap_or_else(|| MirNodeId(input.0.clone()));
                     MirOp::MILCast { name: air_node.name.clone(), x: mi, dtype: dtype.clone() }
                 }
-                AirOp::Select { condition, x, y } => {
-                    // mb.select with 3 arguments (cond, a, b) IS ANE-legal:
-                    // the ANE compiler has ConvertSelect → anec.scaled_elementwise (PE).
-                    // Keep as MILSelect directly — do NOT rewrite to MILWhere.
-                    let mc = air_to_mir
-                        .get(condition)
-                        .cloned()
-                        .unwrap_or_else(|| MirNodeId(condition.0.clone()));
-                    let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
-                    let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
-                    MirOp::MILSelect { name: air_node.name.clone(), condition: mc, x: mx, y: my }
+                AirOp::Select { .. } => {
+                    // UNREACHABLE: mb.select is ANE-illegal (no ANE converter).
+                    // Despite per-op matrix row 69 listing ConvertSelect,
+                    // empirical testing shows mb.select causes CPU fallback.
+                    // Select is decomposed to arithmetic (cond*x + (1-cond)*y)
+                    // at the SIR→AIR level in legality_rewrite.rs.
+                    panic!(
+                        "BUG: AirOp::Select reached AIR→MIR lowering — select must be decomposed to arithmetic at SIR→AIR level. mb.select is ANE-illegal."
+                    );
                 }
 
                 // Reduction ops
@@ -3452,28 +3458,20 @@ impl MilLowerPass {
                 }
             }
 
-            // ── 2. Replace MILWhere / MILSelect with ANE-legal alternatives ──
+            // ── 2. Hard block: MILWhere / MILSelect must never reach MIR ──
             // Both `where` and `select` are ANE-illegal (no ANE converter).
-            // The reference model uses additive masking instead:
-            //   Instead of: select(condition, zeros, neg_infs) → masked values
-            //   Use: add(logits, mask) where mask is precomputed with 0.0/-inf
-            //
-            // With the ISSUE-001 fix, neither MILWhere nor MILSelect should
-            // appear in the decode_step path (masks use Gather from static
-            // tables). But if they appear from other paths, we warn loudly
-            // since they will force CPU fallback.
+            // They are decomposed to arithmetic at the SIR→AIR level in
+            // legality_rewrite.rs. If they somehow reach MIR, it's a bug
+            // in the decomposition pipeline — panic immediately rather than
+            // silently producing an ANE-incompatible model.
             let where_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILWhere { .. })).count();
             let select_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILSelect { .. })).count();
             if where_count > 0 || select_count > 0 {
-                eprintln!(
-                    "  [ANE WARNING] Found {} MILWhere + {} MILSelect — these are ANE-illegal! \
-                     They will force CPU fallback. Replace with precomputed mask tables + Gather + Add.",
+                panic!(
+                    "BUG: Found {} MILWhere + {} MILSelect in MIR — these are ANE-illegal and must be decomposed to arithmetic (cond*x + (1-cond)*y) at the SIR→AIR level. Check legality_rewrite.rs.",
                     where_count, select_count
                 );
             }
-            // No automatic rewrite: Where→Select is useless since Select is also CPU-only.
-            // Both ops will be flagged as CPU-only by the cpu_only_ops gate in the
-            // legality pass, giving them legality_confidence=0.0 and fallback_risk=1.0.
 
             // ── 3. Replace MILLayerNorm with decomposed RMSNorm primitives ──
             // The ANE has no `layer_norm` converter. The reference model
@@ -4800,7 +4798,10 @@ mod tests {
     }
 
     #[test]
-    fn test_where_lowering() {
+    fn test_where_lowering_panics() {
+        // AirOp::Where should NEVER reach AIR→MIR lowering — it must be
+        // decomposed to arithmetic (cond*x + (1-cond)*y) at the SIR→AIR
+        // level in legality_rewrite.rs. If it reaches here, it's a bug.
         let pass = MilLowerPass::new();
         let shard_plan = ShardPlan::default();
         let air = AirGraph {
@@ -4816,23 +4817,10 @@ mod tests {
             outputs: vec![AirNodeId("where_out".into())],
             staticization_decisions: vec![],
         };
-        let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
-        // MILWhere is NOT rewritten to MILSelect (both are ANE-illegal CPU-only ops).
-        // The Where→Select rewrite was removed because Select is also CPU-only.
-        // Both ops are flagged as CPU-only (legality_confidence=0.0) and should
-        // not appear in the decode_step path at all — the proper approach is to
-        // use precomputed mask tables + Gather + Add instead.
-        let where_node = mirs[0]
-            .nodes
-            .iter()
-            .find(|n| matches!(n.op, MirOp::MILWhere { .. }));
-        // MILWhere should still be present (not rewritten to MILSelect)
-        assert!(where_node.is_some(), "MILWhere should be preserved (both Where and Select are CPU-only)");
-        if let MirOp::MILWhere { condition, x, y, .. } = &where_node.unwrap().op {
-            assert_eq!(condition.0, "mask");
-            assert_eq!(x.0, "update");
-            assert_eq!(y.0, "original");
-        }
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = pass.run(&air, &shard_plan, &HashMap::new());
+        }));
+        assert!(result.is_err(), "AirOp::Where should panic at AIR→MIR lowering — it must be decomposed to arithmetic at SIR→AIR level");
     }
 
     // --- Sprint 55: Maximum/Minimum lowering tests ---

@@ -626,13 +626,50 @@ impl<'a> SirBuildContext<'a> {
                 )])
             }
             TracedOp::Where => {
+                // ANE-LEGAL DECOMPOSITION: mb.where is ANE-illegal (no ANE converter).
+                // Decompose where(cond, x, y) → cond*x + (1-cond)*y
+                // using pure arithmetic ops (Mul, Sub, Add) which are fully ANE-legal.
+                //
+                // The intermediate nodes use semantic aliases (sir_{name}_{traced_id})
+                // that get resolved to actual counter-based IDs by the post-hoc
+                // alias resolution system (see build() method).
                 let cond_id = self.resolve_input(&node.inputs, 0);
                 let x_id = self.resolve_input(&node.inputs, 1);
                 let y_id = self.resolve_input(&node.inputs, 2);
-                Ok(vec![(
-                    SirOp::Where { condition: cond_id, x: x_id, y: y_id },
-                    "where".to_string(),
-                )])
+                let base = &node.id;
+
+                // 1. Const scalar 1.0 (for computing 1 - cond)
+                let one_alias = SirNodeId(format!("sir_where_one_{}", base));
+                // 2. Sub: 1 - cond
+                let one_minus_cond_alias = SirNodeId(format!("sir_where_sub_{}", base));
+                // 3. Mul: cond * x
+                let cond_x_alias = SirNodeId(format!("sir_where_mul_x_{}", base));
+                // 4. Mul: (1-cond) * y
+                let one_minus_cond_y_alias = SirNodeId(format!("sir_where_mul_y_{}", base));
+                // 5. Add: cond*x + (1-cond)*y (final result)
+
+                Ok(vec![
+                    (SirOp::Const {
+                        value_path: "scalar://fp16/1.0".to_string(),
+                        dtype: MilDtype::Fp16,
+                    }, "where_one".to_string()),
+                    (SirOp::Sub {
+                        x: one_alias,
+                        y: cond_id.clone(),
+                    }, "where_sub".to_string()),
+                    (SirOp::Mul {
+                        x: cond_id,
+                        y: x_id,
+                    }, "where_mul_x".to_string()),
+                    (SirOp::Mul {
+                        x: one_minus_cond_alias,
+                        y: y_id,
+                    }, "where_mul_y".to_string()),
+                    (SirOp::Add {
+                        x: cond_x_alias,
+                        y: one_minus_cond_y_alias,
+                    }, "where_add".to_string()),
+                ])
             }
             TracedOp::KvCacheRead { layer_idx, head_dim, num_heads: _ } => {
                 let state_id = format!("kv_cache_layer_{}_key", layer_idx);

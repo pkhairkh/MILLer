@@ -139,25 +139,27 @@ pub static CPU_ONLY_OPS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         // NOTE: FillLike is decomposed to ANE-legal mul+add by the proto emitter.
         "fill",
         "fill_like",
-        // select: HAS an ANE converter (ConvertSelect → anec.scaled_elementwise, PE engine).
-        // The 3-argument form (cond, a, b) IS ANE-legal on all families.
-        // Removed from CPU_ONLY list per ANE per-op-per-family support matrix.
-        // "select",
+        // select / where: Despite per-op matrix row 69 listing ConvertSelect,
+        // empirical testing shows mb.select causes CPU fallback in practice.
+        // Decompose to arithmetic: select(cond, a, b) → cond*a + (1-cond)*b
+        "select",
+        "where",
         // Quantization constexpr (never on ANE)
         "constexpr_blockwise_shift_scale",
         "constexpr_sparse_blockwise_shift_scale",
-        // More ops
-        "erf",
+        // Logical (mps.and/or/xor have NO ANEC converter — rows 104-106)
+        // These map to the bitwise/logical gate ops, NOT comparison ops.
         "logical_and",
         "logical_or",
         "logical_xor",
         "logical_not",
-        "equal",
-        "not_equal",
-        "greater",
-        "greater_equal",
-        "less",
-        "less_equal",
+        // NOTE: Comparison ops (equal, not_equal, greater, greater_equal, less, less_equal)
+        // ARE ANE-legal per the per-op support matrix (rows 44-50):
+        //   ConvertBinaryCompare → anec.equal/greater_than/less_than etc., PE engine, all families.
+        // They have been REMOVED from CPU_ONLY.
+        // NOTE: erf IS ANE-legal per the per-op support matrix (row 25):
+        //   ConvertElementwiseUnary<ErfOp, Erf> → anec.erf, PE engine, all families.
+        // Removed from CPU_ONLY.
         "non_maximum_suppression",
         "dict",
         "has_key",
@@ -230,11 +232,9 @@ pub static CPU_ONLY_OPS_DETAILED: LazyLock<Vec<CpuOnlyOp>> = LazyLock::new(|| {
         CpuOnlyOp { mil_name: "shape", reason: CpuOnlyReason::ShapeQuery },
         CpuOnlyOp { mil_name: "rank", reason: CpuOnlyReason::ShapeQuery },
         CpuOnlyOp { mil_name: "size", reason: CpuOnlyReason::ShapeQuery },
-        // Comparison (most never on ANE)
-        CpuOnlyOp { mil_name: "equal", reason: CpuOnlyReason::Logical },
-        CpuOnlyOp { mil_name: "not_equal", reason: CpuOnlyReason::Logical },
-        CpuOnlyOp { mil_name: "greater", reason: CpuOnlyReason::Logical },
-        CpuOnlyOp { mil_name: "less", reason: CpuOnlyReason::Logical },
+        // NOTE: Comparison ops (equal, not_equal, greater, greater_equal, less, less_equal)
+        // ARE ANE-legal per per-op support matrix rows 44-50.
+        // Removed from CPU_ONLY detailed catalog.
         // Blockwise scale
         CpuOnlyOp {
             mil_name: "constexpr_blockwise_shift_scale",

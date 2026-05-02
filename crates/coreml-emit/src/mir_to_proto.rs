@@ -92,11 +92,10 @@ pub fn convert_mir_to_proto_multifunction(
             for op in &graph.ops {
                 let illegal = match op {
                     MirOpCompat::Fill { name, .. } => Some(format!("  {name}: mb.fill is ANE-illegal, should have been replaced with MILConst during lowering")),
+                    MirOpCompat::Select { name, .. } => Some(format!("  {name}: mb.select is ANE-illegal in practice (causes CPU fallback despite ConvertSelect in per-op matrix). Should have been decomposed to arithmetic (cond*x + (1-cond)*y) at SIR→AIR level")),
+                    MirOpCompat::Where { name, .. } => Some(format!("  {name}: mb.where is ANE-illegal (no ANE converter). Should have been decomposed to arithmetic (cond*x + (1-cond)*y) at SIR→AIR level")),
                     // FillLike is NOT rejected — the Apple proto emitter decomposes it
                     // to ANE-legal mul(ref,0)+add(zero,val) ops.
-                    // Select is NOT rejected — it maps to anec.scaled_elementwise via
-                    // ConvertSelect and IS ANE-legal on all families (PE engine).
-                    // Where is handled by the proto emitter's Where→Select conversion.
                     _ => None,
                 };
                 if let Some(msg) = illegal {
@@ -106,12 +105,10 @@ pub fn convert_mir_to_proto_multifunction(
             if !illegal_ops.is_empty() {
                 anyhow::bail!(
                     "Cannot emit Core ML package: {} ANE-illegal operation(s) in function '{}'. \
-                     These ops force CPU fallback and should have been replaced during AIR→MIR lowering.\n\
+                     These ops force CPU fallback and should have been replaced earlier in the pipeline.\n\
                      ANE-illegal ops:\n{}\n\
-                     Fix: ensure the mil_lower pass replaces Fill→Const. \
-                     FillLike is decomposed by the proto emitter (mul+add). \
-                     Select is ANE-legal (anec.scaled_elementwise on PE). \
-                     Where is converted to Select by the proto emitter.",
+                     Fix: Fill → MILConst (mil_lower). Select/Where → arithmetic decomposition \
+                     (cond*x + (1-cond)*y) in legality_rewrite. FillLike → decomposed by proto emitter (mul+add).",
                     illegal_ops.len(),
                     graph.function_name,
                     illegal_ops.join("\n")

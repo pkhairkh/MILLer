@@ -401,6 +401,20 @@ pub fn compat_output_shape(
         MirOp::MILIdentity { x, .. } if x.0 == "__placeholder__" => vec![1, 512],
         // Identity: propagate input shape
         MirOp::MILIdentity { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
+        // ─── Stack: like Concat but inserts a new dimension at `axis` ───
+        // Stack([t1, t2, ..., tN], axis) → shape is same as t1 but with a new
+        // dim of size N inserted at `axis`. E.g. Stack([a,b], axis=0) where
+        // a=[3,4] → [2,3,4].
+        MirOp::MILStack { values, axis, .. } => {
+            if let Some(first_shape) = values.first().and_then(|id| node_shapes.get(&id.0)) {
+                let mut out = first_shape.clone();
+                let ax = if *axis <= out.len() { *axis } else { out.len() };
+                out.insert(ax, values.len());
+                out
+            } else {
+                vec![]
+            }
+        }
         // Catch-all: return empty shape rather than a wrong hardcoded value.
         // An empty shape means "unknown" which Core ML will try to infer from
         // the graph — better than a wrong shape that causes type inference failure.

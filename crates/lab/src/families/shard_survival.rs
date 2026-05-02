@@ -195,6 +195,8 @@ impl ShardSurvivalFamily {
                                     intermediate_size: *embed_dim * 4,
                                     vocab_size: 0,
                                     dtype: dtype.clone(),
+                                    uses_rope: true,
+                                    has_qk_norm: false,
                                 },
                                 format!(
                                     "Shard survival test (3-shard decode-step): {}d/{}h/{}k/{}kv, batch={}, dtype={}",

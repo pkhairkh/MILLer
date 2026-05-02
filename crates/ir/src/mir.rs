@@ -1152,8 +1152,6 @@ impl MirOp {
             // Cast / softmax
             | MirOp::MILCast { .. }
             | MirOp::MILSoftmax { .. }
-            // NOTE: MILSelect and MILWhere are CPU-only (no ANE converter).
-            // They are moved to the None branch below.
             // Reductions
             | MirOp::MILReduceSum { .. }
             | MirOp::MILReduceMean { .. }
@@ -1203,13 +1201,12 @@ impl MirOp {
             | MirOp::MILBandPart { .. }
             // Identity / misc (ANE-legal)
             | MirOp::MILIdentity { .. }
-            // Select: ANE-legal via ConvertSelect → anec.scaled_elementwise (PE)
-            | MirOp::MILSelect { .. }
-            // Where: proto emitter converts to Select → anec.scaled_elementwise (PE)
-            | MirOp::MILWhere { .. }
-            // NOTE: MILFill, MILFillLike, MILOneHot, MILNonZero, MILRange1d,
-            // MILShape, MILCrop are CPU-only (no ANE converter).
-            // They are moved to the None branch below.
+            // NOTE: MILSelect and MILWhere are CPU-only.
+            // Despite per-op matrix row 69 listing ConvertSelect, empirical testing
+            // shows mb.select causes CPU fallback. Decompose to arithmetic instead.
+            // They are in the None branch below.
+            // NOTE: Sign, Erf, Exp2 are already in the PE branch above
+            // (rows 15, 25, 22 of the per-op support matrix).
             | MirOp::MILCrop { .. } => Some(AneEngine::PE),
 
             // ─── TransposeEngine ───────────────────────────────────
@@ -1251,16 +1248,17 @@ impl MirOp {
             | MirOp::MILClassify { .. }
             | MirOp::MILCumsum { .. }
             // ANE-illegal conditional/tensor creation ops (no ANE converter)
-            // select: HAS ANE converter (ConvertSelect → anec.scaled_elementwise, PE).
-            //   The 3-argument form (cond, a, b) IS ANE-legal on all families.
-            // where: CoreML MIL has no "where" op; proto emitter converts to Select.
-            //   ANE-legal in emitted form.
+            // select / where: Despite per-op matrix row 69, empirical testing shows
+            //   mb.select causes CPU fallback. Decompose to arithmetic instead:
+            //   select(cond, a, b) → cond*a + (1-cond)*b
             // fill: ANE has no fill converter; use precomputed Const instead
-            // fill_like: ANE has no fill_like converter; decomposed to mul+add by proto emitter
+            // fill_like: ANE has no fill_like converter; decomposed to mul+add
             // one_hot: ANE has no one_hot converter
             // non_zero: ANE has no non_zero converter
             // range1d: ANE has no range converter
             // shape: ANE has no shape query converter
+            | MirOp::MILSelect { .. }
+            | MirOp::MILWhere { .. }
             | MirOp::MILFill { .. }
             | MirOp::MILFillLike { .. }
             | MirOp::MILOneHot { .. }

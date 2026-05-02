@@ -681,6 +681,8 @@ mod tests {
                 intermediate_size: 512, // embed_dim * 4
                 vocab_size: 0,
                 dtype: "fp16".into(),
+                uses_rope: true,
+                has_qk_norm: false,
             },
             measurement: MeasurementConfig {
                 warmup_iterations: 5,
