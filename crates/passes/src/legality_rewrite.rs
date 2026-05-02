@@ -2208,7 +2208,7 @@ impl LegalityRewritePass {
         kq: &dyn PassKnowledgeQuery,
         ctx: Option<&DecompositionContext>,
         mut nodes: &mut Vec<AirNode>,
-    ) -> (AirNodeId, Option<AirNodeId>, Option<AirNodeId>, Option<AirNodeId>) {
+    ) -> (AirNodeId, Option<AirNodeId>, Option<AirNodeId>, Option<AirNodeId>, Option<AirNodeId>) {
         let head_dim = ctx.map(|c| c.head_dim).unwrap_or(0);
         let head_dim = if head_dim > 0 { head_dim } else {
             eprintln!("[WARN] apply_rope_decode without head_dim — using default 128");

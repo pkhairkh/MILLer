@@ -213,3 +213,25 @@ Stage Summary:
 - 448 duplicate output names eliminated: each KV head is now sliced exactly once and reused
 - Pre-write validation ensures any future duplicate output name bugs are caught at emission time
 - Files changed: legality_rewrite.rs, mir_to_proto.rs
+
+---
+Task ID: 2
+Agent: main
+Task: Fix critical crash at mil_lower.rs:3316 and MatMul dimension mismatch bugs
+
+Work Log:
+- Cloned MILLer repo from GitHub (commit 020ab2e)
+- Analyzed crash: insertion index (7519) should be <= len (7518) at mil_lower.rs:3316
+- Root cause: cast node insertion at `lm_idx + 2` assumes `needs_reshape=true`, but decode_step uses `needs_reshape=false` (2D input), so matmul is at `lm_idx`, not `lm_idx+1`
+- Investigated 40960 dimension in MatMul warnings: 40960 = max_position_embeddings from model config
+- Found squeeze_mask not handled in SliceByIndex shape inference (mil_lower.rs + bridge/shape_inference.rs)
+- Found masked blend using 2D K/V cache (k_cache_id) instead of 4D (k_4d_id), causing broadcast incompatibility
+- Found K RoPE applied to old cache before update, and RoPE'd K never used for attention
+- Fixed all 4 bugs and pushed commit 5cc8ddb
+
+Stage Summary:
+- Bug 1: Cast insertion index fix (lm_idx+1 when !needs_reshape, lm_idx+2 when needs_reshape)
+- Bug 2: squeeze_mask handling in SliceByIndex shape inference (both mil_lower.rs and bridge)
+- Bug 3: Use k_4d_id/v_4d_id (4D) instead of k_cache_id/v_cache_id (2D) in masked blend
+- Bug 4: Restructured apply_rope_decode to return cos/sin table IDs; K RoPE applied after cache update using full tables
+- All changes committed and pushed to main
