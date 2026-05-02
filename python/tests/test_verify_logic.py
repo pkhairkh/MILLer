@@ -152,7 +152,7 @@ class TestCpuPredictedOps:
 
     @pytest.mark.parametrize("op_type", [
         "embedding", "gather", "topk", "slice_by_index",
-        "read_state", "coreml_update_state",
+        "read_state", "write_state",
     ])
     def test_cpu_bound_ops(self, op_type):
         """Known CPU-bound ops should be predicted for CPU."""

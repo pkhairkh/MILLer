@@ -2976,9 +2976,11 @@ fn mir_op_to_apple_ops(
         }
         mir_compat::MirOpCompat::CoremlUpdateState { name, state_id, value } => {
             let mut inputs = HashMap::new();
-            // Core ML schema: mb.coreml_update_state(state=k_state, value=updated_k)
-            // The op type is "coreml_update_state", NOT "write_state".
-            // The parameter names are "state" and "value" (these are correct for this op).
+            // Core ML serialized MIL schema: write_state(state=k_state, value=updated_k)
+            // The Python builder API uses mb.coreml_update_state(), but when
+            // serialized to the ML Program protobuf, the op is lowered to "write_state".
+            // Using "coreml_update_state" causes: Unknown operator 'coreml_update_state'.
+            // The parameter names "state" and "value" are correct for write_state.
             inputs.insert("state".to_string(), make_name_arg(state_id));
             inputs.insert("value".to_string(), make_name_arg(value));
 
@@ -2986,7 +2988,7 @@ fn mir_op_to_apple_ops(
             add_name_attribute(&mut attributes, name);
 
             vec![apple_proto::mil_spec::Operation {
-                r#type: "coreml_update_state".to_string(),
+                r#type: "write_state".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
                     name,
@@ -3147,8 +3149,9 @@ fn mir_op_to_apple_ops(
         }
         mir_compat::MirOpCompat::StateWrite { name, state_ref, value } => {
             let mut inputs = HashMap::new();
-            // Core ML schema: same as coreml_update_state
-            // mb.coreml_update_state(state=..., value=...)
+            // Core ML serialized MIL schema: write_state(state=..., value=...)
+            // Same lowered form as CoremlUpdateState — the Python builder API
+            // mb.coreml_update_state() is lowered to write_state when serialized.
             inputs.insert("state".to_string(), make_name_arg(state_ref));
             inputs.insert("value".to_string(), make_name_arg(value));
 
@@ -3156,7 +3159,7 @@ fn mir_op_to_apple_ops(
             add_name_attribute(&mut attributes, name);
 
             vec![apple_proto::mil_spec::Operation {
-                r#type: "coreml_update_state".to_string(),
+                r#type: "write_state".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
                     name,

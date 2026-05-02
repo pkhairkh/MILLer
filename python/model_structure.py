@@ -417,7 +417,7 @@ def fallback_file_structure(mlpackage_path: str) -> Dict[str, Any]:
                 b"rsqrt", b"real_div", b"layer_norm", b"topk",
                 b"cos", b"sin", b"slice_by_index",
                 b"scaled_dot_product_attention",
-                b"read_state", b"coreml_update_state",
+                b"read_state", b"write_state",
             ]
             for op_name in known_ops:
                 if op_name in content:

@@ -824,9 +824,9 @@ mod tests {
 
         assert_eq!(block.operations.len(), 2);
 
-        // Check op types: read_state uses "input" param, coreml_update_state uses "state"/"value"
+        // Check op types: read_state uses "input" param, write_state uses "state"/"value"
         assert_eq!(block.operations[0].r#type, "read_state");
-        assert_eq!(block.operations[1].r#type, "coreml_update_state");
+        assert_eq!(block.operations[1].r#type, "write_state");
 
         // Check that state ops use name references (not inline strings)
         let read_state_op = &block.operations[0];
@@ -841,13 +841,13 @@ mod tests {
         }
 
         let update_state_op = &block.operations[1];
-        // coreml_update_state uses "state" parameter name
+        // write_state uses "state" parameter name
         let state_arg2 = update_state_op.inputs.get("state").unwrap();
         match state_arg2.arguments[0].binding.as_ref().unwrap() {
             ane_coreml_proto::apple_proto::mil_spec::argument::binding::Binding::Name(name) => {
                 assert_eq!(name, "state_0");
             }
-            other => panic!("Expected Name binding for state in coreml_update_state, got {:?}", other),
+            other => panic!("Expected Name binding for state in write_state, got {:?}", other),
         }
 
         // All ops should have attributes["name"]

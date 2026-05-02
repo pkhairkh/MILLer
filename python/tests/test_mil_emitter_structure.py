@@ -124,7 +124,7 @@ def _make_mock_coremltools():
     for op_name in [
         "linear", "const", "gather", "concat", "gelu", "relu",
         "slice_by_index", "reshape", "scaled_dot_product_attention",
-        "read_state", "coreml_update_state", "slice_update",
+        "read_state", "write_state", "coreml_update_state", "slice_update",
         "matmul", "add", "mul", "layer_norm",
         "transpose", "softmax", "expand_dims",
     ]:

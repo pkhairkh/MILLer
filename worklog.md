@@ -235,3 +235,30 @@ Stage Summary:
 - Bug 3: Use k_4d_id/v_4d_id (4D) instead of k_cache_id/v_cache_id (2D) in masked blend
 - Bug 4: Restructured apply_rope_decode to return cos/sin table IDs; K RoPE applied after cache update using full tables
 - All changes committed and pushed to main
+
+---
+Task ID: 3
+Agent: main
+Task: Fix CoreML state op serialization errors preventing model compilation
+
+Work Log:
+- User reported: coremlcompiler error "Invalid param name 'state'" on read_state op
+- Analyzed the proto emission code in coreml-proto/src/lib.rs
+- Found Bug 1: read_state uses param key "state" but CoreML schema expects "input"
+  - mb.read_state(input=k_state) is the correct spelling per coremltools
+  - Using "state" causes: "Invalid param name 'state'" compilation error
+- Found Bug 2: State update op type is "write_state" but CoreML expects "coreml_update_state"
+  - mb.coreml_update_state(state=..., value=...) is the correct spelling
+  - The param names "state" and "value" are correct for this op
+- Found Bug 3: StateWrite compat path also emitted "write_state"
+- Fixed all three in coreml-proto/src/lib.rs
+- Updated test in coreml-emit/src/mir_to_proto.rs to match corrected serialization
+- Also fixed the apply_rope_decode return type (5-tuple) compilation error from previous commit
+- Committed: 6d4fd39 (return type fix), eee4a2c (state op fixes), 66b9a57 (StateWrite compat fix)
+
+Stage Summary:
+- CoreML state op serialization now matches Apple's operator schema
+- read_state: "state" → "input" param key
+- State update: "write_state" → "coreml_update_state" op type
+- Both CoremlUpdateState and StateWrite compat paths fixed
+- Test updated to verify corrected param names

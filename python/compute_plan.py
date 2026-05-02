@@ -282,6 +282,7 @@ def predict_placement_from_ops(
         # State ops — typically CPU
         ("read_state", "CPU", 0.80),
         ("coreml_update_state", "CPU", 0.80),
+        ("write_state", "CPU", 0.80),
         ("state_write", "CPU", 0.80),
     ]
 
