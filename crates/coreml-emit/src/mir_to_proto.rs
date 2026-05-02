@@ -91,9 +91,12 @@ pub fn convert_mir_to_proto_multifunction(
             let mut illegal_ops: Vec<String> = Vec::new();
             for op in &graph.ops {
                 let illegal = match op {
-                    MirOpCompat::Fill { name, .. } => Some(format!("  {name}: mb.fill is ANE-illegal, should have been replaced with mb.where + Const")),
-                    MirOpCompat::FillLike { name, .. } => Some(format!("  {name}: mb.fill_like is ANE-illegal, should have been replaced with mb.where")),
-                    MirOpCompat::Select { name, .. } => Some(format!("  {name}: mb.select is ANE-illegal, should have been replaced with mb.where")),
+                    MirOpCompat::Fill { name, .. } => Some(format!("  {name}: mb.fill is ANE-illegal, should have been replaced with MILConst during lowering")),
+                    // FillLike is NOT rejected — the Apple proto emitter decomposes it
+                    // to ANE-legal mul(ref,0)+add(zero,val) ops.
+                    // Select is NOT rejected — it maps to anec.scaled_elementwise via
+                    // ConvertSelect and IS ANE-legal on all families (PE engine).
+                    // Where is handled by the proto emitter's Where→Select conversion.
                     _ => None,
                 };
                 if let Some(msg) = illegal {
@@ -105,7 +108,10 @@ pub fn convert_mir_to_proto_multifunction(
                     "Cannot emit Core ML package: {} ANE-illegal operation(s) in function '{}'. \
                      These ops force CPU fallback and should have been replaced during AIR→MIR lowering.\n\
                      ANE-illegal ops:\n{}\n\
-                     Fix: ensure the mil_lower pass replaces Fill→Const, FillLike→Where, and Select→Where.",
+                     Fix: ensure the mil_lower pass replaces Fill→Const. \
+                     FillLike is decomposed by the proto emitter (mul+add). \
+                     Select is ANE-legal (anec.scaled_elementwise on PE). \
+                     Where is converted to Select by the proto emitter.",
                     illegal_ops.len(),
                     graph.function_name,
                     illegal_ops.join("\n")

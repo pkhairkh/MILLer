@@ -136,12 +136,13 @@ pub static CPU_ONLY_OPS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         // fill / fill_like: No ANE converter; forces CPU fallback.
         // The reference model NEVER uses these — all constants are
         // precomputed as static tables (Const ops).
+        // NOTE: FillLike is decomposed to ANE-legal mul+add by the proto emitter.
         "fill",
         "fill_like",
-        // select: Technically has a MIL definition, but the ANE does NOT
-        // have a select converter. The reference model uses additive
-        // masking (mb.add with -inf mask) instead of mb.select.
-        "select",
+        // select: HAS an ANE converter (ConvertSelect → anec.scaled_elementwise, PE engine).
+        // The 3-argument form (cond, a, b) IS ANE-legal on all families.
+        // Removed from CPU_ONLY list per ANE per-op-per-family support matrix.
+        // "select",
         // Quantization constexpr (never on ANE)
         "constexpr_blockwise_shift_scale",
         "constexpr_sparse_blockwise_shift_scale",

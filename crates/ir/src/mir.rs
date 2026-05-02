@@ -1203,6 +1203,10 @@ impl MirOp {
             | MirOp::MILBandPart { .. }
             // Identity / misc (ANE-legal)
             | MirOp::MILIdentity { .. }
+            // Select: ANE-legal via ConvertSelect → anec.scaled_elementwise (PE)
+            | MirOp::MILSelect { .. }
+            // Where: proto emitter converts to Select → anec.scaled_elementwise (PE)
+            | MirOp::MILWhere { .. }
             // NOTE: MILFill, MILFillLike, MILOneHot, MILNonZero, MILRange1d,
             // MILShape, MILCrop are CPU-only (no ANE converter).
             // They are moved to the None branch below.
@@ -1247,16 +1251,16 @@ impl MirOp {
             | MirOp::MILClassify { .. }
             | MirOp::MILCumsum { .. }
             // ANE-illegal conditional/tensor creation ops (no ANE converter)
-            // select: ANE has no select converter; use additive masking instead
-            // where: ANE has no where converter; same as select
+            // select: HAS ANE converter (ConvertSelect → anec.scaled_elementwise, PE).
+            //   The 3-argument form (cond, a, b) IS ANE-legal on all families.
+            // where: CoreML MIL has no "where" op; proto emitter converts to Select.
+            //   ANE-legal in emitted form.
             // fill: ANE has no fill converter; use precomputed Const instead
-            // fill_like: ANE has no fill_like converter; decomposed to mul+add
+            // fill_like: ANE has no fill_like converter; decomposed to mul+add by proto emitter
             // one_hot: ANE has no one_hot converter
             // non_zero: ANE has no non_zero converter
             // range1d: ANE has no range converter
             // shape: ANE has no shape query converter
-            | MirOp::MILSelect { .. }
-            | MirOp::MILWhere { .. }
             | MirOp::MILFill { .. }
             | MirOp::MILFillLike { .. }
             | MirOp::MILOneHot { .. }

@@ -412,9 +412,10 @@ impl OpSupportMatrix {
                 "LogicalNot has no ANEC converter; falls back to CPU".to_string(),
             ),
             SirOp::Cast { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
-            SirOp::Select { .. } => OpSupport::CpuOnly(
-                "mb.select is ANE-illegal; must be replaced with mb.where during lowering".to_string(),
-            ),
+            SirOp::Select { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
+            // mb.where: CoreML MIL has no native "where" op. The proto emitter
+            // converts Where → Select, which IS ANE-legal (anec.scaled_elementwise).
+            // Mark as AneSupported since the emitted form lands on ANE.
             SirOp::Where { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
 
             // ─── Reduction: PE, with family restrictions ───────────

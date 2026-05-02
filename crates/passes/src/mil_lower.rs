@@ -463,6 +463,37 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
         AirOp::Const { value_path, .. } => {
             node_shapes.get(&AirNodeId(value_path.clone())).cloned().unwrap_or_default()
         }
+        // ─── ExpandDims: insert 1-sized dims at specified axes ───
+        AirOp::ExpandDims { input, axis } => {
+            if let Some(input_shape) = node_shapes.get(input) {
+                let mut out = input_shape.clone();
+                let mut sorted_axes: Vec<usize> = axis.iter().map(|&a| a as usize).collect();
+                sorted_axes.sort_unstable();
+                for (i, &ax) in sorted_axes.iter().enumerate() {
+                    let insert_pos = if ax >= out.len() { out.len() } else { ax + i };
+                    out.insert(insert_pos, 1);
+                }
+                out
+            } else {
+                vec![]
+            }
+        }
+        // ─── Squeeze: remove dims at specified axes ───
+        AirOp::Squeeze { input, axis } => {
+            if let Some(input_shape) = node_shapes.get(input) {
+                let mut out = input_shape.clone();
+                let mut sorted_axes: Vec<usize> = axis.iter().map(|&a| a as usize).collect();
+                sorted_axes.sort_unstable_by(|a, b| b.cmp(a)); // Remove from back to front
+                for &ax in &sorted_axes {
+                    if ax < out.len() {
+                        out.remove(ax);
+                    }
+                }
+                out
+            } else {
+                vec![]
+            }
+        }
         // All remaining AIR ops: conservatively return empty shape
         _ => vec![],
     }
@@ -1521,16 +1552,16 @@ impl MilLowerPass {
                     MirOp::MILCast { name: air_node.name.clone(), x: mi, dtype: dtype.clone() }
                 }
                 AirOp::Select { condition, x, y } => {
-                    // ANE-LEGAL REWRITE: mb.select is ANE-illegal.
-                    // mb.where is semantically identical (cond, a, b → a if cond else b)
-                    // and is ANE-legal. Lower Select → MILWhere directly.
+                    // mb.select with 3 arguments (cond, a, b) IS ANE-legal:
+                    // the ANE compiler has ConvertSelect → anec.scaled_elementwise (PE).
+                    // Keep as MILSelect directly — do NOT rewrite to MILWhere.
                     let mc = air_to_mir
                         .get(condition)
                         .cloned()
                         .unwrap_or_else(|| MirNodeId(condition.0.clone()));
                     let mx = air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
                     let my = air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
-                    MirOp::MILWhere { name: air_node.name.clone(), condition: mc, x: mx, y: my }
+                    MirOp::MILSelect { name: air_node.name.clone(), condition: mc, x: mx, y: my }
                 }
 
                 // Reduction ops
@@ -2107,33 +2138,22 @@ impl MilLowerPass {
                         dtype: dtype.clone(),
                     }
                 }
-                AirOp::FillLike { ref_tensor, value, dtype: _ } => {
-                    // ANE-LEGAL REWRITE: mb.fill_like is ANE-illegal.
-                    // Decompose: FillLike(ref, value) → Where(ones_like_ref, value, value)
-                    // But since we don't have ones_like as a primitive, we use:
-                    //   Mul(ref, 0) + value  →  value broadcast to ref's shape
-                    // Actually, the cleanest ANE-legal pattern is:
-                    //   Where(ref_ne_zero | ref_eq_zero, value, value)
-                    // which always returns value regardless of condition, but broadcasts
-                    // to ref's shape. We use a simple identity condition that always
-                    // evaluates the same way:
-                    //   Where(EqualTo(ref, ref), value, value) — always true, broadcasts to ref shape
-                    //
-                    // Pragmatic approach: emit as MILWhere with the ref_tensor as condition
-                    // (any non-zero tensor works as boolean True for Where), and value
-                    // broadcast as both x and y. This is ANE-legal and produces the
-                    // correct result.
+                AirOp::FillLike { ref_tensor, value, dtype } => {
+                    // ANE-LEGAL REWRITE: mb.fill_like has no ANE converter.
+                    // The Apple proto emitter decomposes FillLike to ANE-legal ops:
+                    //   fill_like(ref, val) → mul(ref, 0) + add(zero, val)
+                    // Pass through as MILFillLike — the proto emitter handles the
+                    // decomposition. The mir_to_proto validation gate must NOT reject
+                    // FillLike since it is decomposed before reaching the ANE compiler.
                     let mr = air_to_mir
                         .get(ref_tensor)
                         .cloned()
                         .unwrap_or_else(|| MirNodeId(ref_tensor.0.clone()));
-                    // We need a Const for the fill value that broadcasts to ref's shape.
-                    // Use a scalar const that will broadcast with the ref tensor.
-                    MirOp::MILWhere {
+                    MirOp::MILFillLike {
                         name: air_node.name.clone(),
-                        condition: mr,
-                        x: MirNodeId(format!("_fill_like_val_{}_{}", air_node.id.0, value)),
-                        y: MirNodeId(format!("_fill_like_val_{}_{}", air_node.id.0, value)),
+                        ref_tensor: mr,
+                        value: *value,
+                        dtype: dtype.clone(),
                     }
                 }
                 AirOp::Identity { input } => {
@@ -2872,10 +2892,9 @@ impl MilLowerPass {
                         let scale_const_id = MirNodeId(format!("{}_scale_{}", sdpa_id.0, qi));
                         let scale_const_node = MirNode {
                             id: scale_const_id.clone(),
-                            op: MirOp::MILFill {
+                            op: MirOp::MILConst {
                                 name: format!("{}_scale_{}", name, qi),
-                                shape: vec![1],
-                                value: scale_val,
+                                value_path: format!("_sdpa_scale_{}_{}", sdpa_id.0, qi),
                                 dtype: sdpa_dtype.clone(),
                             },
                             dtype: sdpa_dtype.clone(),
