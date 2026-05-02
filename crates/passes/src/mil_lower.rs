@@ -2727,59 +2727,17 @@ impl MilLowerPass {
                     let sdpa_compute = &node.compute_unit_hint;
                     let sdpa_air = &node.air_source;
 
-                    // Step 1: Split Q into hq heads along axis 1
-                    let q_split_id = MirNodeId(format!("{}_q_split", sdpa_id.0));
-                    let q_split_node = MirNode {
-                        id: q_split_id.clone(),
-                        op: MirOp::MILSplit {
-                            name: format!("{}_q_split", name),
-                            x: query.clone(),
-                            axis: 1,
-                            num_splits: hq,
-                        },
-                        dtype: sdpa_dtype.clone(),
-                        shape: vec![1, 1, 1, hd], // per-split output shape
-                        compute_unit_hint: sdpa_compute.clone(),
-                        air_source: None,
-                    };
-                    let mut new_nodes = vec![q_split_node];
-                    extra_shapes.push((AirNodeId(format!("{}_q_split", sdpa_id.0)), vec![1, 1, 1, hd]));
+                    // NOTE: We intentionally do NOT emit MILSplit here. Core ML's
+                    // split op returns a *list* of tensors, which our IR cannot model
+                    // (single output per op). Serialising split with num_splits>1 as
+                    // a single-output op is invalid MIL. Instead, we slice individual
+                    // heads directly from the original Q/K/V tensors using
+                    // slice_by_index — matching the Python reference emitter pattern.
+                    let q_split_id = query.clone();
+                    let k_split_id = key.clone();
+                    let v_split_id = value.clone();
 
-                    // Step 2: Split K into hk heads along axis 1
-                    let k_split_id = MirNodeId(format!("{}_k_split", sdpa_id.0));
-                    let k_split_node = MirNode {
-                        id: k_split_id.clone(),
-                        op: MirOp::MILSplit {
-                            name: format!("{}_k_split", name),
-                            x: key.clone(),
-                            axis: 1,
-                            num_splits: hk,
-                        },
-                        dtype: sdpa_dtype.clone(),
-                        shape: vec![1, 1, k_shape.get(2).copied().unwrap_or(0), hd],
-                        compute_unit_hint: sdpa_compute.clone(),
-                        air_source: None,
-                    };
-                    new_nodes.push(k_split_node);
-                    extra_shapes.push((AirNodeId(format!("{}_k_split", sdpa_id.0)), vec![1, 1, k_shape.get(2).copied().unwrap_or(0), hd]));
-
-                    // Step 3: Split V into hk heads along axis 1
-                    let v_split_id = MirNodeId(format!("{}_v_split", sdpa_id.0));
-                    let v_split_node = MirNode {
-                        id: v_split_id.clone(),
-                        op: MirOp::MILSplit {
-                            name: format!("{}_v_split", name),
-                            x: value.clone(),
-                            axis: 1,
-                            num_splits: hk,
-                        },
-                        dtype: sdpa_dtype.clone(),
-                        shape: vec![1, 1, k_shape.get(2).copied().unwrap_or(0), hd],
-                        compute_unit_hint: sdpa_compute.clone(),
-                        air_source: None,
-                    };
-                    new_nodes.push(v_split_node);
-                    extra_shapes.push((AirNodeId(format!("{}_v_split", sdpa_id.0)), vec![1, 1, k_shape.get(2).copied().unwrap_or(0), hd]));
+                    let mut new_nodes: Vec<MirNode> = Vec::new();
 
                     // Step 4: For each query head, compute attention
                     let seq_len = k_shape.get(2).copied().unwrap_or(0);

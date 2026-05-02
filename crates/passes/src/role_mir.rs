@@ -372,14 +372,65 @@ impl RoleMirBuilder {
                     air_source: None,
                 });
 
-                // Split QKV into Q, K, V (3-way split along last dim)
-                let split_name = format!("{}_qkv_split", spec.shard_name);
-                let split_id = MirNodeId(format!("{}_qkv_split_out", spec.shard_name));
+                // Extract Q, K, V from QKV projection output using slice_by_index.
+                // NOTE: We intentionally do NOT use MILSplit here because Core ML's
+                // split op returns a *list* of tensors, which our IR cannot model.
+                // SliceByIndex on the original tensor produces valid single-output MIL.
+                let embed_dim_val = embed_dim; // size of each Q/K/V slice
+
+                let q_id = MirNodeId(format!("{}_q", spec.shard_name));
                 nodes.push(MirNode {
-                    id: split_id.clone(),
-                    op: MirOp::MILSplit { name: split_name, x: linear_id, axis: 1, num_splits: 3 },
+                    id: q_id.clone(),
+                    op: MirOp::MILSliceByIndex {
+                        name: format!("{}_q_extract", spec.shard_name),
+                        x: linear_id.clone(),
+                        begin: vec![0, 0],
+                        end: vec![1, embed_dim_val as i64],
+                        stride: vec![1, 1],
+                        begin_mask: vec![false, false],
+                        end_mask: vec![false, false],
+                        squeeze_mask: vec![false, false],
+                    },
                     dtype: self.default_dtype.clone(),
-                    shape: vec![1, embed_dim],
+                    shape: vec![1, embed_dim_val],
+                    compute_unit_hint: Some(compute_hint.clone()),
+                    air_source: None,
+                });
+
+                let k_id = MirNodeId(format!("{}_k", spec.shard_name));
+                nodes.push(MirNode {
+                    id: k_id.clone(),
+                    op: MirOp::MILSliceByIndex {
+                        name: format!("{}_k_extract", spec.shard_name),
+                        x: linear_id.clone(),
+                        begin: vec![0, embed_dim_val as i64],
+                        end: vec![1, (2 * embed_dim_val) as i64],
+                        stride: vec![1, 1],
+                        begin_mask: vec![false, false],
+                        end_mask: vec![false, false],
+                        squeeze_mask: vec![false, false],
+                    },
+                    dtype: self.default_dtype.clone(),
+                    shape: vec![1, embed_dim_val],
+                    compute_unit_hint: Some(compute_hint.clone()),
+                    air_source: None,
+                });
+
+                let v_id = MirNodeId(format!("{}_v", spec.shard_name));
+                nodes.push(MirNode {
+                    id: v_id.clone(),
+                    op: MirOp::MILSliceByIndex {
+                        name: format!("{}_v_extract", spec.shard_name),
+                        x: linear_id.clone(),
+                        begin: vec![0, (2 * embed_dim_val) as i64],
+                        end: vec![1, (3 * embed_dim_val) as i64],
+                        stride: vec![1, 1],
+                        begin_mask: vec![false, false],
+                        end_mask: vec![false, false],
+                        squeeze_mask: vec![false, false],
+                    },
+                    dtype: self.default_dtype.clone(),
+                    shape: vec![1, embed_dim_val],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
                 });
@@ -387,7 +438,7 @@ impl RoleMirBuilder {
                 Ok(MirGraph {
                     nodes,
                     inputs: vec![input_id],
-                    outputs: vec![split_id],
+                    outputs: vec![q_id, k_id, v_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
                     input_shapes: std::collections::HashMap::new(),
@@ -1002,8 +1053,10 @@ mod tests {
             attn_sig, out_sig
         );
 
-        // QKV should have Split, Attention should have SDPA + state ops
-        assert!(qkv_sig.contains(&"Split".to_string()), "QKV must include Split");
+        // QKV should have SliceByIndex (not Split — Split is invalid MIL),
+        // Attention should have SDPA + state ops
+        assert!(qkv_sig.contains(&"SliceByIndex".to_string()), "QKV must include SliceByIndex (not Split)");
+        assert!(!qkv_sig.contains(&"Split".to_string()), "QKV must NOT include Split (invalid MIL)");
         assert!(attn_sig.contains(&"SDPA".to_string()), "Attention must include SDPA");
         assert!(attn_sig.contains(&"ReadState".to_string()), "Attention must include ReadState");
         assert!(out_sig.contains(&"LayerNorm".to_string()), "Output must include LayerNorm");

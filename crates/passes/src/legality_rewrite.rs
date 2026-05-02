@@ -928,41 +928,16 @@ impl LegalityRewritePass {
                 1
             };
 
-        // Split Q into per-head blocks: [B, hq, S, D] → hq blocks of [B, 1, S, D]
-        let q_split_id = AirNodeId(format!("{base}_q_split"));
-        nodes.push(Self::make_air_node(
-            q_split_id.clone(),
-            AirOp::Split {
-                input: q_t_id,
-                axis: 1,
-                num_splits: heads as usize,
-            },
-            sir_node, "mb.split", kq,
-        ));
-
-        // Split K into per-KV-head blocks: [B, hk, S, D] → hk blocks of [B, 1, S, D]
-        let k_split_id = AirNodeId(format!("{base}_k_split"));
-        nodes.push(Self::make_air_node(
-            k_split_id.clone(),
-            AirOp::Split {
-                input: k_t_id,
-                axis: 1,
-                num_splits: kv_heads.max(1) as usize,
-            },
-            sir_node, "mb.split", kq,
-        ));
-
-        // Split V into per-KV-head blocks: [B, hk, S, D] → hk blocks of [B, 1, S, D]
-        let v_split_id = AirNodeId(format!("{base}_v_split"));
-        nodes.push(Self::make_air_node(
-            v_split_id.clone(),
-            AirOp::Split {
-                input: v_t_id,
-                axis: 1,
-                num_splits: kv_heads.max(1) as usize,
-            },
-            sir_node, "mb.split", kq,
-        ));
+        // NOTE: We intentionally do NOT emit mb.split here. Core ML's split op
+        // returns a *list* of tensors, which our IR cannot model (single output
+        // per op). Serialising a split with num_splits>1 as a single-output op
+        // is invalid MIL and causes "number of outputs must be within the range
+        // 2:MAX" errors from coremlcompiler. Instead, we slice individual heads
+        // directly from the original Q/K/V tensors using slice_by_index, which
+        // matches the Python reference emitter pattern and produces valid MIL.
+        let q_split_id = q_t_id.clone();
+        let k_split_id = k_t_id.clone();
+        let v_split_id = v_t_id.clone();
 
         // Scale constant: 1/√d_k
         let _scale_val = if head_dim > 0 {
@@ -1754,42 +1729,16 @@ impl LegalityRewritePass {
             1.0 / (128.0_f32).sqrt() // default fallback
         };
 
-        // Split Q into per-head blocks: [B, hq, 1, hd] → hq blocks of [B, 1, 1, hd]
-        let q_split_id = AirNodeId(format!("{base}_q_split"));
-        nodes.push(Self::make_air_node(
-            q_split_id.clone(),
-            AirOp::Split {
-                input: q_for_attn,
-                axis: 1,
-                num_splits: heads as usize,
-            },
-            sir_node, "mb.split", kq,
-        ));
-
-        // Split K cache into per-KV-head blocks: [1, hk, seq, hd] → hk blocks of [1, 1, seq, hd]
-        // Use k_for_attn (RoPE'd) instead of next_k_cache_id (un-RoPE'd)
-        let k_split_id = AirNodeId(format!("{base}_k_split"));
-        nodes.push(Self::make_air_node(
-            k_split_id.clone(),
-            AirOp::Split {
-                input: k_for_attn,
-                axis: 1,
-                num_splits: kv_heads as usize,
-            },
-            sir_node, "mb.split", kq,
-        ));
-
-        // Split V cache into per-KV-head blocks: [1, hk, seq, hd] → hk blocks of [1, 1, seq, hd]
-        let v_split_id = AirNodeId(format!("{base}_v_split"));
-        nodes.push(Self::make_air_node(
-            v_split_id.clone(),
-            AirOp::Split {
-                input: next_v_cache_id.clone(),
-                axis: 1,
-                num_splits: kv_heads as usize,
-            },
-            sir_node, "mb.split", kq,
-        ));
+        // NOTE: We intentionally do NOT emit mb.split here. Core ML's split op
+        // returns a *list* of tensors, which our IR cannot model (single output
+        // per op). Serialising a split with num_splits>1 as a single-output op
+        // is invalid MIL and causes coremlcompiler errors. Instead, we slice
+        // individual heads directly from the original tensors using
+        // slice_by_index — same pattern as the embedding path and the Python
+        // reference emitter.
+        let q_split_id = q_for_attn.clone();
+        let k_split_id = k_for_attn.clone();
+        let v_split_id = next_v_cache_id.clone();
 
         // For each Q head, compute per-head attention:
         //   logits_i = matmul(q_i, k_{kv_idx}, transpose_y=True)
@@ -1800,12 +1749,10 @@ impl LegalityRewritePass {
         //
         // Then concat all ctx_i along axis 1.
         //
-        // Note: The Split op produces a list output. In Core ML MIL,
-        // mb.split returns a list of tensors. Each individual output
-        // is accessed by index. Since our IR doesn't model list outputs
-        // directly, we use SliceByIndex to extract each head from the
-        // split output. This is equivalent to the reference model's
-        // k_blocks[kv_idx] pattern.
+        // Note: Individual heads are extracted via slice_by_index on the
+        // original (un-split) Q/K/V tensors. This avoids the invalid-MIL
+        // problem of serialising mb.split with wrong output arity, and
+        // matches the Python reference emitter pattern.
         //
         // CRITICAL: For GQA (fan_out > 1), multiple Q heads share the
         // same KV head. Each KV head must be sliced EXACTLY ONCE and
@@ -4446,7 +4393,11 @@ mod tests {
         assert!(!has_sdpa, "DecodeStep decomposition must NOT include ScaledDotProductAttention (ANE-illegal in decoder shards)");
         assert!(has_matmul, "DecodeStep decomposition must include MatMul for per-head attention");
         assert!(has_softmax, "DecodeStep decomposition must include Softmax for per-head attention");
-        assert!(has_split, "DecodeStep decomposition must include Split for GQA");
+        // Split is intentionally NOT emitted (invalid MIL output arity).
+        // Instead, SliceByIndex is used to extract individual heads.
+        assert!(!has_split, "DecodeStep decomposition must NOT include Split (invalid MIL)");
+        let has_slice = air.nodes.iter().any(|n| matches!(n.op, AirOp::SliceByIndex { .. }));
+        assert!(has_slice, "DecodeStep decomposition must include SliceByIndex for head extraction");
         assert!(
             has_linear,
             "DecodeStep decomposition must include Conv1x1AsLinear for QKV and output projections"
@@ -4628,7 +4579,11 @@ mod tests {
             air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
         let has_tile = air.nodes.iter().any(|n| matches!(n.op, AirOp::Tile { .. }));
 
-        assert!(has_split, "Split-based attention must include Split ops");
+        // Split is intentionally NOT emitted (invalid MIL output arity).
+        // Instead, SliceByIndex is used to extract individual heads.
+        assert!(!has_split, "Split-based attention must NOT include Split ops (invalid MIL)");
+        let has_slice = air.nodes.iter().any(|n| matches!(n.op, AirOp::SliceByIndex { .. }));
+        assert!(has_slice, "Split-based attention must include SliceByIndex for head extraction");
         assert!(has_matmul, "Split-based attention must include MatMul ops");
         assert!(has_softmax, "Split-based attention must include Softmax ops");
         assert!(has_concat, "Split-based attention must include Concat ops");

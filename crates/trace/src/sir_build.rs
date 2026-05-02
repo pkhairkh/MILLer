@@ -1010,38 +1010,13 @@ impl<'a> SirBuildContext<'a> {
             1
         };
 
-        // Split Q into per-head blocks: [B, hq, S, D] → hq blocks of [B, 1, S, D]
-        let q_split_id = SirNodeId(format!("sir_q_split_{}", node.id));
-        ops.push((
-            SirOp::Split {
-                input: q_id,
-                axis: 1,
-                num_splits: num_heads,
-            },
-            "q_split".to_string(),
-        ));
-
-        // Split K into per-KV-head blocks: [B, hk, S, D] → hk blocks of [B, 1, S, D]
-        let k_split_id = SirNodeId(format!("sir_k_split_{}", node.id));
-        ops.push((
-            SirOp::Split {
-                input: k_id,
-                axis: 1,
-                num_splits: num_kv_heads,
-            },
-            "k_split".to_string(),
-        ));
-
-        // Split V into per-KV-head blocks: [B, hk, S, D] → hk blocks of [B, 1, S, D]
-        let v_split_id = SirNodeId(format!("sir_v_split_{}", node.id));
-        ops.push((
-            SirOp::Split {
-                input: v_id,
-                axis: 1,
-                num_splits: num_kv_heads,
-            },
-            "v_split".to_string(),
-        ));
+        // NOTE: We intentionally do NOT emit SirOp::Split here. Core ML's
+        // split op returns a *list* of tensors, which our IR cannot model.
+        // Instead, we slice individual heads directly from the original Q/K/V
+        // tensors using SliceByIndex — matching the Python reference emitter.
+        let q_split_id = q_id.clone();
+        let k_split_id = k_id.clone();
+        let v_split_id = v_id.clone();
 
         // Scale constant: 1/√d_k, used per-head
         let scale_value = 1.0 / (head_dim as f32).sqrt();
@@ -2492,14 +2467,22 @@ mod tests {
 
         let sir = result.unwrap();
 
-        // Split-based per-head attention is always used (no Tile, no SDPA)
-        // Key ops: Split, SliceByIndex, MatMul, Const(scale), Softmax
+        // Split-based per-head attention uses SliceByIndex directly on Q/K/V.
+        // Split is intentionally NOT emitted (invalid MIL output arity).
+        // Key ops: SliceByIndex, MatMul, Const(scale), Softmax
         let has_split = sir.nodes.iter().any(|n| {
             matches!(n.op, SirOp::Split { .. })
         });
         assert!(
-            has_split,
-            "M2 attention decomposition must include Split for per-head attention"
+            !has_split,
+            "M2 attention decomposition must NOT include Split (invalid MIL)"
+        );
+        let has_slice = sir.nodes.iter().any(|n| {
+            matches!(n.op, SirOp::SliceByIndex { .. })
+        });
+        assert!(
+            has_slice,
+            "M2 attention decomposition must include SliceByIndex for head extraction"
         );
 
         let has_scale_const = sir.nodes.iter().any(|n| {
@@ -2568,13 +2551,21 @@ mod tests {
 
         let sir = result.unwrap();
 
-        // Split-based per-head attention is always used (no Tile, no SDPA)
+        // Split-based per-head attention uses SliceByIndex directly on Q/K/V.
+        // Split is intentionally NOT emitted (invalid MIL output arity).
         let has_split = sir.nodes.iter().any(|n| {
             matches!(n.op, SirOp::Split { .. })
         });
         assert!(
-            has_split,
-            "Attention decomposition must use Split for per-head attention"
+            !has_split,
+            "Attention decomposition must NOT use Split (invalid MIL)"
+        );
+        let has_slice = sir.nodes.iter().any(|n| {
+            matches!(n.op, SirOp::SliceByIndex { .. })
+        });
+        assert!(
+            has_slice,
+            "Attention decomposition must use SliceByIndex for head extraction"
         );
 
         // Should NOT see SDPA — split-based attention replaces it
