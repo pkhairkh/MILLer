@@ -628,7 +628,18 @@ impl RoleMirBuilder {
                         dtype: self.default_dtype.clone(),
                     },
                     dtype: self.default_dtype.clone(),
-                    shape: vec![32000, 128], // vocab_size × embed_dim
+                    shape: spec
+                        .output_specs
+                        .first()
+                        .map(|s| {
+                            // Embedding weight shape = [vocab_size, embed_dim].
+                            // Derive from output spec: if output is [batch, embed_dim],
+                            // the weight shape is [vocab_size, embed_dim]. Use a large
+                            // default vocab_size (32000) when input spec is unavailable.
+                            let embed_dim = s.shape.get(1).copied().unwrap_or(128);
+                            vec![32000, embed_dim]
+                        })
+                        .unwrap_or_else(|| vec![32000, 128]),
                     compute_unit_hint: Some(compute_hint.clone()), // IO compute hint from spec
                     air_source: None,
                 });

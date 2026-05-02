@@ -1149,11 +1149,11 @@ impl MirOp {
             | MirOp::MILAtanh { .. }
             | MirOp::MILErf { .. }
             | MirOp::MILLogicalNot { .. }
-            // Cast / select / where / softmax
+            // Cast / softmax
             | MirOp::MILCast { .. }
-            | MirOp::MILSelect { .. }
-            | MirOp::MILWhere { .. }
             | MirOp::MILSoftmax { .. }
+            // NOTE: MILSelect and MILWhere are CPU-only (no ANE converter).
+            // They are moved to the None branch below.
             // Reductions
             | MirOp::MILReduceSum { .. }
             | MirOp::MILReduceMean { .. }
@@ -1201,14 +1201,11 @@ impl MirOp {
             | MirOp::MILArgsort { .. }
             | MirOp::MILTopk { .. }
             | MirOp::MILBandPart { .. }
-            // Fill / identity / misc
-            | MirOp::MILFill { .. }
-            | MirOp::MILFillLike { .. }
+            // Identity / misc (ANE-legal)
             | MirOp::MILIdentity { .. }
-            | MirOp::MILOneHot { .. }
-            | MirOp::MILNonZero { .. }
-            | MirOp::MILRange1d { .. }
-            | MirOp::MILShape { .. }
+            // NOTE: MILFill, MILFillLike, MILOneHot, MILNonZero, MILRange1d,
+            // MILShape, MILCrop are CPU-only (no ANE converter).
+            // They are moved to the None branch below.
             | MirOp::MILCrop { .. } => Some(AneEngine::PE),
 
             // ─── TransposeEngine ───────────────────────────────────
@@ -1248,7 +1245,24 @@ impl MirOp {
             | MirOp::MILCoremlUpdateState { .. }
             | MirOp::MILStateWrite { .. }
             | MirOp::MILClassify { .. }
-            | MirOp::MILCumsum { .. } => None,
+            | MirOp::MILCumsum { .. }
+            // ANE-illegal conditional/tensor creation ops (no ANE converter)
+            // select: ANE has no select converter; use additive masking instead
+            // where: ANE has no where converter; same as select
+            // fill: ANE has no fill converter; use precomputed Const instead
+            // fill_like: ANE has no fill_like converter; decomposed to mul+add
+            // one_hot: ANE has no one_hot converter
+            // non_zero: ANE has no non_zero converter
+            // range1d: ANE has no range converter
+            // shape: ANE has no shape query converter
+            | MirOp::MILSelect { .. }
+            | MirOp::MILWhere { .. }
+            | MirOp::MILFill { .. }
+            | MirOp::MILFillLike { .. }
+            | MirOp::MILOneHot { .. }
+            | MirOp::MILNonZero { .. }
+            | MirOp::MILRange1d { .. }
+            | MirOp::MILShape { .. } => None,
         }
     }
 }

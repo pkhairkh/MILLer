@@ -18,9 +18,9 @@
 //! |-------|-------|-------|---------|
 //! | sin_tab | [1, 1, seq_len, head_dim] | float16 | RoPE sin values per position |
 //! | cos_tab | [1, 1, seq_len, head_dim] | float16 | RoPE cos values per position |
-//! | eye_tab | [seq_len, seq_len] | float16 | Identity for KV-cache ring buffer (legacy, large) |
-//! | mask_tab | [seq_len, seq_len] | float16 | Causal attention mask (legacy, large) |
-//! | arange_tab | [seq_len] | int32 | Position indices for computed masks |
+//! | eye_tab | [seq_len, seq_len] | float16 | Identity for KV-cache write mask (Gather+Reshape) |
+//! | mask_tab | [seq_len, seq_len] | float16 | Causal attention mask (Gather+Reshape+Add) |
+//! | arange_tab | [seq_len] | int32 | Position indices (legacy, for prefill fallback) |
 //!
 //! The sin/cos table shape `[1, 1, seq_len, head_dim]` is chosen for broadcast
 //! compatibility with the Q/K tensor shape `[1, num_heads, seq_len, head_dim]`.
@@ -101,14 +101,13 @@ impl StaticTableResolver {
         Self { config, cache: HashMap::new() }
     }
 
-    /// Create a resolver with parameters typical for modern large language models
-    /// (high rope_theta, large head_dim). The caller should provide the actual
-    /// model-specific parameters via `RopeTableConfig::new()` when available.
-    #[deprecated(note = "Use RopeTableConfig::new() with model-specific parameters instead")]
-    pub fn for_qwen3_0_6b(seq_len: usize) -> Self {
+    /// Create a resolver with parameters from a model configuration.
+    /// This is the preferred way to create a resolver — it reads all
+    /// parameters from the model config rather than hardcoding model-specific values.
+    pub fn from_model_config(rope_theta: f64, head_dim: usize, seq_len: usize) -> Self {
         Self::new(RopeTableConfig {
-            rope_theta: 1_000_000.0,
-            head_dim: 128,
+            rope_theta,
+            head_dim,
             seq_len,
         })
     }
@@ -169,12 +168,17 @@ impl StaticTableResolver {
         }
 
         // Step 3: Compute identity table (eye_tab) — [seq, seq] fp16
+        // Precomputed identity matrix for KV-cache write masking.
+        // The decode_step path uses Gather(eye_tab, pos, axis=0) to get
+        // a one-hot row for the write position — this is ANE-legal and
+        // replaces the ANE-illegal Equal+Cast pattern.
+        //
         // ONLY compute when seq_len is small enough to be practical.
-        // For seq_len > 4096, the eye_tab would be > 32 MB (seq×seq×2 bytes)
-        // which is wasteful and never used by the decode_step path (which uses
-        // arange_tab + Equal/LessEqual instead). The embedding path (small seq_len)
-        // still uses eye_tab for prefill attention masking.
-        let compute_large_tables = seq <= 4096;
+        // For seq_len > 8192, the eye_tab would be > 128 MB (seq×seq×2 bytes)
+        // which may be too large for mobile deployment. The embedding path
+        // (small seq_len) always uses eye_tab for prefill attention masking.
+        // The decode_step path requires it for KV write masking.
+        let compute_large_tables = seq <= 8192;
 
         let mut eye_bytes = Vec::new();
         if compute_large_tables {
@@ -188,9 +192,16 @@ impl StaticTableResolver {
         }
 
         // Step 4: Compute causal mask (mask_tab) — [seq, seq] fp16
+        // Precomputed causal attention mask for additive masking.
+        // The decode_step path uses Gather(mask_tab, pos, axis=0) to get
+        // the causal mask row for the current position, then applies it
+        // via mb.add(logits, mask) — fully ANE-legal, replacing the
+        // ANE-illegal LessEqual+Fill+Select pattern.
+        //
         // Same seq_len guard as eye_tab — mask_tab is [seq, seq] and grows
-        // quadratically. The decode_step uses computed masks (arange_tab +
-        // LessEqual + Select) instead.
+        // quadratically. The decode_step ALWAYS uses the precomputed table
+        // approach now (ISSUE-001 fix), so this table is mandatory for
+        // seq_len ≤ 8192.
         let mut mask_bytes = Vec::new();
         if compute_large_tables {
             // Upper-triangular: the last (idx+1) positions are unmasked (0.0),
@@ -246,11 +257,41 @@ impl StaticTableResolver {
     }
 }
 
+impl StaticTableResolver {
+    /// Resolve a scalar constant from a value_path of the form `scalar://fp16/{value}`
+    /// or `scalar://fp32/{value}`.
+    ///
+    /// This produces a 1-element WeightData with the scalar value,
+    /// which broadcasts correctly with tensors of any shape in
+    /// CoreML MIL `mb.add`, `mb.mul`, etc.
+    fn resolve_scalar(value_path: &str) -> Option<WeightData> {
+        if let Some(rest) = value_path.strip_prefix("scalar://fp16/") {
+            let val: f32 = rest.parse().ok()?;
+            let f16_val = half::f16::from_f32(val);
+            let mut bytes = Vec::with_capacity(2);
+            bytes.extend_from_slice(&f16_val.to_bits().to_le_bytes());
+            Some(WeightData { data: bytes, shape: vec![1] })
+        } else if let Some(rest) = value_path.strip_prefix("scalar://fp32/") {
+            let val: f32 = rest.parse().ok()?;
+            let mut bytes = Vec::with_capacity(4);
+            bytes.extend_from_slice(&val.to_le_bytes());
+            Some(WeightData { data: bytes, shape: vec![1] })
+        } else {
+            None
+        }
+    }
+}
+
 impl WeightResolver for StaticTableResolver {
     fn resolve(&self, value_path: &str) -> Option<WeightData> {
         // First check the cache
         if let Some(data) = self.cache.get(value_path) {
             return Some(data.clone());
+        }
+
+        // Try scalar constant resolution
+        if let Some(data) = Self::resolve_scalar(value_path) {
+            return Some(data);
         }
 
         // If it's a static_tables path but not cached, it won't be found
@@ -399,5 +440,40 @@ mod tests {
     fn test_non_static_path_returns_none() {
         let resolver = StaticTableResolver::new(RopeTableConfig::default());
         assert!(resolver.resolve("model.layers.0.weight").is_none());
+    }
+
+    #[test]
+    fn test_scalar_fp16_resolution() {
+        let resolver = StaticTableResolver::new(RopeTableConfig::default());
+        let data = resolver.resolve("scalar://fp16/0.000001").unwrap();
+        assert_eq!(data.shape, vec![1]);
+        assert_eq!(data.data.len(), 2); // fp16 = 2 bytes
+        let val = half::f16::from_bits(u16::from_le_bytes([data.data[0], data.data[1]]));
+        assert!((val.to_f32() - 0.000001).abs() < 1e-7, "Expected ~1e-6, got {}", val.to_f32());
+    }
+
+    #[test]
+    fn test_scalar_fp32_resolution() {
+        let resolver = StaticTableResolver::new(RopeTableConfig::default());
+        let data = resolver.resolve("scalar://fp32/1.5").unwrap();
+        assert_eq!(data.shape, vec![1]);
+        assert_eq!(data.data.len(), 4); // fp32 = 4 bytes
+        let val = f32::from_le_bytes([data.data[0], data.data[1], data.data[2], data.data[3]]);
+        assert!((val - 1.5).abs() < 1e-7);
+    }
+
+    #[test]
+    fn test_scalar_zero_resolution() {
+        let resolver = StaticTableResolver::new(RopeTableConfig::default());
+        let data = resolver.resolve("scalar://fp16/0").unwrap();
+        let val = half::f16::from_bits(u16::from_le_bytes([data.data[0], data.data[1]]));
+        assert_eq!(val.to_f32(), 0.0);
+    }
+
+    #[test]
+    fn test_scalar_invalid_path_returns_none() {
+        let resolver = StaticTableResolver::new(RopeTableConfig::default());
+        assert!(resolver.resolve("scalar://fp16/notanumber").is_none());
+        assert!(resolver.resolve("scalar://int32/5").is_none());
     }
 }

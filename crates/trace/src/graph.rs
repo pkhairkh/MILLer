@@ -9,6 +9,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Default RoPE theta value (standard transformer: 10,000).
+fn default_rope_theta() -> f64 {
+    10_000.0
+}
+
 /// A complete traced computation graph from a transformers model.
 ///
 /// This is the JSON-serializable format produced by the Python tracing
@@ -107,6 +112,16 @@ pub struct ModelConfig {
     pub hidden_act: String,
     /// Whether the model uses RoPE (Rotary Position Embeddings).
     pub uses_rope: bool,
+    /// RoPE base frequency (theta). Default: 10,000 (standard transformer).
+    /// Models like Qwen3 use 1,000,000; Llama uses 500,000.
+    /// Read from HuggingFace config `rope_theta` field.
+    #[serde(default = "default_rope_theta")]
+    pub rope_theta: f64,
+    /// Whether the model uses QK normalization (per-head RMSNorm on Q and K).
+    /// Models like Qwen3 use QK norm; most Llama/GPT-2 models do not.
+    /// Detected by the presence of `q_norm`/`k_norm` weights in the model.
+    #[serde(default)]
+    pub has_qk_norm: bool,
     /// Whether the model uses RMSNorm (vs LayerNorm).
     pub uses_rms_norm: bool,
     /// Whether the model uses GQA (Grouped Query Attention).

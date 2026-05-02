@@ -3370,13 +3370,14 @@ impl MilLowerPass {
         //
         // ANE-illegal ops replaced:
         //   MILLinear     → MILMatMul(transpose_y=True)
-        //   MILWhere      → MILSelect
+        //   MILWhere      → WARN (CPU-only, should not appear; use Gather+Add instead)
+        //   MILSelect     → WARN (CPU-only, should not appear; use Gather+Add instead)
         //   MILLayerNorm  → decomposed RMSNorm primitives
         //   MILSliceUpdate→ read_state + mul + add + coreml_update_state
         //   MILCos/MILSin → MILGather on precomputed tables (deferred)
         //   MILTile       → eliminated (SDPA decomposition handles GQA)
-        //   MILFill       → MILConst (named constant)
-        //   MILFillLike   → mul(ref, 0) + add(0, value)
+        //   MILFill       → MILConst (precomputed constant tensor)
+        //   MILFillLike   → mul(ref, 0) + add(0, value) (in proto emitter)
         //   MILTranspose  → eliminated where possible (matmul transpose_y)
         {
             // ── 1. Replace ALL MILLinear with MILMatMul(transpose_y=True) ──
@@ -3402,24 +3403,28 @@ impl MilLowerPass {
                 }
             }
 
-            // ── 2. Replace MILWhere with MILSelect ──
-            // `where` is CPU-only on ANE (listed in cpu_only_ops.rs).
-            // `select` has the same semantics and IS ANE-compatible.
+            // ── 2. Replace MILWhere / MILSelect with ANE-legal alternatives ──
+            // Both `where` and `select` are ANE-illegal (no ANE converter).
+            // The reference model uses additive masking instead:
+            //   Instead of: select(condition, zeros, neg_infs) → masked values
+            //   Use: add(logits, mask) where mask is precomputed with 0.0/-inf
+            //
+            // With the ISSUE-001 fix, neither MILWhere nor MILSelect should
+            // appear in the decode_step path (masks use Gather from static
+            // tables). But if they appear from other paths, we warn loudly
+            // since they will force CPU fallback.
             let where_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILWhere { .. })).count();
-            if where_count > 0 {
-                eprintln!("  [ANE legality] Replacing {} MILWhere → MILSelect", where_count);
-                for node in mir_nodes.iter_mut() {
-                    if let MirOp::MILWhere { name, condition, x, y } = &node.op {
-                        let new_op = MirOp::MILSelect {
-                            name: name.clone(),
-                            condition: condition.clone(),
-                            x: x.clone(),
-                            y: y.clone(),
-                        };
-                        node.op = new_op;
-                    }
-                }
+            let select_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILSelect { .. })).count();
+            if where_count > 0 || select_count > 0 {
+                eprintln!(
+                    "  [ANE WARNING] Found {} MILWhere + {} MILSelect — these are ANE-illegal! \
+                     They will force CPU fallback. Replace with precomputed mask tables + Gather + Add.",
+                    where_count, select_count
+                );
             }
+            // No automatic rewrite: Where→Select is useless since Select is also CPU-only.
+            // Both ops will be flagged as CPU-only by the cpu_only_ops gate in the
+            // legality pass, giving them legality_confidence=0.0 and fallback_risk=1.0.
 
             // ── 3. Replace MILLayerNorm with decomposed RMSNorm primitives ──
             // The ANE has no `layer_norm` converter. The reference model
@@ -3680,16 +3685,29 @@ impl MilLowerPass {
             }
 
             // ── 5. MILFill / MILFillLike handling ──
-            // MILFill is ANE-supported (PE engine) and correctly handled by the
-            // compat layer (MirOpCompat::Fill) and proto emitter. Do NOT replace
-            // MILFill with MILConst — doing so loses the fill value (e.g.,
-            // NEG_INFINITY for causal masks becomes 0.0), which completely breaks
-            // causal attention masking. MILFillLike is also handled by the proto
-            // emitter decomposition.
+            // MILFill and MILFillLike are ANE-illegal (added to CPU_ONLY list).
+            // The reference model NEVER uses these — all constant tensors
+            // are precomputed at compile time as static tables (Const ops).
+            //
+            // With the mask computation now using precomputed eye_tab/mask_tab
+            // + Gather (ISSUE-001 fix), MILFill/MILFillLike should NOT appear
+            // in the decode_step path. If they appear from other paths, they
+            // are flagged as CPU-only (legality_confidence=0.0) and the
+            // proto emitter handles their emission as a fallback.
+            //
+            // We do NOT attempt to replace MILFill with MILConst here because
+            // MILConst in our IR only carries a value_path (resolved later by
+            // the weight resolver), not inline data. Instead, the proto emitter
+            // directly emits Fill ops with the fill value and shape.
             let fill_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILFill { .. })).count();
             let filllike_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILFillLike { .. })).count();
             if fill_count > 0 || filllike_count > 0 {
-                eprintln!("  [ANE legality] Keeping {} MILFill + {} MILFillLike (ANE-supported, proto handles emission)", fill_count, filllike_count);
+                eprintln!(
+                    "  [ANE WARNING] Found {} MILFill + {} MILFillLike — these are ANE-illegal \
+                     (CPU-only). They will force CPU fallback. The decode_step path should use \
+                     precomputed static tables + Gather instead. Proto emitter will handle emission.",
+                    fill_count, filllike_count
+                );
             }
 
             // ── 6. Eliminate MILTranspose where possible ──
@@ -4750,18 +4768,18 @@ mod tests {
             staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
-        // After ANE legality rewrite, MILWhere is replaced with MILSelect
+        // MILWhere is NOT rewritten to MILSelect (both are ANE-illegal CPU-only ops).
+        // The Where→Select rewrite was removed because Select is also CPU-only.
+        // Both ops are flagged as CPU-only (legality_confidence=0.0) and should
+        // not appear in the decode_step path at all — the proper approach is to
+        // use precomputed mask tables + Gather + Add instead.
         let where_node = mirs[0]
             .nodes
             .iter()
             .find(|n| matches!(n.op, MirOp::MILWhere { .. }));
-        assert!(where_node.is_none(), "MILWhere should have been replaced with MILSelect");
-        let select_node = mirs[0]
-            .nodes
-            .iter()
-            .find(|n| matches!(n.op, MirOp::MILSelect { .. }))
-            .expect("Expected MILSelect node");
-        if let MirOp::MILSelect { condition, x, y, .. } = &select_node.op {
+        // MILWhere should still be present (not rewritten to MILSelect)
+        assert!(where_node.is_some(), "MILWhere should be preserved (both Where and Select are CPU-only)");
+        if let MirOp::MILWhere { condition, x, y, .. } = &where_node.unwrap().op {
             assert_eq!(condition.0, "mask");
             assert_eq!(x.0, "update");
             assert_eq!(y.0, "original");

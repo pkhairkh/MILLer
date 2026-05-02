@@ -2096,20 +2096,26 @@ impl LegalityRewritePass {
             kq,
         ));
 
-        // mean(x²) + epsilon (use FillLike for broadcast)
-        let eps_id = AirNodeId(format!("{base}{suffix}_eps"));
+        // mean(x²) + epsilon (ANE-legal: Const scalar + Add with broadcasting)
+        // Instead of FillLike (which is ANE-illegal), use a scalar Const
+        // that broadcasts with the mean tensor in mb.add.
+        // CoreML's mb.add(x=tensor, y=scalar) broadcasts the scalar correctly.
+        let eps_scalar_id = AirNodeId(format!("{base}{suffix}_eps_scalar"));
         nodes.push(Self::make_air_node(
-            eps_id.clone(),
-            AirOp::FillLike { ref_tensor: mean_id.clone(), value: epsilon, dtype: MilDtype::Fp16 },
+            eps_scalar_id.clone(),
+            AirOp::Const {
+                value_path: format!("scalar://fp16/{}", epsilon),
+                dtype: MilDtype::Fp16,
+            },
             sir_node,
-            "mb.fill_like",
+            "mb.const",
             kq,
         ));
 
         let biased_id = AirNodeId(format!("{base}{suffix}_biased"));
         nodes.push(Self::make_air_node(
             biased_id.clone(),
-            AirOp::Add { x: mean_id, y: eps_id },
+            AirOp::Add { x: mean_id, y: eps_scalar_id },
             sir_node,
             "mb.add",
             kq,
@@ -2197,7 +2203,7 @@ impl LegalityRewritePass {
             eprintln!("[WARN] apply_rope_decode without head_dim — using default 128");
             128
         };
-        let kv_len = ctx.map(|c| c.seq_len as i64).unwrap_or(0);
+        let _kv_len = ctx.map(|c| c.seq_len as i64).unwrap_or(0);
         let half = head_dim / 2;
 
         // ── ANE-LEGAL RoPE: Const + Gather pattern (Sprint 67) ────────
@@ -2272,14 +2278,13 @@ impl LegalityRewritePass {
             shared_sin_id
         };
 
-        // Also emit a Const node for arange_tab used by the computed mask pattern.
-        // Instead of storing huge [seq_len, seq_len] eye_tab/mask_tab tables
-        // (which would be 3+ GB for seq_len=40960), we compute masks at runtime
-        // using arange_tab (int32 position indices) + comparison ops.
-        //
-        // KV write mask:  Equal(arange_tab, pos) → one-hot → Cast(fp16)
-        // Causal mask:    LessEqual(arange_tab, pos) → Select(zeros, neg_infs)
-        let arange_tab_id = {
+        // arange_tab is no longer needed for mask computation — masks now use
+        // precomputed eye_tab/mask_tab tables + Gather (ANE-legal pattern from
+        // the reference implementation). However, we keep arange_tab available
+        // for backward compatibility with the embedding/prefill path that may
+        // still use it, and as a fallback for very large seq_len where
+        // eye_tab/mask_tab are impractical (> 128 MB each).
+        let _arange_tab_id = {
             let arange_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_arange_tab_{}", tables_ref));
             if sir_to_air.contains_key(&arange_sir_id) {
                 AirNodeId(arange_sir_id.0.clone())
@@ -2294,13 +2299,14 @@ impl LegalityRewritePass {
                     },
                     sir_node, "mb.const", kq,
                 ));
-                shared_arange_id
+                shared_arange_id.clone()
             }
         };
 
         // When a position input is provided, gather the specific row
         // from the cos/sin tables for position-dependent RoPE, and
-        // compute KV write mask and causal mask using arange_tab.
+        // compute KV write mask and causal mask using precomputed
+        // eye_tab/mask_tab tables + Gather (all ANE-legal ops).
         //
         // cos_tab shape: [1, 1, seq_len, head_dim]
         // Gather along axis 2 with position index → [1, 1, 1, head_dim]
@@ -2324,59 +2330,82 @@ impl LegalityRewritePass {
                 sir_node, "mb.gather", kq,
             ));
 
-            // Compute KV write mask (one-hot at position `pos`):
-            // arange_tab shape: [kv_len] int32, pos shape: [1] int32
-            // Equal(arange_tab, pos) → bool [kv_len] (True at pos, False elsewhere)
-            // Cast(bool, fp16) → fp16 [kv_len] (1.0 at pos, 0.0 elsewhere)
-            let kv_mask_eq_id = AirNodeId(format!("{base}_kv_mask_eq"));
-            nodes.push(Self::make_air_node(
-                kv_mask_eq_id.clone(),
-                AirOp::Equal { x: arange_tab_id.clone(), y: pos_air.clone() },
-                sir_node, "mb.equal", kq,
-            ));
+            // ── ANE-LEGAL mask computation: precomputed static tables + Gather ──
+            //
+            // The reference implementation (pkhairkh/qwen3-coreml-palettized)
+            // NEVER uses Equal/LessEqual/Fill/Select for masking — these are
+            // CPU-only on the ANE. Instead, it precomputes mask_tab and eye_tab
+            // at compile time and uses mb.gather to select the correct row.
+            //
+            // Pattern (matching reference _build_decoder_prelude):
+            //   eye_tab: [seq_len, seq_len] fp16 identity matrix
+            //   mask_tab: [seq_len, seq_len] fp16 causal mask (0.0 or -inf)
+            //
+            //   kv_mask_row = mb.gather(x=eye_tab, indices=pos, axis=0)    → [seq_len] fp16
+            //   mask_row = mb.gather(x=mask_tab, indices=pos, axis=0)       → [seq_len] fp16
+            //
+            // All ops (Const, Gather) are fully ANE-legal.
 
+            // Emit shared eye_tab Const — same AirNodeId across all layers
+            // for deduplication by the global AirNodeId dedup at the end
+            // of LegalityRewritePass::run().
+            let shared_eye_id = AirNodeId(format!("shared_rope_{}_eye_tab", tables_ref));
+            let eye_tab_id = {
+                let eye_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_eye_tab_{}", tables_ref));
+                if sir_to_air.contains_key(&eye_sir_id) {
+                    AirNodeId(eye_sir_id.0.clone())
+                } else {
+                    nodes.push(Self::make_air_node(
+                        shared_eye_id.clone(),
+                        AirOp::Const {
+                            value_path: format!("static_tables/{}/eye_tab", tables_ref),
+                            dtype: MilDtype::Fp16,
+                        },
+                        sir_node, "mb.const", kq,
+                    ));
+                    shared_eye_id
+                }
+            };
+
+            // Emit shared mask_tab Const — same AirNodeId across all layers
+            let shared_mask_id = AirNodeId(format!("shared_rope_{}_mask_tab", tables_ref));
+            let mask_tab_id = {
+                let mask_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_mask_tab_{}", tables_ref));
+                if sir_to_air.contains_key(&mask_sir_id) {
+                    AirNodeId(mask_sir_id.0.clone())
+                } else {
+                    nodes.push(Self::make_air_node(
+                        shared_mask_id.clone(),
+                        AirOp::Const {
+                            value_path: format!("static_tables/{}/mask_tab", tables_ref),
+                            dtype: MilDtype::Fp16,
+                        },
+                        sir_node, "mb.const", kq,
+                    ));
+                    shared_mask_id
+                }
+            };
+
+            // KV write mask: Gather(eye_tab, pos, axis=0) → [seq_len] fp16
+            // This gives a one-hot row from the identity matrix — 1.0 at the
+            // write position, 0.0 elsewhere — exactly what the KV cache blend
+            // needs for mask_write.
             let kv_mask_gathered_id = AirNodeId(format!("{base}_kv_mask_gathered"));
             nodes.push(Self::make_air_node(
                 kv_mask_gathered_id.clone(),
-                AirOp::Cast { input: kv_mask_eq_id, dtype: MilDtype::Fp16 },
-                sir_node, "mb.cast", kq,
+                AirOp::Gather { input: eye_tab_id, indices: pos_air.clone(), axis: 0 },
+                sir_node, "mb.gather", kq,
             ));
 
-            // Compute causal mask (0.0 for causal positions, -inf for future):
-            // LessEqual(arange_tab, pos) → bool [kv_len] (True for positions ≤ pos)
-            // Select(condition, zeros, neg_infs) → fp16 [kv_len]
-            let mask_le_id = AirNodeId(format!("{base}_mask_le"));
-            nodes.push(Self::make_air_node(
-                mask_le_id.clone(),
-                AirOp::LessEqual { x: arange_tab_id.clone(), y: pos_air.clone() },
-                sir_node, "mb.less_equal", kq,
-            ));
-
-            // zeros: [kv_len] fp16 — 0.0 for allowed (causal) positions
-            let mask_zeros_id = AirNodeId(format!("{base}_mask_zeros"));
-            nodes.push(Self::make_air_node(
-                mask_zeros_id.clone(),
-                AirOp::Fill { shape: vec![kv_len as usize], value: 0.0, dtype: MilDtype::Fp16 },
-                sir_node, "mb.fill", kq,
-            ));
-
-            // neg_infs: [kv_len] fp16 — -inf for masked (future) positions
-            let mask_neg_infs_id = AirNodeId(format!("{base}_mask_neg_infs"));
-            nodes.push(Self::make_air_node(
-                mask_neg_infs_id.clone(),
-                AirOp::Fill { shape: vec![kv_len as usize], value: f32::NEG_INFINITY, dtype: MilDtype::Fp16 },
-                sir_node, "mb.fill", kq,
-            ));
-
+            // Causal mask: Gather(mask_tab, pos, axis=0) → [seq_len] fp16
+            // This gives 0.0 for allowed (causal) positions and -inf for
+            // masked (future) positions. Used with additive masking:
+            //   logits = mb.add(x=logits, y=mask)
             let mask_gathered_id = AirNodeId(format!("{base}_mask_gathered"));
             nodes.push(Self::make_air_node(
                 mask_gathered_id.clone(),
-                AirOp::Select {
-                    condition: mask_le_id,
-                    x: mask_zeros_id,
-                    y: mask_neg_infs_id,
-                },
-                sir_node, "mb.select", kq,
+                AirOp::Gather { input: mask_tab_id, indices: pos_air.clone(), axis: 0 },
+                sir_node, "mb.gather", kq,
             ));
 
             (cos_gathered_id, sin_gathered_id, Some(kv_mask_gathered_id), Some(mask_gathered_id))
@@ -2682,23 +2711,24 @@ impl LegalityRewritePass {
         ));
 
         // Clamp max_abs to at least epsilon to avoid division by zero
-        let eps_for_max_id = AirNodeId(format!("{base}_eps_for_max"));
+        // ANE-legal: Const scalar + Maximum with broadcasting (instead of FillLike)
+        let eps_for_max_scalar_id = AirNodeId(format!("{base}_eps_for_max_scalar"));
+        let eps_clamp_val = epsilon.max(1e-6);
         nodes.push(Self::make_air_node(
-            eps_for_max_id.clone(),
-            AirOp::FillLike {
-                ref_tensor: max_abs_id.clone(),
-                value: epsilon.max(1e-6), // at least 1e-6 to prevent div-by-zero
+            eps_for_max_scalar_id.clone(),
+            AirOp::Const {
+                value_path: format!("scalar://fp16/{}", eps_clamp_val),
                 dtype: MilDtype::Fp16,
             },
             sir_node,
-            "mb.fill_like",
+            "mb.const",
             kq,
         ));
 
         let safe_max_id = AirNodeId(format!("{base}_safe_max"));
         nodes.push(Self::make_air_node(
             safe_max_id.clone(),
-            AirOp::Maximum { x: max_abs_id, y: eps_for_max_id },
+            AirOp::Maximum { x: max_abs_id, y: eps_for_max_scalar_id },
             sir_node,
             "mb.maximum",
             kq,
@@ -2741,26 +2771,25 @@ impl LegalityRewritePass {
         // Step 3: mean(x^2) + epsilon
         //
         // RMSNorm requires rsqrt(mean(x²) + ε) for numerical stability.
-        // The previous code passed the raw mean directly to Rsqrt with no
-        // epsilon, causing division-by-zero for zero inputs and instability
-        // for small values. QWEN3 uses rms_norm_eps = 1e-6.
-        let eps_id = AirNodeId(format!("{base}_eps"));
+        // ANE-legal: Const scalar + Add with broadcasting (instead of FillLike).
+        // CoreML's mb.add(x=tensor, y=scalar) broadcasts the scalar correctly,
+        // matching the reference implementation pattern.
+        let eps_scalar_id = AirNodeId(format!("{base}_eps_scalar"));
         nodes.push(Self::make_air_node(
-            eps_id.clone(),
-            AirOp::FillLike {
-                ref_tensor: mean_id.clone(),
-                value: epsilon,
+            eps_scalar_id.clone(),
+            AirOp::Const {
+                value_path: format!("scalar://fp16/{}", epsilon),
                 dtype: MilDtype::Fp16,
             },
             sir_node,
-            "mb.fill_like",
+            "mb.const",
             kq,
         ));
 
         let mean_plus_eps_id = AirNodeId(format!("{base}_mean_plus_eps"));
         nodes.push(Self::make_air_node(
             mean_plus_eps_id.clone(),
-            AirOp::Add { x: mean_id, y: eps_id },
+            AirOp::Add { x: mean_id, y: eps_scalar_id },
             sir_node,
             "mb.add",
             kq,
@@ -3682,6 +3711,9 @@ impl LegalityRewritePass {
                 AirOp::Fill { shape: shape.clone(), value: *value, dtype: dtype.clone() },
                 "mb.fill",
             ),
+            // DEPRECATED: FillLike is ANE-illegal. New decompositions should use
+            // Const scalar + Add broadcasting instead. This 1:1 mapping is kept
+            // for backward compatibility only. See ISSUE-002.
             SirOp::FillLike { ref_tensor, value, dtype } => (
                 AirOp::FillLike {
                     ref_tensor: aid(ref_tensor),

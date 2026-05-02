@@ -132,6 +132,16 @@ pub static CPU_ONLY_OPS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "non_zero",
         "clamp",
         "prelu",
+        // ANE-illegal tensor creation / conditional ops
+        // fill / fill_like: No ANE converter; forces CPU fallback.
+        // The reference model NEVER uses these — all constants are
+        // precomputed as static tables (Const ops).
+        "fill",
+        "fill_like",
+        // select: Technically has a MIL definition, but the ANE does NOT
+        // have a select converter. The reference model uses additive
+        // masking (mb.add with -inf mask) instead of mb.select.
+        "select",
         // Quantization constexpr (never on ANE)
         "constexpr_blockwise_shift_scale",
         "constexpr_sparse_blockwise_shift_scale",

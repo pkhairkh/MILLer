@@ -4181,7 +4181,7 @@ fn run_trace_compile(
     // computes the actual tensor data in float64 precision and stores as fp16.
     // The ChainedResolver will try static tables first, then fall through to
     // the safetensors resolver for model weights.
-    let rope_theta = 1_000_000.0; // Qwen3 default; TODO: read from model config
+    let rope_theta = traced_graph.model_config.rope_theta;
 
     // Compute actual_max_seq_len early — needed for the decode_step resolver.
     // The embedding function uses seq_len (prefill length), but decode_step
@@ -4417,8 +4417,8 @@ fn run_trace_compile(
             num_kv_heads,
             traced_graph.model_config.intermediate_size,
             traced_graph.model_config.vocab_size,
-            true,  // uses_rope: Qwen3 uses RoPE in decode
-            true,  // has_qk_norm: Qwen3 uses QK norm
+            traced_graph.model_config.uses_rope,  // uses_rope: from model config
+            traced_graph.model_config.has_qk_norm, // has_qk_norm: from model config
         );
 
         let decode_step_air = legality
