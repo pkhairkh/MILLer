@@ -113,12 +113,42 @@ pub fn convert_mir_to_proto_multifunction(
                     }
                 }
                 MirOpCompat::ReadState { name: _, state_id, shape, dtype } => {
-                    graph_states.push(TensorDesc {
-                        name: state_id.clone(),
-                        shape: shape.iter().map(|&d| d as u64).collect(),
-                        dtype: CoreMlDataType::from_mir_dtype(dtype),
-                        is_state: true,
-                    });
+                    // Collect state declarations from ReadState ops.
+                    // Deduplicate by state_id since the same state may be
+                    // read multiple times in one function.
+                    if !graph_states.iter().any(|s: &TensorDesc| s.name == *state_id) {
+                        graph_states.push(TensorDesc {
+                            name: state_id.clone(),
+                            shape: shape.iter().map(|&d| d as u64).collect(),
+                            dtype: CoreMlDataType::from_mir_dtype(dtype),
+                            is_state: true,
+                        });
+                    }
+                }
+                MirOpCompat::CoremlUpdateState { state_id, .. } => {
+                    // Also collect state declarations from CoremlUpdateState ops.
+                    // A function might only write to a state without reading
+                    // it first (e.g., initial fill), so we need to capture
+                    // these declarations too.
+                    if !graph_states.iter().any(|s: &TensorDesc| s.name == *state_id) {
+                        graph_states.push(TensorDesc {
+                            name: state_id.clone(),
+                            shape: vec![], // Shape inferred from ReadState if present
+                            dtype: CoreMlDataType::Float16, // Default; overridden by ReadState
+                            is_state: true,
+                        });
+                    }
+                }
+                MirOpCompat::StateWrite { state_ref, .. } => {
+                    // StateWrite uses state_ref instead of state_id.
+                    if !graph_states.iter().any(|s: &TensorDesc| s.name == *state_ref) {
+                        graph_states.push(TensorDesc {
+                            name: state_ref.clone(),
+                            shape: vec![],
+                            dtype: CoreMlDataType::Float16,
+                            is_state: true,
+                        });
+                    }
                 }
                 _ => {}
             }

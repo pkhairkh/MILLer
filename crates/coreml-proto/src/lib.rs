@@ -1999,6 +1999,31 @@ fn make_apple_named_value_type(
     }
 }
 
+/// Build an `apple_proto::mil_spec::NamedValueType` with `StateType` wrapping
+/// a `TensorType`.
+///
+/// Core ML requires state variables to be declared in MIL function inputs
+/// with `ValueType.type = StateType { wrappedType = TensorType {...} }`.
+/// Without this, `read_state` and `write_state` ops reference unbound names
+/// and the runtime rejects the model.
+fn make_apple_state_named_value_type(
+    name: &str,
+    dtype: i32,
+    shape: &[u64],
+) -> apple_proto::mil_spec::NamedValueType {
+    let inner_value_type = make_apple_value_type(dtype, shape);
+    apple_proto::mil_spec::NamedValueType {
+        name: name.to_string(),
+        r#type: Some(apple_proto::mil_spec::ValueType {
+            r#type: Some(apple_proto::mil_spec::value_type::Type::StateType(
+                Box::new(apple_proto::mil_spec::StateType {
+                    wrapped_type: Some(Box::new(inner_value_type)),
+                }),
+            )),
+        }),
+    }
+}
+
 /// Look up the shape of a tensor by name from the node_shapes map,
 /// converting `Vec<usize>` to `Vec<u64>`. Returns empty vec if not found.
 fn lookup_shape_u64(
@@ -4579,7 +4604,8 @@ fn function_to_apple_proto(
     weight_entries: &[WeightEntry],
     opset: &str,
 ) -> apple_proto::mil_spec::Function {
-    let fn_inputs: Vec<apple_proto::mil_spec::NamedValueType> = func
+    // Regular tensor inputs
+    let mut fn_inputs: Vec<apple_proto::mil_spec::NamedValueType> = func
         .inputs
         .iter()
         .map(|td| {
@@ -4587,6 +4613,19 @@ fn function_to_apple_proto(
             make_apple_named_value_type(&td.name, dtype, &td.shape)
         })
         .collect();
+
+    // State variable declarations: Core ML requires state variables to be
+    // declared as MIL function inputs with `ValueType.type = StateType`.
+    // Without these declarations, `read_state` and `write_state` ops
+    // reference unbound names and the runtime rejects the model.
+    for state in &func.states {
+        let dtype = coreml_dtype_to_apple_mil(&state.dtype);
+        fn_inputs.push(make_apple_state_named_value_type(
+            &state.name,
+            dtype,
+            &state.shape,
+        ));
+    }
 
     let operations: Vec<apple_proto::mil_spec::Operation> = func
         .operations
