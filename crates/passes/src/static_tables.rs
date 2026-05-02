@@ -65,14 +65,21 @@ pub fn run_static_tables_pass(graph: &mut SirGraph) -> StaticTablesResult {
         }
         seen_tables_refs.insert(tables_ref.clone());
 
-        let tables = &["sin_tab", "cos_tab", "eye_tab", "mask_tab"];
-        for &table_name in tables {
+        let tables: &[(&str, ane_ir::mir::MilDtype)] = &[
+            ("sin_tab", ane_ir::mir::MilDtype::Fp16),
+            ("cos_tab", ane_ir::mir::MilDtype::Fp16),
+            ("eye_tab", ane_ir::mir::MilDtype::Fp16),
+            ("mask_tab", ane_ir::mir::MilDtype::Fp16),
+            ("arange_tab", ane_ir::mir::MilDtype::Int32),
+            ("arange_fp16_tab", ane_ir::mir::MilDtype::Fp16),
+        ];
+        for &(table_name, ref dtype) in tables {
             let const_id = SirNodeId(format!("sir_static_{}_{}", table_name, tables_ref));
             let const_node = SirNode {
                 id: const_id,
                 op: SirOp::Const {
                     value_path: format!("static_tables/{}/{}", tables_ref, table_name),
-                    dtype: ane_ir::mir::MilDtype::Fp16,
+                    dtype: dtype.clone(),
                 },
                 name: format!("static_{}_{}", table_name, tables_ref),
                 metadata: metadata.clone(),
@@ -120,12 +127,12 @@ mod tests {
         let result = run_static_tables_pass(&mut graph);
 
         assert_eq!(result.rope_converted, 1);
-        assert_eq!(result.tables_inserted, 4); // sin, cos, eye, mask
+        assert_eq!(result.tables_inserted, 6); // sin, cos, eye, mask, arange, arange_fp16
 
         // Verify static table constants were inserted
         let const_count =
             graph.nodes.iter().filter(|n| matches!(n.op, SirOp::Const { .. })).count();
-        assert_eq!(const_count, 4);
+        assert_eq!(const_count, 6);
 
         // Verify Const nodes are PREPENDED before the RoPETransform node.
         // This is critical: LegalityRewritePass processes nodes in order,
@@ -206,10 +213,10 @@ mod tests {
         let result = run_static_tables_pass(&mut graph);
 
         assert_eq!(result.rope_converted, 3); // 3 RoPE patterns found
-        assert_eq!(result.tables_inserted, 4); // only 1 set of 4 tables (deduped)
+        assert_eq!(result.tables_inserted, 6); // only 1 set of 6 tables (deduped)
 
         let const_count =
             graph.nodes.iter().filter(|n| matches!(n.op, SirOp::Const { .. })).count();
-        assert_eq!(const_count, 4);
+        assert_eq!(const_count, 6);
     }
 }

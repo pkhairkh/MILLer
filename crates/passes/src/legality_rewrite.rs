@@ -1045,6 +1045,12 @@ impl LegalityRewritePass {
         // count. In this case, fall back to SDPA (which will be on the ANE for
         // A16+ targets). This fallback should only occur in synthetic tests.
 
+        // CRITICAL: Use heads * head_dim, NOT embed_dim. For models where
+        // num_heads * head_dim != hidden_size (e.g., Qwen3-0.6B: 16*128=2048 ≠ 1024),
+        // using embed_dim produces an impossible reshape because the concat output
+        // has num_heads * head_dim elements, not embed_dim elements.
+        let attn_flat_dim = heads * head_dim;
+
         if heads > 0 {
             // ── Split-based per-head attention (primary path) ──────────
             let fan_out = if kv_heads > 0 && kv_heads < heads {
@@ -1065,19 +1071,20 @@ impl LegalityRewritePass {
         let v_split_id = v_t_id.clone();
 
         // Scale constant: 1/√d_k
-        let _scale_val = if head_dim > 0 {
+        let scale_val = if head_dim > 0 {
             1.0 / (head_dim as f32).sqrt()
         } else {
             1.0 / (128.0_f32).sqrt()
         };
         // Shared scale constant: 1/√d_k
-        // Emitted unconditionally; duplicates are removed by the global
-        // AirNodeId dedup at the end of LegalityRewritePass::run().
+        // Uses scalar:// resolution so the value is correctly serialized as fp16.
+        // Duplicates are removed by the global AirNodeId dedup at the end
+        // of LegalityRewritePass::run().
         let scale_const_id = AirNodeId("shared_attn_scale".to_string());
         nodes.push(Self::make_air_node(
             scale_const_id.clone(),
             AirOp::Const {
-                value_path: "_attn_scale".to_string(),
+                value_path: format!("scalar://fp16/{:.10}", scale_val),
                 dtype: MilDtype::Fp16,
             },
             sir_node, "mb.const", kq,
@@ -1234,11 +1241,7 @@ impl LegalityRewritePass {
         ));
 
         // Step 8: Reshape back to [batch, seq, num_heads * head_dim]
-        // CRITICAL: Use heads * head_dim, NOT embed_dim. For models where
-        // num_heads * head_dim != hidden_size (e.g., Qwen3-0.6B: 16*128=2048 ≠ 1024),
-        // using embed_dim produces an impossible reshape because the concat output
-        // has num_heads * head_dim elements, not embed_dim elements.
-        let attn_flat_dim = heads * head_dim;
+        // attn_flat_dim is defined above (before the if/else branch)
         nodes.push(Self::make_air_node(
             attn_flat_id.clone(),
             AirOp::Reshape {
@@ -1284,7 +1287,11 @@ impl LegalityRewritePass {
                 attn_flat_id.clone(),
                 AirOp::Reshape {
                     input: attn_id,
-                    target_shape: vec![batch as usize, seq as usize, embed as usize],
+                    // CRITICAL: Use heads*head_dim, NOT embed_dim.
+                    // For GQA models (e.g., Qwen3-0.6B: 16 heads × 128 head_dim = 2048 ≠ 1024 embed_dim),
+                    // the attention output has heads*head_dim elements, not embed_dim.
+                    // Using embed_dim here causes the "2048 vs 1024" impossible reshape error.
+                    target_shape: vec![batch as usize, seq as usize, attn_flat_dim as usize],
                 },
                 sir_node,
                 "mb.reshape",
@@ -1754,13 +1761,14 @@ impl LegalityRewritePass {
 
             // mask_keep = 1.0 - mask_write
             // Shared scalar one constant: 1.0 for mask_keep = 1.0 - mask_write
-            // Emitted unconditionally; duplicates are removed by the global
-            // AirNodeId dedup at the end of LegalityRewritePass::run().
+            // Uses the same shared_scalar_one as the arithmetic mask path.
+            // Duplicates are removed by the global AirNodeId dedup at the end
+            // of LegalityRewritePass::run().
             let one_const_id = AirNodeId("shared_scalar_one".to_string());
             nodes.push(Self::make_air_node(
                 one_const_id.clone(),
                 AirOp::Const {
-                    value_path: "_scalar_one".to_string(),
+                    value_path: "scalar://fp16/1.0".to_string(),
                     dtype: MilDtype::Fp16,
                 },
                 sir_node, "mb.const", kq,
@@ -1862,7 +1870,7 @@ impl LegalityRewritePass {
 
         // Attention scale factor: 1/√d_k
         // Used per-head as a scalar constant multiplied with logits.
-        let _scale_val = if head_dim > 0 {
+        let scale_val = if head_dim > 0 {
             1.0 / (head_dim as f32).sqrt()
         } else {
             1.0 / (128.0_f32).sqrt() // default fallback
@@ -1965,11 +1973,12 @@ impl LegalityRewritePass {
         // Shared attention scale constant: emitted once before the Q-head loop.
         // Previously emitted inside the loop, causing duplicate output names
         // (shared_attn_scale defined 16× per function with GQA).
+        // Uses scalar:// resolution so the value is correctly serialized as fp16.
         let scale_const_id = AirNodeId("shared_attn_scale".to_string());
         nodes.push(Self::make_air_node(
             scale_const_id.clone(),
             AirOp::Const {
-                value_path: "_attn_scale".to_string(),
+                value_path: format!("scalar://fp16/{:.10}", scale_val),
                 dtype: MilDtype::Fp16,
             },
             sir_node, "mb.const", kq,
@@ -2443,82 +2452,196 @@ impl LegalityRewritePass {
                 sir_node, "mb.gather", kq,
             ));
 
-            // ── ANE-LEGAL mask computation: precomputed static tables + Gather ──
+            // ── ANE-LEGAL mask computation: pure arithmetic (no Gather) ──
             //
-            // The reference implementation (pkhairkh/qwen3-coreml-palettized)
-            // NEVER uses Equal/LessEqual/Fill/Select for masking — these are
-            // CPU-only on the ANE. Instead, it precomputes mask_tab and eye_tab
-            // at compile time and uses mb.gather to select the correct row.
+            // Previous approach used Gather(eye_tab, pos) and Gather(mask_tab, pos)
+            // to look up precomputed mask rows. This has THREE critical problems:
             //
-            // Pattern (matching reference _build_decoder_prelude):
-            //   eye_tab: [seq_len, seq_len] fp16 identity matrix
-            //   mask_tab: [seq_len, seq_len] fp16 causal mask (0.0 or -inf)
+            // 1. Gather has ANE plannability score 0.26 — it often falls back to
+            //    CPU, creating ANE↔CPU synchronization stalls.
+            // 2. The eye_tab/mask_tab are [seq_len, seq_len] — for seq_len=40960,
+            //    that's 3.2 GB each, exceeding practical memory limits.
+            // 3. When seq_len > 8192, the tables aren't computed but Gather is
+            //    still emitted, causing the scalar-fp16 serialization bug.
             //
-            //   kv_mask_row = mb.gather(x=eye_tab, indices=pos, axis=0)    → [seq_len] fp16
-            //   mask_row = mb.gather(x=mask_tab, indices=pos, axis=0)       → [seq_len] fp16
+            // New approach: compute masks using ONLY add/sub/mul/abs/maximum/minimum
+            // — all fully ANE-legal ops with plannability > 0.80.
             //
-            // All ops (Const, Gather) are fully ANE-legal.
+            // KV write mask (one-hot at position pos):
+            //   arange_fp16 = Const([0, 1, 2, ..., seq_len-1]) as fp16
+            //   diff = Sub(arange_fp16, pos_fp16)
+            //   abs_diff = Abs(diff)
+            //   clipped = Minimum(abs_diff, 1.0)       → 0 at pos, 1 elsewhere
+            //   one_hot = Sub(1.0, clipped)              → 1 at pos, 0 elsewhere
+            //
+            // Causal mask (0 for allowed, -65504 for blocked):
+            //   offset = Sub(Const(seq_len-1), pos_fp16) → first allowed position
+            //   distance = Sub(arange_fp16, offset)       → neg=blocked, ≥0=allowed
+            //   shifted = Add(distance, 1.0)               → ≥1 for allowed, ≤0 blocked
+            //   is_allowed = Minimum(Maximum(shifted, 0.0), 1.0) → 1=allowed, 0=blocked
+            //   is_blocked = Sub(1.0, is_allowed)         → 0=allowed, 1=blocked
+            //   mask = Mul(is_blocked, -65504.0)           → 0 or fp16-min (≈-inf)
 
-            // Emit shared eye_tab Const — same AirNodeId across all layers
-            // for deduplication by the global AirNodeId dedup at the end
-            // of LegalityRewritePass::run().
-            let shared_eye_id = AirNodeId(format!("shared_rope_{}_eye_tab", tables_ref));
-            let eye_tab_id = {
-                let eye_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_eye_tab_{}", tables_ref));
-                if sir_to_air.contains_key(&eye_sir_id) {
-                    AirNodeId(eye_sir_id.0.clone())
+            // Emit shared arange_fp16_tab Const — same AirNodeId across all layers
+            // for deduplication by the global AirNodeId dedup.
+            // Shape: [seq_len] fp16 — only 2*seq_len bytes (80 KB for seq=40960).
+            let shared_arange_fp16_id = AirNodeId(format!("shared_rope_{}_arange_fp16_tab", tables_ref));
+            let arange_fp16_id = {
+                let arange_fp16_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_arange_fp16_tab_{}", tables_ref));
+                if sir_to_air.contains_key(&arange_fp16_sir_id) {
+                    AirNodeId(arange_fp16_sir_id.0.clone())
                 } else {
                     nodes.push(Self::make_air_node(
-                        shared_eye_id.clone(),
+                        shared_arange_fp16_id.clone(),
                         AirOp::Const {
-                            value_path: format!("static_tables/{}/eye_tab", tables_ref),
+                            value_path: format!("static_tables/{}/arange_fp16_tab", tables_ref),
                             dtype: MilDtype::Fp16,
                         },
                         sir_node, "mb.const", kq,
                     ));
-                    shared_eye_id
+                    shared_arange_fp16_id
                 }
             };
 
-            // Emit shared mask_tab Const — same AirNodeId across all layers
-            let shared_mask_id = AirNodeId(format!("shared_rope_{}_mask_tab", tables_ref));
-            let mask_tab_id = {
-                let mask_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_mask_tab_{}", tables_ref));
-                if sir_to_air.contains_key(&mask_sir_id) {
-                    AirNodeId(mask_sir_id.0.clone())
-                } else {
-                    nodes.push(Self::make_air_node(
-                        shared_mask_id.clone(),
-                        AirOp::Const {
-                            value_path: format!("static_tables/{}/mask_tab", tables_ref),
-                            dtype: MilDtype::Fp16,
-                        },
-                        sir_node, "mb.const", kq,
-                    ));
-                    shared_mask_id
-                }
-            };
+            // Cast position from int32 to fp16 for arithmetic mask computation.
+            // The position input is int32 (used as gather indices for cos/sin RoPE
+            // lookup). The arithmetic mask path needs fp16 for Sub/Abs/Minimum etc.
+            let pos_fp16_id = AirNodeId(format!("{base}_pos_fp16"));
+            nodes.push(Self::make_air_node(
+                pos_fp16_id.clone(),
+                AirOp::Cast { input: pos_air.clone(), dtype: MilDtype::Fp16 },
+                sir_node, "mb.cast", kq,
+            ));
 
-            // KV write mask: Gather(eye_tab, pos, axis=0) → [seq_len] fp16
-            // This gives a one-hot row from the identity matrix — 1.0 at the
-            // write position, 0.0 elsewhere — exactly what the KV cache blend
-            // needs for mask_write.
+            // ── KV write mask: one-hot at position pos ──
+            // diff = arange_fp16 - pos_fp16
+            let kv_diff_id = AirNodeId(format!("{base}_kv_mask_diff"));
+            nodes.push(Self::make_air_node(
+                kv_diff_id.clone(),
+                AirOp::Sub { x: arange_fp16_id.clone(), y: pos_fp16_id.clone() },
+                sir_node, "mb.sub", kq,
+            ));
+
+            // abs_diff = Abs(diff)
+            let kv_abs_id = AirNodeId(format!("{base}_kv_mask_abs"));
+            nodes.push(Self::make_air_node(
+                kv_abs_id.clone(),
+                AirOp::Abs { input: kv_diff_id },
+                sir_node, "mb.abs", kq,
+            ));
+
+            // clipped = Minimum(abs_diff, 1.0)
+            let kv_one_const_id = AirNodeId(format!("shared_scalar_one"));
+            nodes.push(Self::make_air_node(
+                kv_one_const_id.clone(),
+                AirOp::Const {
+                    value_path: "scalar://fp16/1.0".to_string(),
+                    dtype: MilDtype::Fp16,
+                },
+                sir_node, "mb.const", kq,
+            ));
+
+            let kv_clipped_id = AirNodeId(format!("{base}_kv_mask_clipped"));
+            nodes.push(Self::make_air_node(
+                kv_clipped_id.clone(),
+                AirOp::Minimum { x: kv_abs_id, y: kv_one_const_id.clone() },
+                sir_node, "mb.minimum", kq,
+            ));
+
+            // one_hot = Sub(1.0, clipped) → 1 at pos, 0 elsewhere
             let kv_mask_gathered_id = AirNodeId(format!("{base}_kv_mask_gathered"));
             nodes.push(Self::make_air_node(
                 kv_mask_gathered_id.clone(),
-                AirOp::Gather { input: eye_tab_id, indices: pos_air.clone(), axis: 0 },
-                sir_node, "mb.gather", kq,
+                AirOp::Sub { x: kv_one_const_id.clone(), y: kv_clipped_id },
+                sir_node, "mb.sub", kq,
             ));
 
-            // Causal mask: Gather(mask_tab, pos, axis=0) → [seq_len] fp16
-            // This gives 0.0 for allowed (causal) positions and -inf for
-            // masked (future) positions. Used with additive masking:
-            //   logits = mb.add(x=logits, y=mask)
+            // ── Causal attention mask: 0 for allowed, -65504 for blocked ──
+            // offset = Sub(Const(seq_len-1), pos_fp16) → first allowed position
+            let seq_minus_1_id = AirNodeId(format!("shared_seq_minus_1_{}", tables_ref));
+            let seq_len_val = ctx.map(|c| c.seq_len).unwrap_or(0);
+            nodes.push(Self::make_air_node(
+                seq_minus_1_id.clone(),
+                AirOp::Const {
+                    value_path: format!("scalar://fp16/{}", seq_len_val.saturating_sub(1)),
+                    dtype: MilDtype::Fp16,
+                },
+                sir_node, "mb.const", kq,
+            ));
+
+            let offset_id = AirNodeId(format!("{base}_mask_offset"));
+            nodes.push(Self::make_air_node(
+                offset_id.clone(),
+                AirOp::Sub { x: seq_minus_1_id, y: pos_fp16_id.clone() },
+                sir_node, "mb.sub", kq,
+            ));
+
+            // distance = Sub(arange_fp16, offset) → negative for blocked, ≥0 for allowed
+            let dist_id = AirNodeId(format!("{base}_mask_distance"));
+            nodes.push(Self::make_air_node(
+                dist_id.clone(),
+                AirOp::Sub { x: arange_fp16_id, y: offset_id },
+                sir_node, "mb.sub", kq,
+            ));
+
+            // shifted = Add(distance, 1.0) → ≥1 for allowed, ≤0 for blocked
+            let shifted_id = AirNodeId(format!("{base}_mask_shifted"));
+            nodes.push(Self::make_air_node(
+                shifted_id.clone(),
+                AirOp::Add { x: dist_id, y: kv_one_const_id.clone() },
+                sir_node, "mb.add", kq,
+            ));
+
+            // is_allowed = Minimum(Maximum(shifted, 0.0), 1.0)
+            let zero_const_id = AirNodeId("shared_scalar_zero".to_string());
+            nodes.push(Self::make_air_node(
+                zero_const_id.clone(),
+                AirOp::Const {
+                    value_path: "scalar://fp16/0.0".to_string(),
+                    dtype: MilDtype::Fp16,
+                },
+                sir_node, "mb.const", kq,
+            ));
+
+            let clamped_pos_id = AirNodeId(format!("{base}_mask_clamped_pos"));
+            nodes.push(Self::make_air_node(
+                clamped_pos_id.clone(),
+                AirOp::Maximum { x: shifted_id, y: zero_const_id },
+                sir_node, "mb.maximum", kq,
+            ));
+
+            let is_allowed_id = AirNodeId(format!("{base}_mask_is_allowed"));
+            nodes.push(Self::make_air_node(
+                is_allowed_id.clone(),
+                AirOp::Minimum { x: clamped_pos_id, y: kv_one_const_id.clone() },
+                sir_node, "mb.minimum", kq,
+            ));
+
+            // is_blocked = Sub(1.0, is_allowed) → 0 for allowed, 1 for blocked
+            let is_blocked_id = AirNodeId(format!("{base}_mask_is_blocked"));
+            nodes.push(Self::make_air_node(
+                is_blocked_id.clone(),
+                AirOp::Sub { x: kv_one_const_id.clone(), y: is_allowed_id },
+                sir_node, "mb.sub", kq,
+            ));
+
+            // mask = Mul(is_blocked, -65504.0) → 0 for allowed, -65504 for blocked
+            // -65504 is the minimum fp16 value, effectively -inf for softmax.
+            let neg_inf_id = AirNodeId("shared_fp16_neg_inf".to_string());
+            nodes.push(Self::make_air_node(
+                neg_inf_id.clone(),
+                AirOp::Const {
+                    value_path: "scalar://fp16/-65504.0".to_string(),
+                    dtype: MilDtype::Fp16,
+                },
+                sir_node, "mb.const", kq,
+            ));
+
             let mask_gathered_id = AirNodeId(format!("{base}_mask_gathered"));
             nodes.push(Self::make_air_node(
                 mask_gathered_id.clone(),
-                AirOp::Gather { input: mask_tab_id, indices: pos_air.clone(), axis: 0 },
-                sir_node, "mb.gather", kq,
+                AirOp::Mul { x: is_blocked_id, y: neg_inf_id },
+                sir_node, "mb.mul", kq,
             ));
 
             (cos_gathered_id, sin_gathered_id, Some(kv_mask_gathered_id), Some(mask_gathered_id))

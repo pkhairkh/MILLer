@@ -229,6 +229,17 @@ impl StaticTableResolver {
             arange_bytes.extend_from_slice(&(i as i32).to_le_bytes());
         }
 
+        // Step 6: Compute fp16 arange table (arange_fp16_tab) — [seq_len] fp16
+        // Used for pure-arithmetic mask computation without Gather.
+        // Replaces the Gather(eye_tab, pos) and Gather(mask_tab, pos) pattern
+        // with Abs/Sub/Minimum/Maximum-based computation that is fully ANE-legal
+        // and works for any seq_len (no quadratic memory cost).
+        let mut arange_fp16_bytes = Vec::with_capacity(seq * 2);
+        for i in 0..seq {
+            let val = half::f16::from_f64(i as f64);
+            arange_fp16_bytes.extend_from_slice(&val.to_bits().to_le_bytes());
+        }
+
         // Cache all tables
         // cos/sin shape: [1, 1, seq_len, head_dim] — broadcasts with [B, H, S, D]
         self.cache.insert(
@@ -253,6 +264,11 @@ impl StaticTableResolver {
         self.cache.insert(
             format!("static_tables/{}/arange_tab", tables_ref),
             WeightData { data: arange_bytes, shape: vec![seq] },
+        );
+        // arange_fp16 shape: [seq_len] fp16 — position indices for arithmetic mask computation
+        self.cache.insert(
+            format!("static_tables/{}/arange_fp16_tab", tables_ref),
+            WeightData { data: arange_fp16_bytes, shape: vec![seq] },
         );
     }
 }
