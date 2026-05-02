@@ -824,33 +824,35 @@ mod tests {
 
         assert_eq!(block.operations.len(), 2);
 
-        // Check op types (now using Apple's "write_state" instead of "coreml_update_state")
+        // Check op types: read_state uses "input" param, coreml_update_state uses "state"/"value"
         assert_eq!(block.operations[0].r#type, "read_state");
-        assert_eq!(block.operations[1].r#type, "write_state");
+        assert_eq!(block.operations[1].r#type, "coreml_update_state");
 
         // Check that state ops use name references (not inline strings)
         let read_state_op = &block.operations[0];
-        let state_arg = read_state_op.inputs.get("state").unwrap();
+        // read_state uses "input" parameter name (Core ML schema: mb.read_state(input=k_state))
+        let input_arg = read_state_op.inputs.get("input").unwrap();
         // Should be a name reference, not an immediate value
-        match state_arg.arguments[0].binding.as_ref().unwrap() {
+        match input_arg.arguments[0].binding.as_ref().unwrap() {
             ane_coreml_proto::apple_proto::mil_spec::argument::binding::Binding::Name(name) => {
                 assert_eq!(name, "state_0");
             }
-            other => panic!("Expected Name binding for state, got {:?}", other),
+            other => panic!("Expected Name binding for input, got {:?}", other),
         }
 
-        let write_state_op = &block.operations[1];
-        let state_arg2 = write_state_op.inputs.get("state").unwrap();
+        let update_state_op = &block.operations[1];
+        // coreml_update_state uses "state" parameter name
+        let state_arg2 = update_state_op.inputs.get("state").unwrap();
         match state_arg2.arguments[0].binding.as_ref().unwrap() {
             ane_coreml_proto::apple_proto::mil_spec::argument::binding::Binding::Name(name) => {
                 assert_eq!(name, "state_0");
             }
-            other => panic!("Expected Name binding for state in write_state, got {:?}", other),
+            other => panic!("Expected Name binding for state in coreml_update_state, got {:?}", other),
         }
 
         // All ops should have attributes["name"]
         assert!(read_state_op.attributes.contains_key("name"));
-        assert!(write_state_op.attributes.contains_key("name"));
+        assert!(update_state_op.attributes.contains_key("name"));
     }
 
     #[test]

@@ -2958,8 +2958,10 @@ fn mir_op_to_apple_ops(
             let apple_dtype = mil_dtype_to_apple(dtype);
             let shape_u64: Vec<u64> = shape.iter().map(|&d| d as u64).collect();
             let mut inputs = HashMap::new();
-            // Apple's format: state input is a name reference, not an inline string
-            inputs.insert("state".to_string(), make_name_arg(state_id));
+            // Core ML schema: mb.read_state(input=k_state)
+            // The parameter name is "input", NOT "state".
+            // Using "state" causes: Invalid param name 'state'.
+            inputs.insert("input".to_string(), make_name_arg(state_id));
 
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
@@ -2974,7 +2976,9 @@ fn mir_op_to_apple_ops(
         }
         mir_compat::MirOpCompat::CoremlUpdateState { name, state_id, value } => {
             let mut inputs = HashMap::new();
-            // Apple's format: "write_state" op type, state input is a name reference
+            // Core ML schema: mb.coreml_update_state(state=k_state, value=updated_k)
+            // The op type is "coreml_update_state", NOT "write_state".
+            // The parameter names are "state" and "value" (these are correct for this op).
             inputs.insert("state".to_string(), make_name_arg(state_id));
             inputs.insert("value".to_string(), make_name_arg(value));
 
@@ -2982,7 +2986,7 @@ fn mir_op_to_apple_ops(
             add_name_attribute(&mut attributes, name);
 
             vec![apple_proto::mil_spec::Operation {
-                r#type: "write_state".to_string(),
+                r#type: "coreml_update_state".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
                     name,
