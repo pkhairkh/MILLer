@@ -2165,6 +2165,7 @@ impl LegalityRewritePass {
             eprintln!("[WARN] apply_rope_decode without head_dim — using default 128");
             128
         };
+        let kv_len = ctx.map(|c| c.seq_len as i64).unwrap_or(0);
         let half = head_dim / 2;
 
         // ── ANE-LEGAL RoPE: Const + Gather pattern (Sprint 67) ────────
@@ -2228,37 +2229,24 @@ impl LegalityRewritePass {
             const_id
         };
 
-        // Also emit Const nodes for eye_tab and mask_tab needed by
-        // the masked blend KV cache write pattern below.
-        let eye_tab_id = {
-            let eye_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_eye_tab_{}", tables_ref));
-            if sir_to_air.contains_key(&eye_sir_id) {
-                AirNodeId(eye_sir_id.0.clone())
+        // Also emit a Const node for arange_tab used by the computed mask pattern.
+        // Instead of storing huge [seq_len, seq_len] eye_tab/mask_tab tables
+        // (which would be 3+ GB for seq_len=40960), we compute masks at runtime
+        // using arange_tab (int32 position indices) + comparison ops.
+        //
+        // KV write mask:  Equal(arange_tab, pos) → one-hot → Cast(fp16)
+        // Causal mask:    LessEqual(arange_tab, pos) → Select(zeros, neg_infs)
+        let arange_tab_id = {
+            let arange_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_arange_tab_{}", tables_ref));
+            if sir_to_air.contains_key(&arange_sir_id) {
+                AirNodeId(arange_sir_id.0.clone())
             } else {
-                let const_id = AirNodeId(format!("{}_eye_tab", base));
+                let const_id = AirNodeId(format!("{}_arange_tab", base));
                 nodes.push(Self::make_air_node(
                     const_id.clone(),
                     AirOp::Const {
-                        value_path: format!("static_tables/{}/eye_tab", tables_ref),
-                        dtype: MilDtype::Fp16,
-                    },
-                    sir_node, "mb.const", kq,
-                ));
-                const_id
-            }
-        };
-
-        let mask_tab_id = {
-            let mask_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_mask_tab_{}", tables_ref));
-            if sir_to_air.contains_key(&mask_sir_id) {
-                AirNodeId(mask_sir_id.0.clone())
-            } else {
-                let const_id = AirNodeId(format!("{}_mask_tab", base));
-                nodes.push(Self::make_air_node(
-                    const_id.clone(),
-                    AirOp::Const {
-                        value_path: format!("static_tables/{}/mask_tab", tables_ref),
-                        dtype: MilDtype::Fp16,
+                        value_path: format!("static_tables/{}/arange_tab", tables_ref),
+                        dtype: MilDtype::Int32,
                     },
                     sir_node, "mb.const", kq,
                 ));
@@ -2267,18 +2255,8 @@ impl LegalityRewritePass {
         };
 
         // When a position input is provided, gather the specific row
-        // from the cos/sin/eye/mask tables for position-dependent RoPE
-        // and KV cache write masks.
-        //
-        // Reference model pattern (_build_decoder_prelude):
-        //   pos_mod_raw = mb.mod(x=pos, y=np.int32(seq))
-        //   write_idx_raw = mb.sub(x=seq-1, y=pos_mod_raw)
-        //   write_idx = _legalize_gather_index(write_idx_raw, seq)
-        //   pos_mod = _legalize_gather_index(pos_mod_raw, seq)
-        //   sin = mb.gather(x=sin_table, indices=pos_mod, axis=0)
-        //   cos = mb.gather(x=cos_table, indices=pos_mod, axis=0)
-        //   kv_mask_row = mb.gather(x=kv_mask, indices=write_idx, axis=0)
-        //   mask_row = mb.gather(x=mask_const, indices=pos_mod, axis=0)
+        // from the cos/sin tables for position-dependent RoPE, and
+        // compute KV write mask and causal mask using arange_tab.
         //
         // cos_tab shape: [1, 1, seq_len, head_dim]
         // Gather along axis 2 with position index → [1, 1, 1, head_dim]
@@ -2302,26 +2280,59 @@ impl LegalityRewritePass {
                 sir_node, "mb.gather", kq,
             ));
 
-            // Gather the KV mask row for the write position (eye_tab row)
-            // eye_tab shape: [seq_len, seq_len], gather row at write_idx
-            // The write position for a ring-buffer cache is: seq_len - 1 - (pos % seq_len)
-            // But for the simple decode case (seq_len=1 new token), we gather
-            // the row at the write_idx position. The position index directly
-            // gives the write position mod seq_len.
-            // For the reference model: write_idx = seq - 1 - pos_mod
+            // Compute KV write mask (one-hot at position `pos`):
+            // arange_tab shape: [kv_len] int32, pos shape: [1] int32
+            // Equal(arange_tab, pos) → bool [kv_len] (True at pos, False elsewhere)
+            // Cast(bool, fp16) → fp16 [kv_len] (1.0 at pos, 0.0 elsewhere)
+            let kv_mask_eq_id = AirNodeId(format!("{base}_kv_mask_eq"));
+            nodes.push(Self::make_air_node(
+                kv_mask_eq_id.clone(),
+                AirOp::Equal { x: arange_tab_id.clone(), y: pos_air.clone() },
+                sir_node, "mb.equal", kq,
+            ));
+
             let kv_mask_gathered_id = AirNodeId(format!("{base}_kv_mask_gathered"));
             nodes.push(Self::make_air_node(
                 kv_mask_gathered_id.clone(),
-                AirOp::Gather { input: eye_tab_id.clone(), indices: pos_air.clone(), axis: 0 },
-                sir_node, "mb.gather", kq,
+                AirOp::Cast { input: kv_mask_eq_id, dtype: MilDtype::Fp16 },
+                sir_node, "mb.cast", kq,
             ));
 
-            // Gather the causal mask row for the current position
+            // Compute causal mask (0.0 for causal positions, -inf for future):
+            // LessEqual(arange_tab, pos) → bool [kv_len] (True for positions ≤ pos)
+            // Select(condition, zeros, neg_infs) → fp16 [kv_len]
+            let mask_le_id = AirNodeId(format!("{base}_mask_le"));
+            nodes.push(Self::make_air_node(
+                mask_le_id.clone(),
+                AirOp::LessEqual { x: arange_tab_id.clone(), y: pos_air.clone() },
+                sir_node, "mb.less_equal", kq,
+            ));
+
+            // zeros: [kv_len] fp16 — 0.0 for allowed (causal) positions
+            let mask_zeros_id = AirNodeId(format!("{base}_mask_zeros"));
+            nodes.push(Self::make_air_node(
+                mask_zeros_id.clone(),
+                AirOp::Fill { shape: vec![kv_len as usize], value: 0.0, dtype: MilDtype::Fp16 },
+                sir_node, "mb.fill", kq,
+            ));
+
+            // neg_infs: [kv_len] fp16 — -inf for masked (future) positions
+            let mask_neg_infs_id = AirNodeId(format!("{base}_mask_neg_infs"));
+            nodes.push(Self::make_air_node(
+                mask_neg_infs_id.clone(),
+                AirOp::Fill { shape: vec![kv_len as usize], value: f32::NEG_INFINITY, dtype: MilDtype::Fp16 },
+                sir_node, "mb.fill", kq,
+            ));
+
             let mask_gathered_id = AirNodeId(format!("{base}_mask_gathered"));
             nodes.push(Self::make_air_node(
                 mask_gathered_id.clone(),
-                AirOp::Gather { input: mask_tab_id.clone(), indices: pos_air, axis: 0 },
-                sir_node, "mb.gather", kq,
+                AirOp::Select {
+                    condition: mask_le_id,
+                    x: mask_zeros_id,
+                    y: mask_neg_infs_id,
+                },
+                sir_node, "mb.select", kq,
             ));
 
             (cos_gathered_id, sin_gathered_id, Some(kv_mask_gathered_id), Some(mask_gathered_id))

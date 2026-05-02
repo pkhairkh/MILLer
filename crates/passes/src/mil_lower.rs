@@ -123,7 +123,10 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
         }
 
         AirOp::Add { x, y } | AirOp::Mul { x, y } | AirOp::Sub { x, y }
-        | AirOp::Maximum { x, y } | AirOp::Minimum { x, y } => {
+        | AirOp::Maximum { x, y } | AirOp::Minimum { x, y }
+        | AirOp::Equal { x, y } | AirOp::NotEqual { x, y }
+        | AirOp::Greater { x, y } | AirOp::GreaterEqual { x, y }
+        | AirOp::Less { x, y } | AirOp::LessEqual { x, y } => {
             // Sprint 62→63: Compute the broadcast output shape for binary elementwise ops.
             // Core ML's type inference applies standard numpy-style broadcasting, so
             // the declared output shape must match the broadcast result. Previously we
@@ -442,7 +445,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 vec![]
             }
         }
-        AirOp::Where { x, .. } => node_shapes.get(x).cloned().unwrap_or_default(),
+        AirOp::Where { x, .. } | AirOp::Select { x, .. } => node_shapes.get(x).cloned().unwrap_or_default(),
         AirOp::StaticLUTProjection { .. } => vec![],
         // ─── Fill: shape is explicitly given; FillLike: derives from ref_tensor ───
         AirOp::Fill { shape, .. } => shape.clone(),

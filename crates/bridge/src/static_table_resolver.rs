@@ -18,8 +18,9 @@
 //! |-------|-------|-------|---------|
 //! | sin_tab | [1, 1, seq_len, head_dim] | float16 | RoPE sin values per position |
 //! | cos_tab | [1, 1, seq_len, head_dim] | float16 | RoPE cos values per position |
-//! | eye_tab | [seq_len, seq_len] | float16 | Identity for KV-cache ring buffer |
-//! | mask_tab | [seq_len, seq_len] | float16 | Causal attention mask |
+//! | eye_tab | [seq_len, seq_len] | float16 | Identity for KV-cache ring buffer (legacy, large) |
+//! | mask_tab | [seq_len, seq_len] | float16 | Causal attention mask (legacy, large) |
+//! | arange_tab | [seq_len] | int32 | Position indices for computed masks |
 //!
 //! The sin/cos table shape `[1, 1, seq_len, head_dim]` is chosen for broadcast
 //! compatibility with the Q/K tensor shape `[1, num_heads, seq_len, head_dim]`.
@@ -192,7 +193,16 @@ impl StaticTableResolver {
             }
         }
 
-        // Cache all four tables
+        // Step 5: Compute arange table (arange_tab) — [seq_len] int32
+        // Used for computing one-hot KV write masks and causal masks at runtime
+        // via Equal/LessEqual + Cast/Select, instead of storing huge [seq, seq]
+        // eye_tab/mask_tab tables (which would be 3+ GB for seq_len=40960).
+        let mut arange_bytes = Vec::with_capacity(seq * 4);
+        for i in 0..seq {
+            arange_bytes.extend_from_slice(&(i as i32).to_le_bytes());
+        }
+
+        // Cache all tables
         // cos/sin shape: [1, 1, seq_len, head_dim] — broadcasts with [B, H, S, D]
         self.cache.insert(
             format!("static_tables/{}/sin_tab", tables_ref),
@@ -209,6 +219,11 @@ impl StaticTableResolver {
         self.cache.insert(
             format!("static_tables/{}/mask_tab", tables_ref),
             WeightData { data: mask_bytes, shape: vec![seq, seq] },
+        );
+        // arange shape: [seq_len] int32 — position indices for mask computation
+        self.cache.insert(
+            format!("static_tables/{}/arange_tab", tables_ref),
+            WeightData { data: arange_bytes, shape: vec![seq] },
         );
     }
 }

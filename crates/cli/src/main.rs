@@ -4182,31 +4182,54 @@ fn run_trace_compile(
     // The ChainedResolver will try static tables first, then fall through to
     // the safetensors resolver for model weights.
     let rope_theta = 1_000_000.0; // Qwen3 default; TODO: read from model config
-    let mut static_table_resolver = StaticTableResolver::new(RopeTableConfig::new(
+
+    // Compute actual_max_seq_len early — needed for the decode_step resolver.
+    // The embedding function uses seq_len (prefill length), but decode_step
+    // needs actual_max_seq_len (the full KV cache dimension) for its tables.
+    let actual_max_seq_len = traced_graph.model_config.max_position_embeddings
+        .max(config.max_seq_len);
+
+    // Embedding resolver: uses seq_len (prefill length, e.g., 512)
+    let mut embedding_static_table_resolver = StaticTableResolver::new(RopeTableConfig::new(
         rope_theta,
         head_dim,
         seq_len,
     ));
     // Pre-compute all static tables for every unique rope reference
     for rope_ref in &unique_rope_refs {
-        static_table_resolver.ensure_tables_computed(rope_ref);
+        embedding_static_table_resolver.ensure_tables_computed(rope_ref);
     }
     if !unique_rope_refs.is_empty() {
-        println!("  Pre-computed {} static table set(s) (sin/cos/eye/mask per rope ref)",
-            unique_rope_refs.len());
+        println!("  Pre-computed {} static table set(s) for embedding (seq_len={})",
+            unique_rope_refs.len(), seq_len);
     }
 
-    // Build the chained resolver: static tables first, then safetensors fallback
-    let chained_resolver = ChainedResolver::new(static_table_resolver, weight_resolver);
+    // Decode_step resolver: uses actual_max_seq_len (full KV cache length, e.g., 40960)
+    let mut decode_static_table_resolver = StaticTableResolver::new(RopeTableConfig::new(
+        rope_theta,
+        head_dim,
+        actual_max_seq_len,
+    ));
+    for rope_ref in &unique_rope_refs {
+        decode_static_table_resolver.ensure_tables_computed(rope_ref);
+    }
+    if !unique_rope_refs.is_empty() {
+        println!("  Pre-computed {} static table set(s) for decode_step (seq_len={})",
+            unique_rope_refs.len(), actual_max_seq_len);
+    }
+
+    // Build the chained resolvers: static tables first, then safetensors fallback
+    let embedding_resolver = ChainedResolver::new(embedding_static_table_resolver, weight_resolver.clone());
+    let decode_resolver = ChainedResolver::new(decode_static_table_resolver, weight_resolver);
 
     // Build weight_shapes for mil_lower, merging resolved weights with config-derived
     // shapes. When safetensors files aren't available (e.g., pre-traced JSON fixtures),
     // we still need the embedding weight shape for the Gather op's output shape
     // inference. Also add the alias "embed_weight_embed_tokens" → model.embed_tokens.weight.
     // Also seed static table shapes so shape inference knows the dimensions of
-    // cos_tab/sin_tab Const nodes.
+    // cos_tab/sin_tab/arange_tab Const nodes.
     let mut weight_shapes: std::collections::HashMap<String, Vec<usize>> =
-        chained_resolver.fallback().weight_shapes();
+        embedding_resolver.fallback().weight_shapes();
     if !weight_shapes.contains_key("model.embed_tokens.weight") {
         weight_shapes.insert(
             "model.embed_tokens.weight".to_string(),
@@ -4219,7 +4242,7 @@ fn run_trace_compile(
             vec![traced_graph.model_config.vocab_size, traced_graph.model_config.hidden_size],
         );
     }
-    // Add static table shapes for shape inference
+    // Add static table shapes for embedding shape inference
     // cos/sin shape: [1, 1, seq_len, head_dim] — broadcasts with Q/K [B, H, S, D]
     for rope_ref in &unique_rope_refs {
         weight_shapes.insert(
@@ -4238,6 +4261,48 @@ fn run_trace_compile(
             format!("static_tables/{}/mask_tab", rope_ref),
             vec![seq_len, seq_len],
         );
+        weight_shapes.insert(
+            format!("static_tables/{}/arange_tab", rope_ref),
+            vec![seq_len],
+        );
+    }
+
+    // Build separate weight_shapes for decode_step with actual_max_seq_len dimensions.
+    // The decode_step uses actual_max_seq_len for the KV cache dimension, so its
+    // static tables must also match. Without this, shape inference would produce
+    // wrong shapes for the arange_tab and cos/sin tables in decode_step.
+    let mut decode_weight_shapes: std::collections::HashMap<String, Vec<usize>> =
+        decode_resolver.fallback().weight_shapes();
+    if !decode_weight_shapes.contains_key("model.embed_tokens.weight") {
+        decode_weight_shapes.insert(
+            "model.embed_tokens.weight".to_string(),
+            vec![traced_graph.model_config.vocab_size, traced_graph.model_config.hidden_size],
+        );
+    }
+    if !decode_weight_shapes.contains_key("embed_weight_embed_tokens") {
+        decode_weight_shapes.insert(
+            "embed_weight_embed_tokens".to_string(),
+            vec![traced_graph.model_config.vocab_size, traced_graph.model_config.hidden_size],
+        );
+    }
+    // Add static table shapes for decode_step shape inference
+    // cos/sin shape: [1, 1, actual_max_seq_len, head_dim]
+    for rope_ref in &unique_rope_refs {
+        decode_weight_shapes.insert(
+            format!("static_tables/{}/sin_tab", rope_ref),
+            vec![1, 1, actual_max_seq_len, head_dim],
+        );
+        decode_weight_shapes.insert(
+            format!("static_tables/{}/cos_tab", rope_ref),
+            vec![1, 1, actual_max_seq_len, head_dim],
+        );
+        decode_weight_shapes.insert(
+            format!("static_tables/{}/arange_tab", rope_ref),
+            vec![actual_max_seq_len],
+        );
+        // Note: eye_tab and mask_tab are NOT included for decode_step because
+        // the decode_step uses computed masks (arange_tab + Equal/LessEqual)
+        // instead of the large [seq, seq] static tables.
     }
 
     let mirs = mil_lower
@@ -4260,14 +4325,14 @@ fn run_trace_compile(
     fs::create_dir_all(&output_path).map_err(|e| format!("Failed to create output dir: {}", e))?;
 
     // Print weight stats (from the fallback safetensors resolver)
-    if !chained_resolver.fallback().is_empty() {
-        let names = chained_resolver.fallback().tensor_names();
+    if !embedding_resolver.fallback().is_empty() {
+        let names = embedding_resolver.fallback().tensor_names();
         let sample: Vec<&str> = names.iter().take(5).map(|s| s.as_str()).collect();
         println!("  Sample tensor names: {:?}", sample);
         println!(
             "  Total weight data: {} bytes ({:.1} MB)",
-            chained_resolver.fallback().total_weight_bytes(),
-            chained_resolver.fallback().total_weight_bytes() as f64 / 1e6
+            embedding_resolver.fallback().total_weight_bytes(),
+            embedding_resolver.fallback().total_weight_bytes() as f64 / 1e6
         );
     }
 
@@ -4328,8 +4393,7 @@ fn run_trace_compile(
         // is the maximum context window (e.g. 2048 or 32768). Using
         // seq_len here would cap the KV cache to only 32 positions,
         // making autoregressive generation impossible beyond that.
-        let actual_max_seq_len = traced_graph.model_config.max_position_embeddings
-            .max(config.max_seq_len);
+        // Note: actual_max_seq_len was computed earlier for the resolvers.
         let decode_step_sir = build_decode_step_sir(
             &traced_graph,
             num_layers,
@@ -4400,7 +4464,7 @@ fn run_trace_compile(
         println!("  Decode-step input shapes: {} entries", decode_input_shapes.len());
 
         let decode_step_mirs = mil_lower
-            .run_with_weight_shapes(&decode_step_air, &shard_plan, &decode_input_shapes, &weight_shapes)
+            .run_with_weight_shapes(&decode_step_air, &shard_plan, &decode_input_shapes, &decode_weight_shapes)
             .map_err(|e| format!("MilLowerPass for decode_step failed: {}", e))?;
 
         if decode_step_mirs.is_empty() {
@@ -4444,9 +4508,12 @@ fn run_trace_compile(
         println!("  Shared weights: {} tensor(s)", shared_weight_names.len());
 
         // Convert both MIRs to compat format
-        let embedding_compat = mir_graph_to_compat(embedding_mir, &chained_resolver)
+        // Each function uses its own resolver with the correct seq_len for static tables:
+        // - embedding_resolver: tables with seq_len (prefill length)
+        // - decode_resolver: tables with actual_max_seq_len (full KV cache length)
+        let embedding_compat = mir_graph_to_compat(embedding_mir, &embedding_resolver)
             .map_err(|e| format!("Embedding MIR compat conversion failed: {}", e))?;
-        let decode_step_compat = mir_graph_to_compat(decode_step_mir, &chained_resolver)
+        let decode_step_compat = mir_graph_to_compat(decode_step_mir, &decode_resolver)
             .map_err(|e| format!("Decode-step MIR compat conversion failed: {}", e))?;
 
         // DIAGNOSTIC: Verify compat format preserves state ops
@@ -4492,7 +4559,7 @@ fn run_trace_compile(
         emit_mir_graph_proto_direct_with_resolver(
             &mirs[0],
             mlpackage_dir.to_str().unwrap_or(""),
-            &chained_resolver,
+            &embedding_resolver,
         )
         .map_err(|e| format!("Proto-direct emission failed: {}", e))?
     };
