@@ -144,6 +144,16 @@ pub static CPU_ONLY_OPS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         // Decompose to arithmetic: select(cond, a, b) → cond*a + (1-cond)*b
         "select",
         "where",
+        // gather / gather_along_axis / gather_nd: ANE-illegal — causes CPU
+        // fallback with synchronization stalls. The reference model uses
+        // mb.gather for RoPE cos/sin lookup AND embedding, but empirical
+        // testing shows Gather has ANE plannability score ~0.26, causing
+        // frequent CPU fallback. In MILLer, we replace Gather with
+        // SliceByIndex (fully ANE-legal) everywhere except embedding
+        // (which runs on CPU anyway due to the embedding weight size).
+        "gather",
+        "gather_along_axis",
+        "gather_nd",
         // Quantization constexpr (never on ANE)
         "constexpr_blockwise_shift_scale",
         "constexpr_sparse_blockwise_shift_scale",
@@ -282,6 +292,13 @@ mod tests {
     }
 
     #[test]
+    fn test_gather_is_cpu_only() {
+        assert!(is_cpu_only("gather"));
+        assert!(is_cpu_only("gather_along_axis"));
+        assert!(is_cpu_only("gather_nd"));
+    }
+
+    #[test]
     fn test_cpu_only_reason() {
         assert_eq!(get_cpu_only_reason("acos"), Some(&CpuOnlyReason::TrigInverse));
         assert_eq!(get_cpu_only_reason("gru"), Some(&CpuOnlyReason::Rnn));
@@ -290,10 +307,10 @@ mod tests {
 
     #[test]
     fn test_cpu_only_set_size() {
-        // Should have at least 80 entries
+        // Should have at least 83 entries (was 80, added gather/gather_along_axis/gather_nd)
         assert!(
-            CPU_ONLY_OPS.len() >= 80,
-            "CPU_ONLY_OPS has {} entries, expected >= 80",
+            CPU_ONLY_OPS.len() >= 83,
+            "CPU_ONLY_OPS has {} entries, expected >= 83",
             CPU_ONLY_OPS.len()
         );
     }

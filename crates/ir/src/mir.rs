@@ -1192,10 +1192,10 @@ impl MirOp {
             // Quantize / dequantize
             | MirOp::MILQuantize { .. }
             | MirOp::MILDequantize { .. }
-            // Gather / sort / topk
-            | MirOp::MILGather { .. }
-            | MirOp::MILGatherAlongAxis { .. }
-            | MirOp::MILGatherNd { .. }
+            // Gather ops are CPU-only — ANE plannability ~0.26, causes
+            // CPU fallback with sync stalls. Replaced with SliceByIndex
+            // in the decode_step path. Only embedding uses Gather (runs on CPU).
+            // Sort / topk / band_part remain ANE-legal.
             | MirOp::MILArgsort { .. }
             | MirOp::MILTopk { .. }
             | MirOp::MILBandPart { .. }
@@ -1264,7 +1264,12 @@ impl MirOp {
             | MirOp::MILOneHot { .. }
             | MirOp::MILNonZero { .. }
             | MirOp::MILRange1d { .. }
-            | MirOp::MILShape { .. } => None,
+            | MirOp::MILShape { .. }
+            // Gather ops: CPU-only due to ANE plannability ~0.26.
+            // Only embedding uses Gather (runs on CPU anyway).
+            | MirOp::MILGather { .. }
+            | MirOp::MILGatherAlongAxis { .. }
+            | MirOp::MILGatherNd { .. } => None,
         }
     }
 }

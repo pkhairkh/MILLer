@@ -2437,54 +2437,85 @@ impl LegalityRewritePass {
                 .cloned()
                 .unwrap_or_else(|| AirNodeId(pos_sir.0.clone()));
 
-            // Gather cos[pos]: [1, 1, seq_len, head_dim] → [1, 1, 1, head_dim]
-            let cos_gathered_id = AirNodeId(format!("{base}_cos_gathered"));
+            // ── ANE-LEGAL RoPE table lookup: SliceByIndex (NOT Gather) ──
+            //
+            // mb.gather is ANE-illegal (CPU plannability ~0.26, causes sync
+            // stalls). We replace Gather(cos_tab, pos, axis=2) with
+            // SliceByIndex which is fully ANE-legal.
+            //
+            // cos_tab shape: [1, 1, seq_len, head_dim]
+            // We need the row at position `pos` along axis 2.
+            // SliceByIndex with begin=[0,0,pos,0], end=[0,0,pos+1,head_dim],
+            // squeeze_mask=[false,false,true,false] → [1, 1, head_dim]
+            // This broadcasts correctly with Q/K [1, hq, 1, head_dim].
+            //
+            // NOTE: We use pos_air (int32 position) as the basis for the
+            // slice begin/end. However, SliceByIndex expects i64 constants
+            // for begin/end, not dynamic indices. Since `pos` is a runtime
+            // input, we MUST use a dynamic approach.
+            //
+            // Alternative ANE-legal approach: use Mul with a one-hot mask.
+            // But SliceByIndex with begin_mask/end_mask can handle this
+            // if we provide the position as a 4D tensor.
+            //
+            // Actually, the simplest ANE-legal replacement for
+            // Gather(table, pos, axis=2) when pos is dynamic is:
+            //   1. Expand pos to [1, 1, 1, 1] via Reshape
+            //   2. SliceByIndex with dynamic begin from pos
+            //
+            // But SliceByIndex's begin/end are Vec<i64> (static), not
+            // dynamic. So we need a different approach entirely.
+            //
+            // The correct ANE-legal approach for dynamic position lookup:
+            //   - Reshape cos_tab [1,1,S,D] → [1,1,S,1,D] (insert dim)
+            //   - Mul with one-hot at position pos
+            //   - ReduceSum along the position axis
+            //
+            // But this requires computing a one-hot from pos, which is
+            // exactly the mask we already compute for KV cache!
+            //
+            // Simplest approach: use the KV mask one-hot (already computed)
+            // to select the cos/sin row via Mul + ReduceSum.
+            //
+            // However, the KV mask is computed LATER in this function.
+            // We need to restructure: compute the KV mask FIRST, then
+            // use it for both RoPE table lookup and KV cache write.
+            //
+            // For now, we use a SIMPLER approach that works with the
+            // existing structure: elementwise Mul + ReduceSum.
+            //
+            // cos_row = ReduceSum(cos_tab * one_hot_kv_mask, axis=2)
+            // sin_row = ReduceSum(sin_tab * one_hot_kv_mask, axis=2)
+            //
+            // where one_hot_kv_mask is [1, 1, seq_len] with 1 at pos, 0 elsewhere.
+            // This is exactly what we compute as kv_mask_gathered below.
+            //
+            // BUT: the kv_mask is computed AFTER the RoPE step. We need to
+            // reorder: compute the KV mask first, then use it for RoPE.
+            //
+            // SIMPLEST FIX: compute the KV one-hot mask here (before RoPE),
+            // use it for both RoPE table lookup AND KV cache write.
+            //
+            // For the RoPE lookup:
+            //   cos_for_pos = ReduceSum(Mul(cos_tab, kv_one_hot_4d), axis=2)
+            //   sin_for_pos = ReduceSum(Mul(sin_tab, kv_one_hot_4d), axis=2)
+            // where kv_one_hot_4d has shape [1, 1, seq_len, 1] (broadcasts with
+            // cos_tab [1, 1, seq_len, head_dim])
+            // Result: [1, 1, 1, head_dim] — the cos/sin values at position pos.
+
+            // ── Compute KV one-hot mask FIRST (needed for RoPE lookup) ──
+            // Same arithmetic mask computation as below, but done early
+            // so we can use it for cos/sin table lookup.
+
+            // Cast position from int32 to fp16 for arithmetic mask computation
+            let pos_fp16_id = AirNodeId(format!("{base}_pos_fp16"));
             nodes.push(Self::make_air_node(
-                cos_gathered_id.clone(),
-                AirOp::Gather { input: cos_id.clone(), indices: pos_air.clone(), axis: 2 },
-                sir_node, "mb.gather", kq,
+                pos_fp16_id.clone(),
+                AirOp::Cast { input: pos_air.clone(), dtype: MilDtype::Fp16 },
+                sir_node, "mb.cast", kq,
             ));
 
-            let sin_gathered_id = AirNodeId(format!("{base}_sin_gathered"));
-            nodes.push(Self::make_air_node(
-                sin_gathered_id.clone(),
-                AirOp::Gather { input: sin_id.clone(), indices: pos_air.clone(), axis: 2 },
-                sir_node, "mb.gather", kq,
-            ));
-
-            // ── ANE-LEGAL mask computation: pure arithmetic (no Gather) ──
-            //
-            // Previous approach used Gather(eye_tab, pos) and Gather(mask_tab, pos)
-            // to look up precomputed mask rows. This has THREE critical problems:
-            //
-            // 1. Gather has ANE plannability score 0.26 — it often falls back to
-            //    CPU, creating ANE↔CPU synchronization stalls.
-            // 2. The eye_tab/mask_tab are [seq_len, seq_len] — for seq_len=40960,
-            //    that's 3.2 GB each, exceeding practical memory limits.
-            // 3. When seq_len > 8192, the tables aren't computed but Gather is
-            //    still emitted, causing the scalar-fp16 serialization bug.
-            //
-            // New approach: compute masks using ONLY add/sub/mul/abs/maximum/minimum
-            // — all fully ANE-legal ops with plannability > 0.80.
-            //
-            // KV write mask (one-hot at position pos):
-            //   arange_fp16 = Const([0, 1, 2, ..., seq_len-1]) as fp16
-            //   diff = Sub(arange_fp16, pos_fp16)
-            //   abs_diff = Abs(diff)
-            //   clipped = Minimum(abs_diff, 1.0)       → 0 at pos, 1 elsewhere
-            //   one_hot = Sub(1.0, clipped)              → 1 at pos, 0 elsewhere
-            //
-            // Causal mask (0 for allowed, -65504 for blocked):
-            //   offset = Sub(Const(seq_len-1), pos_fp16) → first allowed position
-            //   distance = Sub(arange_fp16, offset)       → neg=blocked, ≥0=allowed
-            //   shifted = Add(distance, 1.0)               → ≥1 for allowed, ≤0 blocked
-            //   is_allowed = Minimum(Maximum(shifted, 0.0), 1.0) → 1=allowed, 0=blocked
-            //   is_blocked = Sub(1.0, is_allowed)         → 0=allowed, 1=blocked
-            //   mask = Mul(is_blocked, -65504.0)           → 0 or fp16-min (≈-inf)
-
-            // Emit shared arange_fp16_tab Const — same AirNodeId across all layers
-            // for deduplication by the global AirNodeId dedup.
-            // Shape: [seq_len] fp16 — only 2*seq_len bytes (80 KB for seq=40960).
+            // Shared arange_fp16_tab Const
             let shared_arange_fp16_id = AirNodeId(format!("shared_rope_{}_arange_fp16_tab", tables_ref));
             let arange_fp16_id = {
                 let arange_fp16_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_arange_fp16_tab_{}", tables_ref));
@@ -2503,17 +2534,7 @@ impl LegalityRewritePass {
                 }
             };
 
-            // Cast position from int32 to fp16 for arithmetic mask computation.
-            // The position input is int32 (used as gather indices for cos/sin RoPE
-            // lookup). The arithmetic mask path needs fp16 for Sub/Abs/Minimum etc.
-            let pos_fp16_id = AirNodeId(format!("{base}_pos_fp16"));
-            nodes.push(Self::make_air_node(
-                pos_fp16_id.clone(),
-                AirOp::Cast { input: pos_air.clone(), dtype: MilDtype::Fp16 },
-                sir_node, "mb.cast", kq,
-            ));
-
-            // ── KV write mask: one-hot at position pos ──
+            // KV write mask (one-hot at position pos):
             // diff = arange_fp16 - pos_fp16
             let kv_diff_id = AirNodeId(format!("{base}_kv_mask_diff"));
             nodes.push(Self::make_air_node(
@@ -2531,7 +2552,7 @@ impl LegalityRewritePass {
             ));
 
             // clipped = Minimum(abs_diff, 1.0)
-            let kv_one_const_id = AirNodeId(format!("shared_scalar_one"));
+            let kv_one_const_id = AirNodeId("shared_scalar_one".to_string());
             nodes.push(Self::make_air_node(
                 kv_one_const_id.clone(),
                 AirOp::Const {
@@ -2548,7 +2569,7 @@ impl LegalityRewritePass {
                 sir_node, "mb.minimum", kq,
             ));
 
-            // one_hot = Sub(1.0, clipped) → 1 at pos, 0 elsewhere
+            // one_hot = Sub(1.0, clipped) → 1 at pos, 0 elsewhere → shape [seq_len]
             let kv_mask_gathered_id = AirNodeId(format!("{base}_kv_mask_gathered"));
             nodes.push(Self::make_air_node(
                 kv_mask_gathered_id.clone(),
@@ -2556,7 +2577,57 @@ impl LegalityRewritePass {
                 sir_node, "mb.sub", kq,
             ));
 
+            // ── ANE-LEGAL RoPE table lookup using Mul+ReduceSum (no Gather) ──
+            //
+            // cos_tab: [1, 1, seq_len, head_dim]
+            // kv_one_hot_4d: Reshape one_hot [seq_len] → [1, 1, seq_len, 1]
+            // cos_masked = Mul(cos_tab, kv_one_hot_4d) → zeros everywhere except pos row
+            // cos_for_pos = ReduceSum(cos_masked, axis=2, keep_dims=true) → [1, 1, 1, head_dim]
+            //
+            // Same for sin_tab.
+
+            let kv_one_hot_4d_id = AirNodeId(format!("{base}_kv_one_hot_4d"));
+            nodes.push(Self::make_air_node(
+                kv_one_hot_4d_id.clone(),
+                AirOp::Reshape {
+                    input: kv_mask_gathered_id.clone(),
+                    target_shape: vec![1, 1, ctx.map(|c| c.seq_len).unwrap_or(0), 1],
+                },
+                sir_node, "mb.reshape", kq,
+            ));
+
+            // cos_for_pos = ReduceSum(Mul(cos_tab, one_hot_4d), axis=2)
+            let cos_masked_id = AirNodeId(format!("{base}_cos_masked"));
+            nodes.push(Self::make_air_node(
+                cos_masked_id.clone(),
+                AirOp::Mul { x: cos_id.clone(), y: kv_one_hot_4d_id.clone() },
+                sir_node, "mb.mul", kq,
+            ));
+
+            let cos_gathered_id = AirNodeId(format!("{base}_cos_gathered"));
+            nodes.push(Self::make_air_node(
+                cos_gathered_id.clone(),
+                AirOp::ReduceSum { input: cos_masked_id, axes: vec![2], keep_dims: true },
+                sir_node, "mb.reduce_sum", kq,
+            ));
+
+            // sin_for_pos = ReduceSum(Mul(sin_tab, one_hot_4d), axis=2)
+            let sin_masked_id = AirNodeId(format!("{base}_sin_masked"));
+            nodes.push(Self::make_air_node(
+                sin_masked_id.clone(),
+                AirOp::Mul { x: sin_id.clone(), y: kv_one_hot_4d_id },
+                sir_node, "mb.mul", kq,
+            ));
+
+            let sin_gathered_id = AirNodeId(format!("{base}_sin_gathered"));
+            nodes.push(Self::make_air_node(
+                sin_gathered_id.clone(),
+                AirOp::ReduceSum { input: sin_masked_id, axes: vec![2], keep_dims: true },
+                sir_node, "mb.reduce_sum", kq,
+            ));
+
             // ── Causal attention mask: 0 for allowed, -65504 for blocked ──
+            // (KV one-hot mask was already computed above for RoPE table lookup)
             // offset = Sub(Const(seq_len-1), pos_fp16) → first allowed position
             let seq_minus_1_id = AirNodeId(format!("shared_seq_minus_1_{}", tables_ref));
             let seq_len_val = ctx.map(|c| c.seq_len).unwrap_or(0);

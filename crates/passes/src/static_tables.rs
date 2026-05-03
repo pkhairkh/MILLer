@@ -68,8 +68,14 @@ pub fn run_static_tables_pass(graph: &mut SirGraph) -> StaticTablesResult {
         let tables: &[(&str, ane_ir::mir::MilDtype)] = &[
             ("sin_tab", ane_ir::mir::MilDtype::Fp16),
             ("cos_tab", ane_ir::mir::MilDtype::Fp16),
-            ("eye_tab", ane_ir::mir::MilDtype::Fp16),
-            ("mask_tab", ane_ir::mir::MilDtype::Fp16),
+            // NOTE: eye_tab and mask_tab REMOVED — these are no longer used.
+            // The decode_step now uses pure-arithmetic mask computation
+            // (Sub+Abs+Minimum+Maximum) instead of Gather(eye_tab/mask_tab).
+            // This eliminates the quadratic-memory [seq,seq] tables and
+            // the scalar-serialization bug when seq_len > 8192.
+            //
+            // arange_tab and arange_fp16_tab remain — arange_fp16 is used
+            // by the arithmetic mask computation path.
             ("arange_tab", ane_ir::mir::MilDtype::Int32),
             ("arange_fp16_tab", ane_ir::mir::MilDtype::Fp16),
         ];
@@ -127,14 +133,12 @@ mod tests {
         let result = run_static_tables_pass(&mut graph);
 
         assert_eq!(result.rope_converted, 1);
-        assert_eq!(result.tables_inserted, 6); // sin, cos, eye, mask, arange, arange_fp16
+        assert_eq!(result.tables_inserted, 4); // sin, cos, arange, arange_fp16
 
         // Verify static table constants were inserted
         let const_count =
             graph.nodes.iter().filter(|n| matches!(n.op, SirOp::Const { .. })).count();
-        assert_eq!(const_count, 6);
-
-        // Verify Const nodes are PREPENDED before the RoPETransform node.
+        assert_eq!(const_count, 4);
         // This is critical: LegalityRewritePass processes nodes in order,
         // and decompose_rope checks sir_to_air for the Const IDs. If they
         // come after the RoPETransform, the fallback path emits unresolved
@@ -213,10 +217,10 @@ mod tests {
         let result = run_static_tables_pass(&mut graph);
 
         assert_eq!(result.rope_converted, 3); // 3 RoPE patterns found
-        assert_eq!(result.tables_inserted, 6); // only 1 set of 6 tables (deduped)
+        assert_eq!(result.tables_inserted, 4); // only 1 set of 4 tables (deduped)
 
         let const_count =
             graph.nodes.iter().filter(|n| matches!(n.op, SirOp::Const { .. })).count();
-        assert_eq!(const_count, 6);
+        assert_eq!(const_count, 4);
     }
 }

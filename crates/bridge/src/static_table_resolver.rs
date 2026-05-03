@@ -18,9 +18,15 @@
 //! |-------|-------|-------|---------|
 //! | sin_tab | [1, 1, seq_len, head_dim] | float16 | RoPE sin values per position |
 //! | cos_tab | [1, 1, seq_len, head_dim] | float16 | RoPE cos values per position |
-//! | eye_tab | [seq_len, seq_len] | float16 | Identity for KV-cache write mask (Gather+Reshape) |
-//! | mask_tab | [seq_len, seq_len] | float16 | Causal attention mask (Gather+Reshape+Add) |
 //! | arange_tab | [seq_len] | int32 | Position indices (legacy, for prefill fallback) |
+//! | arange_fp16_tab | [seq_len] | float16 | Position indices for arithmetic mask computation |
+//!
+//! NOTE: eye_tab and mask_tab have been REMOVED. The decode_step now uses
+//! pure-arithmetic mask computation (Sub+Abs+Minimum+Maximum+Mul) instead
+//! of Gather(eye_tab/mask_tab). This eliminates:
+//! - Quadratic-memory [seq,seq] tables (3.2 GB each for seq=40960)
+//! - ANE-illegal Gather ops (plannability ~0.26)
+//! - The scalar-serialization bug when seq_len > 8192
 //!
 //! The sin/cos table shape `[1, 1, seq_len, head_dim]` is chosen for broadcast
 //! compatibility with the Q/K tensor shape `[1, num_heads, seq_len, head_dim]`.
@@ -167,60 +173,20 @@ impl StaticTableResolver {
             }
         }
 
-        // Step 3: Compute identity table (eye_tab) — [seq, seq] fp16
-        // Precomputed identity matrix for KV-cache write masking.
-        // The decode_step path uses Gather(eye_tab, pos, axis=0) to get
-        // a one-hot row for the write position — this is ANE-legal and
-        // replaces the ANE-illegal Equal+Cast pattern.
+        // Step 3: eye_tab and mask_tab REMOVED.
         //
-        // ONLY compute when seq_len is small enough to be practical.
-        // For seq_len > 8192, the eye_tab would be > 128 MB (seq×seq×2 bytes)
-        // which may be too large for mobile deployment. The embedding path
-        // (small seq_len) always uses eye_tab for prefill attention masking.
-        // The decode_step path requires it for KV write masking.
-        let compute_large_tables = seq <= 8192;
-
-        let mut eye_bytes = Vec::new();
-        if compute_large_tables {
-            eye_bytes = Vec::with_capacity(seq * seq * 2);
-            for row in 0..seq {
-                for col in 0..seq {
-                    let val = half::f16::from_f64(if row == col { 1.0 } else { 0.0 });
-                    eye_bytes.extend_from_slice(&val.to_bits().to_le_bytes());
-                }
-            }
-        }
-
-        // Step 4: Compute causal mask (mask_tab) — [seq, seq] fp16
-        // Precomputed causal attention mask for additive masking.
-        // The decode_step path uses Gather(mask_tab, pos, axis=0) to get
-        // the causal mask row for the current position, then applies it
-        // via mb.add(logits, mask) — fully ANE-legal, replacing the
-        // ANE-illegal LessEqual+Fill+Select pattern.
+        // The decode_step path now uses pure-arithmetic mask computation
+        // (Sub+Abs+Minimum+Maximum+Mul) instead of Gather(eye_tab/mask_tab).
+        // This eliminates:
+        //   - Quadratic-memory [seq,seq] tables (3.2 GB each for seq=40960)
+        //   - ANE-illegal Gather ops (plannability ~0.26)
+        //   - The scalar-serialization bug when seq_len > 8192
         //
-        // Same seq_len guard as eye_tab — mask_tab is [seq, seq] and grows
-        // quadratically. The decode_step ALWAYS uses the precomputed table
-        // approach now (ISSUE-001 fix), so this table is mandatory for
-        // seq_len ≤ 8192.
-        let mut mask_bytes = Vec::new();
-        if compute_large_tables {
-            // Upper-triangular: the last (idx+1) positions are unmasked (0.0),
-            // the rest are -inf. This matches the reversed ring-buffer pattern
-            // from the HuggingFace reference.
-            // mask_tab[idx, seq-(idx+1):] = 0.0, rest = -inf
-            let neg_inf_f16 = half::f16::from_f64(f64::NEG_INFINITY);
-            let zero_f16 = half::f16::from_f64(0.0);
-            mask_bytes = Vec::with_capacity(seq * seq * 2);
-            for idx in 0..seq {
-                let unmask_start = seq - (idx + 1);
-                for col in 0..seq {
-                    let val = if col >= unmask_start { zero_f16 } else { neg_inf_f16 };
-                    mask_bytes.extend_from_slice(&val.to_bits().to_le_bytes());
-                }
-            }
-        }
+        // The arithmetic mask path uses only arange_fp16_tab (linear memory)
+        // and produces identical one-hot KV write masks and causal attention
+        // masks using fully ANE-legal ops.
 
-        // Step 5: Compute arange table (arange_tab) — [seq_len] int32
+        // Step 4: Compute arange table (arange_tab) — [seq_len] int32
         // Used for computing one-hot KV write masks and causal masks at runtime
         // via Equal/LessEqual + Cast/Select, instead of storing huge [seq, seq]
         // eye_tab/mask_tab tables (which would be 3+ GB for seq_len=40960).
@@ -229,7 +195,7 @@ impl StaticTableResolver {
             arange_bytes.extend_from_slice(&(i as i32).to_le_bytes());
         }
 
-        // Step 6: Compute fp16 arange table (arange_fp16_tab) — [seq_len] fp16
+        // Step 5: Compute fp16 arange table (arange_fp16_tab) — [seq_len] fp16
         // Used for pure-arithmetic mask computation without Gather.
         // Replaces the Gather(eye_tab, pos) and Gather(mask_tab, pos) pattern
         // with Abs/Sub/Minimum/Maximum-based computation that is fully ANE-legal
@@ -250,16 +216,9 @@ impl StaticTableResolver {
             format!("static_tables/{}/cos_tab", tables_ref),
             WeightData { data: cos_bytes, shape: vec![1, 1, seq, hd] },
         );
-        if compute_large_tables {
-            self.cache.insert(
-                format!("static_tables/{}/eye_tab", tables_ref),
-                WeightData { data: eye_bytes, shape: vec![seq, seq] },
-            );
-            self.cache.insert(
-                format!("static_tables/{}/mask_tab", tables_ref),
-                WeightData { data: mask_bytes, shape: vec![seq, seq] },
-            );
-        }
+        // NOTE: eye_tab and mask_tab are NOT cached — they are no longer used.
+        // The arithmetic mask path (arange_fp16 + Sub/Abs/Minimum/Maximum)
+        // replaces Gather(eye_tab/mask_tab) entirely.
         // arange shape: [seq_len] int32 — position indices for mask computation
         self.cache.insert(
             format!("static_tables/{}/arange_tab", tables_ref),
@@ -389,15 +348,20 @@ mod tests {
         assert_eq!(cos_data.shape, vec![1, 1, 8, 128]);
         assert_eq!(cos_data.data.len(), 1 * 1 * 8 * 128 * 2);
 
-        // Check eye_tab
-        let eye_data = resolver.resolve("static_tables/rope_tables_0/eye_tab").unwrap();
-        assert_eq!(eye_data.shape, vec![8, 8]);
-        assert_eq!(eye_data.data.len(), 8 * 8 * 2);
+        // eye_tab and mask_tab are no longer computed (removed in favor of
+        // arithmetic mask path). Verify they return None.
+        assert!(resolver.resolve("static_tables/rope_tables_0/eye_tab").is_none());
+        assert!(resolver.resolve("static_tables/rope_tables_0/mask_tab").is_none());
 
-        // Check mask_tab
-        let mask_data = resolver.resolve("static_tables/rope_tables_0/mask_tab").unwrap();
-        assert_eq!(mask_data.shape, vec![8, 8]);
-        assert_eq!(mask_data.data.len(), 8 * 8 * 2);
+        // Check arange_tab
+        let arange_data = resolver.resolve("static_tables/rope_tables_0/arange_tab").unwrap();
+        assert_eq!(arange_data.shape, vec![8]);
+        assert_eq!(arange_data.data.len(), 8 * 4); // int32 = 4 bytes
+
+        // Check arange_fp16_tab
+        let arange_fp16_data = resolver.resolve("static_tables/rope_tables_0/arange_fp16_tab").unwrap();
+        assert_eq!(arange_fp16_data.shape, vec![8]);
+        assert_eq!(arange_fp16_data.data.len(), 8 * 2); // fp16 = 2 bytes
     }
 
     #[test]

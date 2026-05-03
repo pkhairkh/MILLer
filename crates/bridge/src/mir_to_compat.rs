@@ -200,7 +200,22 @@ pub fn mir_graph_to_compat(
         let (data, shape, dtype) = match resolver.resolve(&weight_name) {
             Some(wd) => (wd.data, wd.shape, MilDtypeCompat::Fp16),
             None => {
-                // Weight not found in resolver — use zero-filled placeholder.
+                // Weight not found in resolver.
+                // For static_tables paths (eye_tab, mask_tab, etc.), skip entirely
+                // rather than creating a broken scalar placeholder. These weights
+                // are optional and may not be needed when the arithmetic mask path
+                // is used instead of Gather. Creating a scalar [1] placeholder for
+                // a weight that should be a ranked tensor causes CoreML validation
+                // failures (e.g., "Param 'x' has incorrect type for operator
+                // 'gather'. Expected tensor; got fp16").
+                if weight_name.starts_with("static_tables/") {
+                    eprintln!(
+                        "  Info: static table '{}' not resolved — skipping (arithmetic mask path used)",
+                        weight_name
+                    );
+                    continue;
+                }
+                // For model weights (non-static-tables), use zero-filled placeholder.
                 // Default shape [1] with FP16 gives 2 bytes minimum.
                 eprintln!(
                     "  Warning: weight '{}' not resolved — using zero-filled placeholder",
