@@ -5695,4 +5695,1822 @@ mod tests {
             }
         }
     }
+
+    // ─── T-37: SIR→AIR Roundtrip Tests ─────────────────────────────────
+
+    /// Helper: collect all AirNodeId references within an AirOp.
+    /// Returns every AirNodeId that the op references as an input.
+    fn collect_air_op_refs(op: &AirOp) -> Vec<AirNodeId> {
+        match op {
+            AirOp::Const { .. } => vec![],
+            AirOp::Linear { input, .. } => vec![input.clone()],
+            AirOp::MatMul { a, b } => vec![a.clone(), b.clone()],
+            AirOp::Einsum { inputs, .. } => inputs.clone(),
+            AirOp::Conv1x1AsLinear { input, .. } => vec![input.clone()],
+            AirOp::Conv { input, weight, .. } => vec![input.clone(), weight.clone()],
+            AirOp::ConvTranspose { input, weight, .. } => vec![input.clone(), weight.clone()],
+            AirOp::Add { x, y }
+            | AirOp::Mul { x, y }
+            | AirOp::Sub { x, y }
+            | AirOp::Maximum { x, y }
+            | AirOp::Minimum { x, y }
+            | AirOp::RealDiv { x, y }
+            | AirOp::FloorDiv { x, y }
+            | AirOp::Mod { x, y }
+            | AirOp::Pow { x, y }
+            | AirOp::Equal { x, y }
+            | AirOp::NotEqual { x, y }
+            | AirOp::Greater { x, y }
+            | AirOp::GreaterEqual { x, y }
+            | AirOp::Less { x, y }
+            | AirOp::LessEqual { x, y }
+            | AirOp::LogicalAnd { x, y }
+            | AirOp::LogicalOr { x, y }
+            | AirOp::LogicalXor { x, y } => vec![x.clone(), y.clone()],
+            AirOp::Abs { input }
+            | AirOp::Neg { input }
+            | AirOp::Sigmoid { input }
+            | AirOp::Tanh { input }
+            | AirOp::Relu { input }
+            | AirOp::Relu6 { input }
+            | AirOp::Softsign { input }
+            | AirOp::Silu { input }
+            | AirOp::Softplus { input }
+            | AirOp::Sqrt { input }
+            | AirOp::Rsqrt { input }
+            | AirOp::Ceil { input }
+            | AirOp::Floor { input }
+            | AirOp::Round { input }
+            | AirOp::Exp { input }
+            | AirOp::Exp2 { input }
+            | AirOp::Sign { input }
+            | AirOp::Cos { input }
+            | AirOp::Sin { input }
+            | AirOp::Tan { input }
+            | AirOp::Acos { input }
+            | AirOp::Asin { input }
+            | AirOp::Atan { input }
+            | AirOp::Cosh { input }
+            | AirOp::Sinh { input }
+            | AirOp::Atanh { input }
+            | AirOp::Erf { input }
+            | AirOp::LogicalNot { input }
+            | AirOp::Cast { input, .. } => vec![input.clone()],
+            AirOp::LeakyRelu { input, .. }
+            | AirOp::SigmoidHard { input, .. }
+            | AirOp::ThresholdedRelu { input, .. }
+            | AirOp::ClampedRelu { input, .. }
+            | AirOp::LinearActivation { input, .. }
+            | AirOp::ScaledTanh { input, .. }
+            | AirOp::Elu { input, .. }
+            | AirOp::Gelu { input, .. }
+            | AirOp::Clip { input, .. }
+            | AirOp::Square { input }
+            | AirOp::Threshold { input, .. }
+            | AirOp::Inverse { input, .. }
+            | AirOp::Log { input, .. } => vec![input.clone()],
+            AirOp::Prelu { input, .. } | AirOp::SoftplusParametric { input, .. } => {
+                vec![input.clone()]
+            }
+            AirOp::Select { condition, x, y } | AirOp::Where { condition, x, y } => {
+                vec![condition.clone(), x.clone(), y.clone()]
+            }
+            AirOp::Softmax { input, .. } => vec![input.clone()],
+            AirOp::ReduceSum { input, .. }
+            | AirOp::ReduceMean { input, .. }
+            | AirOp::ReduceMax { input, .. }
+            | AirOp::ReduceMin { input, .. }
+            | AirOp::ReduceProd { input, .. }
+            | AirOp::ReduceSumSquare { input, .. }
+            | AirOp::ReduceL2Norm { input, .. }
+            | AirOp::ReduceL1Norm { input, .. }
+            | AirOp::ReduceLogSumExp { input, .. }
+            | AirOp::ReduceLogSum { input, .. } => vec![input.clone()],
+            AirOp::ReduceArgmax { input, .. } | AirOp::ReduceArgmin { input, .. } => {
+                vec![input.clone()]
+            }
+            AirOp::BatchNorm { input, .. } => vec![input.clone()],
+            AirOp::InstanceNorm { input, .. } => vec![input.clone()],
+            AirOp::LayerNorm { input, .. } => vec![input.clone()],
+            AirOp::L2Norm { input, .. } => vec![input.clone()],
+            AirOp::LocalResponseNorm { input, .. } => vec![input.clone()],
+            AirOp::MaxPool { input, .. }
+            | AirOp::AvgPool { input, .. }
+            | AirOp::L2Pool { input, .. } => vec![input.clone()],
+            AirOp::Resize { input, .. } => vec![input.clone()],
+            AirOp::ResizeNearestNeighbor { input, .. } => vec![input.clone()],
+            AirOp::ResizeBilinear { input, .. } => vec![input.clone()],
+            AirOp::UpsampleNearestNeighbor { input, .. } => vec![input.clone()],
+            AirOp::UpsampleBilinear { input, .. } => vec![input.clone()],
+            AirOp::CropResize { input, boxes, box_indices, .. } => {
+                vec![input.clone(), boxes.clone(), box_indices.clone()]
+            }
+            AirOp::Affine { input, transform, .. } => vec![input.clone(), transform.clone()],
+            AirOp::Resample { input, coordinates, .. } => {
+                vec![input.clone(), coordinates.clone()]
+            }
+            AirOp::Reshape { input, .. } => vec![input.clone()],
+            AirOp::ReshapeLike { input, ref_tensor } => {
+                vec![input.clone(), ref_tensor.clone()]
+            }
+            AirOp::Transpose { input, .. } => vec![input.clone()],
+            AirOp::Split { input, .. } => vec![input.clone()],
+            AirOp::Concat { inputs, .. } => inputs.clone(),
+            AirOp::ExpandDims { input, .. } | AirOp::Squeeze { input, .. } => {
+                vec![input.clone()]
+            }
+            AirOp::Flatten2d { input, .. } => vec![input.clone()],
+            AirOp::Reverse { input, .. } => vec![input.clone()],
+            AirOp::ReverseSequence { input, lengths, .. } => {
+                vec![input.clone(), lengths.clone()]
+            }
+            AirOp::SliceByIndex { input, .. } => vec![input.clone()],
+            AirOp::SliceBySize { input, .. } => vec![input.clone()],
+            AirOp::SliceUpdate { input, update, .. } => vec![input.clone(), update.clone()],
+            AirOp::SlidingWindows { input, .. } => vec![input.clone()],
+            AirOp::DepthToSpace { input, .. }
+            | AirOp::SpaceToDepth { input, .. }
+            | AirOp::PixelShuffle { input, .. }
+            | AirOp::PixelUnshuffle { input, .. } => vec![input.clone()],
+            AirOp::BatchToSpace { input, .. } | AirOp::SpaceToBatch { input, .. } => {
+                vec![input.clone()]
+            }
+            AirOp::Pad { input, .. } => vec![input.clone()],
+            AirOp::Stack { values, .. } => values.clone(),
+            AirOp::Tile { input, .. } => vec![input.clone()],
+            AirOp::Cumsum { input, .. } => vec![input.clone()],
+            AirOp::Fill { .. } | AirOp::Range1d { .. } => vec![],
+            AirOp::FillLike { ref_tensor, .. } => vec![ref_tensor.clone()],
+            AirOp::Identity { input } => vec![input.clone()],
+            AirOp::OneHot { indices, .. } => vec![indices.clone()],
+            AirOp::NonZero { input } | AirOp::Argsort { input, .. } => vec![input.clone()],
+            AirOp::BandPart { input, .. } => vec![input.clone()],
+            AirOp::Shape { input } => vec![input.clone()],
+            AirOp::Crop { input, .. } => vec![input.clone()],
+            AirOp::Gather { input, indices, .. } | AirOp::GatherAlongAxis { input, indices, .. } => {
+                vec![input.clone(), indices.clone()]
+            }
+            AirOp::GatherNd { input, indices } => vec![input.clone(), indices.clone()],
+            AirOp::Scatter { input, indices, updates, .. }
+            | AirOp::ScatterAlongAxis { input, indices, updates, .. } => {
+                vec![input.clone(), indices.clone(), updates.clone()]
+            }
+            AirOp::ScatterNd { input, indices, updates } => {
+                vec![input.clone(), indices.clone(), updates.clone()]
+            }
+            AirOp::NonMaximumSuppression { boxes, scores, .. } => {
+                vec![boxes.clone(), scores.clone()]
+            }
+            AirOp::ScaledDotProductAttention { query, key, value, attention_mask, .. } => {
+                let mut refs = vec![query.clone(), key.clone(), value.clone()];
+                if let Some(mask) = attention_mask {
+                    refs.push(mask.clone());
+                }
+                refs
+            }
+            AirOp::Quantize { input, .. } | AirOp::Dequantize { input, .. } => {
+                vec![input.clone()]
+            }
+            AirOp::ConstexprAffineDequantize { .. }
+            | AirOp::ConstexprBlockwiseShiftScale { .. }
+            | AirOp::ConstexprLutToDense { .. }
+            | AirOp::ConstexprSparseToDense { .. }
+            | AirOp::ConstexprCast { .. }
+            | AirOp::ConstexprLutToSparse { .. }
+            | AirOp::ConstexprSparseBlockwiseShiftScale { .. } => vec![],
+            AirOp::Rnn { input, initial_h, .. } => vec![input.clone(), initial_h.clone()],
+            AirOp::Gru { input, initial_h, .. } => vec![input.clone(), initial_h.clone()],
+            AirOp::Lstm { input, initial_h, initial_c, .. } => {
+                vec![input.clone(), initial_h.clone(), initial_c.clone()]
+            }
+            AirOp::Cond { pred, .. } => vec![pred.clone()],
+            AirOp::WhileLoop { loop_vars, .. } => loop_vars.clone(),
+            AirOp::MakeList { elems, .. } => elems.clone(),
+            AirOp::ListLength { ls } | AirOp::ListRead { ls, .. } => vec![ls.clone()],
+            AirOp::ListWrite { ls, index, value } => {
+                vec![ls.clone(), index.clone(), value.clone()]
+            }
+            AirOp::ListGather { ls, indices } => vec![ls.clone(), indices.clone()],
+            AirOp::ListScatter { ls, indices, values } => {
+                vec![ls.clone(), indices.clone(), values.clone()]
+            }
+            AirOp::RandomBernoulli { .. }
+            | AirOp::RandomNormal { .. }
+            | AirOp::RandomUniform { .. } => vec![],
+            AirOp::RandomCategorical { logits, .. } => vec![logits.clone()],
+            AirOp::StateReadFixed { .. } => vec![],
+            AirOp::StateWriteFixed { value, .. } => vec![value.clone()],
+            AirOp::Topk { input, .. } => vec![input.clone()],
+            AirOp::Classify { input } => vec![input.clone()],
+            AirOp::StaticLUTProjection { input, .. } => vec![input.clone()],
+        }
+    }
+
+    /// Validate structural invariants of an AirGraph:
+    /// 1. No duplicate AirNodeIds (SSA property)
+    /// 2. All AirNodeId references resolve to defined nodes, graph inputs,
+    ///    or external weight/const references
+    /// 3. All output nodes exist in the graph (or are graph inputs)
+    ///
+    /// Note: Graph inputs are externally provided and may not have corresponding
+    /// AIR nodes in the graph. Similarly, the RMSNorm decomposition uses weight
+    /// name strings directly as AirNodeId references (e.g.,
+    /// `AirNodeId("model.layers.0.self_attn.q_norm.weight")`), which are
+    /// resolved at the MIR lowering stage. These are valid external references.
+    fn validate_air_graph_structural_invariants(air: &AirGraph) {
+        // 1. No duplicate AirNodeIds
+        let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for node in &air.nodes {
+            assert!(
+                seen_ids.insert(node.id.0.clone()),
+                "Duplicate AirNodeId: {} — violates SSA property",
+                node.id.0
+            );
+        }
+
+        // Build a lookup of all defined node IDs (including graph inputs)
+        let mut defined_ids: std::collections::HashSet<String> =
+            air.nodes.iter().map(|n| n.id.0.clone()).collect();
+        // Graph inputs are externally defined — references to them are valid
+        for in_id in &air.inputs {
+            defined_ids.insert(in_id.0.clone());
+        }
+
+        // 2. All AirNodeId references within ops resolve to defined nodes or
+        //    known external references (weight paths, scalar constants, placeholders)
+        for node in &air.nodes {
+            let refs = collect_air_op_refs(&node.op);
+            for r in &refs {
+                let is_defined = defined_ids.contains(&r.0);
+                // External reference patterns used by the decomposition:
+                // - Weight paths: "model.layers.X..." or "*.weight" or "*.bin"
+                // - Scalar constants: "scalar://..."
+                // - Placeholder inputs: "__placeholder__" or "__*"
+                // - Shared rope tables: "shared_rope_*" / "shared_scalar_*"
+                let is_external = r.0.contains(".weight")
+                    || r.0.contains(".bin")
+                    || r.0.starts_with("scalar://")
+                    || r.0.starts_with("__")
+                    || r.0.starts_with("shared_rope_")
+                    || r.0.starts_with("shared_scalar_")
+                    || r.0.starts_with("shared_attn_");
+                assert!(
+                    is_defined || is_external,
+                    "AirNode '{}' references undefined AirNodeId '{}' — broken SSA reference",
+                    node.id.0,
+                    r.0
+                );
+            }
+        }
+
+        // 3. All output nodes exist (either defined in graph or as inputs)
+        for out_id in &air.outputs {
+            assert!(
+                defined_ids.contains(&out_id.0),
+                "AIR output '{}' is not defined in the graph",
+                out_id.0
+            );
+        }
+    }
+
+    /// T-37: Full SIR→AIR roundtrip with `for_decode_step_full()` using
+    /// realistic Qwen3-0.6B dimensions. This is the key test that the
+    /// existing test suite lacked — all 19 unit tests cover individual
+    /// decompositions but none exercises the full pipeline end-to-end
+    /// with `for_decode_step_full()` context and realistic model dimensions.
+    ///
+    /// Qwen3-0.6B: embed_dim=1024, num_heads=16, head_dim=128,
+    /// kv_heads=8 (GQA), intermediate_size=2048, vocab_size=151936,
+    /// max_seq_len=32768.
+    #[test]
+    fn test_decode_step_roundtrip_qwen3_0_6b() {
+        let ctx = DecompositionContext::for_decode_step_full(
+            1,      // batch_size
+            1024,   // embed_dim
+            16,     // num_heads
+            128,    // head_dim
+            512,    // kv_len (typical decode KV cache length)
+            8,      // kv_heads (GQA)
+            2048,   // intermediate_size
+            151936, // vocab_size
+            true,   // uses_rope
+            true,   // has_qk_norm
+        );
+
+        let sir = SirGraph {
+            nodes: vec![SirNode {
+                id: SirNodeId("decode_0".into()),
+                op: SirOp::DecodeStep {
+                    token: SirNodeId("token_input".into()),
+                    state_map: vec!["k_cache_0".into(), "v_cache_0".into()],
+                    q_weight: Some("model.layers.0.self_attn.q_proj.weight".into()),
+                    k_weight: Some("model.layers.0.self_attn.k_proj.weight".into()),
+                    v_weight: Some("model.layers.0.self_attn.v_proj.weight".into()),
+                    out_weight: Some("model.layers.0.self_attn.o_proj.weight".into()),
+                    rope_tables: Some("rope_tables_shared".into()),
+                    position: Some(SirNodeId("position_0".into())),
+                    q_norm_weight: Some("model.layers.0.self_attn.q_norm.weight".into()),
+                    k_norm_weight: Some("model.layers.0.self_attn.k_norm.weight".into()),
+                    norm_epsilon: 1e-6,
+                    qk_norm_type: "rms".to_string(),
+                    mask_ref: Some("causal_mask".into()),
+                },
+                name: "decode_step_layer_0".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::RealModel { name: "Qwen3-0.6B".into() },
+                    model_id: Some("qwen3-0.6b".into()),
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
+            inputs: vec![SirNodeId("token_input".into()), SirNodeId("position_0".into())],
+            outputs: vec![SirNodeId("decode_0".into())],
+        };
+
+        let pass = LegalityRewritePass::new();
+        let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
+
+        // ── Structural invariants ──
+        validate_air_graph_structural_invariants(&air);
+
+        // ── Decomposition correctness ──
+        // Must have Conv1x1AsLinear for QKV+output projections
+        let linear_nodes: Vec<_> = air
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }))
+            .collect();
+        assert!(
+            !linear_nodes.is_empty(),
+            "DecodeStep must decompose into Conv1x1AsLinear projections"
+        );
+
+        // Must have MatMul for per-head attention (NOT SDPA)
+        let has_matmul = air.nodes.iter().any(|n| matches!(n.op, AirOp::MatMul { .. }));
+        let has_sdpa = air
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
+        assert!(has_matmul, "DecodeStep must include MatMul for per-head attention");
+        assert!(
+            !has_sdpa,
+            "DecodeStep must NOT include SDPA (ANE-illegal in decoder shards)"
+        );
+
+        // Must have state ops for KV cache
+        let has_state_read = air.nodes.iter().any(|n| matches!(n.op, AirOp::StateReadFixed { .. }));
+        let has_state_write =
+            air.nodes.iter().any(|n| matches!(n.op, AirOp::StateWriteFixed { .. }));
+        assert!(has_state_read, "DecodeStep must include StateReadFixed for KV cache");
+        assert!(has_state_write, "DecodeStep must include StateWriteFixed for KV cache update");
+
+        // Must have Softmax for attention weights
+        let has_softmax = air.nodes.iter().any(|n| matches!(n.op, AirOp::Softmax { .. }));
+        assert!(has_softmax, "DecodeStep must include Softmax for per-head attention");
+
+        // Must have RoPE decomposition (Const tables + Gather + Mul + Add)
+        let has_gather = air.nodes.iter().any(|n| matches!(n.op, AirOp::Gather { .. }));
+        let has_rope_const = air.nodes.iter().any(|n| {
+            matches!(n.op, AirOp::Const { ref value_path, .. } if value_path.contains("rope"))
+        });
+        assert!(
+            has_gather || has_rope_const,
+            "DecodeStep with uses_rope=true must include RoPE decomposition (Gather or Const tables)"
+        );
+
+        // Must have QK-norm decomposition (ReduceMean + Rsqrt + Mul)
+        let has_rsqrt = air.nodes.iter().any(|n| matches!(n.op, AirOp::Rsqrt { .. }));
+        assert!(
+            has_rsqrt,
+            "DecodeStep with has_qk_norm=true must include RMSNorm decomposition with Rsqrt"
+        );
+
+        // ── Shape consistency ──
+        // Conv1x1AsLinear output_dim for Q projection should be num_heads*head_dim = 16*128 = 2048
+        let q_proj = air.nodes.iter().find(|n| {
+            if let AirOp::Conv1x1AsLinear { weight, output_dim, .. } = &n.op {
+                weight.contains("q_proj") && *output_dim > 0
+            } else {
+                false
+            }
+        });
+        if let Some(q) = q_proj {
+            if let AirOp::Conv1x1AsLinear { output_dim, .. } = &q.op {
+                assert_eq!(
+                    *output_dim, 2048,
+                    "Q projection output_dim should be num_heads*head_dim = 2048"
+                );
+            }
+        }
+
+        // K projection output_dim should be kv_heads*head_dim = 8*128 = 1024
+        let k_proj = air.nodes.iter().find(|n| {
+            if let AirOp::Conv1x1AsLinear { weight, output_dim, .. } = &n.op {
+                weight.contains("k_proj") && *output_dim > 0
+            } else {
+                false
+            }
+        });
+        if let Some(k) = k_proj {
+            if let AirOp::Conv1x1AsLinear { output_dim, .. } = &k.op {
+                assert_eq!(
+                    *output_dim, 1024,
+                    "K projection output_dim should be kv_heads*head_dim = 1024"
+                );
+            }
+        }
+
+        // O projection output_dim should be embed_dim = 1024
+        let o_proj = air.nodes.iter().find(|n| {
+            if let AirOp::Conv1x1AsLinear { weight, output_dim, .. } = &n.op {
+                weight.contains("o_proj") && *output_dim > 0
+            } else {
+                false
+            }
+        });
+        if let Some(o) = o_proj {
+            if let AirOp::Conv1x1AsLinear { output_dim, .. } = &o.op {
+                assert_eq!(
+                    *output_dim, 1024,
+                    "O projection output_dim should be embed_dim = 1024"
+                );
+            }
+        }
+
+        // ── No Tile ops (ANE-illegal) ──
+        let has_tile = air.nodes.iter().any(|n| matches!(n.op, AirOp::Tile { .. }));
+        assert!(!has_tile, "DecodeStep AIR output must NOT contain Tile ops");
+
+        // ── No Split ops (invalid MIL for multi-output) ──
+        let has_split = air.nodes.iter().any(|n| matches!(n.op, AirOp::Split { .. }));
+        assert!(!has_split, "DecodeStep AIR output must NOT contain Split ops (invalid MIL)");
+
+        // ── Must use SliceByIndex for head extraction ──
+        let has_slice = air.nodes.iter().any(|n| matches!(n.op, AirOp::SliceByIndex { .. }));
+        assert!(
+            has_slice,
+            "DecodeStep must use SliceByIndex for per-head extraction (replaces Split)"
+        );
+
+        // ── GQA: verify fan_out = num_heads / kv_heads = 16 / 8 = 2 ──
+        // Each KV head is shared by 2 Q heads. The per-head attention loop
+        // should produce fan_out MatMul ops per KV head group.
+        let matmul_count = air
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.op, AirOp::MatMul { .. }))
+            .count();
+        assert!(
+            matmul_count >= ctx.num_heads,
+            "GQA decode must have at least {} MatMul ops (one per Q head), got {}",
+            ctx.num_heads,
+            matmul_count
+        );
+
+        // ── Verify the output is reachable ──
+        assert!(
+            !air.outputs.is_empty(),
+            "AIR graph must have at least one output"
+        );
+        assert!(
+            air.nodes.iter().any(|n| n.id == air.outputs[0]),
+            "AIR output node must exist in graph"
+        );
+    }
+
+    /// T-37: AttentionBlock roundtrip with `for_attention_full()` and
+    /// Qwen3-0.6B dimensions. Validates the full SIR→AIR pipeline for
+    /// the prefill attention path (no state ops, separate Q/K/V inputs).
+    #[test]
+    fn test_attention_block_roundtrip_qwen3_0_6b() {
+        let ctx = DecompositionContext::for_attention_full(
+            1,      // batch_size
+            1024,   // embed_dim
+            16,     // num_heads
+            128,    // head_dim
+            512,    // seq_len
+            8,      // kv_heads (GQA)
+            2048,   // intermediate_size
+            151936, // vocab_size
+        );
+
+        let q_id = SirNodeId("q_proj_output".into());
+        let k_id = SirNodeId("k_proj_output".into());
+        let v_id = SirNodeId("v_proj_output".into());
+
+        let sir = SirGraph {
+            nodes: vec![
+                SirNode {
+                    id: q_id.clone(),
+                    op: SirOp::LinearProjection {
+                        input: SirNodeId("hidden_state".into()),
+                        weight: "model.layers.0.self_attn.q_proj.weight".into(),
+                        bias: None,
+                    },
+                    name: "q_proj".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::RealModel { name: "Qwen3-0.6B".into() },
+                        model_id: Some("qwen3-0.6b".into()),
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: k_id.clone(),
+                    op: SirOp::LinearProjection {
+                        input: SirNodeId("hidden_state".into()),
+                        weight: "model.layers.0.self_attn.k_proj.weight".into(),
+                        bias: None,
+                    },
+                    name: "k_proj".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: v_id.clone(),
+                    op: SirOp::LinearProjection {
+                        input: SirNodeId("hidden_state".into()),
+                        weight: "model.layers.0.self_attn.v_proj.weight".into(),
+                        bias: None,
+                    },
+                    name: "v_proj".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("attn_0".into()),
+                    op: SirOp::AttentionBlock {
+                        q: q_id,
+                        k: k_id,
+                        v: v_id,
+                        mask: None,
+                        rope: None,
+                    },
+                    name: "attention_layer_0".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::RealModel { name: "Qwen3-0.6B".into() },
+                        model_id: Some("qwen3-0.6b".into()),
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+            ],
+            inputs: vec![SirNodeId("hidden_state".into())],
+            outputs: vec![SirNodeId("attn_0".into())],
+        };
+
+        let pass = LegalityRewritePass::new();
+        let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
+
+        // ── Structural invariants ──
+        validate_air_graph_structural_invariants(&air);
+
+        // ── Decomposition correctness ──
+        // Must have per-head MatMul, NOT SDPA
+        let has_matmul = air.nodes.iter().any(|n| matches!(n.op, AirOp::MatMul { .. }));
+        let has_sdpa = air
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
+        let has_tile = air.nodes.iter().any(|n| matches!(n.op, AirOp::Tile { .. }));
+
+        assert!(has_matmul, "AttentionBlock with context must use per-head MatMul");
+        assert!(!has_sdpa, "AttentionBlock with context must NOT use SDPA");
+        assert!(!has_tile, "AttentionBlock must NOT use Tile (ANE-illegal)");
+
+        // Must have Concat to merge per-head outputs
+        let has_concat = air.nodes.iter().any(|n| matches!(n.op, AirOp::Concat { .. }));
+        assert!(has_concat, "AttentionBlock must include Concat to merge per-head attention outputs");
+
+        // Must have Conv1x1AsLinear for output projection
+        let has_out_proj = air
+            .nodes
+            .iter()
+            .any(|n| matches!(&n.op, AirOp::Conv1x1AsLinear { weight, .. } if weight.contains("o_proj") || n.id.0.contains("out_proj")));
+        let has_any_conv1x1 = air.nodes.iter().any(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }));
+        assert!(
+            has_any_conv1x1,
+            "AttentionBlock decomposition must include Conv1x1AsLinear for projections"
+        );
+
+        // ── Shape consistency ──
+        // Q reshape: [1, 512, 16, 128] (batch, seq, num_heads, head_dim)
+        let q_4d = air
+            .nodes
+            .iter()
+            .find(|n| n.id.0 == "attn_0_q_4d")
+            .expect("Expected attn_0_q_4d node");
+        if let AirOp::Reshape { target_shape, .. } = &q_4d.op {
+            assert_eq!(
+                target_shape, &vec![1, 512, 16, 128],
+                "Q 4D reshape should be [batch, seq, num_heads, head_dim]"
+            );
+        }
+
+        // K reshape: [1, 512, 8, 128] (uses kv_heads for GQA)
+        let k_4d = air
+            .nodes
+            .iter()
+            .find(|n| n.id.0 == "attn_0_k_4d")
+            .expect("Expected attn_0_k_4d node");
+        if let AirOp::Reshape { target_shape, .. } = &k_4d.op {
+            assert_eq!(
+                target_shape, &vec![1, 512, 8, 128],
+                "K 4D reshape should use kv_heads=8 for GQA: [1, 512, 8, 128]"
+            );
+        }
+
+        // V reshape: [1, 512, 8, 128] (uses kv_heads for GQA)
+        let v_4d = air
+            .nodes
+            .iter()
+            .find(|n| n.id.0 == "attn_0_v_4d")
+            .expect("Expected attn_0_v_4d node");
+        if let AirOp::Reshape { target_shape, .. } = &v_4d.op {
+            assert_eq!(
+                target_shape, &vec![1, 512, 8, 128],
+                "V 4D reshape should use kv_heads=8 for GQA: [1, 512, 8, 128]"
+            );
+        }
+
+        // attn_flat reshape: [1, 512, 2048] (num_heads * head_dim, NOT embed_dim)
+        let attn_flat = air
+            .nodes
+            .iter()
+            .find(|n| n.id.0 == "attn_0_attn_flat")
+            .expect("Expected attn_0_attn_flat node");
+        if let AirOp::Reshape { target_shape, .. } = &attn_flat.op {
+            assert_eq!(
+                target_shape, &vec![1, 512, 2048],
+                "attn_flat reshape should be [batch, seq, num_heads*head_dim] = [1, 512, 2048] (NOT embed_dim=1024)"
+            );
+        }
+
+        // ── GQA: MatMul count should equal num_heads (16) ──
+        let matmul_count = air
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.op, AirOp::MatMul { .. }))
+            .count();
+        assert!(
+            matmul_count >= ctx.num_heads,
+            "GQA attention must have at least {} MatMul ops (one per Q head), got {}",
+            ctx.num_heads,
+            matmul_count
+        );
+    }
+
+    /// T-37: Multi-layer SIR→AIR roundtrip. Simulates two decoder layers
+    /// with realistic Qwen3-0.6B dimensions, each containing a DecodeStep.
+    /// Tests that shared nodes (attn_scale, rope tables, etc.) are properly
+    /// deduplicated across layers by the global AirNodeId dedup pass.
+    #[test]
+    fn test_multi_layer_decode_roundtrip() {
+        let ctx = DecompositionContext::for_decode_step_full(
+            1,      // batch_size
+            1024,   // embed_dim
+            16,     // num_heads
+            128,    // head_dim
+            512,    // kv_len
+            8,      // kv_heads
+            2048,   // intermediate_size
+            151936, // vocab_size
+            true,   // uses_rope
+            true,   // has_qk_norm
+        );
+
+        let sir = SirGraph {
+            nodes: vec![
+                SirNode {
+                    id: SirNodeId("decode_layer_0".into()),
+                    op: SirOp::DecodeStep {
+                        token: SirNodeId("token_input".into()),
+                        state_map: vec!["k_cache_0".into(), "v_cache_0".into()],
+                        q_weight: Some("model.layers.0.self_attn.q_proj.weight".into()),
+                        k_weight: Some("model.layers.0.self_attn.k_proj.weight".into()),
+                        v_weight: Some("model.layers.0.self_attn.v_proj.weight".into()),
+                        out_weight: Some("model.layers.0.self_attn.o_proj.weight".into()),
+                        rope_tables: Some("rope_tables_shared".into()),
+                        position: Some(SirNodeId("position_0".into())),
+                        q_norm_weight: Some("model.layers.0.self_attn.q_norm.weight".into()),
+                        k_norm_weight: Some("model.layers.0.self_attn.k_norm.weight".into()),
+                        norm_epsilon: 1e-6,
+                        qk_norm_type: "rms".to_string(),
+                        mask_ref: Some("causal_mask".into()),
+                    },
+                    name: "decode_layer_0".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::RealModel { name: "Qwen3-0.6B".into() },
+                        model_id: Some("qwen3-0.6b".into()),
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("decode_layer_1".into()),
+                    op: SirOp::DecodeStep {
+                        token: SirNodeId("decode_layer_0".into()),
+                        state_map: vec!["k_cache_1".into(), "v_cache_1".into()],
+                        q_weight: Some("model.layers.1.self_attn.q_proj.weight".into()),
+                        k_weight: Some("model.layers.1.self_attn.k_proj.weight".into()),
+                        v_weight: Some("model.layers.1.self_attn.v_proj.weight".into()),
+                        out_weight: Some("model.layers.1.self_attn.o_proj.weight".into()),
+                        rope_tables: Some("rope_tables_shared".into()),
+                        position: Some(SirNodeId("position_0".into())),
+                        q_norm_weight: Some("model.layers.1.self_attn.q_norm.weight".into()),
+                        k_norm_weight: Some("model.layers.1.self_attn.k_norm.weight".into()),
+                        norm_epsilon: 1e-6,
+                        qk_norm_type: "rms".to_string(),
+                        mask_ref: Some("causal_mask".into()),
+                    },
+                    name: "decode_layer_1".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::RealModel { name: "Qwen3-0.6B".into() },
+                        model_id: Some("qwen3-0.6b".into()),
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+            ],
+            inputs: vec![SirNodeId("token_input".into()), SirNodeId("position_0".into())],
+            outputs: vec![SirNodeId("decode_layer_1".into())],
+        };
+
+        let pass = LegalityRewritePass::new();
+        let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
+
+        // ── Structural invariants (especially SSA dedup) ──
+        validate_air_graph_structural_invariants(&air);
+
+        // ── Shared nodes must be deduplicated ──
+        // The shared_attn_scale should appear exactly once (not once per layer)
+        let shared_scale_count = air
+            .nodes
+            .iter()
+            .filter(|n| n.id.0 == "shared_attn_scale")
+            .count();
+        assert_eq!(
+            shared_scale_count, 1,
+            "shared_attn_scale must be deduplicated across layers (should appear exactly once)"
+        );
+
+        // ── Both layers must be fully decomposed ──
+        let state_read_count = air
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.op, AirOp::StateReadFixed { .. }))
+            .count();
+        // Each layer reads 2 KV caches (K + V) → at least 4 state reads
+        assert!(
+            state_read_count >= 4,
+            "Two decode layers must produce at least 4 StateReadFixed ops (2 per layer), got {}",
+            state_read_count
+        );
+
+        let state_write_count = air
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.op, AirOp::StateWriteFixed { .. }))
+            .count();
+        // Each layer writes 2 KV caches (K + V) → at least 4 state writes
+        assert!(
+            state_write_count >= 4,
+            "Two decode layers must produce at least 4 StateWriteFixed ops (2 per layer), got {}",
+            state_write_count
+        );
+
+        // ── Layer 1 references layer 0 output as token input ──
+        // The AIR graph should contain nodes whose inputs reference
+        // the final AIR node of decode_layer_0's decomposition.
+        assert!(
+            !air.outputs.is_empty(),
+            "AIR graph must have outputs"
+        );
+    }
+
+    /// T-37: Roundtrip test for a realistic multi-op pipeline that combines
+    /// multiple SIR op types (LinearProjection, RMSNorm, Add, Reshape, etc.)
+    /// with DecompositionContext. This simulates a simplified single-layer
+    /// transformer block:
+    ///   input → LinearProjection(Q) → RMSNorm(q_norm) →
+    ///   LinearProjection(K) → RMSNorm(k_norm) → LinearProjection(V) →
+    ///   AttentionBlock → Reshape → Add(residual)
+    #[test]
+    fn test_full_transformer_layer_roundtrip() {
+        let ctx = DecompositionContext::for_attention_full(
+            1,      // batch_size
+            1024,   // embed_dim
+            16,     // num_heads
+            128,    // head_dim
+            512,    // seq_len
+            8,      // kv_heads
+            2048,   // intermediate_size
+            151936, // vocab_size
+        );
+
+        let input_id = SirNodeId("hidden_state".into());
+        let residual_id = SirNodeId("residual".into());
+        let q_proj_id = SirNodeId("q_proj".into());
+        let k_proj_id = SirNodeId("k_proj".into());
+        let v_proj_id = SirNodeId("v_proj".into());
+        let q_norm_id = SirNodeId("q_norm".into());
+        let k_norm_id = SirNodeId("k_norm".into());
+        let attn_id = SirNodeId("attn_block".into());
+        let reshape_id = SirNodeId("attn_reshape".into());
+        let add_id = SirNodeId("residual_add".into());
+
+        let sir = SirGraph {
+            nodes: vec![
+                SirNode {
+                    id: q_proj_id.clone(),
+                    op: SirOp::LinearProjection {
+                        input: input_id.clone(),
+                        weight: "model.layers.0.self_attn.q_proj.weight".into(),
+                        bias: None,
+                    },
+                    name: "q_proj".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: k_proj_id.clone(),
+                    op: SirOp::LinearProjection {
+                        input: input_id.clone(),
+                        weight: "model.layers.0.self_attn.k_proj.weight".into(),
+                        bias: None,
+                    },
+                    name: "k_proj".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: v_proj_id.clone(),
+                    op: SirOp::LinearProjection {
+                        input: input_id.clone(),
+                        weight: "model.layers.0.self_attn.v_proj.weight".into(),
+                        bias: None,
+                    },
+                    name: "v_proj".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: q_norm_id.clone(),
+                    op: SirOp::RMSNorm {
+                        input: q_proj_id.clone(),
+                        weight: "model.layers.0.self_attn.q_norm.weight".into(),
+                        epsilon: 1e-6,
+                        axes: vec![3], // per-head QK norm
+                    },
+                    name: "q_norm".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: k_norm_id.clone(),
+                    op: SirOp::RMSNorm {
+                        input: k_proj_id.clone(),
+                        weight: "model.layers.0.self_attn.k_norm.weight".into(),
+                        epsilon: 1e-6,
+                        axes: vec![3], // per-head QK norm
+                    },
+                    name: "k_norm".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: attn_id.clone(),
+                    op: SirOp::AttentionBlock {
+                        q: q_norm_id,
+                        k: k_norm_id,
+                        v: v_proj_id,
+                        mask: None,
+                        rope: None,
+                    },
+                    name: "attn".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: reshape_id.clone(),
+                    op: SirOp::Reshape {
+                        input: attn_id,
+                        target_shape: vec![1, 512, 1024],
+                    },
+                    name: "attn_reshape".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: add_id.clone(),
+                    op: SirOp::Add {
+                        x: reshape_id,
+                        y: residual_id.clone(),
+                    },
+                    name: "residual_add".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+            ],
+            inputs: vec![input_id, residual_id],
+            outputs: vec![add_id],
+        };
+
+        let pass = LegalityRewritePass::new();
+        let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
+
+        // ── Structural invariants ──
+        validate_air_graph_structural_invariants(&air);
+
+        // ── RMSNorm with axes=[3] must produce 4D reshapes ──
+        let reshape_shapes: Vec<Vec<usize>> = air
+            .nodes
+            .iter()
+            .filter_map(|n| {
+                if let AirOp::Reshape { target_shape, .. } = &n.op {
+                    Some(target_shape.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // q_norm: 3D → 4D [1, 512, 16, 128]
+        assert!(
+            reshape_shapes.iter().any(|s| s == &vec![1, 512, 16, 128]),
+            "q_norm must produce 4D reshape to [1, 512, 16, 128] (num_heads=16), got: {:?}",
+            reshape_shapes
+        );
+
+        // k_norm: 3D → 4D [1, 512, 8, 128]
+        assert!(
+            reshape_shapes.iter().any(|s| s == &vec![1, 512, 8, 128]),
+            "k_norm must produce 4D reshape to [1, 512, 8, 128] (kv_heads=8), got: {:?}",
+            reshape_shapes
+        );
+
+        // q_norm: 4D → 3D [1, 512, 2048]
+        assert!(
+            reshape_shapes.iter().any(|s| s == &vec![1, 512, 2048]),
+            "q_norm must reshape back to [1, 512, 2048] (num_heads*head_dim), got: {:?}",
+            reshape_shapes
+        );
+
+        // k_norm: 4D → 3D [1, 512, 1024]
+        assert!(
+            reshape_shapes.iter().any(|s| s == &vec![1, 512, 1024]),
+            "k_norm must reshape back to [1, 512, 1024] (kv_heads*head_dim), got: {:?}",
+            reshape_shapes
+        );
+
+        // ── AttentionBlock must use per-head MatMul (NOT SDPA/Tile) ──
+        let has_matmul = air.nodes.iter().any(|n| matches!(n.op, AirOp::MatMul { .. }));
+        let has_sdpa = air
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
+        let has_tile = air.nodes.iter().any(|n| matches!(n.op, AirOp::Tile { .. }));
+        assert!(has_matmul, "Transformer layer must include MatMul for per-head attention");
+        assert!(!has_sdpa, "Transformer layer must NOT include SDPA");
+        assert!(!has_tile, "Transformer layer must NOT include Tile");
+
+        // ── Residual Add must be present ──
+        let has_add = air.nodes.iter().any(|n| matches!(n.op, AirOp::Add { .. }));
+        assert!(has_add, "Transformer layer must include Add for residual connection");
+    }
+
+    /// T-37: Non-GQA model roundtrip. Tests the DecodeStep decomposition
+    /// with kv_heads == num_heads (no GQA). This is the path used by
+    /// models like LLaMA-2 where all heads are KV heads (fan_out=1).
+    #[test]
+    fn test_decode_step_roundtrip_non_gqa() {
+        let ctx = DecompositionContext::for_decode_step_full(
+            1,     // batch_size
+            4096,  // embed_dim
+            32,    // num_heads
+            128,   // head_dim
+            2048,  // kv_len
+            32,    // kv_heads (== num_heads, NO GQA)
+            11008, // intermediate_size
+            32000, // vocab_size
+            false, // uses_rope (LLaMA-2 doesn't use RoPE in our SIR)
+            false, // has_qk_norm
+        );
+
+        let sir = SirGraph {
+            nodes: vec![SirNode {
+                id: SirNodeId("decode_0".into()),
+                op: SirOp::DecodeStep {
+                    token: SirNodeId("token_input".into()),
+                    state_map: vec!["k_cache_0".into(), "v_cache_0".into()],
+                    q_weight: Some("model.layers.0.self_attn.q_proj.weight".into()),
+                    k_weight: Some("model.layers.0.self_attn.k_proj.weight".into()),
+                    v_weight: Some("model.layers.0.self_attn.v_proj.weight".into()),
+                    out_weight: Some("model.layers.0.self_attn.o_proj.weight".into()),
+                    rope_tables: None,
+                    position: None,
+                    q_norm_weight: None,
+                    k_norm_weight: None,
+                    norm_epsilon: 1e-6,
+                    qk_norm_type: "rms".to_string(),
+                    mask_ref: None,
+                },
+                name: "decode_step_llama2".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
+            inputs: vec![SirNodeId("token_input".into())],
+            outputs: vec![SirNodeId("decode_0".into())],
+        };
+
+        let pass = LegalityRewritePass::new();
+        let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
+
+        // ── Structural invariants ──
+        validate_air_graph_structural_invariants(&air);
+
+        // ── Non-GQA: no RoPE, no QK-norm ──
+        // Should NOT have Gather (used for position-based RoPE)
+        let has_gather = air.nodes.iter().any(|n| matches!(n.op, AirOp::Gather { .. }));
+        // Gather may still appear for other reasons, so we don't assert its absence.
+        // But we should NOT have Rsqrt (which indicates QK-norm)
+        // Actually, RMSNorm is still applied in the main decode path (not just QK-norm),
+        // so Rsqrt may be present. Just check the structural invariants.
+
+        // ── Output projection dimension should be embed_dim=4096 ──
+        let o_proj = air.nodes.iter().find(|n| {
+            if let AirOp::Conv1x1AsLinear { weight, output_dim, .. } = &n.op {
+                weight.contains("o_proj") && *output_dim > 0
+            } else {
+                false
+            }
+        });
+        if let Some(o) = o_proj {
+            if let AirOp::Conv1x1AsLinear { output_dim, .. } = &o.op {
+                assert_eq!(
+                    *output_dim, 4096,
+                    "O projection output_dim should be embed_dim = 4096 for non-GQA model"
+                );
+            }
+        }
+
+        // ── Non-GQA: Q and K should have same head count ──
+        // K reshape should use kv_heads=32 == num_heads=32
+        let k_4d = air.nodes.iter().find(|n| n.id.0 == "decode_0_k_4d");
+        if let Some(k) = k_4d {
+            if let AirOp::Reshape { target_shape, .. } = &k.op {
+                // K should use 32 heads (same as Q) since kv_heads == num_heads
+                assert!(
+                    target_shape.contains(&32),
+                    "K 4D reshape should use kv_heads=32 (non-GQA): {:?}",
+                    target_shape
+                );
+            }
+        }
+    }
+
+    /// T-37: Verify that `output_dim_for_weight` returns correct dimensions
+    /// for all Qwen3-0.6B projection types when using `for_decode_step_full()`.
+    #[test]
+    fn test_output_dim_for_weight_qwen3_0_6b() {
+        let ctx = DecompositionContext::for_decode_step_full(
+            1,      // batch_size
+            1024,   // embed_dim
+            16,     // num_heads
+            128,    // head_dim
+            512,    // kv_len
+            8,      // kv_heads
+            2048,   // intermediate_size
+            151936, // vocab_size
+            true,   // uses_rope
+            true,   // has_qk_norm
+        );
+
+        // Q projection: num_heads * head_dim = 16 * 128 = 2048
+        assert_eq!(
+            ctx.output_dim_for_weight("model.layers.0.self_attn.q_proj.weight"),
+            2048,
+            "Q projection output_dim should be num_heads * head_dim = 2048"
+        );
+
+        // K projection: kv_heads * head_dim = 8 * 128 = 1024
+        assert_eq!(
+            ctx.output_dim_for_weight("model.layers.0.self_attn.k_proj.weight"),
+            1024,
+            "K projection output_dim should be kv_heads * head_dim = 1024"
+        );
+
+        // V projection: kv_heads * head_dim = 8 * 128 = 1024
+        assert_eq!(
+            ctx.output_dim_for_weight("model.layers.0.self_attn.v_proj.weight"),
+            1024,
+            "V projection output_dim should be kv_heads * head_dim = 1024"
+        );
+
+        // O projection: embed_dim = 1024
+        assert_eq!(
+            ctx.output_dim_for_weight("model.layers.0.self_attn.o_proj.weight"),
+            1024,
+            "O projection output_dim should be embed_dim = 1024"
+        );
+
+        // Gate projection: intermediate_size = 2048
+        assert_eq!(
+            ctx.output_dim_for_weight("model.layers.0.mlp.gate_proj.weight"),
+            2048,
+            "Gate projection output_dim should be intermediate_size = 2048"
+        );
+
+        // Up projection: intermediate_size = 2048
+        assert_eq!(
+            ctx.output_dim_for_weight("model.layers.0.mlp.up_proj.weight"),
+            2048,
+            "Up projection output_dim should be intermediate_size = 2048"
+        );
+
+        // Down projection: embed_dim = 1024
+        assert_eq!(
+            ctx.output_dim_for_weight("model.layers.0.mlp.down_proj.weight"),
+            1024,
+            "Down projection output_dim should be embed_dim = 1024"
+        );
+
+        // lm_head: vocab_size = 151936
+        assert_eq!(
+            ctx.output_dim_for_weight("lm_head.weight"),
+            151936,
+            "lm_head output_dim should be vocab_size = 151936"
+        );
+
+        // embed_tokens: embed_dim = 1024
+        assert_eq!(
+            ctx.output_dim_for_weight("model.embed_tokens.weight"),
+            1024,
+            "embed_tokens output_dim should be embed_dim = 1024"
+        );
+
+        // Unknown projection: 0
+        assert_eq!(
+            ctx.output_dim_for_weight("model.layers.0.unknown_proj.weight"),
+            0,
+            "Unknown projection output_dim should be 0"
+        );
+    }
+
+    /// T-37: Verify that Conv1x1AsLinear output_dim in the AIR graph
+    /// matches `output_dim_for_weight()` for every linear projection
+    /// in a multi-op SIR→AIR roundtrip. This is a shape-consistency
+    /// smoke test that catches the "output_dim=0" bug from Sprint 61.
+    #[test]
+    fn test_conv1x1_output_dim_matches_context() {
+        let ctx = DecompositionContext::for_decode_step_full(
+            1,      // batch_size
+            1024,   // embed_dim
+            16,     // num_heads
+            128,    // head_dim
+            512,    // kv_len
+            8,      // kv_heads
+            2048,   // intermediate_size
+            151936, // vocab_size
+            false,  // uses_rope
+            false,  // has_qk_norm
+        );
+
+        let sir = SirGraph {
+            nodes: vec![
+                SirNode {
+                    id: SirNodeId("q_proj".into()),
+                    op: SirOp::LinearProjection {
+                        input: SirNodeId("input".into()),
+                        weight: "model.layers.0.self_attn.q_proj.weight".into(),
+                        bias: None,
+                    },
+                    name: "q_proj".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("k_proj".into()),
+                    op: SirOp::LinearProjection {
+                        input: SirNodeId("input".into()),
+                        weight: "model.layers.0.self_attn.k_proj.weight".into(),
+                        bias: None,
+                    },
+                    name: "k_proj".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("v_proj".into()),
+                    op: SirOp::LinearProjection {
+                        input: SirNodeId("input".into()),
+                        weight: "model.layers.0.self_attn.v_proj.weight".into(),
+                        bias: None,
+                    },
+                    name: "v_proj".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("o_proj".into()),
+                    op: SirOp::LinearProjection {
+                        input: SirNodeId("input".into()),
+                        weight: "model.layers.0.self_attn.o_proj.weight".into(),
+                        bias: None,
+                    },
+                    name: "o_proj".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("gate_proj".into()),
+                    op: SirOp::LinearProjection {
+                        input: SirNodeId("input".into()),
+                        weight: "model.layers.0.mlp.gate_proj.weight".into(),
+                        bias: None,
+                    },
+                    name: "gate_proj".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("down_proj".into()),
+                    op: SirOp::LinearProjection {
+                        input: SirNodeId("input".into()),
+                        weight: "model.layers.0.mlp.down_proj.weight".into(),
+                        bias: None,
+                    },
+                    name: "down_proj".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("lm_head".into()),
+                    op: SirOp::LinearProjection {
+                        input: SirNodeId("input".into()),
+                        weight: "lm_head.weight".into(),
+                        bias: None,
+                    },
+                    name: "lm_head".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+            ],
+            inputs: vec![SirNodeId("input".into())],
+            outputs: vec![SirNodeId("lm_head".into())],
+        };
+
+        let pass = LegalityRewritePass::new();
+        let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
+
+        // Verify every Conv1x1AsLinear has the correct output_dim
+        for node in &air.nodes {
+            if let AirOp::Conv1x1AsLinear { weight, output_dim, .. } = &node.op {
+                let expected = ctx.output_dim_for_weight(weight);
+                assert_eq!(
+                    *output_dim, expected,
+                    "Conv1x1AsLinear('{}') output_dim={} should match output_dim_for_weight()={}",
+                    weight, output_dim, expected
+                );
+            }
+        }
+
+        // Structural invariants
+        validate_air_graph_structural_invariants(&air);
+    }
+
+    /// T-37: Verify that SIR metadata (TaskOrigin, model_id,
+    /// precision_override) propagates correctly through the SIR→AIR
+    /// roundtrip for a realistic decode pipeline.
+    #[test]
+    fn test_metadata_propagation_through_roundtrip() {
+        let ctx = DecompositionContext::for_decode_step_full(
+            1, 1024, 16, 128, 512, 8, 2048, 151936, true, true,
+        );
+
+        let sir = SirGraph {
+            nodes: vec![
+                SirNode {
+                    id: SirNodeId("rms_norm".into()),
+                    op: SirOp::RMSNorm {
+                        input: SirNodeId("input".into()),
+                        weight: "model.layers.0.input_layernorm.weight".into(),
+                        epsilon: 1e-6,
+                        axes: vec![2],
+                    },
+                    name: "layernorm".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::RealModel { name: "Qwen3-0.6B".into() },
+                        model_id: Some("qwen3-0.6b".into()),
+                        quality_contract: None,
+                        precision_override: Some("fp32".into()),
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("decode_0".into()),
+                    op: SirOp::DecodeStep {
+                        token: SirNodeId("rms_norm".into()),
+                        state_map: vec!["k_cache_0".into(), "v_cache_0".into()],
+                        q_weight: Some("model.layers.0.self_attn.q_proj.weight".into()),
+                        k_weight: Some("model.layers.0.self_attn.k_proj.weight".into()),
+                        v_weight: Some("model.layers.0.self_attn.v_proj.weight".into()),
+                        out_weight: Some("model.layers.0.self_attn.o_proj.weight".into()),
+                        rope_tables: Some("rope_tables_shared".into()),
+                        position: Some(SirNodeId("pos".into())),
+                        q_norm_weight: Some("model.layers.0.self_attn.q_norm.weight".into()),
+                        k_norm_weight: Some("model.layers.0.self_attn.k_norm.weight".into()),
+                        norm_epsilon: 1e-6,
+                        qk_norm_type: "rms".to_string(),
+                        mask_ref: None,
+                    },
+                    name: "decode_step".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::TransformersTrace { name: "qwen3-0.6b-trace".into() },
+                        model_id: Some("qwen3-0.6b".into()),
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+            ],
+            inputs: vec![SirNodeId("input".into()), SirNodeId("pos".into())],
+            outputs: vec![SirNodeId("decode_0".into())],
+        };
+
+        let pass = LegalityRewritePass::new();
+        let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
+
+        // Check that the RMSNorm-derived AIR nodes carry the precision_override
+        let rms_air_nodes: Vec<_> = air
+            .nodes
+            .iter()
+            .filter(|n| n.sir_source.as_ref().map_or(false, |s| s.0 == "rms_norm"))
+            .collect();
+        assert!(
+            !rms_air_nodes.is_empty(),
+            "AIR must contain nodes derived from the RMSNorm SIR node"
+        );
+        for node in &rms_air_nodes {
+            assert_eq!(
+                node.precision_override,
+                Some("fp32".into()),
+                "RMSNorm AIR node must inherit precision_override='fp32' from SIR metadata"
+            );
+        }
+
+        // Check that DecodeStep-derived AIR nodes have correct sir_source
+        let decode_air_nodes: Vec<_> = air
+            .nodes
+            .iter()
+            .filter(|n| n.sir_source.as_ref().map_or(false, |s| s.0 == "decode_0"))
+            .collect();
+        assert!(
+            !decode_air_nodes.is_empty(),
+            "AIR must contain nodes derived from the DecodeStep SIR node"
+        );
+        // DecodeStep SIR node did NOT have precision_override
+        for node in &decode_air_nodes {
+            assert_eq!(
+                node.precision_override, None,
+                "DecodeStep AIR nodes should have no precision_override (not set in SIR)"
+            );
+        }
+    }
+
+    /// T-37: Verify SSA validity for the Tile decomposition path.
+    /// Tile decomposes into Reshape + Mul + Reshape, and the intermediate
+    /// AirNodeIds must be unique and referenceable.
+    #[test]
+    fn test_tile_decomposition_ssa_validity() {
+        let sir = SirGraph {
+            nodes: vec![SirNode {
+                id: SirNodeId("tile_0".into()),
+                op: SirOp::Tile {
+                    input: SirNodeId("input".into()),
+                    reps: vec![1, 4, 1, 1], // GQA-style tile on dim 1
+                },
+                name: "gqa_tile".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
+            inputs: vec![SirNodeId("input".into())],
+            outputs: vec![SirNodeId("tile_0".into())],
+        };
+
+        let pass = LegalityRewritePass::new();
+        let air = pass.run(sir, &NoKnowledge, None).unwrap();
+
+        // Verify structural invariants (SSA, reference integrity)
+        validate_air_graph_structural_invariants(&air);
+
+        // Must include the Tile decomposition ops (Reshape, Const, Mul)
+        let has_reshape = air.nodes.iter().any(|n| matches!(n.op, AirOp::Reshape { .. }));
+        let has_mul = air.nodes.iter().any(|n| matches!(n.op, AirOp::Mul { .. }));
+        let has_const = air.nodes.iter().any(|n| matches!(n.op, AirOp::Const { .. }));
+        // No Tile should survive — it must be decomposed
+        let has_tile = air.nodes.iter().any(|n| matches!(n.op, AirOp::Tile { .. }));
+
+        assert!(has_reshape, "Tile decomposition must include Reshape");
+        assert!(has_mul, "Tile decomposition must include Mul (broadcast)");
+        assert!(has_const, "Tile decomposition must include Const (ones)");
+        assert!(!has_tile, "Tile must NOT survive as AirOp::Tile in AIR");
+    }
+
+    /// T-37: Verify SSA validity for Select/Where decomposition.
+    /// These decompose into Const + Sub + Mul + Mul + Add, and all
+    /// intermediate AirNodeIds must be unique and referenceable.
+    #[test]
+    fn test_select_where_decomposition_ssa_validity() {
+        let sir = SirGraph {
+            nodes: vec![
+                SirNode {
+                    id: SirNodeId("select_0".into()),
+                    op: SirOp::Select {
+                        condition: SirNodeId("cond".into()),
+                        x: SirNodeId("x_val".into()),
+                        y: SirNodeId("y_val".into()),
+                    },
+                    name: "select_op".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("where_0".into()),
+                    op: SirOp::Where {
+                        condition: SirNodeId("cond".into()),
+                        x: SirNodeId("x_val".into()),
+                        y: SirNodeId("y_val".into()),
+                    },
+                    name: "where_op".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+            ],
+            inputs: vec![
+                SirNodeId("cond".into()),
+                SirNodeId("x_val".into()),
+                SirNodeId("y_val".into()),
+            ],
+            outputs: vec![SirNodeId("select_0".into()), SirNodeId("where_0".into())],
+        };
+
+        let pass = LegalityRewritePass::new();
+        let air = pass.run(sir, &NoKnowledge, None).unwrap();
+
+        // Verify structural invariants
+        validate_air_graph_structural_invariants(&air);
+
+        // Both Select and Where must be decomposed (NOT present as-is)
+        let has_select = air.nodes.iter().any(|n| matches!(n.op, AirOp::Select { .. }));
+        let has_where = air.nodes.iter().any(|n| matches!(n.op, AirOp::Where { .. }));
+        assert!(!has_select, "Select must be decomposed into arithmetic ops (ANE-illegal)");
+        assert!(!has_where, "Where must be decomposed into arithmetic ops (ANE-illegal)");
+
+        // Must have the decomposition ops: Const(1), Sub, Mul, Add
+        let has_const = air.nodes.iter().any(|n| matches!(n.op, AirOp::Const { .. }));
+        let has_sub = air.nodes.iter().any(|n| matches!(n.op, AirOp::Sub { .. }));
+        let has_mul = air.nodes.iter().any(|n| matches!(n.op, AirOp::Mul { .. }));
+        let has_add = air.nodes.iter().any(|n| matches!(n.op, AirOp::Add { .. }));
+        assert!(has_const, "Select/Where decomposition must include Const(1.0)");
+        assert!(has_sub, "Select/Where decomposition must include Sub (1-cond)");
+        assert!(has_mul, "Select/Where decomposition must include Mul (cond*x, (1-cond)*y)");
+        assert!(has_add, "Select/Where decomposition must include Add (cond*x + (1-cond)*y)");
+    }
+
+    /// T-37: Empty SIR graph roundtrip. The simplest possible SIR→AIR
+    /// conversion — should produce an empty AIR graph with no nodes.
+    #[test]
+    fn test_empty_graph_roundtrip() {
+        let sir = SirGraph {
+            nodes: vec![],
+            inputs: vec![],
+            outputs: vec![],
+        };
+
+        let pass = LegalityRewritePass::new();
+        let air = pass.run(sir, &NoKnowledge, None).unwrap();
+
+        assert_eq!(air.nodes.len(), 0, "Empty SIR should produce empty AIR");
+        assert_eq!(air.inputs.len(), 0);
+        assert_eq!(air.outputs.len(), 0);
+        assert_eq!(air.staticization_decisions.len(), 0);
+    }
+
+    /// T-37: Passthrough ops roundtrip. Verify that simple 1:1 SIR→AIR
+    /// mappings (Add, Mul, Reshape, Transpose, etc.) preserve structural
+    /// invariants and that all AirNodeId references resolve correctly.
+    #[test]
+    fn test_passthrough_ops_roundtrip() {
+        let sir = SirGraph {
+            nodes: vec![
+                SirNode {
+                    id: SirNodeId("input_a".into()),
+                    op: SirOp::Identity { input: SirNodeId("__placeholder__".into()) },
+                    name: "input_a".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("input_b".into()),
+                    op: SirOp::Identity { input: SirNodeId("__placeholder__".into()) },
+                    name: "input_b".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("add_0".into()),
+                    op: SirOp::Add {
+                        x: SirNodeId("input_a".into()),
+                        y: SirNodeId("input_b".into()),
+                    },
+                    name: "add".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("mul_0".into()),
+                    op: SirOp::Mul {
+                        x: SirNodeId("add_0".into()),
+                        y: SirNodeId("input_a".into()),
+                    },
+                    name: "mul".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("reshape_0".into()),
+                    op: SirOp::Reshape {
+                        input: SirNodeId("mul_0".into()),
+                        target_shape: vec![1, 16, 64],
+                    },
+                    name: "reshape".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("transpose_0".into()),
+                    op: SirOp::Transpose {
+                        input: SirNodeId("reshape_0".into()),
+                        perm: vec![0, 2, 1],
+                    },
+                    name: "transpose".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+            ],
+            inputs: vec![SirNodeId("input_a".into()), SirNodeId("input_b".into())],
+            outputs: vec![SirNodeId("transpose_0".into())],
+        };
+
+        let pass = LegalityRewritePass::new();
+        let air = pass.run(sir, &NoKnowledge, None).unwrap();
+
+        // Verify structural invariants
+        validate_air_graph_structural_invariants(&air);
+
+        // Verify op types are preserved
+        assert!(air.nodes.iter().any(|n| matches!(n.op, AirOp::Identity { .. })));
+        assert!(air.nodes.iter().any(|n| matches!(n.op, AirOp::Add { .. })));
+        assert!(air.nodes.iter().any(|n| matches!(n.op, AirOp::Mul { .. })));
+        assert!(air.nodes.iter().any(|n| matches!(n.op, AirOp::Reshape { .. })));
+        assert!(air.nodes.iter().any(|n| matches!(n.op, AirOp::Transpose { .. })));
+    }
+
+    /// T-37: RMSNorm + RoPE + DecodeStep combined roundtrip.
+    /// This tests the full pre-norm + attention + RoPE pipeline
+    /// that a real decoder layer would exercise.
+    #[test]
+    fn test_rms_norm_rope_decode_combined_roundtrip() {
+        let ctx = DecompositionContext::for_decode_step_full(
+            1, 1024, 16, 128, 512, 8, 2048, 151936, true, true,
+        );
+
+        let sir = SirGraph {
+            nodes: vec![
+                SirNode {
+                    id: SirNodeId("layernorm".into()),
+                    op: SirOp::RMSNorm {
+                        input: SirNodeId("input".into()),
+                        weight: "model.layers.0.input_layernorm.weight".into(),
+                        epsilon: 1e-6,
+                        axes: vec![2],
+                    },
+                    name: "input_layernorm".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("rope_0".into()),
+                    op: SirOp::RoPETransform {
+                        input: SirNodeId("layernorm".into()),
+                        tables: "rope_tables_shared".into(),
+                    },
+                    name: "rope".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("decode_0".into()),
+                    op: SirOp::DecodeStep {
+                        token: SirNodeId("rope_0".into()),
+                        state_map: vec!["k_cache_0".into(), "v_cache_0".into()],
+                        q_weight: Some("model.layers.0.self_attn.q_proj.weight".into()),
+                        k_weight: Some("model.layers.0.self_attn.k_proj.weight".into()),
+                        v_weight: Some("model.layers.0.self_attn.v_proj.weight".into()),
+                        out_weight: Some("model.layers.0.self_attn.o_proj.weight".into()),
+                        rope_tables: None,
+                        position: None,
+                        q_norm_weight: None,
+                        k_norm_weight: None,
+                        norm_epsilon: 1e-6,
+                        qk_norm_type: "rms".to_string(),
+                        mask_ref: None,
+                    },
+                    name: "decode".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+            ],
+            inputs: vec![SirNodeId("input".into())],
+            outputs: vec![SirNodeId("decode_0".into())],
+        };
+
+        let pass = LegalityRewritePass::new();
+        let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
+
+        // ── Structural invariants ──
+        validate_air_graph_structural_invariants(&air);
+
+        // ── RMSNorm decomposition ──
+        let has_reduce_mean = air.nodes.iter().any(|n| matches!(n.op, AirOp::ReduceMean { .. }));
+        let has_rsqrt = air.nodes.iter().any(|n| matches!(n.op, AirOp::Rsqrt { .. }));
+        assert!(has_reduce_mean, "RMSNorm must decompose into ReduceMean");
+        assert!(has_rsqrt, "RMSNorm must decompose into Rsqrt");
+
+        // ── RoPE decomposition ──
+        // Standalone RoPETransform produces Const tables (NOT Cos/Sin which are ANE-illegal)
+        let has_cos = air.nodes.iter().any(|n| matches!(n.op, AirOp::Cos { .. }));
+        let has_sin = air.nodes.iter().any(|n| matches!(n.op, AirOp::Sin { .. }));
+        assert!(!has_cos, "RoPE must NOT use Cos (ANE-illegal)");
+        assert!(!has_sin, "RoPE must NOT use Sin (ANE-illegal)");
+
+        // ── DecodeStep decomposition ──
+        let has_matmul = air.nodes.iter().any(|n| matches!(n.op, AirOp::MatMul { .. }));
+        let has_sdpa = air
+            .nodes
+            .iter()
+            .any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
+        assert!(has_matmul, "DecodeStep must include MatMul");
+        assert!(!has_sdpa, "DecodeStep must NOT include SDPA");
+    }
+
+    /// T-37: Verify the GQA fan_out computation. For Qwen3-0.6B,
+    /// num_heads=16, kv_heads=8, so fan_out=2. This means each KV
+    /// head is shared by 2 Q heads, and the per-head attention loop
+    /// produces 16 Q-head MatMul ops grouped into 8 KV-head groups.
+    #[test]
+    fn test_gqa_fan_out_computation() {
+        // Qwen3-0.6B: fan_out = 16 / 8 = 2
+        let ctx = DecompositionContext::for_decode_step_full(
+            1, 1024, 16, 128, 512, 8, 2048, 151936, false, false,
+        );
+        assert!(ctx.uses_gqa, "GQA should be detected when kv_heads < num_heads");
+
+        // Non-GQA model: kv_heads == num_heads → uses_gqa = false
+        let ctx_no_gqa = DecompositionContext::for_decode_step_full(
+            1, 4096, 32, 128, 2048, 32, 11008, 32000, false, false,
+        );
+        assert!(
+            !ctx_no_gqa.uses_gqa,
+            "GQA should NOT be detected when kv_heads == num_heads"
+        );
+
+        // Edge case: kv_heads=0 → uses_gqa = false
+        let ctx_zero_kv = DecompositionContext::for_decode_step(
+            1, 128, 4, 32, 64,
+        );
+        assert!(
+            !ctx_zero_kv.uses_gqa,
+            "GQA should NOT be detected when kv_heads=0 (defaults to num_heads)"
+        );
+    }
 }

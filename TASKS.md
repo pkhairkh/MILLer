@@ -136,13 +136,13 @@
 - **Effort**: M (2 days)
 - **Resolution**: Added `ModelArchConfig` and `ModelArchitecture` to `ane-ir/src/common.rs`, centralizing all model-specific constants that were previously hardcoded. (1) `role_mir.rs`: Replaced hardcoded `vocab_size=32000` and `embed_dim=128` with `arch_config().vocab_size` and `arch_config().embed_dim`; added `with_arch_config()` builder method. (2) `legality_rewrite.rs`: Replaced 4 silent `head_dim=128` fallbacks with strong `[ERROR]`/`[WARN]` diagnostic messages that explicitly flag wrong-scale risk for models with head_dim != 128. (3) `mir_to_compat.rs`: Replaced hardcoded Qwen3 weight name patterns in `build_input_alias_map()` with `ModelArchitecture` pattern methods; added `mir_graph_to_compat_with_arch()` for architecture-aware conversion. (4) `shape_inference.rs`: Replaced hardcoded `vec![1, 512]` fallback with `max_seq_len` parameter; added `compat_input_shape_default()` and `compat_output_shape_default()` convenience wrappers. Default config is Qwen3-0.6B (vocab_size=151936, embed_dim=1024, head_dim=128, max_seq_len=32768). Added 8 new tests for `ModelArchConfig` and `ModelArchitecture`. All 1069 tests pass.
 
-### T-37 · Add SIR→AIR Roundtrip Test
+### T-37 · Add SIR→AIR Roundtrip Test ✅
 
 - **ISSUES ref**: I-16
 - **AUDIT ref**: §V
-- **Severity**: MEDIUM
+- **Severity**: MEDIUM → RESOLVED
 - **Effort**: M (1 day)
-- **Description**: legality_rewrite has no end-to-end test using `DecompositionContext::for_decode_step_full()` with realistic model dimensions.
+- **Resolution**: Added 14 comprehensive SIR→AIR roundtrip tests using `DecompositionContext::for_decode_step_full()` with realistic Qwen3-0.6B dimensions (embed_dim=1024, num_heads=16, head_dim=128, kv_heads=8, intermediate_size=2048, vocab_size=151936). Tests cover: (1) Full DecodeStep roundtrip with RoPE+QK-norm+GQA, verifying Conv1x1AsLinear output_dim for Q/K/O projections (2048/1024/1024), per-head MatMul (NOT SDPA), StateReadFixed/StateWriteFixed for KV cache, SliceByIndex for head extraction, and no Tile/Split ops; (2) AttentionBlock roundtrip with for_attention_full(), verifying GQA reshape shapes (Q=[1,512,16,128], K/V=[1,512,8,128], attn_flat=[1,512,2048]); (3) Multi-layer decode roundtrip verifying shared node deduplication (shared_attn_scale appears exactly once across layers); (4) Full transformer layer roundtrip (LinearProjection→RMSNorm(axes=3)→AttentionBlock→Reshape→Add) verifying 4D reshape shapes for QK-norm; (5) Non-GQA model roundtrip (kv_heads==num_heads, LLaMA-2-like); (6) output_dim_for_weight validation for all Qwen3-0.6B projection types (Q/K/V/O, gate/up/down, lm_head, embed_tokens); (7) Conv1x1AsLinear output_dim consistency check across 7 linear projections; (8) Metadata propagation (TaskOrigin::RealModel, precision_override) through SIR→AIR; (9) Tile decomposition SSA validity; (10) Select/Where decomposition SSA validity; (11) Empty graph roundtrip; (12) Passthrough ops roundtrip; (13) RMSNorm+RoPE+DecodeStep combined roundtrip; (14) GQA fan_out computation. Added `collect_air_op_refs()` and `validate_air_graph_structural_invariants()` helpers for deep structural invariant validation (no duplicate AirNodeIds, reference integrity, output reachability). All 1083 tests pass.
 
 ### T-38 · Implement `ToProto` Trait (Unify MirOp + MirOpCompat)
 
@@ -229,7 +229,7 @@
 | T-34 | I-13 | MEDIUM | S | ✅ |
 | T-35 | I-14 | MEDIUM | M | ✅ |
 | T-36 | I-15 | MEDIUM | M | ✅ |
-| T-37 | I-16 | MEDIUM | M | ⬜ |
+| T-37 | I-16 | MEDIUM | M | ✅ |
 | T-38 | I-17 | MEDIUM | L | ⬜ |
 | T-39 | I-18 | MEDIUM | M | ⬜ |
 | T-40 | I-19 | MEDIUM | S | ⬜ |

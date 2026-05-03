@@ -197,16 +197,16 @@ Hardcoded model-specific values:
 
 ### I-16 · No SIR→AIR Roundtrip Test with Real Shapes
 
-**Status:** ⬜ Open
+**Status:** ✅ FIXED (T-37)
 **Files:** `crates/passes/src/legality_rewrite.rs`
 **AUDIT ref:** §V
-**Severity:** MEDIUM
+**Severity:** MEDIUM → RESOLVED
 **Effort:** M (1 day)
 **Task:** T-37
 
 19 unit tests cover individual decompositions but there's no end-to-end test using `DecompositionContext::for_decode_step_full()` with realistic Qwen3-0.6B dimensions.
 
-**Fix:** Add SIR→AIR roundtrip test with full DecompositionContext.
+**Fix:** Added 14 comprehensive SIR→AIR roundtrip tests using `for_decode_step_full()` and `for_attention_full()` with realistic Qwen3-0.6B dimensions. Added `collect_air_op_refs()` and `validate_air_graph_structural_invariants()` helpers for deep structural invariant validation (no duplicate AirNodeIds, reference integrity, output reachability).
 
 ---
 
@@ -309,8 +309,8 @@ The following issues from the previous tracker have been resolved and archived t
 |----------|-------|------|-------------|-------|
 | P0 | 3 | 0 | 0 | 3 |
 | P1 | 8 | 0 | 0 | 8 |
-| P2 | 8 | 4 | 0 | 4 |
+| P2 | 8 | 3 | 0 | 5 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **5** | **0** | **15** |
+| **Total** | **20** | **4** | **0** | **16** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issues I-12, I-13, I-14, I-15 resolved by T-33, T-34, T-35, T-36.*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issues I-12, I-13, I-14, I-15, I-16 resolved by T-33, T-34, T-35, T-36, T-37.*

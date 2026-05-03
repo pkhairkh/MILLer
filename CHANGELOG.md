@@ -2,6 +2,13 @@
 
 ## 2026-05-04
 
+### T-37 · Add SIR→AIR Roundtrip Test ✅
+- **ISSUES ref**: I-16
+- **AUDIT ref**: §V
+- **Severity**: MEDIUM → RESOLVED
+- **Effort**: M (1 day)
+- **Resolution**: Added 14 comprehensive SIR→AIR roundtrip tests using `DecompositionContext::for_decode_step_full()` with realistic Qwen3-0.6B dimensions (embed_dim=1024, num_heads=16, head_dim=128, kv_heads=8, intermediate_size=2048, vocab_size=151936). Tests cover: (1) Full DecodeStep roundtrip with RoPE+QK-norm+GQA, verifying Conv1x1AsLinear output_dim for Q/K/O projections (2048/1024/1024), per-head MatMul (NOT SDPA), StateReadFixed/StateWriteFixed for KV cache, SliceByIndex for head extraction, and no Tile/Split ops; (2) AttentionBlock roundtrip with for_attention_full(), verifying GQA reshape shapes (Q=[1,512,16,128], K/V=[1,512,8,128], attn_flat=[1,512,2048]); (3) Multi-layer decode roundtrip verifying shared node deduplication (shared_attn_scale appears exactly once across layers); (4) Full transformer layer roundtrip (LinearProjection→RMSNorm(axes=3)→AttentionBlock→Reshape→Add) verifying 4D reshape shapes for QK-norm; (5) Non-GQA model roundtrip (kv_heads==num_heads, LLaMA-2-like); (6) output_dim_for_weight validation for all Qwen3-0.6B projection types; (7) Conv1x1AsLinear output_dim consistency check across 7 linear projections; (8) Metadata propagation (TaskOrigin::RealModel, precision_override) through SIR→AIR; (9) Tile decomposition SSA validity; (10) Select/Where decomposition SSA validity; (11) Empty graph roundtrip; (12) Passthrough ops roundtrip; (13) RMSNorm+RoPE+DecodeStep combined roundtrip; (14) GQA fan_out computation. Added `collect_air_op_refs()` and `validate_air_graph_structural_invariants()` helpers for deep structural invariant validation (no duplicate AirNodeIds, reference integrity, output reachability). All 1083 tests pass.
+
 ### T-36 · Parameterize Model-Specific Constants ✅
 - **ISSUES ref**: I-15
 - **AUDIT ref**: §III (CQ-16, CQ-17, CQ-18, CQ-19)
