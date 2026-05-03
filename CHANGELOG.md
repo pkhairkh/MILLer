@@ -1,5 +1,14 @@
 # CHANGELOG.md — MILLer Compiler
 
+## 2026-05-04
+
+### T-36 · Parameterize Model-Specific Constants ✅
+- **ISSUES ref**: I-15
+- **AUDIT ref**: §III (CQ-16, CQ-17, CQ-18, CQ-19)
+- **Severity**: MEDIUM → RESOLVED
+- **Effort**: M (2 days)
+- **Resolution**: Added `ModelArchConfig` and `ModelArchitecture` to `ane-ir/src/common.rs`, centralizing all model-specific constants that were previously hardcoded throughout the codebase. (1) `role_mir.rs`: Replaced hardcoded `vocab_size=32000` and `embed_dim=128` with `arch_config().vocab_size` and `arch_config().embed_dim`; added `with_arch_config()` builder method to `RoleMirBuilder`. (2) `legality_rewrite.rs`: Replaced 4 silent `head_dim=128` fallbacks in `decompose_attention`, `decompose_decode_step`, `apply_rope_decode`, and RoPE decompose with strong `[ERROR]`/`[WARN]` diagnostic messages that explicitly flag wrong-scale risk for models with head_dim != 128. (3) `mir_to_compat.rs`: Replaced hardcoded Qwen3 weight name patterns in `build_input_alias_map()` with `ModelArchitecture` pattern methods (`q_proj_pattern()`, `k_proj_pattern()`, etc.); added `mir_graph_to_compat_with_arch()` for architecture-aware MIR-to-compat conversion. (4) `shape_inference.rs`: Replaced hardcoded `vec![1, 512]` fallback with `max_seq_len` parameter in `compat_input_shape()` and `compat_output_shape()`; added `compat_input_shape_default()` and `compat_output_shape_default()` convenience wrappers using Qwen3-0.6B defaults. Default config is Qwen3-0.6B (vocab_size=151936, embed_dim=1024, head_dim=128, kv_heads=8, intermediate_size=2048, max_seq_len=32768). Added `from_model_config()` factory for CLI integration. Added 8 new tests for `ModelArchConfig` and `ModelArchitecture`. All 1069 tests pass.
+
 ## Pre-Audit Resolved Tasks (Archived from TASKS.md)
 
 These tasks (T-01 through T-21) were completed before the TABULA RASA audit on 2026-05-03.

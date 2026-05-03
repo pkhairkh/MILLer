@@ -1071,9 +1071,17 @@ impl LegalityRewritePass {
         let v_split_id = v_t_id.clone();
 
         // Scale constant: 1/√d_k
+        // T-36 (I-15/CQ-17): Warn on missing head_dim instead of silently
+        // falling back to 128, which produces wrong attention scale for
+        // models with head_dim != 128.
         let scale_val = if head_dim > 0 {
             1.0 / (head_dim as f32).sqrt()
         } else {
+            eprintln!(
+                "[ERROR] decompose_attention: head_dim is 0 — cannot compute correct attention scale. \
+                 Using default 1/√128 which will be WRONG for models with head_dim != 128. \
+                 Provide DecompositionContext with correct head_dim."
+            );
             1.0 / (128.0_f32).sqrt()
         };
         // Shared scale constant: 1/√d_k
@@ -1870,10 +1878,18 @@ impl LegalityRewritePass {
 
         // Attention scale factor: 1/√d_k
         // Used per-head as a scalar constant multiplied with logits.
+        // T-36 (I-15/CQ-17): Warn on missing head_dim instead of silently
+        // falling back to 128, which produces wrong attention scale for
+        // models with head_dim != 128.
         let scale_val = if head_dim > 0 {
             1.0 / (head_dim as f32).sqrt()
         } else {
-            1.0 / (128.0_f32).sqrt() // default fallback
+            eprintln!(
+                "[ERROR] decompose_decode_step: head_dim is 0 — cannot compute correct attention scale. \
+                 Using default 1/√128 which will be WRONG for models with head_dim != 128. \
+                 Provide DecompositionContext with correct head_dim."
+            );
+            1.0 / (128.0_f32).sqrt()
         };
 
         // NOTE: We intentionally do NOT emit mb.split here. Core ML's split op
@@ -2322,7 +2338,16 @@ impl LegalityRewritePass {
     ) -> (AirNodeId, Option<AirNodeId>, Option<AirNodeId>, AirNodeId, Option<AirNodeId>, Option<AirNodeId>) {
         let head_dim = ctx.map(|c| c.head_dim).unwrap_or(0);
         let head_dim = if head_dim > 0 { head_dim } else {
-            eprintln!("[WARN] apply_rope_decode without head_dim — using default 128");
+            // T-36 (I-15/CQ-17): Previously fell back to 128 silently, which
+            // produces wrong RoPE slicing for models with head_dim != 128.
+            // Now we return a default value with a strong warning; the caller
+            // (decompose_rope_transform) will error if head_dim is still 0
+            // after attempting to derive it from the graph.
+            eprintln!(
+                "[WARN] apply_rope_decode: head_dim=0 from DecompositionContext — \
+                 using default 128. This will be wrong for models with head_dim != 128. \
+                 Provide DecompositionContext with correct head_dim."
+            );
             128
         };
         let _kv_len = ctx.map(|c| c.seq_len as i64).unwrap_or(0);
@@ -3225,13 +3250,15 @@ impl LegalityRewritePass {
         let mut nodes = Vec::new();
 
         // Determine head_dim from context (needed for rotate_half slicing).
-        // When context is unavailable, default to a reasonable value.
-        // This should ideally always be provided via DecompositionContext.
+        // T-36 (I-15/CQ-17): Previously fell back to 128 silently, which
+        // produces wrong RoPE slicing for models with head_dim != 128.
+        // Now uses a strong warning; the caller should provide DecompositionContext.
         let head_dim = ctx.map(|c| c.head_dim).unwrap_or(0);
         if head_dim == 0 {
             eprintln!(
                 "[WARN] RoPE decompose without head_dim in context — \
-                 using default 128. Provide DecompositionContext for correctness."
+                 using default 128. This will be WRONG for models with head_dim != 128. \
+                 Provide DecompositionContext for correctness."
             );
         }
         let head_dim = if head_dim > 0 { head_dim } else { 128 };

@@ -16,6 +16,7 @@
 //! the same role but different op profiles produce genuinely different
 //! MIR graphs, not just different-dimension clones of the same ops.
 
+use ane_ir::common::ModelArchConfig;
 use ane_ir::mir::{ComputeUnitHint, MilDtype, MirGraph, MirNode, MirNodeId, MirOp};
 use ane_ir::pir::{ActivationType, ShardOpProfile, ShardSpec};
 use anyhow::Result;
@@ -42,6 +43,11 @@ pub struct RoleMirBuilder {
     /// compute hint from the shard spec, so this is only used as a
     /// default by the `with_compute_hint()` builder method.
     default_compute_hint: ComputeUnitHint,
+    /// Model architecture configuration for model-specific constants
+    /// (vocab_size, embed_dim, head_dim, max_seq_len, architecture).
+    /// When `None`, falls back to `ModelArchConfig::default()` (Qwen3-0.6B).
+    /// T-36 (I-15): replaces hardcoded vocab_size=32000, embed_dim=128.
+    arch_config: Option<ModelArchConfig>,
 }
 
 impl Default for RoleMirBuilder {
@@ -51,9 +57,14 @@ impl Default for RoleMirBuilder {
 }
 
 impl RoleMirBuilder {
-    /// Create a new builder with fp16 dtype and CPU+NE compute hint.
+    /// Create a new builder with fp16 dtype, CPU+NE compute hint,
+    /// and no model architecture config (uses default Qwen3-0.6B values).
     pub fn new() -> Self {
-        Self { default_dtype: MilDtype::Fp16, default_compute_hint: ComputeUnitHint::CPUAndNE }
+        Self {
+            default_dtype: MilDtype::Fp16,
+            default_compute_hint: ComputeUnitHint::CPUAndNE,
+            arch_config: None,
+        }
     }
 
     /// Create a builder with a custom dtype.
@@ -71,6 +82,26 @@ impl RoleMirBuilder {
     pub fn with_compute_hint(mut self, hint: ComputeUnitHint) -> Self {
         self.default_compute_hint = hint;
         self
+    }
+
+    /// Create a builder with a model architecture configuration.
+    ///
+    /// T-36 (I-15): The config provides model-specific constants
+    /// (vocab_size, embed_dim, head_dim, max_seq_len, architecture)
+    /// that were previously hardcoded. Without this, the builder
+    /// uses Qwen3-0.6B defaults.
+    pub fn with_arch_config(mut self, config: ModelArchConfig) -> Self {
+        self.arch_config = Some(config);
+        self
+    }
+
+    /// Returns the effective model architecture config, falling back
+    /// to the default (Qwen3-0.6B) when none was provided.
+    fn arch_config(&self) -> &ModelArchConfig {
+        self.arch_config.as_ref().unwrap_or_else(|| {
+            static DEFAULT: std::sync::OnceLock<ModelArchConfig> = std::sync::OnceLock::new();
+            DEFAULT.get_or_init(ModelArchConfig::default)
+        })
     }
 
     /// Build a MIR graph from a shard specification.
@@ -544,8 +575,8 @@ impl RoleMirBuilder {
                 let embed_dim = spec
                     .input_specs
                     .first()
-                    .map(|s| s.shape.get(1).copied().unwrap_or(128))
-                    .unwrap_or(128);
+                    .map(|s| s.shape.get(1).copied().unwrap_or_else(|| self.arch_config().embed_dim))
+                    .unwrap_or_else(|| self.arch_config().embed_dim);
 
                 nodes.push(MirNode {
                     id: weight_id.clone(),
@@ -634,12 +665,13 @@ impl RoleMirBuilder {
                         .map(|s| {
                             // Embedding weight shape = [vocab_size, embed_dim].
                             // Derive from output spec: if output is [batch, embed_dim],
-                            // the weight shape is [vocab_size, embed_dim]. Use a large
-                            // default vocab_size (32000) when input spec is unavailable.
-                            let embed_dim = s.shape.get(1).copied().unwrap_or(128);
-                            vec![32000, embed_dim]
+                            // the weight shape is [vocab_size, embed_dim].
+                            // T-36 (I-15): Use arch_config.vocab_size and arch_config.embed_dim
+                            // instead of hardcoded 32000 and 128.
+                            let embed_dim = s.shape.get(1).copied().unwrap_or_else(|| self.arch_config().embed_dim);
+                            vec![self.arch_config().vocab_size, embed_dim]
                         })
-                        .unwrap_or_else(|| vec![32000, 128]),
+                        .unwrap_or_else(|| vec![self.arch_config().vocab_size, self.arch_config().embed_dim]),
                     compute_unit_hint: Some(compute_hint.clone()), // IO compute hint from spec
                     air_source: None,
                 });

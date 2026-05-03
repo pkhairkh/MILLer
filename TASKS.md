@@ -128,13 +128,13 @@
 - **Effort**: M (1 day)
 - **Resolution**: Added 5 new dtype variants to `MilDtype` (Int4, UInt4, E4M3, E5M2, UInt16) and 5 corresponding variants to `MilDtypeCompat`. Updated all 18 exhaustive match sites across 8 crates. Added `AneFamily::supports_e4m3()` method (true only on A18). Enforced ANE constraints in `dtype_constraints.rs`: (1) Int4/UInt4 legal but require interleave=8 (`validate_int4_interleave`, `validate_uint4_interleave`, `dtype_requires_interleave_8`); (2) E4M3 version-gated — rejected on A11-A16, allowed on A18; (3) E5M2 rejected on all families ("E4M3 or E5M2 format not supported"); (4) UInt16 legal on all families; (5) Updated quantization constraints — output can be Int8/UInt8/E4M3/E5M2 per ANE canon; (6) Updated dequantization constraints — input can be Int8/UInt8/Int4/E4M3, but Int4 per-cout dequant rejected; (7) Added `is_int4_per_cout_dequant_supported()`, `is_e4m3_zero_point_supported()`, `DequantScaleType` enum. Updated `CoreMlDataType` with 5 new variants and proper proto value mappings. Updated `BlobDataType` with UInt16=7, Int4=8, UInt4=11, Float8E4M3FN=16, Float8E5M2=17. Updated Cast op dtype strings. Updated `parse_dtype` in sir_build.rs with all new string formats. Updated string→MilDtype matches in shard_desc.rs, linear_slice.rs, mil_lower.rs. 25 new tests covering all constraint paths. All 1061 tests pass.
 
-### T-36 · Parameterize Model-Specific Constants
+### T-36 · Parameterize Model-Specific Constants ✅
 
 - **ISSUES ref**: I-15
 - **AUDIT ref**: §III (CQ-16, CQ-17, CQ-18, CQ-19)
-- **Severity**: MEDIUM
+- **Severity**: MEDIUM → RESOLVED
 - **Effort**: M (2 days)
-- **Description**: Remove hardcoded vocab_size=32000, head_dim=128, input shape [1,512], Qwen3 weight patterns. Read from TaskSpec/ModelConfig.
+- **Resolution**: Added `ModelArchConfig` and `ModelArchitecture` to `ane-ir/src/common.rs`, centralizing all model-specific constants that were previously hardcoded. (1) `role_mir.rs`: Replaced hardcoded `vocab_size=32000` and `embed_dim=128` with `arch_config().vocab_size` and `arch_config().embed_dim`; added `with_arch_config()` builder method. (2) `legality_rewrite.rs`: Replaced 4 silent `head_dim=128` fallbacks with strong `[ERROR]`/`[WARN]` diagnostic messages that explicitly flag wrong-scale risk for models with head_dim != 128. (3) `mir_to_compat.rs`: Replaced hardcoded Qwen3 weight name patterns in `build_input_alias_map()` with `ModelArchitecture` pattern methods; added `mir_graph_to_compat_with_arch()` for architecture-aware conversion. (4) `shape_inference.rs`: Replaced hardcoded `vec![1, 512]` fallback with `max_seq_len` parameter; added `compat_input_shape_default()` and `compat_output_shape_default()` convenience wrappers. Default config is Qwen3-0.6B (vocab_size=151936, embed_dim=1024, head_dim=128, max_seq_len=32768). Added 8 new tests for `ModelArchConfig` and `ModelArchitecture`. All 1069 tests pass.
 
 ### T-37 · Add SIR→AIR Roundtrip Test
 
@@ -228,7 +228,7 @@
 | T-33 | I-12 | MEDIUM | M | ✅ |
 | T-34 | I-13 | MEDIUM | S | ✅ |
 | T-35 | I-14 | MEDIUM | M | ✅ |
-| T-36 | I-15 | MEDIUM | M | ⬜ |
+| T-36 | I-15 | MEDIUM | M | ✅ |
 | T-37 | I-16 | MEDIUM | M | ⬜ |
 | T-38 | I-17 | MEDIUM | L | ⬜ |
 | T-39 | I-18 | MEDIUM | M | ⬜ |

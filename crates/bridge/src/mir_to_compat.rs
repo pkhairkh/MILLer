@@ -120,7 +120,28 @@ pub fn mir_graph_to_compat(
     graph: &MirGraph,
     resolver: &dyn WeightResolver,
 ) -> Result<MirGraphCompat> {
-    let alias_map = build_input_alias_map(graph);
+    mir_graph_to_compat_with_arch(graph, resolver, None, None)
+}
+
+/// Convert a MIR graph to compat representation with architecture-specific
+/// weight name patterns.
+///
+/// T-36 (I-15/CQ-18): The `architecture` parameter allows the caller to
+/// specify the model architecture for weight-name pattern resolution in
+/// [`build_input_alias_map`]. When `None`, defaults to Qwen3 patterns
+/// (backward-compatible behavior).
+///
+/// T-36 (I-15/CQ-19): The `max_seq_len` parameter replaces the hardcoded
+/// `512` fallback in shape inference. When `None`, defaults to 32768
+/// (Qwen3-0.6B max_position_embeddings).
+pub fn mir_graph_to_compat_with_arch(
+    graph: &MirGraph,
+    resolver: &dyn WeightResolver,
+    architecture: Option<&ane_ir::common::ModelArchitecture>,
+    max_seq_len: Option<usize>,
+) -> Result<MirGraphCompat> {
+    let alias_map = build_input_alias_map(graph, architecture);
+    let max_seq_len = max_seq_len.unwrap_or(32768);
 
     // Build a shape map from MirNode.id → MirNode.shape so that reshape ops
     // can resolve zero-placeholder dimensions by looking up their input node's
@@ -245,7 +266,7 @@ pub fn mir_graph_to_compat(
             match node_map.get(id.0.as_str()) {
                 Some(node) => TensorDescCompat {
                     name: node.id.0.clone(),
-                    shape: compat_input_shape(&node.id.0, &node.shape),
+                    shape: compat_input_shape(&node.id.0, &node.shape, max_seq_len),
                     dtype: compat_input_dtype(&node.id.0, &node.dtype),
                 },
                 None => {
@@ -299,7 +320,7 @@ pub fn mir_graph_to_compat(
     // Seed with graph input shapes
     for id in &graph.inputs {
         if let Some(node) = node_map.get(id.0.as_str()) {
-            let shape = compat_input_shape(&node.id.0, &node.shape);
+            let shape = compat_input_shape(&node.id.0, &node.shape, max_seq_len);
             if !shape.is_empty() {
                 node_shapes.insert(node.id.0.clone(), shape);
             }
@@ -350,7 +371,7 @@ pub fn mir_graph_to_compat(
             continue;
         }
         // Fall back to the static compat_output_shape for this op
-        let shape = compat_output_shape(&node.id.0, &node.op, &node.shape, &node_shapes);
+        let shape = compat_output_shape(&node.id.0, &node.op, &node.shape, &node_shapes, max_seq_len);
         if !shape.is_empty() {
             node_shapes.insert(node.id.0.clone(), shape);
         }
@@ -368,7 +389,7 @@ pub fn mir_graph_to_compat(
                     shape: node_shapes
                         .get(&node.id.0)
                         .cloned()
-                        .unwrap_or_else(|| compat_output_shape(&node.id.0, &node.op, &node.shape, &node_shapes)),
+                        .unwrap_or_else(|| compat_output_shape(&node.id.0, &node.op, &node.shape, &node_shapes, max_seq_len)),
                     dtype: mil_dtype_to_compat(&node.dtype),
                 },
                 None => {
@@ -511,24 +532,32 @@ fn compat_input_names(op: &MirOpCompat) -> Vec<String> {
 
 /// Build a map of SIR alias names to their resolved MIR node IDs.
 ///
-/// **Qwen3-specific**: This function hardcodes aliases that match the Qwen3
-/// transformer architecture (e.g., `.self_attn.q_proj.weight`,
-/// `.mlp.up_proj.weight`, `"mlp_silu"`, `"attn_qk"`). When adding support
-/// for other model architectures, this function should be generalized —
-/// either by accepting a model-configuration callback/struct, or by moving
-/// the alias rules into a per-model configuration section.
+/// T-36 (I-15/CQ-18): Previously hardcoded Qwen3-specific weight name
+/// patterns. Now uses `ModelArchitecture` for architecture-aware pattern
+/// resolution. When `architecture` is `None`, defaults to Qwen3 patterns
+/// for backward compatibility.
 ///
 /// The alias map is used by [`remap_compat_inputs`] to redirect SIR-level
 /// input references (which use synthetic names from the SIR decomposition)
 /// to the actual MIR node IDs that produce those values.
-fn build_input_alias_map(graph: &MirGraph) -> std::collections::HashMap<String, String> {
+fn build_input_alias_map(
+    graph: &MirGraph,
+    architecture: Option<&ane_ir::common::ModelArchitecture>,
+) -> std::collections::HashMap<String, String> {
+    // Default to Qwen3 patterns when no architecture is specified.
+    let arch = architecture.cloned().unwrap_or(ane_ir::common::ModelArchitecture::Qwen3);
+    let q_proj = arch.q_proj_pattern();
+    let _k_proj = arch.k_proj_pattern();
+    let _v_proj = arch.v_proj_pattern();
+    let up_proj = arch.up_proj_pattern();
+
     let mut aliases = std::collections::HashMap::new();
     aliases
         .insert("embed_weight_embed_tokens".to_string(), "model.embed_tokens.weight".to_string());
 
     for node in &graph.nodes {
         match &node.op {
-            MirOp::MILLinear { weight, .. } if weight.contains(".self_attn.q_proj.weight") => {
+            MirOp::MILLinear { weight, .. } if weight.contains(q_proj) => {
                 if let Some(layer) = layer_index_from_weight(weight) {
                     aliases.insert(
                         format!("sir_qkv_split_q_layer_{layer}_self_attn"),
@@ -544,7 +573,7 @@ fn build_input_alias_map(graph: &MirGraph) -> std::collections::HashMap<String, 
                     );
                 }
             }
-            MirOp::MILLinear { weight, .. } if weight.contains(".mlp.up_proj.weight") => {
+            MirOp::MILLinear { weight, .. } if weight.contains(up_proj) => {
                 if let Some(layer) = layer_index_from_weight(weight) {
                     aliases.insert(format!("sir_up_proj_layer_{layer}_mlp"), node.id.0.clone());
                 }

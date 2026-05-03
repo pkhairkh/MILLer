@@ -178,10 +178,10 @@ The `MilDtype` enum only has: Fp16, Fp32, Int32, UInt8, Bool, Fp64, Int8, Int16.
 
 ### I-15 · Model-Specific Constants in Compilation Logic
 
-**Status:** ⬜ Open
-**Files:** `crates/passes/src/role_mir.rs:640-642,1103`, `crates/passes/src/legality_rewrite.rs:1077,1876,2325`, `crates/bridge/src/mir_to_compat.rs:510`, `crates/bridge/src/shape_inference.rs:54-58`
+**Status:** ✅ FIXED (T-36)
+**Files:** `crates/ir/src/common.rs`, `crates/passes/src/role_mir.rs`, `crates/passes/src/legality_rewrite.rs`, `crates/bridge/src/mir_to_compat.rs`, `crates/bridge/src/shape_inference.rs`
 **AUDIT ref:** §III (CQ-16, CQ-17, CQ-18, CQ-19)
-**Severity:** MEDIUM — Will cause silent miscompilation for non-Qwen3 models
+**Severity:** MEDIUM → RESOLVED
 **Effort:** M (2 days)
 **Task:** T-36
 
@@ -191,7 +191,7 @@ Hardcoded model-specific values:
 - Qwen3 weight name patterns in `build_input_alias_map()`
 - `vec![1, 512]` input shape fallback (Qwen3-0.6B assumption)
 
-**Fix:** Read these from TaskSpec/ModelConfig. Error on missing values rather than using wrong defaults.
+**Resolution:** Added `ModelArchConfig` and `ModelArchitecture` to `ane-ir/src/common.rs`, centralizing all model-specific constants. (1) `role_mir.rs`: Replaced hardcoded `vocab_size=32000` and `embed_dim=128` with `arch_config()` fields; added `with_arch_config()` builder method. (2) `legality_rewrite.rs`: Replaced 4 silent `head_dim=128` fallbacks with strong diagnostic warnings. (3) `mir_to_compat.rs`: Replaced hardcoded Qwen3 patterns in `build_input_alias_map()` with `ModelArchitecture` pattern methods; added `mir_graph_to_compat_with_arch()`. (4) `shape_inference.rs`: Replaced `vec![1, 512]` with `max_seq_len` parameter; added convenience wrappers. Default config is Qwen3-0.6B. 8 new tests.
 
 ---
 
@@ -309,8 +309,8 @@ The following issues from the previous tracker have been resolved and archived t
 |----------|-------|------|-------------|-------|
 | P0 | 3 | 0 | 0 | 3 |
 | P1 | 8 | 0 | 0 | 8 |
-| P2 | 8 | 5 | 0 | 3 |
+| P2 | 8 | 4 | 0 | 4 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **6** | **0** | **14** |
+| **Total** | **20** | **5** | **0** | **15** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issues I-12, I-13, I-14 resolved by T-33, T-34, T-35.*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issues I-12, I-13, I-14, I-15 resolved by T-33, T-34, T-35, T-36.*
