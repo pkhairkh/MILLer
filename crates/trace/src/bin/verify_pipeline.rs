@@ -6,9 +6,9 @@
 use std::collections::HashMap;
 use std::fs;
 
-use ane_ir::ane_target::AneFamily;
 use ane_ir::air::{AirGraph, AirOp};
-use ane_ir::mir::{MirGraph, MirOp, MilDtype};
+use ane_ir::ane_target::AneFamily;
+use ane_ir::mir::{MilDtype, MirGraph, MirOp};
 use ane_ir::pir::PirGraph;
 use ane_ir::sir::{SirGraph, SirOp};
 use ane_passes::knowledge_query::NoKnowledge;
@@ -23,11 +23,15 @@ fn main() {
     let trace_path = args.get(1).map(|s| s.as_str()).unwrap_or("/tmp/qwen3_trace_new.json");
 
     eprintln!("Loading trace from: {}", trace_path);
-    let json_str = fs::read_to_string(trace_path)
-        .unwrap_or_else(|e| { eprintln!("Failed to read {}: {}", trace_path, e); std::process::exit(1); });
+    let json_str = fs::read_to_string(trace_path).unwrap_or_else(|e| {
+        eprintln!("Failed to read {}: {}", trace_path, e);
+        std::process::exit(1);
+    });
 
-    let trace: TracedGraph = serde_json::from_str(&json_str)
-        .unwrap_or_else(|e| { eprintln!("Failed to parse trace JSON: {}", e); std::process::exit(1); });
+    let trace: TracedGraph = serde_json::from_str(&json_str).unwrap_or_else(|e| {
+        eprintln!("Failed to parse trace JSON: {}", e);
+        std::process::exit(1);
+    });
 
     // ═══════════════════════════════════════════════════════════════
     // STAGE 0: Trace Validation
@@ -36,10 +40,15 @@ fn main() {
     let cfg = &trace.model_config;
     println!("  model_id: {}", trace.model_id);
     println!("  architecture: {}", trace.architecture);
-    println!("  hidden_size={}, num_heads={}, num_kv_heads={:?}",
-        cfg.hidden_size, cfg.num_attention_heads, cfg.num_key_value_heads);
+    println!(
+        "  hidden_size={}, num_heads={}, num_kv_heads={:?}",
+        cfg.hidden_size, cfg.num_attention_heads, cfg.num_key_value_heads
+    );
     println!("  intermediate_size={}, vocab_size={}", cfg.intermediate_size, cfg.vocab_size);
-    println!("  uses_rms_norm={}, uses_gqa={}, uses_rope={}", cfg.uses_rms_norm, cfg.uses_gqa, cfg.uses_rope);
+    println!(
+        "  uses_rms_norm={}, uses_gqa={}, uses_rope={}",
+        cfg.uses_rms_norm, cfg.uses_gqa, cfg.uses_rope
+    );
 
     let trace_ok = cfg.hidden_size == 1024
         && cfg.num_attention_heads == 16
@@ -59,12 +68,19 @@ fn main() {
 
     let feat = &trace.discovered_features;
     let has_qk_norm = feat.detection_methods.contains_key("qk_norm");
-    println!("  qk_norm detected={}, attention_types={:?}, mlp_types={:?}",
-        has_qk_norm, feat.attention_module_types, feat.mlp_module_types);
-    println!("  linear_count={}, embedding_count={}, weights={}",
-        feat.linear_count, feat.embedding_count, trace.weights.len());
+    println!(
+        "  qk_norm detected={}, attention_types={:?}, mlp_types={:?}",
+        has_qk_norm, feat.attention_module_types, feat.mlp_module_types
+    );
+    println!(
+        "  linear_count={}, embedding_count={}, weights={}",
+        feat.linear_count,
+        feat.embedding_count,
+        trace.weights.len()
+    );
 
-    let qk_norm_ok = has_qk_norm && feat.attention_module_types.contains(&"Qwen3Attention".to_string());
+    let qk_norm_ok =
+        has_qk_norm && feat.attention_module_types.contains(&"Qwen3Attention".to_string());
     if qk_norm_ok {
         println!("  ✅ Feature detection: QK-norm detected, Qwen3Attention/Qwen3MLP identified");
     } else {
@@ -75,8 +91,10 @@ fn main() {
     // STAGE 1: SIR Construction
     // ═══════════════════════════════════════════════════════════════
     println!("\n═══ STAGE 1: SIR Construction ═══");
-    let sir = build_sir_from_trace(&trace, AneFamily::A16)
-        .unwrap_or_else(|e| { eprintln!("SIR build failed: {}", e); std::process::exit(1); });
+    let sir = build_sir_from_trace(&trace, AneFamily::A16).unwrap_or_else(|e| {
+        eprintln!("SIR build failed: {}", e);
+        std::process::exit(1);
+    });
 
     let sir_ok = validate_sir(&sir);
     dump_sir_stats(&sir);
@@ -105,8 +123,10 @@ fn main() {
         uses_gqa: cfg.uses_gqa,
     };
     let legality_pass = LegalityRewritePass::new();
-    let air = legality_pass.run(sir.clone(), &kq, Some(&decomp_ctx))
-        .unwrap_or_else(|e| { eprintln!("AIR lowering failed: {}", e); std::process::exit(1); });
+    let air = legality_pass.run(sir.clone(), &kq, Some(&decomp_ctx)).unwrap_or_else(|e| {
+        eprintln!("AIR lowering failed: {}", e);
+        std::process::exit(1);
+    });
 
     let air_ok = validate_air(&air);
     dump_air_stats(&air);
@@ -128,8 +148,10 @@ fn main() {
     }
 
     let mil_lower = MilLowerPass::new();
-    let mir_graphs = mil_lower.run(&air, &shard_plan, &input_shapes)
-        .unwrap_or_else(|e| { eprintln!("MIR lowering failed: {}", e); std::process::exit(1); });
+    let mir_graphs = mil_lower.run(&air, &shard_plan, &input_shapes).unwrap_or_else(|e| {
+        eprintln!("MIR lowering failed: {}", e);
+        std::process::exit(1);
+    });
 
     println!("  MIR graphs produced: {}", mir_graphs.len());
     let mir_ok = if mir_graphs.is_empty() {
@@ -152,10 +174,15 @@ fn main() {
     // ═══════════════════════════════════════════════════════════════
     println!("\n═══ STAGE 4: MIR → PIR (Shard Planning) ═══");
     let mut shard_pass = ane_passes::shard_plan::ShardPlanPass::new();
-    let (pir_plan, pir_graph) = shard_pass.run(&sir, &kq)
-        .unwrap_or_else(|e| { eprintln!("PIR planning failed: {}", e); std::process::exit(1); });
+    let (pir_plan, pir_graph) = shard_pass.run(&sir, &kq).unwrap_or_else(|e| {
+        eprintln!("PIR planning failed: {}", e);
+        std::process::exit(1);
+    });
 
-    println!("  Shard plan: num_shards={}, is_multi_shard={}", pir_plan.num_shards, pir_plan.is_multi_shard);
+    println!(
+        "  Shard plan: num_shards={}, is_multi_shard={}",
+        pir_plan.num_shards, pir_plan.is_multi_shard
+    );
     println!("  Compute units: {:?}", pir_plan.compute_units);
     println!("  Shard roles: {:?}", pir_plan.shard_roles);
     println!("  Shard names: {:?}", pir_plan.shard_names);
@@ -265,13 +292,11 @@ fn validate_sir(sir: &SirGraph) -> bool {
     // Check SDPA scale = 1/sqrt(128)
     let mut scale_ok = true;
     for node in &sir.nodes {
-        if let SirOp::ScaledDotProductAttention { scale, .. } = &node.op {
-            if let Some(s) = scale {
-                let expected = 1.0f32 / 128.0f32.sqrt();
-                if (s - expected).abs() > 0.001 {
-                    println!("  ❌ SDPA scale: {} (expected ~{})", s, expected);
-                    scale_ok = false;
-                }
+        if let SirOp::ScaledDotProductAttention { scale: Some(s), .. } = &node.op {
+            let expected = 1.0f32 / 128.0f32.sqrt();
+            if (s - expected).abs() > 0.001 {
+                println!("  ❌ SDPA scale: {} (expected ~{})", s, expected);
+                scale_ok = false;
             }
         }
     }
@@ -368,9 +393,15 @@ fn validate_air(air: &AirGraph) -> bool {
         // Expected: 113 RMSNorm → 113×4 = 452 AIR ops (ReduceMean+Rsqrt+Mul+Mul)
         let expected_rms_decomp = 113 * 4;
         let rms_related = reduce_mean + rsqrt + op_counts.get("Mul").copied().unwrap_or(0);
-        println!("    (RMSNorm-related AIR ops: {} out of expected {})", rms_related, expected_rms_decomp);
+        println!(
+            "    (RMSNorm-related AIR ops: {} out of expected {})",
+            rms_related, expected_rms_decomp
+        );
     } else {
-        println!("  ⚠️  RMSNorm not decomposed (ReduceMean={}, Rsqrt={}) — may be passthrough", reduce_mean, rsqrt);
+        println!(
+            "  ⚠️  RMSNorm not decomposed (ReduceMean={}, Rsqrt={}) — may be passthrough",
+            reduce_mean, rsqrt
+        );
     }
 
     // 3. SDPA preserved
@@ -385,7 +416,10 @@ fn validate_air(air: &AirGraph) -> bool {
     // 4. Residual connections preserved (Add from SIR passthrough + RMSNorm decomposition adds)
     let add = op_counts.get("Add").copied().unwrap_or(0);
     if add >= 56 {
-        println!("  ✅ Add: {} (≥56: residual connections preserved, extra from RMSNorm decomp)", add);
+        println!(
+            "  ✅ Add: {} (≥56: residual connections preserved, extra from RMSNorm decomp)",
+            add
+        );
     } else {
         println!("  ❌ Add: {} (expected at least 56 for residuals)", add);
         ok = false;
@@ -493,9 +527,15 @@ fn validate_mir(mir: &MirGraph) -> bool {
     let mil_linear = op_counts.get("MILLinear").copied().unwrap_or(0);
     let mil_matmul = op_counts.get("MILMatMul").copied().unwrap_or(0);
     if mil_linear >= 197 && mil_matmul == 0 {
-        println!("  ✅ MILLinear: {} (Conv1x1AsLinear correctly lowered, no MILMatMul)", mil_linear);
+        println!(
+            "  ✅ MILLinear: {} (Conv1x1AsLinear correctly lowered, no MILMatMul)",
+            mil_linear
+        );
     } else if mil_matmul > 0 {
-        println!("  ❌ MILMatMul: {} found (LinearProjection should map to MILLinear, not MILMatMul)", mil_matmul);
+        println!(
+            "  ❌ MILMatMul: {} found (LinearProjection should map to MILLinear, not MILMatMul)",
+            mil_matmul
+        );
         ok = false;
     } else {
         println!("  ⚠️  MILLinear: {} (expected ≥197 from SIR's 197 LinearProjection)", mil_linear);
@@ -533,9 +573,15 @@ fn validate_mir(mir: &MirGraph) -> bool {
     let mil_reduce_mean = op_counts.get("MILReduceMean").copied().unwrap_or(0);
     let mil_rsqrt = op_counts.get("MILRsqrt").copied().unwrap_or(0);
     if mil_reduce_mean > 0 && mil_rsqrt > 0 {
-        println!("  ✅ RMSNorm decomposition: MILReduceMean={}, MILRsqrt={}", mil_reduce_mean, mil_rsqrt);
+        println!(
+            "  ✅ RMSNorm decomposition: MILReduceMean={}, MILRsqrt={}",
+            mil_reduce_mean, mil_rsqrt
+        );
     } else {
-        println!("  ⚠️  No RMSNorm decomposition in MIR (ReduceMean={}, Rsqrt={})", mil_reduce_mean, mil_rsqrt);
+        println!(
+            "  ⚠️  No RMSNorm decomposition in MIR (ReduceMean={}, Rsqrt={})",
+            mil_reduce_mean, mil_rsqrt
+        );
     }
 
     ok
@@ -552,8 +598,13 @@ fn validate_pir(pir: &PirGraph) -> bool {
             ane_ir::pir::PackageRole::DecoderShard(sr) => format!("DecoderShard({:?})", sr),
             ane_ir::pir::PackageRole::Sampler => "Sampler".to_string(),
         };
-        println!("    Package: {} (role={}, compute_units={:?}, functions={})",
-            pkg.name, role_str, pkg.compute_units, pkg.functions.len());
+        println!(
+            "    Package: {} (role={}, compute_units={:?}, functions={})",
+            pkg.name,
+            role_str,
+            pkg.compute_units,
+            pkg.functions.len()
+        );
     }
 
     println!("  PIR state_declarations: {}", pir.state_declarations.len());
@@ -569,9 +620,7 @@ fn validate_pir(pir: &PirGraph) -> bool {
     println!("  ✅ PIR graph has {} package(s) with role assignments", n_packages);
 
     // Check for IO model
-    let has_io = pir.packages.iter().any(|p| {
-        matches!(p.role, ane_ir::pir::PackageRole::IO)
-    });
+    let has_io = pir.packages.iter().any(|p| matches!(p.role, ane_ir::pir::PackageRole::IO));
     if has_io {
         println!("  ✅ IO package present");
     } else {
@@ -579,9 +628,11 @@ fn validate_pir(pir: &PirGraph) -> bool {
     }
 
     // Check for decoder shards
-    let decoder_count = pir.packages.iter().filter(|p| {
-        matches!(p.role, ane_ir::pir::PackageRole::DecoderShard(_))
-    }).count();
+    let decoder_count = pir
+        .packages
+        .iter()
+        .filter(|p| matches!(p.role, ane_ir::pir::PackageRole::DecoderShard(_)))
+        .count();
     if decoder_count > 0 {
         println!("  ✅ Decoder shard packages: {}", decoder_count);
     }
@@ -590,8 +641,10 @@ fn validate_pir(pir: &PirGraph) -> bool {
     if !pir.handoffs.is_empty() {
         println!("  ✅ Handoffs present: {}", pir.handoffs.len());
         for h in &pir.handoffs {
-            println!("    {} → {} (tensor: {}, dtype: {})",
-                h.from_package, h.to_package, h.tensor_name, h.dtype);
+            println!(
+                "    {} → {} (tensor: {}, dtype: {})",
+                h.from_package, h.to_package, h.tensor_name, h.dtype
+            );
         }
     }
 
@@ -603,22 +656,28 @@ fn validate_pir(pir: &PirGraph) -> bool {
 // ═══════════════════════════════════════════════════════════════
 
 fn dump_sir_stats(sir: &SirGraph) {
-    println!("  SIR inputs: {:?}, outputs: {:?}",
+    println!(
+        "  SIR inputs: {:?}, outputs: {:?}",
         sir.inputs.iter().map(|i| &i.0).collect::<Vec<_>>(),
-        sir.outputs.iter().map(|o| &o.0).collect::<Vec<_>>());
+        sir.outputs.iter().map(|o| &o.0).collect::<Vec<_>>()
+    );
 }
 
 fn dump_air_stats(air: &AirGraph) {
-    println!("  AIR inputs: {:?}, outputs: {:?}",
+    println!(
+        "  AIR inputs: {:?}, outputs: {:?}",
         air.inputs.iter().map(|i| &i.0).take(5).collect::<Vec<_>>(),
-        air.outputs.iter().map(|o| &o.0).take(5).collect::<Vec<_>>());
+        air.outputs.iter().map(|o| &o.0).take(5).collect::<Vec<_>>()
+    );
     println!("  AIR staticization_decisions: {}", air.staticization_decisions.len());
 }
 
 fn dump_mir_stats(mir: &MirGraph) {
-    println!("  MIR inputs: {:?}, outputs: {:?}",
+    println!(
+        "  MIR inputs: {:?}, outputs: {:?}",
         mir.inputs.iter().map(|i| &i.0).take(5).collect::<Vec<_>>(),
-        mir.outputs.iter().map(|o| &o.0).take(5).collect::<Vec<_>>());
+        mir.outputs.iter().map(|o| &o.0).take(5).collect::<Vec<_>>()
+    );
 
     // Check compute unit hints
     let mut cu_counts: HashMap<String, usize> = HashMap::new();

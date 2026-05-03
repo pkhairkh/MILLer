@@ -157,8 +157,8 @@ impl RiskAnnotatePass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::MockKnowledge;
     use crate::knowledge_query::NoKnowledge;
+    use crate::test_utils::MockKnowledge;
     use ane_ir::air::{AirNode, AirNodeId};
 
     fn make_simple_graph(op: AirOp) -> AirGraph {

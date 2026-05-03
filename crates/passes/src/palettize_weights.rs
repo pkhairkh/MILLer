@@ -101,13 +101,12 @@ pub fn run_palettize_weights_pass(
                 result.grouped_lut_applied += 1;
                 result.weights_annotated += 1;
             }
-            SirOp::Const { value_path, dtype: _ } => {
+            SirOp::Const { value_path, dtype: _ }
                 // Palettize KV/mask constants
-                if value_path.contains("mask") || value_path.contains("kv") {
+                if (value_path.contains("mask") || value_path.contains("kv")) => {
                     result.consts_palettized += 1;
                     result.weights_annotated += 1;
                 }
-            }
             _ => {}
         }
     }

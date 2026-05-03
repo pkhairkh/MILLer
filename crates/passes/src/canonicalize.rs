@@ -60,8 +60,7 @@ impl CanonicalizePass {
     /// Graph input placeholders (Identity with input="__placeholder__") are
     /// preserved because they define the graph's input signature.
     fn eliminate_identities(graph: SirGraph) -> SirGraph {
-        let graph_input_ids: std::collections::HashSet<&SirNodeId> =
-            graph.inputs.iter().collect();
+        let graph_input_ids: std::collections::HashSet<&SirNodeId> = graph.inputs.iter().collect();
 
         let mut subst: HashMap<SirNodeId, SirNodeId> = HashMap::new();
 
@@ -97,17 +96,10 @@ impl CanonicalizePass {
             })
             .collect();
 
-        let outputs: Vec<SirNodeId> = graph
-            .outputs
-            .into_iter()
-            .map(|id| Self::resolve_id(&id, &subst))
-            .collect();
+        let outputs: Vec<SirNodeId> =
+            graph.outputs.into_iter().map(|id| Self::resolve_id(&id, &subst)).collect();
 
-        SirGraph {
-            nodes,
-            inputs: graph.inputs,
-            outputs,
-        }
+        SirGraph { nodes, inputs: graph.inputs, outputs }
     }
 
     /// Transitively resolve substitution chains.
@@ -175,40 +167,28 @@ impl CanonicalizePass {
             SirOp::Mul { x, y } => SirOp::Mul { x: r!(x), y: r!(y) },
             SirOp::MatMul { a, b } => SirOp::MatMul { a: r!(a), b: r!(b) },
             SirOp::RealDiv { x, y } => SirOp::RealDiv { x: r!(x), y: r!(y) },
-            SirOp::Gather { input, indices, axis } => SirOp::Gather {
-                input: r!(input),
-                indices: r!(indices),
-                axis: *axis,
-            },
+            SirOp::Gather { input, indices, axis } => {
+                SirOp::Gather { input: r!(input), indices: r!(indices), axis: *axis }
+            }
             SirOp::Reshape { input, target_shape } => {
                 SirOp::Reshape { input: r!(input), target_shape: target_shape.clone() }
             }
             SirOp::Transpose { input, perm } => {
                 SirOp::Transpose { input: r!(input), perm: perm.clone() }
             }
-            SirOp::Tile { input, reps } => {
-                SirOp::Tile { input: r!(input), reps: reps.clone() }
+            SirOp::Tile { input, reps } => SirOp::Tile { input: r!(input), reps: reps.clone() },
+            SirOp::ReduceMean { input, axes, keep_dims } => {
+                SirOp::ReduceMean { input: r!(input), axes: axes.clone(), keep_dims: *keep_dims }
             }
-            SirOp::ReduceMean { input, axes, keep_dims } => SirOp::ReduceMean {
-                input: r!(input),
-                axes: axes.clone(),
-                keep_dims: *keep_dims,
-            },
-            SirOp::ReduceSum { input, axes, keep_dims } => SirOp::ReduceSum {
-                input: r!(input),
-                axes: axes.clone(),
-                keep_dims: *keep_dims,
-            },
+            SirOp::ReduceSum { input, axes, keep_dims } => {
+                SirOp::ReduceSum { input: r!(input), axes: axes.clone(), keep_dims: *keep_dims }
+            }
             SirOp::Rsqrt { input } => SirOp::Rsqrt { input: r!(input) },
             SirOp::Sqrt { input } => SirOp::Sqrt { input: r!(input) },
-            SirOp::Softmax { input, axis } => {
-                SirOp::Softmax { input: r!(input), axis: *axis }
-            }
+            SirOp::Softmax { input, axis } => SirOp::Softmax { input: r!(input), axis: *axis },
             SirOp::Silu { input } => SirOp::Silu { input: r!(input) },
             SirOp::Relu { input } => SirOp::Relu { input: r!(input) },
-            SirOp::Gelu { input, mode } => {
-                SirOp::Gelu { input: r!(input), mode: mode.clone() }
-            }
+            SirOp::Gelu { input, mode } => SirOp::Gelu { input: r!(input), mode: mode.clone() },
             SirOp::Sigmoid { input } => SirOp::Sigmoid { input: r!(input) },
             SirOp::Tanh { input } => SirOp::Tanh { input: r!(input) },
             SirOp::Exp { input } => SirOp::Exp { input: r!(input) },
@@ -218,75 +198,93 @@ impl CanonicalizePass {
             SirOp::Abs { input } => SirOp::Abs { input: r!(input) },
             SirOp::Neg { input } => SirOp::Neg { input: r!(input) },
             SirOp::Topk { input, k, axis } => SirOp::Topk { input: r!(input), k: *k, axis: *axis },
-            SirOp::SliceByIndex { input, begin, end, stride, begin_mask, end_mask, squeeze_mask } => {
-                SirOp::SliceByIndex {
-                    input: r!(input),
-                    begin: begin.clone(),
-                    end: end.clone(),
-                    stride: stride.clone(),
-                    begin_mask: begin_mask.clone(),
-                    end_mask: end_mask.clone(),
-                    squeeze_mask: squeeze_mask.clone(),
-                }
-            }
+            SirOp::SliceByIndex {
+                input,
+                begin,
+                end,
+                stride,
+                begin_mask,
+                end_mask,
+                squeeze_mask,
+            } => SirOp::SliceByIndex {
+                input: r!(input),
+                begin: begin.clone(),
+                end: end.clone(),
+                stride: stride.clone(),
+                begin_mask: begin_mask.clone(),
+                end_mask: end_mask.clone(),
+                squeeze_mask: squeeze_mask.clone(),
+            },
             SirOp::ExpandDims { input, axis } => {
                 SirOp::ExpandDims { input: r!(input), axis: axis.clone() }
             }
             SirOp::Squeeze { input, axis } => {
                 SirOp::Squeeze { input: r!(input), axis: axis.clone() }
             }
-            SirOp::Concat { inputs, axis } => SirOp::Concat {
-                inputs: inputs.iter().map(|id| r!(id)).collect(),
-                axis: *axis,
-            },
+            SirOp::Concat { inputs, axis } => {
+                SirOp::Concat { inputs: inputs.iter().map(|id| r!(id)).collect(), axis: *axis }
+            }
             SirOp::Pad { input, pad_amounts, mode, constant_value } => SirOp::Pad {
                 input: r!(input),
                 pad_amounts: pad_amounts.clone(),
                 mode: mode.clone(),
                 constant_value: *constant_value,
             },
-            SirOp::Where { condition, x, y } => SirOp::Where {
-                condition: r!(condition),
-                x: r!(x),
-                y: r!(y),
-            },
+            SirOp::Where { condition, x, y } => {
+                SirOp::Where { condition: r!(condition), x: r!(x), y: r!(y) }
+            }
             SirOp::Fill { shape, value, dtype } => {
                 SirOp::Fill { shape: shape.clone(), value: *value, dtype: dtype.clone() }
             }
-            SirOp::FillLike { ref_tensor, value, dtype } => SirOp::FillLike {
-                ref_tensor: r!(ref_tensor),
-                value: *value,
-                dtype: dtype.clone(),
+            SirOp::FillLike { ref_tensor, value, dtype } => {
+                SirOp::FillLike { ref_tensor: r!(ref_tensor), value: *value, dtype: dtype.clone() }
+            }
+            SirOp::Sampler {
+                logits,
+                temperature,
+                top_p,
+                rep_penalty,
+                min_p,
+                top_k,
+                gumbel_noise,
+            } => SirOp::Sampler {
+                logits: r!(logits),
+                temperature: *temperature,
+                top_p: *top_p,
+                rep_penalty: *rep_penalty,
+                min_p: *min_p,
+                top_k: *top_k,
+                gumbel_noise: *gumbel_noise,
             },
-            SirOp::Sampler { logits, temperature, top_p, rep_penalty, min_p, top_k, gumbel_noise } => {
-                SirOp::Sampler {
-                    logits: r!(logits),
-                    temperature: *temperature,
-                    top_p: *top_p,
-                    rep_penalty: *rep_penalty,
-                    min_p: *min_p,
-                    top_k: *top_k,
-                    gumbel_noise: *gumbel_noise,
-                }
-            }
-            SirOp::StateRead { state_id, offset, shape } => {
-                SirOp::StateRead { state_id: state_id.clone(), offset: *offset, shape: shape.clone() }
-            }
-            SirOp::StateWrite { state_id, offset, value } => SirOp::StateWrite {
+            SirOp::StateRead { state_id, offset, shape } => SirOp::StateRead {
                 state_id: state_id.clone(),
                 offset: *offset,
-                value: r!(value),
+                shape: shape.clone(),
             },
-            SirOp::Const { .. } | SirOp::OneHot { .. } | SirOp::Conv { .. }
-            | SirOp::Einsum { .. } | SirOp::DecodeStep { .. }
+            SirOp::StateWrite { state_id, offset, value } => {
+                SirOp::StateWrite { state_id: state_id.clone(), offset: *offset, value: r!(value) }
+            }
+            SirOp::Const { .. }
+            | SirOp::OneHot { .. }
+            | SirOp::Conv { .. }
+            | SirOp::Einsum { .. }
+            | SirOp::DecodeStep { .. }
             | SirOp::SliceBySize { .. }
-            | SirOp::SlidingWindows { .. } | SirOp::GatherAlongAxis { .. }
-            | SirOp::GatherNd { .. } | SirOp::Quantize { .. } | SirOp::Dequantize { .. }
-            | SirOp::LayerNorm { .. } | SirOp::BatchNorm { .. }
-            | SirOp::Softplus { .. } | SirOp::Softsign { .. }
-            | SirOp::Threshold { .. } | SirOp::Clip { .. }
-            | SirOp::Prelu { .. } | SirOp::Split { .. }
-            | SirOp::Stack { .. } | SirOp::SpaceToBatch { .. }
+            | SirOp::SlidingWindows { .. }
+            | SirOp::GatherAlongAxis { .. }
+            | SirOp::GatherNd { .. }
+            | SirOp::Quantize { .. }
+            | SirOp::Dequantize { .. }
+            | SirOp::LayerNorm { .. }
+            | SirOp::BatchNorm { .. }
+            | SirOp::Softplus { .. }
+            | SirOp::Softsign { .. }
+            | SirOp::Threshold { .. }
+            | SirOp::Clip { .. }
+            | SirOp::Prelu { .. }
+            | SirOp::Split { .. }
+            | SirOp::Stack { .. }
+            | SirOp::SpaceToBatch { .. }
             | SirOp::BatchToSpace { .. } => op.clone(),
             // Fallthrough: ops without SirNodeId inputs, or rare ops
             // that we don't expect in identity-elimination paths
@@ -327,11 +325,14 @@ mod tests {
                     "input",
                     SirOp::Identity { input: SirNodeId("__placeholder__".to_string()) },
                 ),
-                make_node("linear", SirOp::LinearProjection {
-                    input: SirNodeId("input".to_string()),
-                    weight: "w".to_string(),
-                    bias: None,
-                }),
+                make_node(
+                    "linear",
+                    SirOp::LinearProjection {
+                        input: SirNodeId("input".to_string()),
+                        weight: "w".to_string(),
+                        bias: None,
+                    },
+                ),
                 make_node("output", SirOp::Identity { input: SirNodeId("linear".to_string()) }),
             ],
             inputs: vec![SirNodeId("input".to_string())],
@@ -368,17 +369,17 @@ mod tests {
     fn test_identity_chain_resolution() {
         let graph = SirGraph {
             nodes: vec![
-                make_node(
-                    "a",
-                    SirOp::Identity { input: SirNodeId("__placeholder__".to_string()) },
-                ),
+                make_node("a", SirOp::Identity { input: SirNodeId("__placeholder__".to_string()) }),
                 make_node("b", SirOp::Identity { input: SirNodeId("a".to_string()) }),
                 make_node("c", SirOp::Identity { input: SirNodeId("b".to_string()) }),
-                make_node("d", SirOp::LinearProjection {
-                    input: SirNodeId("c".to_string()),
-                    weight: "w".to_string(),
-                    bias: None,
-                }),
+                make_node(
+                    "d",
+                    SirOp::LinearProjection {
+                        input: SirNodeId("c".to_string()),
+                        weight: "w".to_string(),
+                        bias: None,
+                    },
+                ),
             ],
             inputs: vec![SirNodeId("a".to_string())],
             outputs: vec![SirNodeId("d".to_string())],

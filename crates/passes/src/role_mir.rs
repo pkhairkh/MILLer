@@ -476,7 +476,13 @@ impl RoleMirBuilder {
                 })
             }
 
-            ShardOpProfile::AttentionComputation { causal: _, stateful, num_heads, head_dim, context_length } => {
+            ShardOpProfile::AttentionComputation {
+                causal: _,
+                stateful,
+                num_heads,
+                head_dim,
+                context_length,
+            } => {
                 // Attention: ReadState (KV cache) → ScaledDotProductAttention → UpdateState
                 // KV cache shape is derived from the shard spec dimensions:
                 //   [batch, num_heads, context_length, head_dim]
@@ -575,7 +581,9 @@ impl RoleMirBuilder {
                 let embed_dim = spec
                     .input_specs
                     .first()
-                    .map(|s| s.shape.get(1).copied().unwrap_or_else(|| self.arch_config().embed_dim))
+                    .map(|s| {
+                        s.shape.get(1).copied().unwrap_or_else(|| self.arch_config().embed_dim)
+                    })
                     .unwrap_or_else(|| self.arch_config().embed_dim);
 
                 nodes.push(MirNode {
@@ -668,10 +676,16 @@ impl RoleMirBuilder {
                             // the weight shape is [vocab_size, embed_dim].
                             // T-36 (I-15): Use arch_config.vocab_size and arch_config.embed_dim
                             // instead of hardcoded 32000 and 128.
-                            let embed_dim = s.shape.get(1).copied().unwrap_or_else(|| self.arch_config().embed_dim);
+                            let embed_dim = s
+                                .shape
+                                .get(1)
+                                .copied()
+                                .unwrap_or_else(|| self.arch_config().embed_dim);
                             vec![self.arch_config().vocab_size, embed_dim]
                         })
-                        .unwrap_or_else(|| vec![self.arch_config().vocab_size, self.arch_config().embed_dim]),
+                        .unwrap_or_else(|| {
+                            vec![self.arch_config().vocab_size, self.arch_config().embed_dim]
+                        }),
                     compute_unit_hint: Some(compute_hint.clone()), // IO compute hint from spec
                     air_source: None,
                 });
@@ -1053,7 +1067,13 @@ mod tests {
                 dtype: "fp16".into(),
             }],
             compute_units: ComputeUnitHint::CPUAndNE,
-            op_profile: ShardOpProfile::AttentionComputation { causal: true, stateful: true, num_heads: 4, head_dim: 32, context_length: 64 },
+            op_profile: ShardOpProfile::AttentionComputation {
+                causal: true,
+                stateful: true,
+                num_heads: 4,
+                head_dim: 32,
+                context_length: 64,
+            },
         };
 
         let out_spec = ShardSpec {
@@ -1098,8 +1118,14 @@ mod tests {
 
         // QKV should have SliceByIndex (not Split — Split is invalid MIL),
         // Attention should have SDPA + state ops
-        assert!(qkv_sig.contains(&"SliceByIndex".to_string()), "QKV must include SliceByIndex (not Split)");
-        assert!(!qkv_sig.contains(&"Split".to_string()), "QKV must NOT include Split (invalid MIL)");
+        assert!(
+            qkv_sig.contains(&"SliceByIndex".to_string()),
+            "QKV must include SliceByIndex (not Split)"
+        );
+        assert!(
+            !qkv_sig.contains(&"Split".to_string()),
+            "QKV must NOT include Split (invalid MIL)"
+        );
         assert!(attn_sig.contains(&"SDPA".to_string()), "Attention must include SDPA");
         assert!(attn_sig.contains(&"ReadState".to_string()), "Attention must include ReadState");
         assert!(out_sig.contains(&"LayerNorm".to_string()), "Output must include LayerNorm");

@@ -257,10 +257,7 @@ impl SafetensorsWeightResolver {
     /// ops like Gather (embedding lookup) where the weight tensor isn't an
     /// AIR graph node but its shape is needed for output shape inference.
     pub fn weight_shapes(&self) -> std::collections::HashMap<String, Vec<usize>> {
-        self.tensors
-            .iter()
-            .map(|(name, entry)| (name.clone(), entry.shape.clone()))
-            .collect()
+        self.tensors.iter().map(|(name, entry)| (name.clone(), entry.shape.clone())).collect()
     }
 }
 
@@ -324,10 +321,7 @@ impl SafetensorsWeightResolver {
         let end_byte = end_row * bytes_per_row;
 
         let shard_data = entry.data[start_byte..end_byte].to_vec();
-        Some(WeightData {
-            data: shard_data,
-            shape: vec![shard_rows, hidden_size],
-        })
+        Some(WeightData { data: shard_data, shape: vec![shard_rows, hidden_size] })
     }
 }
 
@@ -593,10 +587,7 @@ mod tests {
 
         // Not a shard name
         assert_eq!(parse_shard_weight_name("lm_head.weight"), None);
-        assert_eq!(
-            parse_shard_weight_name("model.layers.0.self_attn.q_proj.weight"),
-            None
-        );
+        assert_eq!(parse_shard_weight_name("model.layers.0.self_attn.q_proj.weight"), None);
         assert_eq!(parse_shard_weight_name("some_tensor"), None);
     }
 
@@ -614,10 +605,7 @@ mod tests {
         let mut resolver = SafetensorsWeightResolver::empty();
         resolver.tensors.insert(
             "lm_head.weight".to_string(),
-            TensorEntry {
-                data: fake_data,
-                shape: vec![vocab_size, hidden_size],
-            },
+            TensorEntry { data: fake_data, shape: vec![vocab_size, hidden_size] },
         );
 
         // Resolve shard 0: rows 0..19000

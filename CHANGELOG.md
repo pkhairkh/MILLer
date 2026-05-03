@@ -2,6 +2,13 @@
 
 ## 2026-05-04
 
+### T-41 · Run `cargo fmt` and `cargo clippy --fix` ✅
+- **ISSUES ref**: I-20
+- **AUDIT ref**: §III (CQ-9, CQ-10)
+- **Severity**: LOW → RESOLVED
+- **Effort**: S (0.5 day)
+- **Resolution**: Ran `cargo fmt --all` across the entire workspace, reformatting 52 files to comply with Rust style guidelines. Ran `cargo clippy --fix --allow-dirty --allow-staged` to address auto-fixable clippy warnings. After the fix, the only remaining clippy warnings are 11 `too_many_arguments` violations (8/7 through 16/7 parameters) which require manual refactoring and are tracked by T-44. All 1099 tests pass.
+
 ### T-39 · Add ConstexprLutToDense to MirOpCompat ✅
 - **ISSUES ref**: I-18
 - **AUDIT ref**: §III (CQ-24)

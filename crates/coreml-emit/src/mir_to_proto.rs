@@ -65,13 +65,17 @@ pub fn convert_mir_to_proto_multifunction(
         // illegal MIL operator names like "identity__unsupported_tile" that
         // coremlcompiler will reject. Fail early with a clear error rather
         // than writing an invalid .mlpackage.
-        let unsupported: Vec<_> = graph.ops.iter().filter_map(|op| {
-            if let MirOpCompat::Unsupported { op_kind, name, .. } = op {
-                Some(format!("  {name} (kind={op_kind})"))
-            } else {
-                None
-            }
-        }).collect();
+        let unsupported: Vec<_> = graph
+            .ops
+            .iter()
+            .filter_map(|op| {
+                if let MirOpCompat::Unsupported { op_kind, name, .. } = op {
+                    Some(format!("  {name} (kind={op_kind})"))
+                } else {
+                    None
+                }
+            })
+            .collect();
         if !unsupported.is_empty() {
             anyhow::bail!(
                 "Cannot emit Core ML package: {} unsupported MIR operation(s) in function '{}'. \
@@ -123,7 +127,8 @@ pub fn convert_mir_to_proto_multifunction(
         // This commonly happens with GQA when the same KV head is sliced multiple
         // times in a per-Q-head loop instead of being sliced once and reused.
         {
-            let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut seen_names: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
             let mut duplicates: Vec<String> = Vec::new();
             for op in &graph.ops {
                 let output_names = op_output_names(op);
@@ -159,15 +164,23 @@ pub fn convert_mir_to_proto_multifunction(
             let mut bad_reshapes: Vec<String> = Vec::new();
             for op in &graph.ops {
                 if let MirOpCompat::Reshape { name, x, shape } = op {
-                    let input_elements: usize = graph.node_shapes
-                        .get(x)
-                        .map(|s| s.iter().product::<usize>())
-                        .unwrap_or(0);
-                    let target_elements: usize = shape.iter().map(|&d| {
-                        if d > 0 { d as usize } else { 1 } // treat 0-dims as 1 for element count
-                    }).product();
+                    let input_elements: usize =
+                        graph.node_shapes.get(x).map(|s| s.iter().product::<usize>()).unwrap_or(0);
+                    let target_elements: usize = shape
+                        .iter()
+                        .map(|&d| {
+                            if d > 0 {
+                                d as usize
+                            } else {
+                                1
+                            } // treat 0-dims as 1 for element count
+                        })
+                        .product();
                     // Only validate when both are known and non-zero
-                    if input_elements > 0 && target_elements > 0 && input_elements != target_elements {
+                    if input_elements > 0
+                        && target_elements > 0
+                        && input_elements != target_elements
+                    {
                         bad_reshapes.push(format!(
                             "  {name}: input '{}' has {} elements, target shape {:?} has {} elements",
                             x, input_elements, shape, target_elements
@@ -198,9 +211,9 @@ pub fn convert_mir_to_proto_multifunction(
             for op in &graph.ops {
                 if let MirOpCompat::Concat { name, values, axis: _ } = op {
                     let output_shape = graph.node_shapes.get(name);
-                    let has_ranked_inputs = values.iter().any(|v| {
-                        graph.node_shapes.get(v).map(|s| !s.is_empty()).unwrap_or(false)
-                    });
+                    let has_ranked_inputs = values
+                        .iter()
+                        .any(|v| graph.node_shapes.get(v).map(|s| !s.is_empty()).unwrap_or(false));
                     let output_is_scalar = output_shape.map(|s| s.is_empty()).unwrap_or(true);
                     if has_ranked_inputs && output_is_scalar {
                         bad_concats.push(format!(
@@ -234,31 +247,29 @@ pub fn convert_mir_to_proto_multifunction(
             let mut zero_dim_ops: Vec<String> = Vec::new();
             for op in &graph.ops {
                 match op {
-                    MirOpCompat::Reshape { name, shape, .. } => {
-                        if shape.iter().any(|&d| d == 0) {
-                            let zero_pos: Vec<usize> = shape.iter()
-                                .enumerate()
-                                .filter(|(_, &d)| d == 0)
-                                .map(|(i, _)| i)
-                                .collect();
-                            zero_dim_ops.push(format!(
+                    MirOpCompat::Reshape { name, shape, .. } if shape.contains(&0) => {
+                        let zero_pos: Vec<usize> = shape
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, &d)| d == 0)
+                            .map(|(i, _)| i)
+                            .collect();
+                        zero_dim_ops.push(format!(
                                 "  {name}: reshape target shape {:?} has zero dimension(s) at position(s) {:?}",
                                 shape, zero_pos
                             ));
-                        }
                     }
-                    MirOpCompat::Fill { name, shape, .. } => {
-                        if shape.iter().any(|&d| d == 0) {
-                            let zero_pos: Vec<usize> = shape.iter()
-                                .enumerate()
-                                .filter(|(_, &d)| d == 0)
-                                .map(|(i, _)| i)
-                                .collect();
-                            zero_dim_ops.push(format!(
-                                "  {name}: fill shape {:?} has zero dimension(s) at position(s) {:?}",
-                                shape, zero_pos
-                            ));
-                        }
+                    MirOpCompat::Fill { name, shape, .. } if shape.contains(&0) => {
+                        let zero_pos: Vec<usize> = shape
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, &d)| d == 0)
+                            .map(|(i, _)| i)
+                            .collect();
+                        zero_dim_ops.push(format!(
+                            "  {name}: fill shape {:?} has zero dimension(s) at position(s) {:?}",
+                            shape, zero_pos
+                        ));
                     }
                     _ => {}
                 }
@@ -308,11 +319,11 @@ pub fn convert_mir_to_proto_multifunction(
                             .push(graph.function_name.clone());
                     }
                 }
-                MirOpCompat::ReadState { name: _, state_id, shape, dtype } => {
+                MirOpCompat::ReadState { name: _, state_id, shape, dtype }
                     // Collect state declarations from ReadState ops.
                     // Deduplicate by state_id since the same state may be
                     // read multiple times in one function.
-                    if !graph_states.iter().any(|s: &TensorDesc| s.name == *state_id) {
+                    if !graph_states.iter().any(|s: &TensorDesc| s.name == *state_id) => {
                         graph_states.push(TensorDesc {
                             name: state_id.clone(),
                             shape: shape.iter().map(|&d| d as u64).collect(),
@@ -320,13 +331,12 @@ pub fn convert_mir_to_proto_multifunction(
                             is_state: true,
                         });
                     }
-                }
-                MirOpCompat::CoremlUpdateState { state_id, .. } => {
+                MirOpCompat::CoremlUpdateState { state_id, .. }
                     // Also collect state declarations from CoremlUpdateState ops.
                     // A function might only write to a state without reading
                     // it first (e.g., initial fill), so we need to capture
                     // these declarations too.
-                    if !graph_states.iter().any(|s: &TensorDesc| s.name == *state_id) {
+                    if !graph_states.iter().any(|s: &TensorDesc| s.name == *state_id) => {
                         graph_states.push(TensorDesc {
                             name: state_id.clone(),
                             shape: vec![], // Shape inferred from ReadState if present
@@ -334,10 +344,9 @@ pub fn convert_mir_to_proto_multifunction(
                             is_state: true,
                         });
                     }
-                }
-                MirOpCompat::StateWrite { state_ref, .. } => {
+                MirOpCompat::StateWrite { state_ref, .. }
                     // StateWrite uses state_ref instead of state_id.
-                    if !graph_states.iter().any(|s: &TensorDesc| s.name == *state_ref) {
+                    if !graph_states.iter().any(|s: &TensorDesc| s.name == *state_ref) => {
                         graph_states.push(TensorDesc {
                             name: state_ref.clone(),
                             shape: vec![],
@@ -345,7 +354,6 @@ pub fn convert_mir_to_proto_multifunction(
                             is_state: true,
                         });
                     }
-                }
                 _ => {}
             }
         }
@@ -423,8 +431,8 @@ pub fn convert_mir_to_proto_multifunction(
     };
 
     // Model description uses the default function's I/O
-    let default_fn = functions.iter().find(|f| f.name == default_function_name)
-        .or_else(|| functions.first());
+    let default_fn =
+        functions.iter().find(|f| f.name == default_function_name).or_else(|| functions.first());
     let description = ModelDescriptionCompat {
         inputs: default_fn.map(|f| f.inputs.clone()).unwrap_or_default(),
         outputs: default_fn.map(|f| f.outputs.clone()).unwrap_or_default(),
@@ -627,19 +635,84 @@ fn op_output_names(op: &MirOpCompat) -> Vec<String> {
         };
     }
     name_vec!(
-        Const, Linear, MatMul, Add, Mul, Sub, Abs, Maximum, Minimum,
-        Reshape, Transpose, SliceByIndex, SliceUpdate, Concat, Softmax,
-        Gelu, ScaledDotProductAttention, ReadState, CoremlUpdateState,
-        Gather, ReduceMean, ReduceSum, Conv, StateWrite, Rsqrt, RealDiv,
-        LayerNorm, Topk, Cos, Sin, Cast, Split, Exp, Sigmoid, Tanh,
-        Relu, Where, Silu, Identity, Placeholder, Tile, Fill, FillLike,
-        Neg, ExpandDims, Squeeze, Sqrt, Pow, Clip, Equal, NotEqual,
-        Greater, GreaterEqual, Less, LessEqual, LogicalNot, LogicalAnd,
-        LogicalOr, Pad, ReduceMax, ReduceMin, ReduceProd, Select,
-        LeakyRelu, FloorDiv, Mod, Ceil, Floor, Round, Sign, Log,
-        ConstexprAffineDequantize, ConstexprBlockwiseShiftScale,
-        ConstexprLutToDense, ConstexprSparseToDense, ConstexprCast,
-        ConstexprLutToSparse, ConstexprSparseBlockwiseShiftScale,
+        Const,
+        Linear,
+        MatMul,
+        Add,
+        Mul,
+        Sub,
+        Abs,
+        Maximum,
+        Minimum,
+        Reshape,
+        Transpose,
+        SliceByIndex,
+        SliceUpdate,
+        Concat,
+        Softmax,
+        Gelu,
+        ScaledDotProductAttention,
+        ReadState,
+        CoremlUpdateState,
+        Gather,
+        ReduceMean,
+        ReduceSum,
+        Conv,
+        StateWrite,
+        Rsqrt,
+        RealDiv,
+        LayerNorm,
+        Topk,
+        Cos,
+        Sin,
+        Cast,
+        Split,
+        Exp,
+        Sigmoid,
+        Tanh,
+        Relu,
+        Where,
+        Silu,
+        Identity,
+        Placeholder,
+        Tile,
+        Fill,
+        FillLike,
+        Neg,
+        ExpandDims,
+        Squeeze,
+        Sqrt,
+        Pow,
+        Clip,
+        Equal,
+        NotEqual,
+        Greater,
+        GreaterEqual,
+        Less,
+        LessEqual,
+        LogicalNot,
+        LogicalAnd,
+        LogicalOr,
+        Pad,
+        ReduceMax,
+        ReduceMin,
+        ReduceProd,
+        Select,
+        LeakyRelu,
+        FloorDiv,
+        Mod,
+        Ceil,
+        Floor,
+        Round,
+        Sign,
+        Log,
+        ConstexprAffineDequantize,
+        ConstexprBlockwiseShiftScale,
+        ConstexprLutToDense,
+        ConstexprSparseToDense,
+        ConstexprCast,
+        ConstexprLutToSparse,
+        ConstexprSparseBlockwiseShiftScale,
     )
 }
 
@@ -1065,15 +1138,18 @@ mod tests {
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("duplicate output name"),
-            "Error should mention duplicate output names, got: {}", err_msg
+            "Error should mention duplicate output names, got: {}",
+            err_msg
         );
         assert!(
             err_msg.contains("k_head_0"),
-            "Error should mention the specific duplicate name, got: {}", err_msg
+            "Error should mention the specific duplicate name, got: {}",
+            err_msg
         );
         assert!(
             err_msg.contains("decode_step"),
-            "Error should mention the function name, got: {}", err_msg
+            "Error should mention the function name, got: {}",
+            err_msg
         );
     }
 
@@ -1085,13 +1161,11 @@ mod tests {
         // rejected by the emission validation gate. Core ML treats 0
         // as a literal zero dimension, not "infer from input".
         let graph = MirGraphCompat {
-            ops: vec![
-                MirOpCompat::Reshape {
-                    name: "bad_reshape".to_string(),
-                    x: "input".to_string(),
-                    shape: vec![0, 0, 16, 128], // zeros at positions 0 and 1
-                },
-            ],
+            ops: vec![MirOpCompat::Reshape {
+                name: "bad_reshape".to_string(),
+                x: "input".to_string(),
+                shape: vec![0, 0, 16, 128], // zeros at positions 0 and 1
+            }],
             inputs: vec!["input".to_string()],
             outputs: vec!["bad_reshape".to_string()],
             opset_version: "iOS18".to_string(),
@@ -1118,13 +1192,11 @@ mod tests {
     fn test_zero_dim_reshape_single_zero_rejected() {
         // Even a single zero dimension should be caught.
         let graph = MirGraphCompat {
-            ops: vec![
-                MirOpCompat::Reshape {
-                    name: "single_zero".to_string(),
-                    x: "input".to_string(),
-                    shape: vec![1, 0, 128], // zero at position 1
-                },
-            ],
+            ops: vec![MirOpCompat::Reshape {
+                name: "single_zero".to_string(),
+                x: "input".to_string(),
+                shape: vec![1, 0, 128], // zero at position 1
+            }],
             inputs: vec!["input".to_string()],
             outputs: vec!["single_zero".to_string()],
             opset_version: "iOS18".to_string(),
@@ -1154,14 +1226,12 @@ mod tests {
         // zero-dim gate runs. This test verifies that Fill ops with zero
         // dimensions are still rejected, albeit via the earlier gate.
         let graph = MirGraphCompat {
-            ops: vec![
-                MirOpCompat::Fill {
-                    name: "bad_fill".to_string(),
-                    shape: vec![0, 512], // zero at position 0
-                    value: 1.0,
-                    dtype: MilDtypeCompat::Fp16,
-                },
-            ],
+            ops: vec![MirOpCompat::Fill {
+                name: "bad_fill".to_string(),
+                shape: vec![0, 512], // zero at position 0
+                value: 1.0,
+                dtype: MilDtypeCompat::Fp16,
+            }],
             inputs: vec![],
             outputs: vec!["bad_fill".to_string()],
             opset_version: "iOS18".to_string(),
@@ -1179,23 +1249,18 @@ mod tests {
             err_msg.contains("ANE-illegal") || err_msg.contains("zero dimension"),
             "Fill should be rejected by ANE-illegal or zero-dim gate, got: {err_msg}"
         );
-        assert!(
-            err_msg.contains("bad_fill"),
-            "Error should mention the op name, got: {err_msg}"
-        );
+        assert!(err_msg.contains("bad_fill"), "Error should mention the op name, got: {err_msg}");
     }
 
     #[test]
     fn test_zero_dim_reshape_all_zeros_rejected() {
         // An all-zero reshape shape is definitely invalid.
         let graph = MirGraphCompat {
-            ops: vec![
-                MirOpCompat::Reshape {
-                    name: "all_zeros".to_string(),
-                    x: "input".to_string(),
-                    shape: vec![0, 0, 0, 0],
-                },
-            ],
+            ops: vec![MirOpCompat::Reshape {
+                name: "all_zeros".to_string(),
+                x: "input".to_string(),
+                shape: vec![0, 0, 0, 0],
+            }],
             inputs: vec!["input".to_string()],
             outputs: vec!["all_zeros".to_string()],
             opset_version: "iOS18".to_string(),
@@ -1227,13 +1292,11 @@ mod tests {
         node_shapes.insert("input".to_string(), vec![1, 512, 16, 128]);
 
         let graph = MirGraphCompat {
-            ops: vec![
-                MirOpCompat::Reshape {
-                    name: "good_reshape".to_string(),
-                    x: "input".to_string(),
-                    shape: vec![1, 512, 2048], // no zeros, valid reshape
-                },
-            ],
+            ops: vec![MirOpCompat::Reshape {
+                name: "good_reshape".to_string(),
+                x: "input".to_string(),
+                shape: vec![1, 512, 2048], // no zeros, valid reshape
+            }],
             inputs: vec!["input".to_string()],
             outputs: vec!["good_reshape".to_string()],
             opset_version: "iOS18".to_string(),

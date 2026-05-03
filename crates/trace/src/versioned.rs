@@ -831,7 +831,8 @@ fn op_name_for_sir(op: &SirOp) -> String {
             // boxing the &str keeps the types aligned across all arms.
             return name.to_string();
         }
-    }.to_string()
+    }
+    .to_string()
 }
 
 /// Get the default revision for a family.
@@ -909,11 +910,8 @@ mod tests {
     #[test]
     fn test_reducemin_family_gated_on_a13() {
         let matrix = OpSupportMatrix::for_family(AneFamily::A13);
-        let reducemin = SirOp::ReduceMin {
-            input: SirNodeId("x".into()),
-            axes: vec![1],
-            keep_dims: false,
-        };
+        let reducemin =
+            SirOp::ReduceMin { input: SirNodeId("x".into()), axes: vec![1], keep_dims: false };
         match matrix.check_op(&reducemin) {
             OpSupport::FamilyGated { .. } => {} // expected — A13 is FP-only
             other => panic!("Expected FamilyGated for ReduceMin on A13, got {:?}", other),
@@ -923,11 +921,8 @@ mod tests {
     #[test]
     fn test_reducemin_supported_on_a14() {
         let matrix = OpSupportMatrix::for_family(AneFamily::A14);
-        let reducemin = SirOp::ReduceMin {
-            input: SirNodeId("x".into()),
-            axes: vec![1],
-            keep_dims: false,
-        };
+        let reducemin =
+            SirOp::ReduceMin { input: SirNodeId("x".into()), axes: vec![1], keep_dims: false };
         match matrix.check_op(&reducemin) {
             OpSupport::AneSupported(_) => {} // expected — A14 supports all dtypes
             other => panic!("Expected AneSupported for ReduceMin on A14, got {:?}", other),
@@ -995,11 +990,8 @@ mod tests {
     #[test]
     fn test_argmax_supported_on_a16() {
         let matrix = OpSupportMatrix::for_family(AneFamily::A16);
-        let argmax = SirOp::ReduceArgmax {
-            input: SirNodeId("x".into()),
-            axis: 1,
-            keep_dims: false,
-        };
+        let argmax =
+            SirOp::ReduceArgmax { input: SirNodeId("x".into()), axis: 1, keep_dims: false };
         match matrix.check_op(&argmax) {
             OpSupport::AneSupported(AneEngineSupport::PE) => {} // expected
             other => panic!("Expected AneSupported(PE) for ArgMax on A16, got {:?}", other),
@@ -1009,11 +1001,8 @@ mod tests {
     #[test]
     fn test_argmin_supported_on_a16() {
         let matrix = OpSupportMatrix::for_family(AneFamily::A16);
-        let argmin = SirOp::ReduceArgmin {
-            input: SirNodeId("x".into()),
-            axis: 1,
-            keep_dims: false,
-        };
+        let argmin =
+            SirOp::ReduceArgmin { input: SirNodeId("x".into()), axis: 1, keep_dims: false };
         match matrix.check_op(&argmin) {
             OpSupport::AneSupported(AneEngineSupport::PE) => {} // expected
             other => panic!("Expected AneSupported(PE) for ArgMin on A16, got {:?}", other),
@@ -1024,11 +1013,8 @@ mod tests {
     fn test_argmax_cpu_only_on_a18() {
         // T-32: A18 (LSE_7) has no ConvertReductionArg converter.
         let matrix = OpSupportMatrix::for_family(AneFamily::A18);
-        let argmax = SirOp::ReduceArgmax {
-            input: SirNodeId("x".into()),
-            axis: 1,
-            keep_dims: false,
-        };
+        let argmax =
+            SirOp::ReduceArgmax { input: SirNodeId("x".into()), axis: 1, keep_dims: false };
         match matrix.check_op(&argmax) {
             OpSupport::CpuOnly(reason) => {
                 assert!(reason.contains("LSE_7"), "Expected LSE_7 in reason: {}", reason);
@@ -1041,11 +1027,8 @@ mod tests {
     #[test]
     fn test_argmin_cpu_only_on_a18() {
         let matrix = OpSupportMatrix::for_family(AneFamily::A18);
-        let argmin = SirOp::ReduceArgmin {
-            input: SirNodeId("x".into()),
-            axis: 1,
-            keep_dims: false,
-        };
+        let argmin =
+            SirOp::ReduceArgmin { input: SirNodeId("x".into()), axis: 1, keep_dims: false };
         match matrix.check_op(&argmin) {
             OpSupport::CpuOnly(reason) => {
                 assert!(reason.contains("LSE_7"), "Expected LSE_7 in reason: {}", reason);
@@ -1058,11 +1041,8 @@ mod tests {
     fn test_argmax_supported_on_a11_legacy() {
         // Even the oldest family (A11Legacy, LSE_0) has a converter.
         let matrix = OpSupportMatrix::for_family(AneFamily::A11Legacy);
-        let argmax = SirOp::ReduceArgmax {
-            input: SirNodeId("x".into()),
-            axis: 1,
-            keep_dims: false,
-        };
+        let argmax =
+            SirOp::ReduceArgmax { input: SirNodeId("x".into()), axis: 1, keep_dims: false };
         match matrix.check_op(&argmax) {
             OpSupport::AneSupported(AneEngineSupport::PE) => {} // expected
             other => panic!("Expected AneSupported(PE) for ArgMax on A11Legacy, got {:?}", other),
@@ -1072,11 +1052,8 @@ mod tests {
     #[test]
     fn test_argmax_supported_on_a14() {
         let matrix = OpSupportMatrix::for_family(AneFamily::A14);
-        let argmax = SirOp::ReduceArgmax {
-            input: SirNodeId("x".into()),
-            axis: 1,
-            keep_dims: false,
-        };
+        let argmax =
+            SirOp::ReduceArgmax { input: SirNodeId("x".into()), axis: 1, keep_dims: false };
         match matrix.check_op(&argmax) {
             OpSupport::AneSupported(AneEngineSupport::PE) => {} // expected
             other => panic!("Expected AneSupported(PE) for ArgMax on A14, got {:?}", other),
@@ -1100,16 +1077,17 @@ mod tests {
     fn test_m1_sdpa_not_supported_via_versioned_compiler() {
         // M1 (A14-class) must NOT claim SDPA support through VersionedCompiler.
         let compiler = VersionedCompiler::new(AneFamily::A14);
-        assert!(!compiler.target_family().supports_sdpa(),
-            "M1 (A14-class) must NOT support SDPA");
+        assert!(!compiler.target_family().supports_sdpa(), "M1 (A14-class) must NOT support SDPA");
     }
 
     #[test]
     fn test_m1_layernorm_not_supported_via_versioned_compiler() {
         // M1 (A14-class) must NOT claim LayerNorm support through VersionedCompiler.
         let compiler = VersionedCompiler::new(AneFamily::A14);
-        assert!(!compiler.target_family().supports_layernorm(),
-            "M1 (A14-class) must NOT support LayerNorm");
+        assert!(
+            !compiler.target_family().supports_layernorm(),
+            "M1 (A14-class) must NOT support LayerNorm"
+        );
     }
 }
 

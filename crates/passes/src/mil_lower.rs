@@ -57,13 +57,10 @@ use std::collections::HashMap;
 /// Returns an error if zero-resolution fails — this indicates a malformed
 /// reshape that would produce a Core ML model with literal zero dimensions,
 /// which is invalid.
-fn resolve_reshape_zeros(
-    input_shape: &[usize],
-    target_shape: &[usize],
-) -> Result<Vec<usize>> {
+fn resolve_reshape_zeros(input_shape: &[usize], target_shape: &[usize]) -> Result<Vec<usize>> {
     let input_elements: usize = input_shape.iter().product();
     let mut resolved = target_shape.to_vec();
-    let has_zeros = resolved.iter().any(|&d| d == 0);
+    let has_zeros = resolved.contains(&0);
 
     if !has_zeros || input_elements == 0 {
         return Ok(resolved);
@@ -71,10 +68,10 @@ fn resolve_reshape_zeros(
 
     // Step 1: Try positional resolution
     let mut positional_works = true;
-    for i in 0..resolved.len() {
-        if resolved[i] == 0 {
+    for (i, slot) in resolved.iter_mut().enumerate() {
+        if *slot == 0 {
             if let Some(&dim) = input_shape.get(i) {
-                resolved[i] = dim;
+                *slot = dim;
             } else {
                 positional_works = false;
                 break;
@@ -95,42 +92,37 @@ fn resolve_reshape_zeros(
 
     if !positional_works {
         // Step 2: Element-count-based inference
-        let non_zero_product: usize =
-            resolved.iter().filter(|&&d| d != 0).product();
-        if non_zero_product > 0 {
-            let remaining = input_elements / non_zero_product;
-            if remaining * non_zero_product == input_elements {
-                // Collect zero positions safely (replaces the previous .unwrap()
-                // on .position() / .rposition() which could panic if the slice
-                // had no zeros despite zero_count indicating otherwise).
-                let zero_positions: Vec<usize> = resolved
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, &d)| d == 0)
-                    .map(|(i, _)| i)
-                    .collect();
+        let non_zero_product: usize = resolved.iter().filter(|&&d| d != 0).product();
+        if let Some(remaining) = input_elements
+            .checked_div(non_zero_product)
+            .filter(|&r| r * non_zero_product == input_elements)
+        {
+            // Collect zero positions safely (replaces the previous .unwrap()
+            // on .position() / .rposition() which could panic if the slice
+            // had no zeros despite zero_count indicating otherwise).
+            let zero_positions: Vec<usize> =
+                resolved.iter().enumerate().filter(|(_, &d)| d == 0).map(|(i, _)| i).collect();
 
-                if zero_positions.is_empty() {
-                    anyhow::bail!(
-                        "Reshape zero-resolution internal error: zero_count indicated \
-                         zeros exist in target_shape {:?} but no zero positions found",
-                        target_shape
-                    );
+            if zero_positions.is_empty() {
+                anyhow::bail!(
+                    "Reshape zero-resolution internal error: zero_count indicated \
+                     zeros exist in target_shape {:?} but no zero positions found",
+                    target_shape
+                );
+            }
+
+            match zero_positions.len() {
+                1 => {
+                    resolved[zero_positions[0]] = remaining;
                 }
-
-                match zero_positions.len() {
-                    1 => {
-                        resolved[zero_positions[0]] = remaining;
+                _ => {
+                    // Two or more zeros: assume batch=1 for all but the last,
+                    // compute last from remaining elements
+                    for &pos in &zero_positions[..zero_positions.len() - 1] {
+                        resolved[pos] = 1;
                     }
-                    _ => {
-                        // Two or more zeros: assume batch=1 for all but the last,
-                        // compute last from remaining elements
-                        for &pos in &zero_positions[..zero_positions.len() - 1] {
-                            resolved[pos] = 1;
-                        }
-                        if let Some(&last_pos) = zero_positions.last() {
-                            resolved[last_pos] = remaining;
-                        }
+                    if let Some(&last_pos) = zero_positions.last() {
+                        resolved[last_pos] = remaining;
                     }
                 }
             }
@@ -140,12 +132,14 @@ fn resolve_reshape_zeros(
     // Final validation: if zeros remain after resolution, this reshape is
     // malformed and would produce a Core ML model with literal zero
     // dimensions, which is invalid.
-    if resolved.iter().any(|&d| d == 0) {
+    if resolved.contains(&0) {
         anyhow::bail!(
             "Reshape zero-resolution failed: could not resolve all zero placeholders \
              in target_shape {:?} with input_shape {:?}. Resolved shape still contains \
              zeros: {:?}. Input has {} elements, non-zero target dims product is {}.",
-            target_shape, input_shape, resolved,
+            target_shape,
+            input_shape,
+            resolved,
             input_elements,
             resolved.iter().filter(|&&d| d != 0).product::<usize>()
         );
@@ -199,8 +193,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
                         let batch = if batch_a.is_empty() && batch_b.is_empty() {
                             vec![]
                         } else {
-                            broadcast_shape(batch_a, batch_b)
-                                .unwrap_or_else(|| batch_a.to_vec())
+                            broadcast_shape(batch_a, batch_b).unwrap_or_else(|| batch_a.to_vec())
                         };
                         let mut out = batch;
                         // Validate inner dims when both are concrete (> 0)
@@ -250,11 +243,17 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
             })
         }
 
-        AirOp::Add { x, y } | AirOp::Mul { x, y } | AirOp::Sub { x, y }
-        | AirOp::Maximum { x, y } | AirOp::Minimum { x, y }
-        | AirOp::Equal { x, y } | AirOp::NotEqual { x, y }
-        | AirOp::Greater { x, y } | AirOp::GreaterEqual { x, y }
-        | AirOp::Less { x, y } | AirOp::LessEqual { x, y } => {
+        AirOp::Add { x, y }
+        | AirOp::Mul { x, y }
+        | AirOp::Sub { x, y }
+        | AirOp::Maximum { x, y }
+        | AirOp::Minimum { x, y }
+        | AirOp::Equal { x, y }
+        | AirOp::NotEqual { x, y }
+        | AirOp::Greater { x, y }
+        | AirOp::GreaterEqual { x, y }
+        | AirOp::Less { x, y }
+        | AirOp::LessEqual { x, y } => {
             // Sprint 62→63: Compute the broadcast output shape for binary elementwise ops.
             // Core ML's type inference applies standard numpy-style broadcasting, so
             // the declared output shape must match the broadcast result. Previously we
@@ -295,13 +294,11 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
                 Ok(target_shape.clone())
             }
         }
-        AirOp::Transpose { input, perm } => {
-            Ok(if let Some(shape) = node_shapes.get(input) {
-                perm.iter().map(|&p| shape.get(p).copied().unwrap_or(0)).collect()
-            } else {
-                vec![]
-            })
-        }
+        AirOp::Transpose { input, perm } => Ok(if let Some(shape) = node_shapes.get(input) {
+            perm.iter().map(|&p| shape.get(p).copied().unwrap_or(0)).collect()
+        } else {
+            vec![]
+        }),
         AirOp::Split { input, axis, num_splits } => {
             Ok(if let Some(shape) = node_shapes.get(input) {
                 let mut out = shape.clone();
@@ -358,22 +355,17 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         | AirOp::SliceUpdate { input, .. }
         | AirOp::LayerNorm { input, .. } => Ok(node_shapes.get(input).cloned().unwrap_or_default()),
         AirOp::RealDiv { x, .. } => Ok(node_shapes.get(x).cloned().unwrap_or_default()),
-        AirOp::Topk { input, k, axis } => {
-            Ok(if let Some(shape) = node_shapes.get(input) {
-                let mut out = shape.clone();
-                let ax = if *axis >= 0 {
-                    *axis as usize
-                } else {
-                    out.len().saturating_add(*axis as usize)
-                };
-                if ax < out.len() {
-                    out[ax] = *k;
-                }
-                out
-            } else {
-                vec![]
-            })
-        }
+        AirOp::Topk { input, k, axis } => Ok(if let Some(shape) = node_shapes.get(input) {
+            let mut out = shape.clone();
+            let ax =
+                if *axis >= 0 { *axis as usize } else { out.len().saturating_add(*axis as usize) };
+            if ax < out.len() {
+                out[ax] = *k;
+            }
+            out
+        } else {
+            vec![]
+        }),
         AirOp::Gather { input, indices, axis } => {
             // Embedding lookup: Gather(embed_weight, input_ids, axis=0)
             // The output shape replaces the axis dimension of the input (embedding
@@ -452,7 +444,8 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
                     .collect();
                 // Apply squeeze_mask: remove dimensions where squeeze_mask[i] is true
                 if !squeeze_mask.is_empty() {
-                    sliced.into_iter()
+                    sliced
+                        .into_iter()
                         .enumerate()
                         .filter(|(i, _)| !squeeze_mask.get(*i).copied().unwrap_or(false))
                         .map(|(_, d)| d)
@@ -465,12 +458,14 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
                 && begin.len() == end.len()
             {
                 // Fallback: no input shape available, no masks, all positive.
-                let sliced: Vec<usize> = end.iter()
+                let sliced: Vec<usize> = end
+                    .iter()
                     .zip(begin.iter())
                     .map(|(e, b)| (*e as usize).saturating_sub(*b as usize))
                     .collect();
                 if !squeeze_mask.is_empty() {
-                    sliced.into_iter()
+                    sliced
+                        .into_iter()
                         .enumerate()
                         .filter(|(i, _)| !squeeze_mask.get(*i).copied().unwrap_or(false))
                         .map(|(_, d)| d)
@@ -482,7 +477,9 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
                 vec![]
             })
         }
-        AirOp::Where { x, .. } | AirOp::Select { x, .. } => Ok(node_shapes.get(x).cloned().unwrap_or_default()),
+        AirOp::Where { x, .. } | AirOp::Select { x, .. } => {
+            Ok(node_shapes.get(x).cloned().unwrap_or_default())
+        }
         AirOp::StaticLUTProjection { .. } => Ok(vec![]),
         // ─── Fill: shape is explicitly given; FillLike: derives from ref_tensor ───
         AirOp::Fill { shape, .. } => Ok(shape.clone()),
@@ -516,7 +513,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         AirOp::ExpandDims { input, axis } => {
             Ok(if let Some(input_shape) = node_shapes.get(input) {
                 let mut out = input_shape.clone();
-                let mut sorted_axes: Vec<usize> = axis.iter().map(|&a| a as usize).collect();
+                let mut sorted_axes: Vec<usize> = axis.to_vec();
                 sorted_axes.sort_unstable();
                 for (i, &ax) in sorted_axes.iter().enumerate() {
                     let insert_pos = if ax >= out.len() { out.len() } else { ax + i };
@@ -531,7 +528,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         AirOp::Squeeze { input, axis } => {
             Ok(if let Some(input_shape) = node_shapes.get(input) {
                 let mut out = input_shape.clone();
-                let mut sorted_axes: Vec<usize> = axis.iter().map(|&a| a as usize).collect();
+                let mut sorted_axes: Vec<usize> = axis.to_vec();
                 sorted_axes.sort_unstable_by(|a, b| b.cmp(a)); // Remove from back to front
                 for &ax in &sorted_axes {
                     if ax < out.len() {
@@ -781,7 +778,12 @@ impl MilLowerPass {
                 AirOp::MatMul { a, b, .. } => {
                     let x_id = air_to_mir.get(a).cloned().unwrap_or_else(|| MirNodeId(a.0.clone()));
                     let y_id = air_to_mir.get(b).cloned().unwrap_or_else(|| MirNodeId(b.0.clone()));
-                    MirOp::MILMatMul { name: air_node.name.clone(), x: x_id, y: y_id, transpose_y: false }
+                    MirOp::MILMatMul {
+                        name: air_node.name.clone(),
+                        x: x_id,
+                        y: y_id,
+                        transpose_y: false,
+                    }
                 }
                 AirOp::Conv1x1AsLinear { input, weight, .. } => {
                     // Conv1x1AsLinear is semantically a fully-connected projection.
@@ -803,70 +805,35 @@ impl MilLowerPass {
                         .get(input)
                         .cloned()
                         .unwrap_or_else(|| MirNodeId(input.0.clone()));
-                    MirOp::MILAbs {
-                        name: air_node.name.clone(),
-                        x,
-                    }
+                    MirOp::MILAbs { name: air_node.name.clone(), x }
                 }
                 AirOp::Add { x, y } => {
-                    let x_mir = air_to_mir
-                        .get(x)
-                        .cloned()
-                        .unwrap_or_else(|| MirNodeId(x.0.clone()));
-                    let y_mir = air_to_mir
-                        .get(y)
-                        .cloned()
-                        .unwrap_or_else(|| MirNodeId(y.0.clone()));
-                    MirOp::MILAdd {
-                        name: air_node.name.clone(),
-                        x: x_mir,
-                        y: y_mir,
-                    }
+                    let x_mir =
+                        air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let y_mir =
+                        air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILAdd { name: air_node.name.clone(), x: x_mir, y: y_mir }
                 }
                 AirOp::Mul { x, y } => {
-                    let x_mir = air_to_mir
-                        .get(x)
-                        .cloned()
-                        .unwrap_or_else(|| MirNodeId(x.0.clone()));
-                    let y_mir = air_to_mir
-                        .get(y)
-                        .cloned()
-                        .unwrap_or_else(|| MirNodeId(y.0.clone()));
-                    MirOp::MILMul {
-                        name: air_node.name.clone(),
-                        x: x_mir,
-                        y: y_mir,
-                    }
+                    let x_mir =
+                        air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let y_mir =
+                        air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILMul { name: air_node.name.clone(), x: x_mir, y: y_mir }
                 }
                 AirOp::Maximum { x, y } => {
-                    let x_mir = air_to_mir
-                        .get(x)
-                        .cloned()
-                        .unwrap_or_else(|| MirNodeId(x.0.clone()));
-                    let y_mir = air_to_mir
-                        .get(y)
-                        .cloned()
-                        .unwrap_or_else(|| MirNodeId(y.0.clone()));
-                    MirOp::MILMaximum {
-                        name: air_node.name.clone(),
-                        x: x_mir,
-                        y: y_mir,
-                    }
+                    let x_mir =
+                        air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let y_mir =
+                        air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILMaximum { name: air_node.name.clone(), x: x_mir, y: y_mir }
                 }
                 AirOp::Minimum { x, y } => {
-                    let x_mir = air_to_mir
-                        .get(x)
-                        .cloned()
-                        .unwrap_or_else(|| MirNodeId(x.0.clone()));
-                    let y_mir = air_to_mir
-                        .get(y)
-                        .cloned()
-                        .unwrap_or_else(|| MirNodeId(y.0.clone()));
-                    MirOp::MILMinimum {
-                        name: air_node.name.clone(),
-                        x: x_mir,
-                        y: y_mir,
-                    }
+                    let x_mir =
+                        air_to_mir.get(x).cloned().unwrap_or_else(|| MirNodeId(x.0.clone()));
+                    let y_mir =
+                        air_to_mir.get(y).cloned().unwrap_or_else(|| MirNodeId(y.0.clone()));
+                    MirOp::MILMinimum { name: air_node.name.clone(), x: x_mir, y: y_mir }
                 }
                 AirOp::Reshape { input, target_shape } => {
                     let mir_input = air_to_mir
@@ -2806,8 +2773,10 @@ impl MilLowerPass {
                 } = &node.op
                 {
                     // Look up shapes from node_shapes
-                    let q_shape = node_shapes.get(&AirNodeId(query.0.clone())).cloned().unwrap_or_default();
-                    let k_shape = node_shapes.get(&AirNodeId(key.0.clone())).cloned().unwrap_or_default();
+                    let q_shape =
+                        node_shapes.get(&AirNodeId(query.0.clone())).cloned().unwrap_or_default();
+                    let k_shape =
+                        node_shapes.get(&AirNodeId(key.0.clone())).cloned().unwrap_or_default();
 
                     if q_shape.len() < 4 || k_shape.len() < 4 {
                         eprintln!(
@@ -2907,7 +2876,8 @@ impl MilLowerPass {
                                 air_source: None,
                             };
                             new_nodes.push(k_gather_node);
-                            extra_shapes.push((AirNodeId(k_head_id.0.clone()), vec![1, 1, seq_len, hd]));
+                            extra_shapes
+                                .push((AirNodeId(k_head_id.0.clone()), vec![1, 1, seq_len, hd]));
 
                             let v_gather_node = MirNode {
                                 id: v_head_id.clone(),
@@ -2927,7 +2897,8 @@ impl MilLowerPass {
                                 air_source: None,
                             };
                             new_nodes.push(v_gather_node);
-                            extra_shapes.push((AirNodeId(v_head_id.0.clone()), vec![1, 1, seq_len, hd]));
+                            extra_shapes
+                                .push((AirNodeId(v_head_id.0.clone()), vec![1, 1, seq_len, hd]));
                         }
 
                         // matmul(q_head, k_head, transpose_y=True) → [1, 1, 1, seq_len]
@@ -2998,7 +2969,8 @@ impl MilLowerPass {
                                 air_source: None,
                             };
                             new_nodes.push(masked_node);
-                            extra_shapes.push((AirNodeId(masked_id.0.clone()), vec![1, 1, 1, seq_len]));
+                            extra_shapes
+                                .push((AirNodeId(masked_id.0.clone()), vec![1, 1, 1, seq_len]));
                             masked_id
                         } else {
                             scaled_id
@@ -3019,7 +2991,8 @@ impl MilLowerPass {
                             air_source: None,
                         };
                         new_nodes.push(weights_node);
-                        extra_shapes.push((AirNodeId(weights_id.0.clone()), vec![1, 1, 1, seq_len]));
+                        extra_shapes
+                            .push((AirNodeId(weights_id.0.clone()), vec![1, 1, 1, seq_len]));
 
                         // matmul(weights, v_head) → [1, 1, 1, hd]
                         let ctx_id = MirNodeId(format!("{}_ctx_{}", sdpa_id.0, qi));
@@ -3064,10 +3037,7 @@ impl MilLowerPass {
                     // Create an identity node mapping concat → sdpa_id
                     let identity_node = MirNode {
                         id: sdpa_id.clone(),
-                        op: MirOp::MILIdentity {
-                            name: format!("{}_identity", name),
-                            x: concat_id,
-                        },
+                        op: MirOp::MILIdentity { name: format!("{}_identity", name), x: concat_id },
                         dtype: sdpa_dtype.clone(),
                         shape: node.shape.clone(),
                         compute_unit_hint: sdpa_compute.clone(),
@@ -3106,13 +3076,11 @@ impl MilLowerPass {
         //   Before: [1,S,D] → lm_head → [1,S,V] → slice → [1,1,V]
         //   After:  [1,S,D] → slice → [1,1,D] → lm_head → [1,1,V]
         {
-            let lm_head_idx = mir_nodes.iter().position(|n| {
-                match &n.op {
-                    MirOp::MILLinear { weight, .. } => {
-                        weight == "lm_head.weight" || weight.contains("lm_head.")
-                    }
-                    _ => false,
+            let lm_head_idx = mir_nodes.iter().position(|n| match &n.op {
+                MirOp::MILLinear { weight, .. } => {
+                    weight == "lm_head.weight" || weight.contains("lm_head.")
                 }
+                _ => false,
             });
 
             if let Some(lm_idx) = lm_head_idx {
@@ -3126,7 +3094,8 @@ impl MilLowerPass {
                 // Look up the input node's shape directly from mir_nodes.
                 // This is more reliable than the reverse-lookup through
                 // air_to_mir / node_shapes, which can silently fail.
-                let input_shape = mir_nodes.iter()
+                let input_shape = mir_nodes
+                    .iter()
                     .find(|n| n.id.0 == input_mir_id.0)
                     .map(|n| n.shape.clone())
                     .unwrap_or_default();
@@ -3148,13 +3117,15 @@ impl MilLowerPass {
                     // Slice hidden state: [0, S-1, 0, ...] : [1, S, D, ...] → [1, 1, D, ...]
                     let mut begin = vec![0i64; rank];
                     let mut end: Vec<i64> = input_shape.iter().map(|&d| d as i64).collect();
-                    begin[1] = seq_len - 1;  // Start at last position
-                    end[1] = seq_len;        // Seq dim: take 1 position (end is exclusive)
+                    begin[1] = seq_len - 1; // Start at last position
+                    end[1] = seq_len; // Seq dim: take 1 position (end is exclusive)
 
                     let slice_id = MirNodeId(format!("{}_last_token", input_mir_id.0));
-                    let slice_shape: Vec<usize> = input_shape.iter().enumerate().map(|(i, &d)| {
-                        if i == 1 { 1 } else { d }
-                    }).collect();
+                    let slice_shape: Vec<usize> = input_shape
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &d)| if i == 1 { 1 } else { d })
+                        .collect();
 
                     let slice_node = MirNode {
                         id: slice_id.clone(),
@@ -3196,23 +3167,22 @@ impl MilLowerPass {
 
                     // Update node_shapes: fix the lm_head's AIR source shape
                     // and add the slice node's shape.
-                    let lm_air_id = air_to_mir.iter()
+                    let lm_air_id = air_to_mir
+                        .iter()
                         .find(|(_, mir_id)| mir_id.0 == lm_id.0)
                         .map(|(air_id, _)| air_id.clone());
                     if let Some(air_id) = lm_air_id {
                         node_shapes.insert(air_id, lm_output_shape_fixed);
                     }
-                    node_shapes.insert(
-                        AirNodeId(format!("{}_last_token", input_mir_id.0)),
-                        slice_shape,
-                    );
+                    node_shapes
+                        .insert(AirNodeId(format!("{}_last_token", input_mir_id.0)), slice_shape);
 
                     eprintln!(
                         "  [lm_head pre-slice] Applied: [{},{},{}] → slice → [{},1,{}] → lm_head → [1,1,{}]",
-                        input_shape.get(0).unwrap_or(&0),
+                        input_shape.first().unwrap_or(&0),
                         input_shape.get(1).unwrap_or(&0),
                         input_shape.get(2).unwrap_or(&0),
-                        input_shape.get(0).unwrap_or(&0),
+                        input_shape.first().unwrap_or(&0),
                         input_shape.get(2).unwrap_or(&0),
                         mir_nodes[lm_idx + 1].shape.get(2).unwrap_or(&0),
                     );
@@ -3250,37 +3220,42 @@ impl MilLowerPass {
         // [out_features, in_features] and transposes it at runtime.
         {
             // Re-find lm_head after the slice-before fix may have moved it
-            let lm_head_idx = mir_nodes.iter().position(|n| {
-                match &n.op {
-                    MirOp::MILLinear { weight, .. } => {
-                        weight == "lm_head.weight" || weight.contains("lm_head.")
-                    }
-                    _ => false,
+            let lm_head_idx = mir_nodes.iter().position(|n| match &n.op {
+                MirOp::MILLinear { weight, .. } => {
+                    weight == "lm_head.weight" || weight.contains("lm_head.")
                 }
+                _ => false,
             });
 
             if let Some(lm_idx) = lm_head_idx {
-                let (input_mir_id, output_shape, lm_id, lm_dtype, lm_compute_hint, lm_air_source, weight_name) = {
+                let (
+                    input_mir_id,
+                    output_shape,
+                    lm_id,
+                    lm_dtype,
+                    lm_compute_hint,
+                    lm_air_source,
+                    weight_name,
+                ) = {
                     let lm_node = &mir_nodes[lm_idx];
                     match &lm_node.op {
-                        MirOp::MILLinear { x, weight, .. } => {
-                            (
-                                x.clone(),
-                                lm_node.shape.clone(),
-                                lm_node.id.clone(),
-                                lm_node.dtype.clone(),
-                                lm_node.compute_unit_hint.clone(),
-                                lm_node.air_source.clone(),
-                                weight.clone(),
-                            )
-                        }
+                        MirOp::MILLinear { x, weight, .. } => (
+                            x.clone(),
+                            lm_node.shape.clone(),
+                            lm_node.id.clone(),
+                            lm_node.dtype.clone(),
+                            lm_node.compute_unit_hint.clone(),
+                            lm_node.air_source.clone(),
+                            weight.clone(),
+                        ),
                         _ => unreachable!("lm_head must be MILLinear"),
                     }
                 };
 
                 // Get the input hidden state shape (should be [1, 1, D] after slice-before,
                 // or [1, D] for decode_step with single-token input)
-                let input_shape = mir_nodes.iter()
+                let input_shape = mir_nodes
+                    .iter()
                     .find(|n| n.id.0 == input_mir_id.0)
                     .map(|n| n.shape.clone())
                     .unwrap_or_default();
@@ -3364,24 +3339,15 @@ impl MilLowerPass {
 
                 // Update node_shapes
                 if needs_reshape {
-                    node_shapes.insert(
-                        AirNodeId(format!("{}_2d", input_mir_id.0)),
-                        reshape_shape,
-                    );
+                    node_shapes.insert(AirNodeId(format!("{}_2d", input_mir_id.0)), reshape_shape);
                 }
                 if let Some(air_id) = lm_air_source {
                     node_shapes.insert(air_id, matmul_output_shape.clone());
                 }
                 // Seed the weight shape so the matmul's y input has a known shape
-                node_shapes.insert(
-                    AirNodeId(weight_name.clone()),
-                    vec![vocab_size, hidden_dim],
-                );
+                node_shapes.insert(AirNodeId(weight_name.clone()), vec![vocab_size, hidden_dim]);
                 // Also update the lm_head node's own shape in node_shapes
-                node_shapes.insert(
-                    AirNodeId(lm_id.0.clone()),
-                    matmul_output_shape.clone(),
-                );
+                node_shapes.insert(AirNodeId(lm_id.0.clone()), matmul_output_shape.clone());
 
                 // ─── Step 3: cast matmul output from fp16 → fp32 ───────
                 // The reference implementation (pkhairkh/qwen3-coreml-palettized)
@@ -3411,10 +3377,8 @@ impl MilLowerPass {
                 mir_nodes.insert(cast_insert_idx, cast_node);
 
                 // Update node_shapes for the cast output
-                node_shapes.insert(
-                    AirNodeId(format!("{}_fp32", lm_id.0)),
-                    matmul_output_shape.clone(),
-                );
+                node_shapes
+                    .insert(AirNodeId(format!("{}_fp32", lm_id.0)), matmul_output_shape.clone());
 
                 // ─── Step 4: fix downstream Identity output node ───────
                 // The matmul produces rank-2 [1, V] but the Identity output
@@ -3441,10 +3405,8 @@ impl MilLowerPass {
                             node.shape = matmul_output_shape.clone();
                             node.dtype = MilDtype::Fp32;
                             // Update node_shapes for the Identity output
-                            node_shapes.insert(
-                                AirNodeId(node.id.0.clone()),
-                                matmul_output_shape.clone(),
-                            );
+                            node_shapes
+                                .insert(AirNodeId(node.id.0.clone()), matmul_output_shape.clone());
                             fixed_identity = true;
                             break;
                         }
@@ -3459,7 +3421,7 @@ impl MilLowerPass {
 
                 eprintln!(
                     "  [lm_head matmul] Applied: {} → [1,{}] → matmul(y={}, transpose_y=True) → [1,{}] → cast → [1,{}] fp32",
-                    if needs_reshape { format!("reshape [{},{},{}] → [1,{}]", input_shape.get(0).unwrap_or(&0), input_shape.get(1).unwrap_or(&0), input_shape.get(2).unwrap_or(&0), hidden_dim) } else { format!("direct [{},{}] (already 2D)", input_shape.get(0).unwrap_or(&0), input_shape.get(1).unwrap_or(&0)) },
+                    if needs_reshape { format!("reshape [{},{},{}] → [1,{}]", input_shape.first().unwrap_or(&0), input_shape.get(1).unwrap_or(&0), input_shape.get(2).unwrap_or(&0), hidden_dim) } else { format!("direct [{},{}] (already 2D)", input_shape.first().unwrap_or(&0), input_shape.get(1).unwrap_or(&0)) },
                     hidden_dim,
                     weight_name,
                     vocab_size,
@@ -3496,9 +3458,13 @@ impl MilLowerPass {
             // The `linear` op may not have an ANE execution converter.
             // Our weights are stored in HF convention [out_dim, in_dim],
             // so transpose_y=True gives the correct x @ W^T computation.
-            let linear_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILLinear { .. })).count();
+            let linear_count =
+                mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILLinear { .. })).count();
             if linear_count > 0 {
-                eprintln!("  [ANE legality] Replacing {} MILLinear → MILMatMul(transpose_y=True)", linear_count);
+                eprintln!(
+                    "  [ANE legality] Replacing {} MILLinear → MILMatMul(transpose_y=True)",
+                    linear_count
+                );
                 for node in mir_nodes.iter_mut() {
                     if let MirOp::MILLinear { name, x, weight, bias: _ } = &node.op {
                         let new_op = MirOp::MILMatMul {
@@ -3507,7 +3473,10 @@ impl MilLowerPass {
                             y: MirNodeId(weight.clone()),
                             transpose_y: true,
                         };
-                        eprintln!("    linear '{}' (weight={}) → matmul(transpose_y=True)", name, weight);
+                        eprintln!(
+                            "    linear '{}' (weight={}) → matmul(transpose_y=True)",
+                            name, weight
+                        );
                         node.op = new_op;
                         // Shape remains the same: [B, S, out_dim] for both linear and matmul
                     }
@@ -3520,8 +3489,10 @@ impl MilLowerPass {
             // legality_rewrite.rs. If they somehow reach MIR, it's a bug
             // in the decomposition pipeline — panic immediately rather than
             // silently producing an ANE-incompatible model.
-            let where_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILWhere { .. })).count();
-            let select_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILSelect { .. })).count();
+            let where_count =
+                mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILWhere { .. })).count();
+            let select_count =
+                mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILSelect { .. })).count();
             if where_count > 0 || select_count > 0 {
                 panic!(
                     "BUG: Found {} MILWhere + {} MILSelect in MIR — these are ANE-illegal and must be decomposed to arithmetic (cond*x + (1-cond)*y) at the SIR→AIR level. Check legality_rewrite.rs.",
@@ -3535,9 +3506,13 @@ impl MilLowerPass {
             //   abs(x) → reduce_max → clip(α=2^-14) → real_div(x, clip) →
             //   mul(normed, normed) → reduce_mean → real_div(1/clip, clip) →
             //   add(mean, eps_term) → rsqrt → mul(normed, rsqrt) → mul(result, gamma)
-            let ln_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILLayerNorm { .. })).count();
+            let ln_count =
+                mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILLayerNorm { .. })).count();
             if ln_count > 0 {
-                eprintln!("  [ANE legality] Replacing {} MILLayerNorm → decomposed RMSNorm", ln_count);
+                eprintln!(
+                    "  [ANE legality] Replacing {} MILLayerNorm → decomposed RMSNorm",
+                    ln_count
+                );
                 let mut ln_replacements: Vec<(usize, Vec<MirNode>)> = Vec::new();
                 let mut ln_extra_shapes: Vec<(AirNodeId, Vec<usize>)> = Vec::new();
 
@@ -3547,9 +3522,16 @@ impl MilLowerPass {
                         let ln_dtype = &node.dtype;
                         let ln_compute = &node.compute_unit_hint;
                         let input_shape = node.shape.clone();
-                        let norm_axes = if axes.is_empty() { vec![input_shape.len() - 1] } else { axes.clone() };
+                        let norm_axes = if axes.is_empty() {
+                            vec![input_shape.len() - 1]
+                        } else {
+                            axes.clone()
+                        };
 
-                        eprintln!("    layer_norm '{}' input_shape={:?} epsilon={:.8} axes={:?}", name, input_shape, epsilon, norm_axes);
+                        eprintln!(
+                            "    layer_norm '{}' input_shape={:?} epsilon={:.8} axes={:?}",
+                            name, input_shape, epsilon, norm_axes
+                        );
 
                         let mut new_nodes = Vec::new();
 
@@ -3568,10 +3550,19 @@ impl MilLowerPass {
                         // Step 2: reduce_max(abs, axes, keep_dims=True)
                         let rmax_id = MirNodeId(format!("{}_rmax", ln_id.0));
                         let mut rmax_shape = input_shape.clone();
-                        for &ax in &norm_axes { if ax < rmax_shape.len() { rmax_shape[ax] = 1; } }
+                        for &ax in &norm_axes {
+                            if ax < rmax_shape.len() {
+                                rmax_shape[ax] = 1;
+                            }
+                        }
                         new_nodes.push(MirNode {
                             id: rmax_id.clone(),
-                            op: MirOp::MILReduceMax { name: format!("{}_rmax", name), x: abs_id.clone(), axes: norm_axes.clone(), keep_dims: true },
+                            op: MirOp::MILReduceMax {
+                                name: format!("{}_rmax", name),
+                                x: abs_id.clone(),
+                                axes: norm_axes.clone(),
+                                keep_dims: true,
+                            },
                             dtype: ln_dtype.clone(),
                             shape: rmax_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
@@ -3583,7 +3574,12 @@ impl MilLowerPass {
                         let clip_id = MirNodeId(format!("{}_clip", ln_id.0));
                         new_nodes.push(MirNode {
                             id: clip_id.clone(),
-                            op: MirOp::MILClip { name: format!("{}_clip", name), x: rmax_id.clone(), min_val: 6.103515625e-05, max_val: f32::INFINITY },
+                            op: MirOp::MILClip {
+                                name: format!("{}_clip", name),
+                                x: rmax_id.clone(),
+                                min_val: 6.103_515_6e-5,
+                                max_val: f32::INFINITY,
+                            },
                             dtype: ln_dtype.clone(),
                             shape: rmax_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
@@ -3595,7 +3591,11 @@ impl MilLowerPass {
                         let norm_id = MirNodeId(format!("{}_norm", ln_id.0));
                         new_nodes.push(MirNode {
                             id: norm_id.clone(),
-                            op: MirOp::MILRealDiv { name: format!("{}_norm", name), x: x.clone(), y: clip_id.clone() },
+                            op: MirOp::MILRealDiv {
+                                name: format!("{}_norm", name),
+                                x: x.clone(),
+                                y: clip_id.clone(),
+                            },
                             dtype: ln_dtype.clone(),
                             shape: input_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
@@ -3607,7 +3607,11 @@ impl MilLowerPass {
                         let sq_id = MirNodeId(format!("{}_sq", ln_id.0));
                         new_nodes.push(MirNode {
                             id: sq_id.clone(),
-                            op: MirOp::MILMul { name: format!("{}_sq", name), x: norm_id.clone(), y: norm_id.clone() },
+                            op: MirOp::MILMul {
+                                name: format!("{}_sq", name),
+                                x: norm_id.clone(),
+                                y: norm_id.clone(),
+                            },
                             dtype: ln_dtype.clone(),
                             shape: input_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
@@ -3618,10 +3622,19 @@ impl MilLowerPass {
                         // Step 6: reduce_mean(sq, axes, keep_dims=True) — mean of squares
                         let mean_id = MirNodeId(format!("{}_mean", ln_id.0));
                         let mut mean_shape = input_shape.clone();
-                        for &ax in &norm_axes { if ax < mean_shape.len() { mean_shape[ax] = 1; } }
+                        for &ax in &norm_axes {
+                            if ax < mean_shape.len() {
+                                mean_shape[ax] = 1;
+                            }
+                        }
                         new_nodes.push(MirNode {
                             id: mean_id.clone(),
-                            op: MirOp::MILReduceMean { name: format!("{}_mean", name), x: sq_id.clone(), axes: norm_axes.clone(), keep_dims: true },
+                            op: MirOp::MILReduceMean {
+                                name: format!("{}_mean", name),
+                                x: sq_id.clone(),
+                                axes: norm_axes.clone(),
+                                keep_dims: true,
+                            },
                             dtype: ln_dtype.clone(),
                             shape: mean_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
@@ -3650,25 +3663,32 @@ impl MilLowerPass {
                         let eps_value_path = format!("_epsilon_{:.8}", epsilon);
                         new_nodes.push(MirNode {
                             id: eps_const_id.clone(),
-                            op: MirOp::MILConst { name: format!("{}_eps_const", name), value_path: eps_value_path, dtype: ln_dtype.clone() },
+                            op: MirOp::MILConst {
+                                name: format!("{}_eps_const", name),
+                                value_path: eps_value_path,
+                                dtype: ln_dtype.clone(),
+                            },
                             dtype: ln_dtype.clone(),
                             shape: mean_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
                             air_source: None,
                         });
-                        ln_extra_shapes.push((AirNodeId(eps_const_id.0.clone()), mean_shape.clone()));
+                        ln_extra_shapes
+                            .push((AirNodeId(eps_const_id.0.clone()), mean_shape.clone()));
                         // Seed the epsilon constant value in node_shapes with a marker
                         // The const resolver will create the actual tensor.
                         // Use a special naming convention to identify epsilon constants.
-                        node_shapes.insert(
-                            AirNodeId(format!("{}_eps_const", name)),
-                            mean_shape.clone(),
-                        );
+                        node_shapes
+                            .insert(AirNodeId(format!("{}_eps_const", name)), mean_shape.clone());
 
                         let add_eps_id = MirNodeId(format!("{}_add_eps", ln_id.0));
                         new_nodes.push(MirNode {
                             id: add_eps_id.clone(),
-                            op: MirOp::MILAdd { name: format!("{}_add_eps", name), x: mean_id.clone(), y: eps_const_id.clone() },
+                            op: MirOp::MILAdd {
+                                name: format!("{}_add_eps", name),
+                                x: mean_id.clone(),
+                                y: eps_const_id.clone(),
+                            },
                             dtype: ln_dtype.clone(),
                             shape: mean_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
@@ -3680,7 +3700,10 @@ impl MilLowerPass {
                         let rsqrt_id = MirNodeId(format!("{}_rsqrt", ln_id.0));
                         new_nodes.push(MirNode {
                             id: rsqrt_id.clone(),
-                            op: MirOp::MILRsqrt { name: format!("{}_rsqrt", name), x: add_eps_id.clone() },
+                            op: MirOp::MILRsqrt {
+                                name: format!("{}_rsqrt", name),
+                                x: add_eps_id.clone(),
+                            },
                             dtype: ln_dtype.clone(),
                             shape: mean_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
@@ -3692,7 +3715,11 @@ impl MilLowerPass {
                         let normed_id = MirNodeId(format!("{}_normed", ln_id.0));
                         new_nodes.push(MirNode {
                             id: normed_id.clone(),
-                            op: MirOp::MILMul { name: format!("{}_normed", name), x: norm_id.clone(), y: rsqrt_id.clone() },
+                            op: MirOp::MILMul {
+                                name: format!("{}_normed", name),
+                                x: norm_id.clone(),
+                                y: rsqrt_id.clone(),
+                            },
                             dtype: ln_dtype.clone(),
                             shape: input_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
@@ -3704,7 +3731,11 @@ impl MilLowerPass {
                         let gamma_id = MirNodeId(format!("{}_gamma", ln_id.0));
                         let gamma_const_node = MirNode {
                             id: gamma_id.clone(),
-                            op: MirOp::MILConst { name: weight.clone(), value_path: weight.clone(), dtype: ln_dtype.clone() },
+                            op: MirOp::MILConst {
+                                name: weight.clone(),
+                                value_path: weight.clone(),
+                                dtype: ln_dtype.clone(),
+                            },
                             dtype: ln_dtype.clone(),
                             shape: input_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
@@ -3716,7 +3747,11 @@ impl MilLowerPass {
                         let result_id = MirNodeId(format!("{}_result", ln_id.0));
                         new_nodes.push(MirNode {
                             id: result_id.clone(),
-                            op: MirOp::MILMul { name: format!("{}_gamma_mul", name), x: normed_id.clone(), y: gamma_id.clone() },
+                            op: MirOp::MILMul {
+                                name: format!("{}_gamma_mul", name),
+                                x: normed_id.clone(),
+                                y: gamma_id.clone(),
+                            },
                             dtype: ln_dtype.clone(),
                             shape: input_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
@@ -3729,24 +3764,34 @@ impl MilLowerPass {
                             let beta_id = MirNodeId(format!("{}_beta", ln_id.0));
                             new_nodes.push(MirNode {
                                 id: beta_id.clone(),
-                                op: MirOp::MILConst { name: bias_name.clone(), value_path: bias_name.clone(), dtype: ln_dtype.clone() },
+                                op: MirOp::MILConst {
+                                    name: bias_name.clone(),
+                                    value_path: bias_name.clone(),
+                                    dtype: ln_dtype.clone(),
+                                },
                                 dtype: ln_dtype.clone(),
                                 shape: input_shape.clone(),
                                 compute_unit_hint: ln_compute.clone(),
                                 air_source: None,
                             });
-                            ln_extra_shapes.push((AirNodeId(beta_id.0.clone()), input_shape.clone()));
+                            ln_extra_shapes
+                                .push((AirNodeId(beta_id.0.clone()), input_shape.clone()));
 
                             let biased_id = MirNodeId(format!("{}_biased", ln_id.0));
                             new_nodes.push(MirNode {
                                 id: biased_id.clone(),
-                                op: MirOp::MILAdd { name: format!("{}_beta_add", name), x: result_id.clone(), y: beta_id.clone() },
+                                op: MirOp::MILAdd {
+                                    name: format!("{}_beta_add", name),
+                                    x: result_id.clone(),
+                                    y: beta_id.clone(),
+                                },
                                 dtype: ln_dtype.clone(),
                                 shape: input_shape.clone(),
                                 compute_unit_hint: ln_compute.clone(),
                                 air_source: None,
                             });
-                            ln_extra_shapes.push((AirNodeId(biased_id.0.clone()), input_shape.clone()));
+                            ln_extra_shapes
+                                .push((AirNodeId(biased_id.0.clone()), input_shape.clone()));
                             biased_id
                         } else {
                             result_id
@@ -3755,7 +3800,10 @@ impl MilLowerPass {
                         // Identity node to preserve the original LayerNorm output ID
                         new_nodes.push(MirNode {
                             id: ln_id.clone(),
-                            op: MirOp::MILIdentity { name: format!("{}_identity", name), x: final_id },
+                            op: MirOp::MILIdentity {
+                                name: format!("{}_identity", name),
+                                x: final_id,
+                            },
                             dtype: ln_dtype.clone(),
                             shape: input_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
@@ -3782,9 +3830,13 @@ impl MilLowerPass {
             // at the SIR→AIR decomposition level in legality_rewrite.rs.
             // Any remaining SliceUpdate ops in the MIR are from non-decode paths
             // (e.g., io_model, sampler) which run on CPU.
-            let su_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILSliceUpdate { .. })).count();
+            let su_count =
+                mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILSliceUpdate { .. })).count();
             if su_count > 0 {
-                eprintln!("  [ANE legality] {} MILSliceUpdate remain (non-decode path, CPU-bound)", su_count);
+                eprintln!(
+                    "  [ANE legality] {} MILSliceUpdate remain (non-decode path, CPU-bound)",
+                    su_count
+                );
             }
 
             // ── 5. MILFill / MILFillLike handling ──
@@ -3802,8 +3854,10 @@ impl MilLowerPass {
             // MILConst in our IR only carries a value_path (resolved later by
             // the weight resolver), not inline data. Instead, the proto emitter
             // directly emits Fill ops with the fill value and shape.
-            let fill_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILFill { .. })).count();
-            let filllike_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILFillLike { .. })).count();
+            let fill_count =
+                mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILFill { .. })).count();
+            let filllike_count =
+                mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILFillLike { .. })).count();
             if fill_count > 0 || filllike_count > 0 {
                 eprintln!(
                     "  [ANE WARNING] Found {} MILFill + {} MILFillLike — these are ANE-illegal \
@@ -3822,9 +3876,13 @@ impl MilLowerPass {
             //
             // Also eliminate Transpose ops that are followed by another Transpose
             // that undoes them (no-op pattern).
-            let transpose_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILTranspose { .. })).count();
+            let transpose_count =
+                mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILTranspose { .. })).count();
             if transpose_count > 0 {
-                eprintln!("  [ANE legality] Attempting to eliminate {} MILTranspose ops", transpose_count);
+                eprintln!(
+                    "  [ANE legality] Attempting to eliminate {} MILTranspose ops",
+                    transpose_count
+                );
 
                 // Find transpose nodes whose output is only consumed by a matmul.
                 // For each such transpose, fold it into the matmul's transpose_y attribute.
@@ -3835,11 +3893,14 @@ impl MilLowerPass {
                     if let MirOp::MILMatMul { name, x: _, y, transpose_y: false } = &node.op {
                         // Check if y is the output of a transpose node
                         if let Some(transpose_node) = mir_nodes.iter().find(|n| n.id.0 == y.0) {
-                            if let MirOp::MILTranspose { name: t_name, x: t_input, perm } = &transpose_node.op {
+                            if let MirOp::MILTranspose { name: t_name, x: t_input, perm } =
+                                &transpose_node.op
+                            {
                                 // Only fold [0,2,1,3] permutation (standard QKV head transpose)
-                                if perm == &[0, 2, 1, 3] || perm == &[0usize, 2, 1, 3] {
+                                if perm == &[0, 2, 1, 3] {
                                     eprintln!("    Folding transpose '{}' into matmul '{}' as transpose_y=True", t_name, name);
-                                    transpose_to_fold.insert(y.0.clone(), (name.clone(), t_input.clone()));
+                                    transpose_to_fold
+                                        .insert(y.0.clone(), (name.clone(), t_input.clone()));
                                 }
                             }
                         }
@@ -3847,7 +3908,8 @@ impl MilLowerPass {
                 }
 
                 // Second pass: apply the folding
-                let mut folded_transpose_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+                let mut folded_transpose_ids: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
                 for node in mir_nodes.iter_mut() {
                     if let MirOp::MILMatMul { name, x: _, y, transpose_y } = &mut node.op {
                         if let Some((mm_name, original_input)) = transpose_to_fold.get(&y.0) {
@@ -3864,24 +3926,36 @@ impl MilLowerPass {
                 for node in mir_nodes.iter_mut() {
                     if let MirOp::MILTranspose { name, x, perm: _ } = &node.op {
                         if folded_transpose_ids.contains(&node.id.0) {
-                            eprintln!("    Removing folded transpose '{}' (was consumed by matmul)", name);
-                            node.op = MirOp::MILIdentity { name: format!("{}_removed_transpose", name), x: x.clone() };
+                            eprintln!(
+                                "    Removing folded transpose '{}' (was consumed by matmul)",
+                                name
+                            );
+                            node.op = MirOp::MILIdentity {
+                                name: format!("{}_removed_transpose", name),
+                                x: x.clone(),
+                            };
                         }
                     }
                 }
 
                 // Log remaining transposes
-                let remaining = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILTranspose { .. })).count();
+                let remaining =
+                    mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILTranspose { .. })).count();
                 if remaining > 0 {
-                    eprintln!("    [WARN] {} MILTranspose ops remain (not foldable into matmul)", remaining);
+                    eprintln!(
+                        "    [WARN] {} MILTranspose ops remain (not foldable into matmul)",
+                        remaining
+                    );
                 }
             }
 
             // ── 7. Check for remaining MILCos/MILSin (should be zero after Sprint 67) ──
             // The SIR→AIR decomposition now always uses Const+Gather instead of
             // Cos/Sin. If any remain, it's a bug in the legality rewrite pass.
-            let cos_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILCos { .. })).count();
-            let sin_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILSin { .. })).count();
+            let cos_count =
+                mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILCos { .. })).count();
+            let sin_count =
+                mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILSin { .. })).count();
             if cos_count > 0 || sin_count > 0 {
                 eprintln!("  [ANE legality] WARNING: {} MILCos + {} MILSin remain! These are ANE-illegal and should have been replaced by Const+Gather in the SIR→AIR decomposition.", cos_count, sin_count);
             }
@@ -3891,14 +3965,16 @@ impl MilLowerPass {
             // per-head attention. Any remaining Tile ops should have been decomposed
             // by the legality rewrite pass. The fallback passthrough now panics.
             // If any MILTile ops survive, it's a bug in the compilation pipeline.
-            let tile_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILTile { .. })).count();
+            let tile_count =
+                mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILTile { .. })).count();
             if tile_count > 0 {
                 eprintln!("  [ANE legality] CRITICAL: {} MILTile ops remain! These are ANE-illegal and should have been eliminated by split-based per-head attention (SIR builder) or decomposed to Reshape+Mul+Reshape (legality rewrite). This is a pipeline bug.", tile_count);
             }
 
             // ── 9. Check for remaining MILSliceUpdate (should be zero after Sprint 67) ──
             // The SIR→AIR decomposition now uses masked blend (mul+add) for KV cache.
-            let su_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILSliceUpdate { .. })).count();
+            let su_count =
+                mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILSliceUpdate { .. })).count();
             if su_count > 0 {
                 eprintln!("  [ANE legality] WARNING: {} MILSliceUpdate ops remain! These are ANE-illegal and should have been replaced by masked blend (mul+add) in the SIR→AIR decomposition.", su_count);
             }
@@ -3907,7 +3983,10 @@ impl MilLowerPass {
             // Both the SIR builder (attention block) and the legality rewrite
             // (AttentionBlock SIR op) now use split-based per-head attention
             // instead of SDPA, matching the reference model.
-            let sdpa_count = mir_nodes.iter().filter(|n| matches!(n.op, MirOp::MILScaledDotProductAttention { .. })).count();
+            let sdpa_count = mir_nodes
+                .iter()
+                .filter(|n| matches!(n.op, MirOp::MILScaledDotProductAttention { .. }))
+                .count();
             if sdpa_count > 0 {
                 eprintln!("  [ANE legality] CRITICAL: {} MILSDPA ops remain! These are absent from the reference model and are ANE-problematic. Split-based per-head attention should be used instead.", sdpa_count);
             }
@@ -4010,15 +4089,14 @@ impl MilLowerPass {
         // corresponding MirNode entries (e.g., "sir_hidden_input" in decode_step).
         // Without this, mir_to_compat falls back to shape [1] which breaks
         // all downstream shape inference.
-        let mir_input_shapes: std::collections::HashMap<MirNodeId, Vec<usize>> =
-            input_shapes.iter()
-                .map(|(air_id, shape)| {
-                    let mir_id = air_to_mir.get(air_id)
-                        .cloned()
-                        .unwrap_or_else(|| MirNodeId(air_id.0.clone()));
-                    (mir_id, shape.clone())
-                })
-                .collect();
+        let mir_input_shapes: std::collections::HashMap<MirNodeId, Vec<usize>> = input_shapes
+            .iter()
+            .map(|(air_id, shape)| {
+                let mir_id =
+                    air_to_mir.get(air_id).cloned().unwrap_or_else(|| MirNodeId(air_id.0.clone()));
+                (mir_id, shape.clone())
+            })
+            .collect();
 
         Ok(vec![MirGraph {
             nodes: mir_nodes,
@@ -4281,10 +4359,7 @@ mod tests {
         // After ANE legality rewrite, MILLayerNorm is decomposed into primitives:
         // abs → reduce_max → clip → real_div → mul → reduce_mean → add(eps) → rsqrt → mul → mul(gamma)
         // Check that the decomposition was applied (no MILLayerNorm should remain)
-        let ln_node = mirs[0]
-            .nodes
-            .iter()
-            .find(|n| matches!(n.op, MirOp::MILLayerNorm { .. }));
+        let ln_node = mirs[0].nodes.iter().find(|n| matches!(n.op, MirOp::MILLayerNorm { .. }));
         assert!(ln_node.is_none(), "MILLayerNorm should have been decomposed into primitives");
         // Verify the decomposition contains the expected ops
         let has_abs = mirs[0].nodes.iter().any(|n| matches!(n.op, MirOp::MILAbs { .. }));
@@ -4319,10 +4394,7 @@ mod tests {
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         // After ANE legality rewrite, MILLayerNorm is decomposed into primitives.
         // No MILLayerNorm should remain.
-        let ln_node = mirs[0]
-            .nodes
-            .iter()
-            .find(|n| matches!(n.op, MirOp::MILLayerNorm { .. }));
+        let ln_node = mirs[0].nodes.iter().find(|n| matches!(n.op, MirOp::MILLayerNorm { .. }));
         assert!(ln_node.is_none(), "MILLayerNorm should have been decomposed into primitives");
         // Verify the decomposition contains the expected ops
         let has_abs = mirs[0].nodes.iter().any(|n| matches!(n.op, MirOp::MILAbs { .. }));
@@ -4888,10 +4960,7 @@ mod tests {
         let air = AirGraph {
             nodes: vec![make_simple_air_node(
                 "max_out",
-                AirOp::Maximum {
-                    x: AirNodeId("x".into()),
-                    y: AirNodeId("zero".into()),
-                },
+                AirOp::Maximum { x: AirNodeId("x".into()), y: AirNodeId("zero".into()) },
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("max_out".into())],
@@ -4916,10 +4985,7 @@ mod tests {
         let air = AirGraph {
             nodes: vec![make_simple_air_node(
                 "min_out",
-                AirOp::Minimum {
-                    x: AirNodeId("x".into()),
-                    y: AirNodeId("cap".into()),
-                },
+                AirOp::Minimum { x: AirNodeId("x".into()), y: AirNodeId("cap".into()) },
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("min_out".into())],
@@ -5080,8 +5146,7 @@ mod tests {
             .iter()
             .find(|n| matches!(n.op, MirOp::MILReshape { .. }))
             .expect("Expected Reshape node");
-        assert_eq!(reshape_node.shape, vec![2, 16],
-            "MirNode.shape for Reshape should be [2, 16]");
+        assert_eq!(reshape_node.shape, vec![2, 16], "MirNode.shape for Reshape should be [2, 16]");
     }
 
     #[test]
@@ -5306,7 +5371,11 @@ mod tests {
     fn test_resolve_reshape_zeros_error_message_contains_shapes() {
         let err = resolve_reshape_zeros(&[2, 3], &[0, 7]).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("zero-resolution failed"), "Error message should describe the failure: {}", msg);
+        assert!(
+            msg.contains("zero-resolution failed"),
+            "Error message should describe the failure: {}",
+            msg
+        );
         assert!(msg.contains("[0, 7]"), "Error message should include target shape: {}", msg);
     }
 }

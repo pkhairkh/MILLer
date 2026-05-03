@@ -12,7 +12,7 @@ use crate::pir::{
 use crate::sir::KvCacheLayout;
 use crate::task_spec::{SyntheticTaskSpec, TaskOp};
 
-use super::payload::{BRIDGE_VERSION, FunctionDescriptor, TensorDescriptor};
+use super::payload::{FunctionDescriptor, TensorDescriptor, BRIDGE_VERSION};
 
 /// Description of a single shard within a sharded pipeline.
 ///

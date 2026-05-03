@@ -16,20 +16,20 @@
 /// Core ML runtime versions.
 pub const DEFAULT_OPSET_VERSION: &str = "iOS18";
 
-pub mod common;
 pub mod air;
 pub mod ane_engine;
 pub mod ane_hw_limits;
 pub mod ane_layout;
 pub mod ane_target;
+pub mod common;
 pub mod kir;
 pub mod linear_slice;
 pub mod mir;
 pub mod payload;
-pub mod shard_desc;
 pub mod pir;
 pub mod prof_ir;
 pub mod serialize;
+pub mod shard_desc;
 pub mod sir;
 pub mod strategy;
 pub mod task_spec;

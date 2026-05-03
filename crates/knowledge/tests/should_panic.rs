@@ -4,9 +4,9 @@
 //! - Knowledge store: invalid operations that should fail
 //! - IR construction: invalid graph configurations
 
+use ane_ir::kir::{EvidenceSource, KnowledgeScope, KnowledgeType, KnowledgeUnit};
 use ane_knowledge::store::KnowledgeStore;
 use ane_knowledge::update::UpdatePipeline;
-use ane_ir::kir::{EvidenceSource, KnowledgeScope, KnowledgeType, KnowledgeUnit};
 use std::collections::HashMap;
 
 fn make_unit(id: &str, confidence: f32, evidence_count: usize) -> KnowledgeUnit {

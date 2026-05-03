@@ -113,9 +113,9 @@ fn coreml_dtype_to_blob_dtype(dtype: &CoreMlDataType) -> u32 {
         CoreMlDataType::E4M3 => BlobDataType::Float8E4M3FN as u32,
         CoreMlDataType::E5M2 => BlobDataType::Float8E5M2 as u32,
         // Conservatively map unknown/unsupported types to Float32
-        CoreMlDataType::Float64
-        | CoreMlDataType::Bool
-        | CoreMlDataType::Unknown => BlobDataType::Float32 as u32,
+        CoreMlDataType::Float64 | CoreMlDataType::Bool | CoreMlDataType::Unknown => {
+            BlobDataType::Float32 as u32
+        }
     }
 }
 
@@ -670,9 +670,7 @@ mod tests {
     fn test_blob_v1_small_weight_padding() {
         let mut builder = WeightBinBuilder::new();
         // 10 bytes of data — needs padding to 64-byte boundary
-        builder
-            .add_weight("small_weight", vec![10], CoreMlDataType::UInt8, vec![1u8; 10])
-            .unwrap();
+        builder.add_weight("small_weight", vec![10], CoreMlDataType::UInt8, vec![1u8; 10]).unwrap();
 
         let result = builder.build();
 
@@ -798,10 +796,20 @@ mod tests {
         // --- Without content-hash dedup (default): different names, identical content → stored separately ---
         let mut builder_no_dedup = WeightBinBuilder::new();
         builder_no_dedup
-            .add_weight("embedding_projection_w", vec![128, 16], CoreMlDataType::Float16, content.clone())
+            .add_weight(
+                "embedding_projection_w",
+                vec![128, 16],
+                CoreMlDataType::Float16,
+                content.clone(),
+            )
             .unwrap();
         builder_no_dedup
-            .add_weight("decode_step_projection_w", vec![128, 16], CoreMlDataType::Float16, content.clone())
+            .add_weight(
+                "decode_step_projection_w",
+                vec![128, 16],
+                CoreMlDataType::Float16,
+                content.clone(),
+            )
             .unwrap();
 
         let result_no_dedup = builder_no_dedup.build();
@@ -814,10 +822,20 @@ mod tests {
         let mut builder = WeightBinBuilder::new().with_content_dedup();
 
         builder
-            .add_weight("embedding_projection_w", vec![128, 16], CoreMlDataType::Float16, content.clone())
+            .add_weight(
+                "embedding_projection_w",
+                vec![128, 16],
+                CoreMlDataType::Float16,
+                content.clone(),
+            )
             .unwrap();
         builder
-            .add_weight("decode_step_projection_w", vec![128, 16], CoreMlDataType::Float16, content.clone())
+            .add_weight(
+                "decode_step_projection_w",
+                vec![128, 16],
+                CoreMlDataType::Float16,
+                content.clone(),
+            )
             .unwrap();
 
         let result = builder.build();
@@ -909,20 +927,40 @@ mod tests {
         // --- coremltools 9.0 path: no content dedup → duplicated ---
         let mut no_dedup = WeightBinBuilder::new();
         no_dedup
-            .add_weight("embedding_projection_w", vec![512, 512], CoreMlDataType::Float16, weight_data.clone())
+            .add_weight(
+                "embedding_projection_w",
+                vec![512, 512],
+                CoreMlDataType::Float16,
+                weight_data.clone(),
+            )
             .unwrap();
         no_dedup
-            .add_weight("decode_step_projection_w", vec![512, 512], CoreMlDataType::Float16, weight_data.clone())
+            .add_weight(
+                "decode_step_projection_w",
+                vec![512, 512],
+                CoreMlDataType::Float16,
+                weight_data.clone(),
+            )
             .unwrap();
         let no_dedup_result = no_dedup.build();
 
         // --- Proto-direct with content dedup: shared ---
         let mut with_dedup = WeightBinBuilder::new().with_content_dedup();
         with_dedup
-            .add_weight("embedding_projection_w", vec![512, 512], CoreMlDataType::Float16, weight_data.clone())
+            .add_weight(
+                "embedding_projection_w",
+                vec![512, 512],
+                CoreMlDataType::Float16,
+                weight_data.clone(),
+            )
             .unwrap();
         with_dedup
-            .add_weight("decode_step_projection_w", vec![512, 512], CoreMlDataType::Float16, weight_data.clone())
+            .add_weight(
+                "decode_step_projection_w",
+                vec![512, 512],
+                CoreMlDataType::Float16,
+                weight_data.clone(),
+            )
             .unwrap();
         let with_dedup_result = with_dedup.build();
 
@@ -983,7 +1021,7 @@ mod tests {
         // ── storage_header ──
         assert_eq!(u32::from_le_bytes(result.data[0..4].try_into().unwrap()), 1); // count
         assert_eq!(u32::from_le_bytes(result.data[4..8].try_into().unwrap()), 2); // version
-        // bytes 8-63: reserved zeros
+                                                                                  // bytes 8-63: reserved zeros
         assert!(&result.data[8..64].iter().all(|&b| b == 0));
 
         // ── blob_metadata at offset 64 ──
@@ -992,7 +1030,7 @@ mod tests {
         assert_eq!(u64::from_le_bytes(result.data[72..80].try_into().unwrap()), 64); // sizeInBytes
         assert_eq!(u64::from_le_bytes(result.data[80..88].try_into().unwrap()), 128); // data offset
         assert_eq!(u64::from_le_bytes(result.data[88..96].try_into().unwrap()), 0); // padding_size_in_bits
-        // bytes 96-127: reserved zeros
+                                                                                    // bytes 96-127: reserved zeros
         assert!(&result.data[96..128].iter().all(|&b| b == 0));
 
         // ── data at offset 128 ──

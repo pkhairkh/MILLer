@@ -36,14 +36,14 @@ pub fn validate_conv_constraints(
 ) -> Result<(), OpConstraintViolation> {
     let _ = (kernel_d, stride);
     // Kernel dimensions must be within 1-7 range
-    if kernel_w < 1 || kernel_w > 7 {
+    if !(1..=7).contains(&kernel_w) {
         return Err(OpConstraintViolation {
             op_name: "conv".into(),
             constraint: "kernel_width_range_1_7".into(),
             message: format!("Kernel width {} must be in range 1-7", kernel_w),
         });
     }
-    if kernel_h < 1 || kernel_h > 7 {
+    if !(1..=7).contains(&kernel_h) {
         return Err(OpConstraintViolation {
             op_name: "conv".into(),
             constraint: "kernel_height_range_1_7".into(),
@@ -278,14 +278,11 @@ pub fn validate_matmul_constraints(
     // level, requiring M (which becomes cout) to be even catches the
     // most common violation.
     let m_dim = x_shape[x_rank - 2]; // M is second-to-last dim of A
-    if m_dim % 2 != 0 {
+    if !m_dim.is_multiple_of(2) {
         return Err(OpConstraintViolation {
             op_name: "matmul".into(),
             constraint: "output_channels_even".into(),
-            message: format!(
-                "MatMul output channels (M={}) must be even for ANE tiling",
-                m_dim
-            ),
+            message: format!("MatMul output channels (M={}) must be even for ANE tiling", m_dim),
         });
     }
 

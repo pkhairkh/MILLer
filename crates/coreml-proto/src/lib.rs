@@ -144,11 +144,11 @@ impl CoreMlDataType {
             CoreMlDataType::Int8 => 6,
             CoreMlDataType::Bool => 7,
             // T-35: new dtypes use Apple MIL proto DataType values
-            CoreMlDataType::Int4 => 25,    // DataType::INT4
-            CoreMlDataType::UInt4 => 35,   // DataType::UINT4
-            CoreMlDataType::E4M3 => 40,    // DataType::FLOAT8E4M3FN
-            CoreMlDataType::E5M2 => 41,    // DataType::FLOAT8E5M2
-            CoreMlDataType::UInt16 => 32,  // DataType::UINT16
+            CoreMlDataType::Int4 => 25,   // DataType::INT4
+            CoreMlDataType::UInt4 => 35,  // DataType::UINT4
+            CoreMlDataType::E4M3 => 40,   // DataType::FLOAT8E4M3FN
+            CoreMlDataType::E5M2 => 41,   // DataType::FLOAT8E5M2
+            CoreMlDataType::UInt16 => 32, // DataType::UINT16
         }
     }
 }
@@ -850,7 +850,6 @@ pub mod mir_compat {
         // weight data by name (resolved to MIL Const op outputs during emission).
         // Unlike regular MirOpCompat variants where inputs are SSA value names,
         // these `String` fields are weight-name references to MILConst nodes.
-
         /// Constexpr affine dequantize: decompresses quantized weights using
         /// per-channel scale and zero_point. Core ML MIL op type:
         /// "constexpr_affine_dequantize".
@@ -1035,7 +1034,7 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
                 name,
                 data: Vec::new(), // weight data loaded separately via WeightBinBuilder
                 dtype: convert_dtype(dtype),
-                shape: vec![],    // shape filled from MIR node metadata
+                shape: vec![], // shape filled from MIR node metadata
             },
 
             // ─── Linear / FC ─────────────────────────────────────────
@@ -1045,42 +1044,75 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
                 weight_name: weight,
                 bias_name: bias,
             },
-            MirOp::MILMatMul { name, x, y, transpose_y } => mir_compat::MirOpCompat::MatMul {
-                name,
-                x: nid(x),
-                y: nid(y),
-                transpose_y,
-            },
+            MirOp::MILMatMul { name, x, y, transpose_y } => {
+                mir_compat::MirOpCompat::MatMul { name, x: nid(x), y: nid(y), transpose_y }
+            }
             MirOp::MILEinsum { name, .. } => unsupported("einsum", &name, &op_json),
 
             // ─── Convolution ─────────────────────────────────────────
-            MirOp::MILConv { name, x, weight, pad_type, groups, .. } => mir_compat::MirOpCompat::Conv {
-                name,
-                x: nid(x),
-                weight: nid(weight),
-                pad_type,
-                groups: groups as i64,
-            },
+            MirOp::MILConv { name, x, weight, pad_type, groups, .. } => {
+                mir_compat::MirOpCompat::Conv {
+                    name,
+                    x: nid(x),
+                    weight: nid(weight),
+                    pad_type,
+                    groups: groups as i64,
+                }
+            }
             MirOp::MILConvTranspose { name, .. } => unsupported("conv_transpose", &name, &op_json),
 
             // ─── Elementwise Binary ──────────────────────────────────
-            MirOp::MILAdd { name, x, y } => mir_compat::MirOpCompat::Add { name, x: nid(x), y: nid(y) },
-            MirOp::MILMul { name, x, y } => mir_compat::MirOpCompat::Mul { name, x: nid(x), y: nid(y) },
-            MirOp::MILSub { name, x, y } => mir_compat::MirOpCompat::Sub { name, x: nid(x), y: nid(y) },
-            MirOp::MILMaximum { name, x, y } => mir_compat::MirOpCompat::Maximum { name, x: nid(x), y: nid(y) },
-            MirOp::MILMinimum { name, x, y } => mir_compat::MirOpCompat::Minimum { name, x: nid(x), y: nid(y) },
-            MirOp::MILRealDiv { name, x, y } => mir_compat::MirOpCompat::RealDiv { name, x: nid(x), y: nid(y) },
-            MirOp::MILFloorDiv { name, x, y } => mir_compat::MirOpCompat::FloorDiv { name, x: nid(x), y: nid(y) },
-            MirOp::MILMod { name, x, y } => mir_compat::MirOpCompat::Mod { name, x: nid(x), y: nid(y) },
-            MirOp::MILPow { name, x, y } => mir_compat::MirOpCompat::Pow { name, x: nid(x), y: nid(y) },
-            MirOp::MILEqual { name, x, y } => mir_compat::MirOpCompat::Equal { name, x: nid(x), y: nid(y) },
-            MirOp::MILNotEqual { name, x, y } => mir_compat::MirOpCompat::NotEqual { name, x: nid(x), y: nid(y) },
-            MirOp::MILGreater { name, x, y } => mir_compat::MirOpCompat::Greater { name, x: nid(x), y: nid(y) },
-            MirOp::MILGreaterEqual { name, x, y } => mir_compat::MirOpCompat::GreaterEqual { name, x: nid(x), y: nid(y) },
-            MirOp::MILLess { name, x, y } => mir_compat::MirOpCompat::Less { name, x: nid(x), y: nid(y) },
-            MirOp::MILLessEqual { name, x, y } => mir_compat::MirOpCompat::LessEqual { name, x: nid(x), y: nid(y) },
-            MirOp::MILLogicalAnd { name, x, y } => mir_compat::MirOpCompat::LogicalAnd { name, x: nid(x), y: nid(y) },
-            MirOp::MILLogicalOr { name, x, y } => mir_compat::MirOpCompat::LogicalOr { name, x: nid(x), y: nid(y) },
+            MirOp::MILAdd { name, x, y } => {
+                mir_compat::MirOpCompat::Add { name, x: nid(x), y: nid(y) }
+            }
+            MirOp::MILMul { name, x, y } => {
+                mir_compat::MirOpCompat::Mul { name, x: nid(x), y: nid(y) }
+            }
+            MirOp::MILSub { name, x, y } => {
+                mir_compat::MirOpCompat::Sub { name, x: nid(x), y: nid(y) }
+            }
+            MirOp::MILMaximum { name, x, y } => {
+                mir_compat::MirOpCompat::Maximum { name, x: nid(x), y: nid(y) }
+            }
+            MirOp::MILMinimum { name, x, y } => {
+                mir_compat::MirOpCompat::Minimum { name, x: nid(x), y: nid(y) }
+            }
+            MirOp::MILRealDiv { name, x, y } => {
+                mir_compat::MirOpCompat::RealDiv { name, x: nid(x), y: nid(y) }
+            }
+            MirOp::MILFloorDiv { name, x, y } => {
+                mir_compat::MirOpCompat::FloorDiv { name, x: nid(x), y: nid(y) }
+            }
+            MirOp::MILMod { name, x, y } => {
+                mir_compat::MirOpCompat::Mod { name, x: nid(x), y: nid(y) }
+            }
+            MirOp::MILPow { name, x, y } => {
+                mir_compat::MirOpCompat::Pow { name, x: nid(x), y: nid(y) }
+            }
+            MirOp::MILEqual { name, x, y } => {
+                mir_compat::MirOpCompat::Equal { name, x: nid(x), y: nid(y) }
+            }
+            MirOp::MILNotEqual { name, x, y } => {
+                mir_compat::MirOpCompat::NotEqual { name, x: nid(x), y: nid(y) }
+            }
+            MirOp::MILGreater { name, x, y } => {
+                mir_compat::MirOpCompat::Greater { name, x: nid(x), y: nid(y) }
+            }
+            MirOp::MILGreaterEqual { name, x, y } => {
+                mir_compat::MirOpCompat::GreaterEqual { name, x: nid(x), y: nid(y) }
+            }
+            MirOp::MILLess { name, x, y } => {
+                mir_compat::MirOpCompat::Less { name, x: nid(x), y: nid(y) }
+            }
+            MirOp::MILLessEqual { name, x, y } => {
+                mir_compat::MirOpCompat::LessEqual { name, x: nid(x), y: nid(y) }
+            }
+            MirOp::MILLogicalAnd { name, x, y } => {
+                mir_compat::MirOpCompat::LogicalAnd { name, x: nid(x), y: nid(y) }
+            }
+            MirOp::MILLogicalOr { name, x, y } => {
+                mir_compat::MirOpCompat::LogicalOr { name, x: nid(x), y: nid(y) }
+            }
             MirOp::MILLogicalXor { name, .. } => unsupported("logical_xor", &name, &op_json),
 
             // ─── Elementwise Unary ───────────────────────────────────
@@ -1090,20 +1122,32 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             MirOp::MILTanh { name, x } => mir_compat::MirOpCompat::Tanh { name, x: nid(x) },
             MirOp::MILRelu { name, x } => mir_compat::MirOpCompat::Relu { name, x: nid(x) },
             MirOp::MILRelu6 { name, .. } => unsupported("relu6", &name, &op_json),
-            MirOp::MILLeakyRelu { name, x, alpha } => mir_compat::MirOpCompat::LeakyRelu { name, x: nid(x), alpha },
+            MirOp::MILLeakyRelu { name, x, alpha } => {
+                mir_compat::MirOpCompat::LeakyRelu { name, x: nid(x), alpha }
+            }
             MirOp::MILSigmoidHard { name, .. } => unsupported("sigmoid_hard", &name, &op_json),
-            MirOp::MILThresholdedRelu { name, .. } => unsupported("thresholded_relu", &name, &op_json),
+            MirOp::MILThresholdedRelu { name, .. } => {
+                unsupported("thresholded_relu", &name, &op_json)
+            }
             MirOp::MILClampedRelu { name, .. } => unsupported("clamped_relu", &name, &op_json),
-            MirOp::MILLinearActivation { name, .. } => unsupported("linear_activation", &name, &op_json),
+            MirOp::MILLinearActivation { name, .. } => {
+                unsupported("linear_activation", &name, &op_json)
+            }
             MirOp::MILPrelu { name, .. } => unsupported("prelu", &name, &op_json),
             MirOp::MILSoftsign { name, .. } => unsupported("softsign", &name, &op_json),
             MirOp::MILSilu { name, x } => mir_compat::MirOpCompat::Silu { name, x: nid(x) },
             MirOp::MILScaledTanh { name, .. } => unsupported("scaled_tanh", &name, &op_json),
             MirOp::MILElu { name, .. } => unsupported("elu", &name, &op_json),
             MirOp::MILSoftplus { name, .. } => unsupported("softplus", &name, &op_json),
-            MirOp::MILSoftplusParametric { name, .. } => unsupported("softplus_parametric", &name, &op_json),
-            MirOp::MILGelu { name, x, mode } => mir_compat::MirOpCompat::Gelu { name, x: nid(x), mode },
-            MirOp::MILClip { name, x, min_val, max_val } => mir_compat::MirOpCompat::Clip { name, x: nid(x), min_val, max_val },
+            MirOp::MILSoftplusParametric { name, .. } => {
+                unsupported("softplus_parametric", &name, &op_json)
+            }
+            MirOp::MILGelu { name, x, mode } => {
+                mir_compat::MirOpCompat::Gelu { name, x: nid(x), mode }
+            }
+            MirOp::MILClip { name, x, min_val, max_val } => {
+                mir_compat::MirOpCompat::Clip { name, x: nid(x), min_val, max_val }
+            }
             MirOp::MILSquare { name, .. } => unsupported("square", &name, &op_json),
             MirOp::MILThreshold { name, .. } => unsupported("threshold", &name, &op_json),
             MirOp::MILSqrt { name, x } => mir_compat::MirOpCompat::Sqrt { name, x: nid(x) },
@@ -1126,22 +1170,77 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             MirOp::MILSinh { name, .. } => unsupported("sinh", &name, &op_json),
             MirOp::MILAtanh { name, .. } => unsupported("atanh", &name, &op_json),
             MirOp::MILErf { name, .. } => unsupported("erf", &name, &op_json),
-            MirOp::MILLogicalNot { name, x } => mir_compat::MirOpCompat::LogicalNot { name, x: nid(x) },
-            MirOp::MILCast { name, x, dtype } => mir_compat::MirOpCompat::Cast { name, x: nid(x), dtype: convert_dtype(dtype) },
-            MirOp::MILSelect { name, condition, x, y } => mir_compat::MirOpCompat::Select { name, condition: nid(condition), x: nid(x), y: nid(y) },
-            MirOp::MILWhere { name, condition, x, y } => mir_compat::MirOpCompat::Where { name, condition: nid(condition), x: nid(x), y: nid(y) },
-            MirOp::MILSoftmax { name, x, axis } => mir_compat::MirOpCompat::Softmax { name, x: nid(x), axis: axis as i64 },
+            MirOp::MILLogicalNot { name, x } => {
+                mir_compat::MirOpCompat::LogicalNot { name, x: nid(x) }
+            }
+            MirOp::MILCast { name, x, dtype } => {
+                mir_compat::MirOpCompat::Cast { name, x: nid(x), dtype: convert_dtype(dtype) }
+            }
+            MirOp::MILSelect { name, condition, x, y } => mir_compat::MirOpCompat::Select {
+                name,
+                condition: nid(condition),
+                x: nid(x),
+                y: nid(y),
+            },
+            MirOp::MILWhere { name, condition, x, y } => mir_compat::MirOpCompat::Where {
+                name,
+                condition: nid(condition),
+                x: nid(x),
+                y: nid(y),
+            },
+            MirOp::MILSoftmax { name, x, axis } => {
+                mir_compat::MirOpCompat::Softmax { name, x: nid(x), axis: axis as i64 }
+            }
 
             // ─── Reduction ───────────────────────────────────────────
-            MirOp::MILReduceSum { name, x, axes, keep_dims } => mir_compat::MirOpCompat::ReduceSum { name, x: nid(x), axes: axes.into_iter().map(|a| a as i64).collect(), keep_dims },
-            MirOp::MILReduceMean { name, x, axes, keep_dims } => mir_compat::MirOpCompat::ReduceMean { name, x: nid(x), axes: axes.into_iter().map(|a| a as i64).collect(), keep_dims },
-            MirOp::MILReduceMax { name, x, axes, keep_dims } => mir_compat::MirOpCompat::ReduceMax { name, x: nid(x), axes: axes.into_iter().map(|a| a as i64).collect(), keep_dims },
-            MirOp::MILReduceMin { name, x, axes, keep_dims } => mir_compat::MirOpCompat::ReduceMin { name, x: nid(x), axes: axes.into_iter().map(|a| a as i64).collect(), keep_dims },
-            MirOp::MILReduceProd { name, x, axes, keep_dims } => mir_compat::MirOpCompat::ReduceProd { name, x: nid(x), axes: axes.into_iter().map(|a| a as i64).collect(), keep_dims },
-            MirOp::MILReduceSumSquare { name, .. } => unsupported("reduce_sum_square", &name, &op_json),
+            MirOp::MILReduceSum { name, x, axes, keep_dims } => {
+                mir_compat::MirOpCompat::ReduceSum {
+                    name,
+                    x: nid(x),
+                    axes: axes.into_iter().map(|a| a as i64).collect(),
+                    keep_dims,
+                }
+            }
+            MirOp::MILReduceMean { name, x, axes, keep_dims } => {
+                mir_compat::MirOpCompat::ReduceMean {
+                    name,
+                    x: nid(x),
+                    axes: axes.into_iter().map(|a| a as i64).collect(),
+                    keep_dims,
+                }
+            }
+            MirOp::MILReduceMax { name, x, axes, keep_dims } => {
+                mir_compat::MirOpCompat::ReduceMax {
+                    name,
+                    x: nid(x),
+                    axes: axes.into_iter().map(|a| a as i64).collect(),
+                    keep_dims,
+                }
+            }
+            MirOp::MILReduceMin { name, x, axes, keep_dims } => {
+                mir_compat::MirOpCompat::ReduceMin {
+                    name,
+                    x: nid(x),
+                    axes: axes.into_iter().map(|a| a as i64).collect(),
+                    keep_dims,
+                }
+            }
+            MirOp::MILReduceProd { name, x, axes, keep_dims } => {
+                mir_compat::MirOpCompat::ReduceProd {
+                    name,
+                    x: nid(x),
+                    axes: axes.into_iter().map(|a| a as i64).collect(),
+                    keep_dims,
+                }
+            }
+            MirOp::MILReduceSumSquare { name, .. } => {
+                unsupported("reduce_sum_square", &name, &op_json)
+            }
             MirOp::MILReduceL2Norm { name, .. } => unsupported("reduce_l2_norm", &name, &op_json),
             MirOp::MILReduceL1Norm { name, .. } => unsupported("reduce_l1_norm", &name, &op_json),
-            MirOp::MILReduceLogSumExp { name, .. } => unsupported("reduce_log_sum_exp", &name, &op_json),
+            MirOp::MILReduceLogSumExp { name, .. } => {
+                unsupported("reduce_log_sum_exp", &name, &op_json)
+            }
             MirOp::MILReduceLogSum { name, .. } => unsupported("reduce_log_sum", &name, &op_json),
             MirOp::MILReduceArgmax { name, .. } => unsupported("reduce_argmax", &name, &op_json),
             MirOp::MILReduceArgmin { name, .. } => unsupported("reduce_argmin", &name, &op_json),
@@ -1149,12 +1248,20 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             // ─── Normalization ───────────────────────────────────────
             MirOp::MILBatchNorm { name, .. } => unsupported("batch_norm", &name, &op_json),
             MirOp::MILInstanceNorm { name, .. } => unsupported("instance_norm", &name, &op_json),
-            MirOp::MILLayerNorm { name, x, weight, bias, epsilon, axes } => mir_compat::MirOpCompat::LayerNorm {
-                name, x: nid(x), weight_name: weight, bias_name: bias, epsilon,
-                axes: axes.into_iter().map(|a| a as i64).collect(),
-            },
+            MirOp::MILLayerNorm { name, x, weight, bias, epsilon, axes } => {
+                mir_compat::MirOpCompat::LayerNorm {
+                    name,
+                    x: nid(x),
+                    weight_name: weight,
+                    bias_name: bias,
+                    epsilon,
+                    axes: axes.into_iter().map(|a| a as i64).collect(),
+                }
+            }
             MirOp::MILL2Norm { name, .. } => unsupported("l2_norm", &name, &op_json),
-            MirOp::MILLocalResponseNorm { name, .. } => unsupported("local_response_norm", &name, &op_json),
+            MirOp::MILLocalResponseNorm { name, .. } => {
+                unsupported("local_response_norm", &name, &op_json)
+            }
 
             // ─── Pooling ─────────────────────────────────────────────
             MirOp::MILMaxPool { name, .. } => unsupported("max_pool", &name, &op_json),
@@ -1163,53 +1270,133 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
 
             // ─── Image Resizing ──────────────────────────────────────
             MirOp::MILResize { name, .. } => unsupported("resize", &name, &op_json),
-            MirOp::MILResizeNearestNeighbor { name, .. } => unsupported("resize_nearest_neighbor", &name, &op_json),
-            MirOp::MILResizeBilinear { name, .. } => unsupported("resize_bilinear", &name, &op_json),
-            MirOp::MILUpsampleNearestNeighbor { name, .. } => unsupported("upsample_nearest_neighbor", &name, &op_json),
-            MirOp::MILUpsampleBilinear { name, .. } => unsupported("upsample_bilinear", &name, &op_json),
+            MirOp::MILResizeNearestNeighbor { name, .. } => {
+                unsupported("resize_nearest_neighbor", &name, &op_json)
+            }
+            MirOp::MILResizeBilinear { name, .. } => {
+                unsupported("resize_bilinear", &name, &op_json)
+            }
+            MirOp::MILUpsampleNearestNeighbor { name, .. } => {
+                unsupported("upsample_nearest_neighbor", &name, &op_json)
+            }
+            MirOp::MILUpsampleBilinear { name, .. } => {
+                unsupported("upsample_bilinear", &name, &op_json)
+            }
             MirOp::MILCropResize { name, .. } => unsupported("crop_resize", &name, &op_json),
             MirOp::MILAffine { name, .. } => unsupported("affine", &name, &op_json),
             MirOp::MILResample { name, .. } => unsupported("resample", &name, &op_json),
 
             // ─── Tensor Transform ────────────────────────────────────
-            MirOp::MILReshape { name, x, shape } => mir_compat::MirOpCompat::Reshape { name, x: nid(x), shape: shape.into_iter().map(|d| d as i32).collect() },
+            MirOp::MILReshape { name, x, shape } => mir_compat::MirOpCompat::Reshape {
+                name,
+                x: nid(x),
+                shape: shape.into_iter().map(|d| d as i32).collect(),
+            },
             MirOp::MILReshapeLike { name, .. } => unsupported("reshape_like", &name, &op_json),
-            MirOp::MILTranspose { name, x, perm } => mir_compat::MirOpCompat::Transpose { name, x: nid(x), perm: perm.into_iter().map(|d| d as i32).collect() },
-            MirOp::MILSplit { name, x, axis, num_splits } => mir_compat::MirOpCompat::Split { name, x: nid(x), axis: axis as i64, num_splits: num_splits as i64 },
-            MirOp::MILConcat { name, values, axis } => mir_compat::MirOpCompat::Concat { name, values: values.into_iter().map(nid).collect(), axis: axis as i64 },
-            MirOp::MILExpandDims { name, x, axis } => mir_compat::MirOpCompat::ExpandDims { name, x: nid(x), axis: axis.into_iter().map(|a| a as i32).collect() },
-            MirOp::MILSqueeze { name, x, axis } => mir_compat::MirOpCompat::Squeeze { name, x: nid(x), axis: axis.into_iter().map(|a| a as i32).collect() },
+            MirOp::MILTranspose { name, x, perm } => mir_compat::MirOpCompat::Transpose {
+                name,
+                x: nid(x),
+                perm: perm.into_iter().map(|d| d as i32).collect(),
+            },
+            MirOp::MILSplit { name, x, axis, num_splits } => mir_compat::MirOpCompat::Split {
+                name,
+                x: nid(x),
+                axis: axis as i64,
+                num_splits: num_splits as i64,
+            },
+            MirOp::MILConcat { name, values, axis } => mir_compat::MirOpCompat::Concat {
+                name,
+                values: values.into_iter().map(nid).collect(),
+                axis: axis as i64,
+            },
+            MirOp::MILExpandDims { name, x, axis } => mir_compat::MirOpCompat::ExpandDims {
+                name,
+                x: nid(x),
+                axis: axis.into_iter().map(|a| a as i32).collect(),
+            },
+            MirOp::MILSqueeze { name, x, axis } => mir_compat::MirOpCompat::Squeeze {
+                name,
+                x: nid(x),
+                axis: axis.into_iter().map(|a| a as i32).collect(),
+            },
             MirOp::MILFlatten2d { name, .. } => unsupported("flatten2d", &name, &op_json),
             MirOp::MILReverse { name, .. } => unsupported("reverse", &name, &op_json),
-            MirOp::MILReverseSequence { name, .. } => unsupported("reverse_sequence", &name, &op_json),
-            MirOp::MILSliceByIndex { name, x, begin, end, stride, begin_mask, end_mask, squeeze_mask } => {
-                mir_compat::MirOpCompat::SliceByIndex {
+            MirOp::MILReverseSequence { name, .. } => {
+                unsupported("reverse_sequence", &name, &op_json)
+            }
+            MirOp::MILSliceByIndex {
+                name,
+                x,
+                begin,
+                end,
+                stride,
+                begin_mask,
+                end_mask,
+                squeeze_mask,
+            } => mir_compat::MirOpCompat::SliceByIndex {
+                name,
+                x: nid(x),
+                begin: begin.into_iter().map(|v| v as i32).collect(),
+                end: end.into_iter().map(|v| v as i32).collect(),
+                stride: stride.into_iter().map(|v| v as i32).collect(),
+                begin_mask: begin_mask.clone(),
+                end_mask: end_mask.clone(),
+                squeeze_mask: squeeze_mask.clone(),
+            },
+            MirOp::MILSliceBySize { name, .. } => unsupported("slice_by_size", &name, &op_json),
+            MirOp::MILSliceUpdate { name, x, update, begin, end } => {
+                mir_compat::MirOpCompat::SliceUpdate {
                     name,
                     x: nid(x),
+                    update: nid(update),
                     begin: begin.into_iter().map(|v| v as i32).collect(),
                     end: end.into_iter().map(|v| v as i32).collect(),
-                    stride: stride.into_iter().map(|v| v as i32).collect(),
-                    begin_mask: begin_mask.clone(),
-                    end_mask: end_mask.clone(),
-                    squeeze_mask: squeeze_mask.clone(),
                 }
             }
-            MirOp::MILSliceBySize { name, .. } => unsupported("slice_by_size", &name, &op_json),
-            MirOp::MILSliceUpdate { name, x, update, begin, end } => mir_compat::MirOpCompat::SliceUpdate { name, x: nid(x), update: nid(update), begin: begin.into_iter().map(|v| v as i32).collect(), end: end.into_iter().map(|v| v as i32).collect() },
-            MirOp::MILSlidingWindows { name, .. } => unsupported("sliding_windows", &name, &op_json),
+            MirOp::MILSlidingWindows { name, .. } => {
+                unsupported("sliding_windows", &name, &op_json)
+            }
             MirOp::MILDepthToSpace { name, .. } => unsupported("depth_to_space", &name, &op_json),
             MirOp::MILSpaceToDepth { name, .. } => unsupported("space_to_depth", &name, &op_json),
             MirOp::MILPixelShuffle { name, .. } => unsupported("pixel_shuffle", &name, &op_json),
-            MirOp::MILPixelUnshuffle { name, .. } => unsupported("pixel_unshuffle", &name, &op_json),
+            MirOp::MILPixelUnshuffle { name, .. } => {
+                unsupported("pixel_unshuffle", &name, &op_json)
+            }
             MirOp::MILBatchToSpace { name, .. } => unsupported("batch_to_space", &name, &op_json),
             MirOp::MILSpaceToBatch { name, .. } => unsupported("space_to_batch", &name, &op_json),
-            MirOp::MILPad { name, x, pad_amounts, mode, constant_value } => mir_compat::MirOpCompat::Pad { name, x: nid(x), pad_amounts: pad_amounts.into_iter().map(|v| v as i32).collect(), mode, constant_value },
+            MirOp::MILPad { name, x, pad_amounts, mode, constant_value } => {
+                mir_compat::MirOpCompat::Pad {
+                    name,
+                    x: nid(x),
+                    pad_amounts: pad_amounts.into_iter().map(|v| v as i32).collect(),
+                    mode,
+                    constant_value,
+                }
+            }
             MirOp::MILStack { name, .. } => unsupported("stack", &name, &op_json),
-            MirOp::MILTile { name, x, reps } => mir_compat::MirOpCompat::Tile { name, x: nid(x), reps: reps.into_iter().map(|r| r as i32).collect() },
+            MirOp::MILTile { name, x, reps } => mir_compat::MirOpCompat::Tile {
+                name,
+                x: nid(x),
+                reps: reps.into_iter().map(|r| r as i32).collect(),
+            },
             MirOp::MILCumsum { name, .. } => unsupported("cumsum", &name, &op_json),
-            MirOp::MILFill { name, shape, value, dtype } => mir_compat::MirOpCompat::Fill { name, shape: shape.into_iter().map(|d| d as i32).collect(), value, dtype: convert_dtype(dtype) },
-            MirOp::MILFillLike { name, ref_tensor, value, dtype } => mir_compat::MirOpCompat::FillLike { name, ref_tensor: nid(ref_tensor), value, dtype: convert_dtype(dtype) },
-            MirOp::MILIdentity { name, x } => mir_compat::MirOpCompat::Identity { name, x: nid(x), dtype: MilDtypeCompat::Fp16 },
+            MirOp::MILFill { name, shape, value, dtype } => mir_compat::MirOpCompat::Fill {
+                name,
+                shape: shape.into_iter().map(|d| d as i32).collect(),
+                value,
+                dtype: convert_dtype(dtype),
+            },
+            MirOp::MILFillLike { name, ref_tensor, value, dtype } => {
+                mir_compat::MirOpCompat::FillLike {
+                    name,
+                    ref_tensor: nid(ref_tensor),
+                    value,
+                    dtype: convert_dtype(dtype),
+                }
+            }
+            MirOp::MILIdentity { name, x } => {
+                mir_compat::MirOpCompat::Identity { name, x: nid(x), dtype: MilDtypeCompat::Fp16 }
+            }
             MirOp::MILOneHot { name, .. } => unsupported("one_hot", &name, &op_json),
             MirOp::MILNonZero { name, .. } => unsupported("non_zero", &name, &op_json),
             MirOp::MILArgsort { name, .. } => unsupported("argsort", &name, &op_json),
@@ -1219,25 +1406,41 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             MirOp::MILCrop { name, .. } => unsupported("crop", &name, &op_json),
 
             // ─── Scatter / Gather ────────────────────────────────────
-            MirOp::MILGather { name, x, indices, axis } => mir_compat::MirOpCompat::Gather { name, x: nid(x), indices: nid(indices), axis: axis as i64 },
-            MirOp::MILGatherAlongAxis { name, .. } => unsupported("gather_along_axis", &name, &op_json),
+            MirOp::MILGather { name, x, indices, axis } => mir_compat::MirOpCompat::Gather {
+                name,
+                x: nid(x),
+                indices: nid(indices),
+                axis: axis as i64,
+            },
+            MirOp::MILGatherAlongAxis { name, .. } => {
+                unsupported("gather_along_axis", &name, &op_json)
+            }
             MirOp::MILGatherNd { name, .. } => unsupported("gather_nd", &name, &op_json),
             MirOp::MILScatter { name, .. } => unsupported("scatter", &name, &op_json),
-            MirOp::MILScatterAlongAxis { name, .. } => unsupported("scatter_along_axis", &name, &op_json),
+            MirOp::MILScatterAlongAxis { name, .. } => {
+                unsupported("scatter_along_axis", &name, &op_json)
+            }
             MirOp::MILScatterNd { name, .. } => unsupported("scatter_nd", &name, &op_json),
-            MirOp::MILNonMaximumSuppression { name, .. } => unsupported("non_maximum_suppression", &name, &op_json),
+            MirOp::MILNonMaximumSuppression { name, .. } => {
+                unsupported("non_maximum_suppression", &name, &op_json)
+            }
 
             // ─── Attention ───────────────────────────────────────────
-            MirOp::MILScaledDotProductAttention { name, query, key, value, attention_mask, scale } => {
-                mir_compat::MirOpCompat::ScaledDotProductAttention {
-                    name,
-                    query: nid(query),
-                    key: nid(key),
-                    value: nid(value),
-                    attention_mask: attention_mask.map(|id| nid(id)),
-                    scale,
-                }
-            }
+            MirOp::MILScaledDotProductAttention {
+                name,
+                query,
+                key,
+                value,
+                attention_mask,
+                scale,
+            } => mir_compat::MirOpCompat::ScaledDotProductAttention {
+                name,
+                query: nid(query),
+                key: nid(key),
+                value: nid(value),
+                attention_mask: attention_mask.map(nid),
+                scale,
+            },
 
             // ─── Quantization ────────────────────────────────────────
             MirOp::MILQuantize { name, .. } => unsupported("quantize", &name, &op_json),
@@ -1246,57 +1449,69 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             // ─── Constexpr / Compression ─────────────────────────────
             // T-39 (I-18): Constexpr* variants now have proper MirOpCompat
             // representations instead of being mapped to Unsupported.
-            MirOp::MILConstexprAffineDequantize { name, quantized_data, scale, zero_point, axis } =>
-                mir_compat::MirOpCompat::ConstexprAffineDequantize {
-                    name,
-                    quantized_data,
-                    scale,
-                    zero_point,
-                    axis: axis as i64,
-                },
-            MirOp::MILConstexprBlockwiseShiftScale { name, data, scale, offset, block_size } =>
+            MirOp::MILConstexprAffineDequantize {
+                name,
+                quantized_data,
+                scale,
+                zero_point,
+                axis,
+            } => mir_compat::MirOpCompat::ConstexprAffineDequantize {
+                name,
+                quantized_data,
+                scale,
+                zero_point,
+                axis: axis as i64,
+            },
+            MirOp::MILConstexprBlockwiseShiftScale { name, data, scale, offset, block_size } => {
                 mir_compat::MirOpCompat::ConstexprBlockwiseShiftScale {
                     name,
                     data,
                     scale,
                     offset,
                     block_size: block_size.into_iter().map(|d| d as i64).collect(),
-                },
-            MirOp::MILConstexprLutToDense { name, indices, lut, num_bits } =>
+                }
+            }
+            MirOp::MILConstexprLutToDense { name, indices, lut, num_bits } => {
                 mir_compat::MirOpCompat::ConstexprLutToDense {
                     name,
                     indices,
                     lut,
                     num_bits: num_bits as i64,
-                },
-            MirOp::MILConstexprSparseToDense { name, nonzero_data, shape, default_value } =>
+                }
+            }
+            MirOp::MILConstexprSparseToDense { name, nonzero_data, shape, default_value } => {
                 mir_compat::MirOpCompat::ConstexprSparseToDense {
                     name,
                     nonzero_data,
                     shape: shape.into_iter().map(|d| d as i64).collect(),
                     default_value,
-                },
-            MirOp::MILConstexprCast { name, data, dtype } =>
-                mir_compat::MirOpCompat::ConstexprCast {
-                    name,
-                    data,
-                    dtype: convert_dtype(dtype),
-                },
-            MirOp::MILConstexprLutToSparse { name, data, num_bits } =>
+                }
+            }
+            MirOp::MILConstexprCast { name, data, dtype } => {
+                mir_compat::MirOpCompat::ConstexprCast { name, data, dtype: convert_dtype(dtype) }
+            }
+            MirOp::MILConstexprLutToSparse { name, data, num_bits } => {
                 mir_compat::MirOpCompat::ConstexprLutToSparse {
                     name,
                     data,
                     num_bits: num_bits as i64,
-                },
-            MirOp::MILConstexprSparseBlockwiseShiftScale { name, data, scale, offset, block_size, block_axis } =>
-                mir_compat::MirOpCompat::ConstexprSparseBlockwiseShiftScale {
-                    name,
-                    data,
-                    scale,
-                    offset,
-                    block_size: block_size.into_iter().map(|d| d as i64).collect(),
-                    block_axis: block_axis as i64,
-                },
+                }
+            }
+            MirOp::MILConstexprSparseBlockwiseShiftScale {
+                name,
+                data,
+                scale,
+                offset,
+                block_size,
+                block_axis,
+            } => mir_compat::MirOpCompat::ConstexprSparseBlockwiseShiftScale {
+                name,
+                data,
+                scale,
+                offset,
+                block_size: block_size.into_iter().map(|d| d as i64).collect(),
+                block_axis: block_axis as i64,
+            },
 
             // ─── Recurrent ───────────────────────────────────────────
             MirOp::MILRnn { name, .. } => unsupported("rnn", &name, &op_json),
@@ -1314,18 +1529,35 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             MirOp::MILListScatter { name, .. } => unsupported("list_scatter", &name, &op_json),
 
             // ─── Random ──────────────────────────────────────────────
-            MirOp::MILRandomBernoulli { name, .. } => unsupported("random_bernoulli", &name, &op_json),
+            MirOp::MILRandomBernoulli { name, .. } => {
+                unsupported("random_bernoulli", &name, &op_json)
+            }
             MirOp::MILRandomNormal { name, .. } => unsupported("random_normal", &name, &op_json),
             MirOp::MILRandomUniform { name, .. } => unsupported("random_uniform", &name, &op_json),
-            MirOp::MILRandomCategorical { name, .. } => unsupported("random_categorical", &name, &op_json),
+            MirOp::MILRandomCategorical { name, .. } => {
+                unsupported("random_categorical", &name, &op_json)
+            }
 
             // ─── State ───────────────────────────────────────────────
-            MirOp::MILReadState { name, state_id, shape, dtype } => mir_compat::MirOpCompat::ReadState { name, state_id, shape, dtype: convert_dtype(dtype) },
-            MirOp::MILCoremlUpdateState { name, state_id, value } => mir_compat::MirOpCompat::CoremlUpdateState { name, state_id, value: nid(value) },
-            MirOp::MILStateWrite { name, state_ref, value } => mir_compat::MirOpCompat::StateWrite { name, state_ref, value: nid(value) },
+            MirOp::MILReadState { name, state_id, shape, dtype } => {
+                mir_compat::MirOpCompat::ReadState {
+                    name,
+                    state_id,
+                    shape,
+                    dtype: convert_dtype(dtype),
+                }
+            }
+            MirOp::MILCoremlUpdateState { name, state_id, value } => {
+                mir_compat::MirOpCompat::CoremlUpdateState { name, state_id, value: nid(value) }
+            }
+            MirOp::MILStateWrite { name, state_ref, value } => {
+                mir_compat::MirOpCompat::StateWrite { name, state_ref, value: nid(value) }
+            }
 
             // ─── Metadata / Misc ─────────────────────────────────────
-            MirOp::MILTopk { name, x, k, axis } => mir_compat::MirOpCompat::Topk { name, x: nid(x), k: k as i64, axis: axis as i64 },
+            MirOp::MILTopk { name, x, k, axis } => {
+                mir_compat::MirOpCompat::Topk { name, x: nid(x), k: k as i64, axis: axis as i64 }
+            }
             MirOp::MILClassify { name, .. } => unsupported("classify", &name, &op_json),
         }
     }
@@ -1456,11 +1688,11 @@ pub fn mil_dtype_to_proto(dt: &mir_compat::MilDtypeCompat) -> i32 {
         mir_compat::MilDtypeCompat::Int32 => proto::ArrayDataType::Int32 as i32,
         mir_compat::MilDtypeCompat::UInt8 => proto::ArrayDataType::Uint8 as i32,
         // T-35: new dtypes — use raw MIL proto DataType values
-        mir_compat::MilDtypeCompat::Int4 => 25,    // DataType::INT4
-        mir_compat::MilDtypeCompat::UInt4 => 35,   // DataType::UINT4
-        mir_compat::MilDtypeCompat::E4M3 => 40,    // DataType::FLOAT8E4M3FN
-        mir_compat::MilDtypeCompat::E5M2 => 41,    // DataType::FLOAT8E5M2
-        mir_compat::MilDtypeCompat::UInt16 => 32,  // DataType::UINT16
+        mir_compat::MilDtypeCompat::Int4 => 25, // DataType::INT4
+        mir_compat::MilDtypeCompat::UInt4 => 35, // DataType::UINT4
+        mir_compat::MilDtypeCompat::E4M3 => 40, // DataType::FLOAT8E4M3FN
+        mir_compat::MilDtypeCompat::E5M2 => 41, // DataType::FLOAT8E5M2
+        mir_compat::MilDtypeCompat::UInt16 => 32, // DataType::UINT16
     }
 }
 
@@ -1523,9 +1755,7 @@ pub fn weight_data_inline(
         | mir_compat::MilDtypeCompat::Fp32
         | mir_compat::MilDtypeCompat::UInt8
         | mir_compat::MilDtypeCompat::E4M3
-        | mir_compat::MilDtypeCompat::E5M2 => {
-            proto::weight_value::Value::FloatValue(data.to_vec())
-        }
+        | mir_compat::MilDtypeCompat::E5M2 => proto::weight_value::Value::FloatValue(data.to_vec()),
         mir_compat::MilDtypeCompat::Int32 => proto::weight_value::Value::IntValue(data.to_vec()),
         // T-35: Int4, UInt4, UInt16 stored as integer data
         mir_compat::MilDtypeCompat::Int4
@@ -1661,7 +1891,16 @@ pub fn mir_op_to_proto_op(
                 perm: perm.iter().map(|&d| d as i64).collect(),
             }),
         ),
-        mir_compat::MirOpCompat::SliceByIndex { name, x, begin, end, stride, begin_mask, end_mask, squeeze_mask: _ } => (
+        mir_compat::MirOpCompat::SliceByIndex {
+            name,
+            x,
+            begin,
+            end,
+            stride,
+            begin_mask,
+            end_mask,
+            squeeze_mask: _,
+        } => (
             name.clone(),
             proto::mil_operation::Operation::SliceByIndexOp(proto::MilSliceByIndexOp {
                 x: Some(proto::OperandRef { name: x.clone() }),
@@ -1670,11 +1909,15 @@ pub fn mir_op_to_proto_op(
                 stride: stride.iter().map(|&d| d as i64).collect(),
                 // Legacy proto path: pack bools into bitmasks for the old proto format.
                 // The proto-direct path (used by trace-compile) emits bool tensors instead.
-                begin_mask: begin_mask.iter().enumerate()
+                begin_mask: begin_mask
+                    .iter()
+                    .enumerate()
                     .filter(|&(_, &m)| m)
                     .map(|(i, _)| 1i64 << i)
                     .sum(),
-                end_mask: end_mask.iter().enumerate()
+                end_mask: end_mask
+                    .iter()
+                    .enumerate()
                     .filter(|&(_, &m)| m)
                     .map(|(i, _)| 1i64 << i)
                     .sum(),
@@ -1710,14 +1953,23 @@ pub fn mir_op_to_proto_op(
                 mode: mode.clone(),
             }),
         ),
-        mir_compat::MirOpCompat::ScaledDotProductAttention { name, query, key, value, attention_mask, scale } => (
+        mir_compat::MirOpCompat::ScaledDotProductAttention {
+            name,
+            query,
+            key,
+            value,
+            attention_mask,
+            scale,
+        } => (
             name.clone(),
             proto::mil_operation::Operation::ScaledDotProductAttentionOp(
                 proto::MilScaledDotProductAttentionOp {
                     query: Some(proto::OperandRef { name: query.clone() }),
                     key: Some(proto::OperandRef { name: key.clone() }),
                     value: Some(proto::OperandRef { name: value.clone() }),
-                    attn_mask: attention_mask.as_ref().map(|m| proto::OperandRef { name: m.clone() }),
+                    attn_mask: attention_mask
+                        .as_ref()
+                        .map(|m| proto::OperandRef { name: m.clone() }),
                     has_attn_mask: attention_mask.is_some(),
                     causal: false,
                     scale: scale.unwrap_or(0.0),
@@ -1992,14 +2244,12 @@ pub fn mir_op_to_proto_op(
         | mir_compat::MirOpCompat::Floor { name, x }
         | mir_compat::MirOpCompat::Round { name, x }
         | mir_compat::MirOpCompat::Sign { name, x }
-        | mir_compat::MirOpCompat::Log { name, x } => {
-            (
-                name.clone(),
-                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
-                    x: Some(proto::OperandRef { name: x.clone() }),
-                }),
-            )
-        }
+        | mir_compat::MirOpCompat::Log { name, x } => (
+            name.clone(),
+            proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                x: Some(proto::OperandRef { name: x.clone() }),
+            }),
+        ),
         // T-39 (I-18): Constexpr weight compression ops.
         // These are emitted using the MIL "constexpr_*" op_type naming
         // convention, which the Core ML runtime recognizes for weight
@@ -2012,62 +2262,72 @@ pub fn mir_op_to_proto_op(
         // constexpr ops are emitted with their op_type as a named marker
         // so downstream tooling (Python bridge, Core ML runtime) can
         // recognize and process them.
-        mir_compat::MirOpCompat::ConstexprAffineDequantize { name, quantized_data, scale, zero_point, axis } => {
-            (
-                format!("{name}__constexpr_affine_dequant"),
-                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
-                    x: Some(proto::OperandRef { name: quantized_data.clone() }),
-                }),
-            )
-        }
-        mir_compat::MirOpCompat::ConstexprBlockwiseShiftScale { name, data, scale, offset, block_size: _ } => {
-            (
-                format!("{name}__constexpr_blockwise_shift_scale"),
-                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
-                    x: Some(proto::OperandRef { name: data.clone() }),
-                }),
-            )
-        }
-        mir_compat::MirOpCompat::ConstexprLutToDense { name, indices, lut, num_bits: _ } => {
-            (
-                format!("{name}__constexpr_lut_to_dense"),
-                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
-                    x: Some(proto::OperandRef { name: indices.clone() }),
-                }),
-            )
-        }
-        mir_compat::MirOpCompat::ConstexprSparseToDense { name, nonzero_data, shape: _, default_value: _ } => {
-            (
-                format!("{name}__constexpr_sparse_to_dense"),
-                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
-                    x: Some(proto::OperandRef { name: nonzero_data.clone() }),
-                }),
-            )
-        }
-        mir_compat::MirOpCompat::ConstexprCast { name, data, dtype: _ } => {
-            (
-                format!("{name}__constexpr_cast"),
-                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
-                    x: Some(proto::OperandRef { name: data.clone() }),
-                }),
-            )
-        }
-        mir_compat::MirOpCompat::ConstexprLutToSparse { name, data, num_bits: _ } => {
-            (
-                format!("{name}__constexpr_lut_to_sparse"),
-                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
-                    x: Some(proto::OperandRef { name: data.clone() }),
-                }),
-            )
-        }
-        mir_compat::MirOpCompat::ConstexprSparseBlockwiseShiftScale { name, data, scale: _, offset: _, block_size: _, block_axis: _ } => {
-            (
-                format!("{name}__constexpr_sparse_blockwise_shift_scale"),
-                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
-                    x: Some(proto::OperandRef { name: data.clone() }),
-                }),
-            )
-        }
+        mir_compat::MirOpCompat::ConstexprAffineDequantize {
+            name,
+            quantized_data,
+            scale: _,
+            zero_point: _,
+            axis: _,
+        } => (
+            format!("{name}__constexpr_affine_dequant"),
+            proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                x: Some(proto::OperandRef { name: quantized_data.clone() }),
+            }),
+        ),
+        mir_compat::MirOpCompat::ConstexprBlockwiseShiftScale {
+            name,
+            data,
+            scale: _,
+            offset: _,
+            block_size: _,
+        } => (
+            format!("{name}__constexpr_blockwise_shift_scale"),
+            proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                x: Some(proto::OperandRef { name: data.clone() }),
+            }),
+        ),
+        mir_compat::MirOpCompat::ConstexprLutToDense { name, indices, lut: _, num_bits: _ } => (
+            format!("{name}__constexpr_lut_to_dense"),
+            proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                x: Some(proto::OperandRef { name: indices.clone() }),
+            }),
+        ),
+        mir_compat::MirOpCompat::ConstexprSparseToDense {
+            name,
+            nonzero_data,
+            shape: _,
+            default_value: _,
+        } => (
+            format!("{name}__constexpr_sparse_to_dense"),
+            proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                x: Some(proto::OperandRef { name: nonzero_data.clone() }),
+            }),
+        ),
+        mir_compat::MirOpCompat::ConstexprCast { name, data, dtype: _ } => (
+            format!("{name}__constexpr_cast"),
+            proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                x: Some(proto::OperandRef { name: data.clone() }),
+            }),
+        ),
+        mir_compat::MirOpCompat::ConstexprLutToSparse { name, data, num_bits: _ } => (
+            format!("{name}__constexpr_lut_to_sparse"),
+            proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                x: Some(proto::OperandRef { name: data.clone() }),
+            }),
+        ),
+        mir_compat::MirOpCompat::ConstexprSparseBlockwiseShiftScale {
+            name,
+            data,
+            scale: _,
+            offset: _,
+            block_size: _,
+            block_axis: _,
+        } => (
+            format!("{name}__constexpr_sparse_blockwise_shift_scale"),
+            proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                x: Some(proto::OperandRef { name: data.clone() }),
+            }),
+        ),
         // Unsupported ops are emitted as identity pass-through with a comment
         // marker in the function name. The op_kind and params are preserved
         // for downstream Python emission or manual inspection.
@@ -2293,8 +2553,7 @@ fn make_apple_value_type(dtype: i32, shape: &[u64]) -> apple_proto::mil_spec::Va
 /// The original name is preserved in the `name = string(...)` attribute for
 /// debugging/metadata; only the SSA variable identifier is sanitized.
 fn sanitize_mil_ident(name: &str) -> String {
-    name.replace('.', "_")
-        .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_")
+    name.replace('.', "_").replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_")
 }
 
 /// Build an `apple_proto::mil_spec::NamedValueType` (name + type pair).
@@ -2325,11 +2584,9 @@ fn make_apple_state_named_value_type(
     apple_proto::mil_spec::NamedValueType {
         name: name.to_string(),
         r#type: Some(apple_proto::mil_spec::ValueType {
-            r#type: Some(apple_proto::mil_spec::value_type::Type::StateType(
-                Box::new(apple_proto::mil_spec::StateType {
-                    wrapped_type: Some(Box::new(inner_value_type)),
-                }),
-            )),
+            r#type: Some(apple_proto::mil_spec::value_type::Type::StateType(Box::new(
+                apple_proto::mil_spec::StateType { wrapped_type: Some(Box::new(inner_value_type)) },
+            ))),
         }),
     }
 }
@@ -2457,18 +2714,13 @@ fn make_immediate_bool_tensor_value(values: Vec<bool>) -> apple_proto::mil_spec:
     let rank = values.len() as u64;
     apple_proto::mil_spec::Value {
         doc_string: String::new(),
-        r#type: Some(make_apple_value_type(
-            apple_proto::mil_spec::DataType::Bool as i32,
-            &[rank],
-        )),
+        r#type: Some(make_apple_value_type(apple_proto::mil_spec::DataType::Bool as i32, &[rank])),
         value: Some(apple_proto::mil_spec::value::Value::ImmediateValue(
             apple_proto::mil_spec::value::ImmediateValue {
                 value: Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(
                     apple_proto::mil_spec::TensorValue {
                         value: Some(apple_proto::mil_spec::tensor_value::Value::Bools(
-                            apple_proto::mil_spec::tensor_value::RepeatedBools {
-                                values,
-                            },
+                            apple_proto::mil_spec::tensor_value::RepeatedBools { values },
                         )),
                     },
                 )),
@@ -2504,9 +2756,7 @@ fn make_immediate_float_value(apple_dtype: i32, value: f32) -> apple_proto::mil_
     } else {
         // Float32 (or any other float dtype) → standard `floats` storage.
         apple_proto::mil_spec::tensor_value::Value::Floats(
-            apple_proto::mil_spec::tensor_value::RepeatedFloats {
-                values: vec![value],
-            },
+            apple_proto::mil_spec::tensor_value::RepeatedFloats { values: vec![value] },
         )
     };
 
@@ -2516,9 +2766,7 @@ fn make_immediate_float_value(apple_dtype: i32, value: f32) -> apple_proto::mil_
         value: Some(apple_proto::mil_spec::value::Value::ImmediateValue(
             apple_proto::mil_spec::value::ImmediateValue {
                 value: Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(
-                    apple_proto::mil_spec::TensorValue {
-                        value: Some(tensor_value),
-                    },
+                    apple_proto::mil_spec::TensorValue { value: Some(tensor_value) },
                 )),
             },
         )),
@@ -2635,7 +2883,7 @@ fn make_apple_feature_desc(
         shape.iter().map(|&d| if d == 0 { 1 } else { d as i64 }).collect()
     };
 
-    let has_dynamic_dims = shape.iter().any(|&d| d == 0);
+    let has_dynamic_dims = shape.contains(&0);
 
     let shape_flexibility = if has_dynamic_dims {
         // Build ShapeRange: each dimension gets a SizeRange.
@@ -2694,7 +2942,7 @@ fn make_apple_state_feature_desc(
         shape.iter().map(|&d| if d == 0 { 1 } else { d as i64 }).collect()
     };
 
-    let has_dynamic_dims = shape.iter().any(|&d| d == 0);
+    let has_dynamic_dims = shape.contains(&0);
 
     let shape_flexibility = if has_dynamic_dims {
         let size_ranges: Vec<apple_proto::SizeRange> = shape
@@ -2956,10 +3204,7 @@ fn mir_op_to_apple_ops(
             //   tensor<int8, [?]> }; got tensor<int64, [N]>")
             inputs.insert(
                 "shape".to_string(),
-                make_value_arg(make_immediate_int32_value(
-                    shape.clone(),
-                    &[shape.len() as u64],
-                )),
+                make_value_arg(make_immediate_int32_value(shape.clone(), &[shape.len() as u64])),
             );
 
             let mut attributes = HashMap::new();
@@ -2983,10 +3228,7 @@ fn mir_op_to_apple_ops(
             // perm as INT32 immediate — same ios19 dtype restriction as reshape.shape
             inputs.insert(
                 "perm".to_string(),
-                make_value_arg(make_immediate_int32_value(
-                    perm.clone(),
-                    &[perm.len() as u64],
-                )),
+                make_value_arg(make_immediate_int32_value(perm.clone(), &[perm.len() as u64])),
             );
 
             let mut attributes = HashMap::new();
@@ -3004,26 +3246,29 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
-        mir_compat::MirOpCompat::SliceByIndex { name, x, begin, end, stride, begin_mask, end_mask, squeeze_mask } => {
+        mir_compat::MirOpCompat::SliceByIndex {
+            name,
+            x,
+            begin,
+            end,
+            stride,
+            begin_mask,
+            end_mask,
+            squeeze_mask,
+        } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
 
             // begin as INT32 immediate — same ios19 dtype restriction as reshape.shape
             inputs.insert(
                 "begin".to_string(),
-                make_value_arg(make_immediate_int32_value(
-                    begin.clone(),
-                    &[begin.len() as u64],
-                )),
+                make_value_arg(make_immediate_int32_value(begin.clone(), &[begin.len() as u64])),
             );
 
             // end as INT32 immediate — same ios19 dtype restriction as reshape.shape
             inputs.insert(
                 "end".to_string(),
-                make_value_arg(make_immediate_int32_value(
-                    end.clone(),
-                    &[end.len() as u64],
-                )),
+                make_value_arg(make_immediate_int32_value(end.clone(), &[end.len() as u64])),
             );
 
             // stride as INT32 immediate (omit if all 1s — Core ML defaults to 1)
@@ -3044,9 +3289,7 @@ fn mir_op_to_apple_ops(
             if begin_mask.iter().any(|&m| m) {
                 inputs.insert(
                     "begin_mask".to_string(),
-                    make_value_arg(make_immediate_bool_tensor_value(
-                        begin_mask.clone(),
-                    )),
+                    make_value_arg(make_immediate_bool_tensor_value(begin_mask.clone())),
                 );
             }
 
@@ -3055,9 +3298,7 @@ fn mir_op_to_apple_ops(
             if end_mask.iter().any(|&m| m) {
                 inputs.insert(
                     "end_mask".to_string(),
-                    make_value_arg(make_immediate_bool_tensor_value(
-                        end_mask.clone(),
-                    )),
+                    make_value_arg(make_immediate_bool_tensor_value(end_mask.clone())),
                 );
             }
 
@@ -3068,9 +3309,7 @@ fn mir_op_to_apple_ops(
             if squeeze_mask.iter().any(|&m| m) {
                 inputs.insert(
                     "squeeze_mask".to_string(),
-                    make_value_arg(make_immediate_bool_tensor_value(
-                        squeeze_mask.clone(),
-                    )),
+                    make_value_arg(make_immediate_bool_tensor_value(squeeze_mask.clone())),
                 );
             }
 
@@ -3097,19 +3336,13 @@ fn mir_op_to_apple_ops(
             // begin as INT32 immediate — same ios19 dtype restriction as reshape.shape
             inputs.insert(
                 "begin".to_string(),
-                make_value_arg(make_immediate_int32_value(
-                    begin.clone(),
-                    &[begin.len() as u64],
-                )),
+                make_value_arg(make_immediate_int32_value(begin.clone(), &[begin.len() as u64])),
             );
 
             // end as INT32 immediate — same ios19 dtype restriction as reshape.shape
             inputs.insert(
                 "end".to_string(),
-                make_value_arg(make_immediate_int32_value(
-                    end.clone(),
-                    &[end.len() as u64],
-                )),
+                make_value_arg(make_immediate_int32_value(end.clone(), &[end.len() as u64])),
             );
 
             let mut attributes = HashMap::new();
@@ -3150,10 +3383,8 @@ fn mir_op_to_apple_ops(
             // the default value of false when it's missing). Non-interleaved
             // concat is the standard behavior for all current use cases
             // (RoPE rotate_half, attention Q/K/V stacking, etc.).
-            inputs.insert(
-                "interleave".to_string(),
-                make_value_arg(make_immediate_bool_value(false)),
-            );
+            inputs
+                .insert("interleave".to_string(), make_value_arg(make_immediate_bool_value(false)));
 
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
@@ -3243,7 +3474,14 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
-        mir_compat::MirOpCompat::ScaledDotProductAttention { name, query, key, value, attention_mask, scale } => {
+        mir_compat::MirOpCompat::ScaledDotProductAttention {
+            name,
+            query,
+            key,
+            value,
+            attention_mask,
+            scale,
+        } => {
             let mut inputs = HashMap::new();
             inputs.insert("query".to_string(), make_name_arg(query));
             inputs.insert("key".to_string(), make_name_arg(key));
@@ -3252,7 +3490,8 @@ fn mir_op_to_apple_ops(
                 inputs.insert("attn_mask".to_string(), make_name_arg(mask));
             }
             if let Some(s) = scale {
-                inputs.insert("scale".to_string(), make_value_arg(make_immediate_float32_value(*s)));
+                inputs
+                    .insert("scale".to_string(), make_value_arg(make_immediate_float32_value(*s)));
             }
 
             let mut attributes = HashMap::new();
@@ -3898,10 +4137,7 @@ fn mir_op_to_apple_ops(
             // reps as INT32 immediate — same ios19 dtype restriction as reshape.shape
             inputs.insert(
                 "reps".to_string(),
-                make_value_arg(make_immediate_int32_value(
-                    reps.clone(),
-                    &[reps.len() as u64],
-                )),
+                make_value_arg(make_immediate_int32_value(reps.clone(), &[reps.len() as u64])),
             );
 
             let mut attributes = HashMap::new();
@@ -4066,7 +4302,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "sqrt".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4079,7 +4319,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "logical_not".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4092,7 +4336,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "ceil".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4105,7 +4353,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "floor".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4118,7 +4370,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "round".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4131,7 +4387,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "sign".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4144,7 +4404,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "log".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4159,7 +4423,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "pow".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4173,7 +4441,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "equal".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Bool as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Bool as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4187,7 +4459,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "not_equal".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Bool as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Bool as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4201,7 +4477,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "greater".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Bool as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Bool as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4215,7 +4495,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "greater_equal".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Bool as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Bool as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4229,7 +4513,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "less".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Bool as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Bool as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4243,7 +4531,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "less_equal".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Bool as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Bool as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4257,7 +4549,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "logical_and".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Bool as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Bool as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4271,7 +4567,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "logical_or".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Bool as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Bool as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4285,7 +4585,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "floor_div".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4299,7 +4603,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "mod".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4308,13 +4616,20 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::ExpandDims { name, x, axis } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("axes".to_string(), make_value_arg(make_immediate_int32_value(axis.clone(), &[axis.len() as u64])));
+            inputs.insert(
+                "axes".to_string(),
+                make_value_arg(make_immediate_int32_value(axis.clone(), &[axis.len() as u64])),
+            );
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
             vec![apple_proto::mil_spec::Operation {
                 r#type: "expand_dims".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4323,13 +4638,20 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::Squeeze { name, x, axis } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("axes".to_string(), make_value_arg(make_immediate_int32_value(axis.clone(), &[axis.len() as u64])));
+            inputs.insert(
+                "axes".to_string(),
+                make_value_arg(make_immediate_int32_value(axis.clone(), &[axis.len() as u64])),
+            );
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
             vec![apple_proto::mil_spec::Operation {
                 r#type: "squeeze".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4338,14 +4660,22 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::Clip { name, x, min_val, max_val } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("alpha".to_string(), make_value_arg(make_immediate_float32_value(*min_val)));
-            inputs.insert("beta".to_string(), make_value_arg(make_immediate_float32_value(*max_val)));
+            inputs.insert(
+                "alpha".to_string(),
+                make_value_arg(make_immediate_float32_value(*min_val)),
+            );
+            inputs
+                .insert("beta".to_string(), make_value_arg(make_immediate_float32_value(*max_val)));
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
             vec![apple_proto::mil_spec::Operation {
                 r#type: "clip".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4354,15 +4684,31 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::Pad { name, x, pad_amounts, mode, constant_value } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("pad".to_string(), make_value_arg(make_immediate_int32_value(pad_amounts.clone(), &[pad_amounts.len() as u64])));
-            inputs.insert("mode".to_string(), make_value_arg(make_immediate_string_value(mode.clone())));
-            inputs.insert("constant_value".to_string(), make_value_arg(make_immediate_float32_value(*constant_value)));
+            inputs.insert(
+                "pad".to_string(),
+                make_value_arg(make_immediate_int32_value(
+                    pad_amounts.clone(),
+                    &[pad_amounts.len() as u64],
+                )),
+            );
+            inputs.insert(
+                "mode".to_string(),
+                make_value_arg(make_immediate_string_value(mode.clone())),
+            );
+            inputs.insert(
+                "constant_value".to_string(),
+                make_value_arg(make_immediate_float32_value(*constant_value)),
+            );
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
             vec![apple_proto::mil_spec::Operation {
                 r#type: "pad".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4371,14 +4717,27 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::ReduceMax { name, x, axes, keep_dims } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("axes".to_string(), make_value_arg(make_immediate_int32_value(axes.iter().map(|&v| v as i32).collect(), &[axes.len() as u64])));
-            inputs.insert("keep_dims".to_string(), make_value_arg(make_immediate_bool_value(*keep_dims)));
+            inputs.insert(
+                "axes".to_string(),
+                make_value_arg(make_immediate_int32_value(
+                    axes.iter().map(|&v| v as i32).collect(),
+                    &[axes.len() as u64],
+                )),
+            );
+            inputs.insert(
+                "keep_dims".to_string(),
+                make_value_arg(make_immediate_bool_value(*keep_dims)),
+            );
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
             vec![apple_proto::mil_spec::Operation {
                 r#type: "reduce_max".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4387,14 +4746,27 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::ReduceMin { name, x, axes, keep_dims } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("axes".to_string(), make_value_arg(make_immediate_int32_value(axes.iter().map(|&v| v as i32).collect(), &[axes.len() as u64])));
-            inputs.insert("keep_dims".to_string(), make_value_arg(make_immediate_bool_value(*keep_dims)));
+            inputs.insert(
+                "axes".to_string(),
+                make_value_arg(make_immediate_int32_value(
+                    axes.iter().map(|&v| v as i32).collect(),
+                    &[axes.len() as u64],
+                )),
+            );
+            inputs.insert(
+                "keep_dims".to_string(),
+                make_value_arg(make_immediate_bool_value(*keep_dims)),
+            );
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
             vec![apple_proto::mil_spec::Operation {
                 r#type: "reduce_min".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4403,14 +4775,27 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::ReduceProd { name, x, axes, keep_dims } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("axes".to_string(), make_value_arg(make_immediate_int32_value(axes.iter().map(|&v| v as i32).collect(), &[axes.len() as u64])));
-            inputs.insert("keep_dims".to_string(), make_value_arg(make_immediate_bool_value(*keep_dims)));
+            inputs.insert(
+                "axes".to_string(),
+                make_value_arg(make_immediate_int32_value(
+                    axes.iter().map(|&v| v as i32).collect(),
+                    &[axes.len() as u64],
+                )),
+            );
+            inputs.insert(
+                "keep_dims".to_string(),
+                make_value_arg(make_immediate_bool_value(*keep_dims)),
+            );
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
             vec![apple_proto::mil_spec::Operation {
                 r#type: "reduce_prod".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4426,7 +4811,11 @@ fn mir_op_to_apple_ops(
             vec![apple_proto::mil_spec::Operation {
                 r#type: "select".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4435,13 +4824,18 @@ fn mir_op_to_apple_ops(
         mir_compat::MirOpCompat::LeakyRelu { name, x, alpha } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
-            inputs.insert("alpha".to_string(), make_value_arg(make_immediate_float32_value(*alpha)));
+            inputs
+                .insert("alpha".to_string(), make_value_arg(make_immediate_float32_value(*alpha)));
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
             vec![apple_proto::mil_spec::Operation {
                 r#type: "leaky_relu".to_string(),
                 inputs,
-                outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]
@@ -4450,13 +4844,22 @@ fn mir_op_to_apple_ops(
         // Emitted as constexpr_* op_type with weight-name inputs and scalar attributes.
         // The primary input (quantized_data/data/indices/nonzero_data) is wired as
         // the "x" input; additional weight references are wired as named inputs.
-        mir_compat::MirOpCompat::ConstexprAffineDequantize { name, quantized_data, scale, zero_point, axis } => {
+        mir_compat::MirOpCompat::ConstexprAffineDequantize {
+            name,
+            quantized_data,
+            scale,
+            zero_point,
+            axis,
+        } => {
             let mut inputs = HashMap::new();
             inputs.insert("quantized_data".to_string(), make_name_arg(quantized_data));
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
             attributes.insert("scale".to_string(), make_immediate_float32_value(*scale));
-            attributes.insert("zero_point".to_string(), make_immediate_int64_value(vec![*zero_point as i64], &[]));
+            attributes.insert(
+                "zero_point".to_string(),
+                make_immediate_int64_value(vec![*zero_point as i64], &[]),
+            );
             attributes.insert("axis".to_string(), make_immediate_int64_value(vec![*axis], &[]));
             vec![apple_proto::mil_spec::Operation {
                 r#type: "constexpr_affine_dequantize".to_string(),
@@ -4470,14 +4873,23 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
-        mir_compat::MirOpCompat::ConstexprBlockwiseShiftScale { name, data, scale, offset, block_size } => {
+        mir_compat::MirOpCompat::ConstexprBlockwiseShiftScale {
+            name,
+            data,
+            scale,
+            offset,
+            block_size,
+        } => {
             let mut inputs = HashMap::new();
             inputs.insert("data".to_string(), make_name_arg(data));
             inputs.insert("scale".to_string(), make_name_arg(scale));
             inputs.insert("offset".to_string(), make_name_arg(offset));
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
-            attributes.insert("block_size".to_string(), make_immediate_int64_value(block_size.clone(), &[block_size.len() as u64]));
+            attributes.insert(
+                "block_size".to_string(),
+                make_immediate_int64_value(block_size.clone(), &[block_size.len() as u64]),
+            );
             vec![apple_proto::mil_spec::Operation {
                 r#type: "constexpr_blockwise_shift_scale".to_string(),
                 inputs,
@@ -4496,7 +4908,8 @@ fn mir_op_to_apple_ops(
             inputs.insert("lut".to_string(), make_name_arg(lut));
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
-            attributes.insert("num_bits".to_string(), make_immediate_int64_value(vec![*num_bits], &[]));
+            attributes
+                .insert("num_bits".to_string(), make_immediate_int64_value(vec![*num_bits], &[]));
             vec![apple_proto::mil_spec::Operation {
                 r#type: "constexpr_lut_to_dense".to_string(),
                 inputs,
@@ -4509,13 +4922,22 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
-        mir_compat::MirOpCompat::ConstexprSparseToDense { name, nonzero_data, shape, default_value } => {
+        mir_compat::MirOpCompat::ConstexprSparseToDense {
+            name,
+            nonzero_data,
+            shape,
+            default_value,
+        } => {
             let mut inputs = HashMap::new();
             inputs.insert("nonzero_data".to_string(), make_name_arg(nonzero_data));
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
-            attributes.insert("shape".to_string(), make_immediate_int64_value(shape.clone(), &[shape.len() as u64]));
-            attributes.insert("default_value".to_string(), make_immediate_float32_value(*default_value));
+            attributes.insert(
+                "shape".to_string(),
+                make_immediate_int64_value(shape.clone(), &[shape.len() as u64]),
+            );
+            attributes
+                .insert("default_value".to_string(), make_immediate_float32_value(*default_value));
             vec![apple_proto::mil_spec::Operation {
                 r#type: "constexpr_sparse_to_dense".to_string(),
                 inputs,
@@ -4533,13 +4955,16 @@ fn mir_op_to_apple_ops(
             inputs.insert("data".to_string(), make_name_arg(data));
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
-            attributes.insert("dtype".to_string(), make_immediate_int64_value(vec![compat_dtype_to_apple_mil(dtype) as i64], &[]));
+            attributes.insert(
+                "dtype".to_string(),
+                make_immediate_int64_value(vec![compat_dtype_to_apple_mil(dtype) as i64], &[]),
+            );
             vec![apple_proto::mil_spec::Operation {
                 r#type: "constexpr_cast".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
                     name,
-                    compat_dtype_to_apple_mil(dtype) as i32,
+                    compat_dtype_to_apple_mil(dtype),
                     &lookup_shape_u64(name, node_shapes),
                 )],
                 blocks: vec![],
@@ -4551,7 +4976,8 @@ fn mir_op_to_apple_ops(
             inputs.insert("data".to_string(), make_name_arg(data));
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
-            attributes.insert("num_bits".to_string(), make_immediate_int64_value(vec![*num_bits], &[]));
+            attributes
+                .insert("num_bits".to_string(), make_immediate_int64_value(vec![*num_bits], &[]));
             vec![apple_proto::mil_spec::Operation {
                 r#type: "constexpr_lut_to_sparse".to_string(),
                 inputs,
@@ -4564,15 +4990,28 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
-        mir_compat::MirOpCompat::ConstexprSparseBlockwiseShiftScale { name, data, scale, offset, block_size, block_axis } => {
+        mir_compat::MirOpCompat::ConstexprSparseBlockwiseShiftScale {
+            name,
+            data,
+            scale,
+            offset,
+            block_size,
+            block_axis,
+        } => {
             let mut inputs = HashMap::new();
             inputs.insert("data".to_string(), make_name_arg(data));
             inputs.insert("scale".to_string(), make_name_arg(scale));
             inputs.insert("offset".to_string(), make_name_arg(offset));
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
-            attributes.insert("block_size".to_string(), make_immediate_int64_value(block_size.clone(), &[block_size.len() as u64]));
-            attributes.insert("block_axis".to_string(), make_immediate_int64_value(vec![*block_axis], &[]));
+            attributes.insert(
+                "block_size".to_string(),
+                make_immediate_int64_value(block_size.clone(), &[block_size.len() as u64]),
+            );
+            attributes.insert(
+                "block_axis".to_string(),
+                make_immediate_int64_value(vec![*block_axis], &[]),
+            );
             vec![apple_proto::mil_spec::Operation {
                 r#type: "constexpr_sparse_blockwise_shift_scale".to_string(),
                 inputs,
@@ -4626,7 +5065,9 @@ fn validate_fill_dtype_consistency(operations: &[apple_proto::mil_spec::Operatio
         if op.r#type != "fill" && op.r#type != "fill_like" {
             continue;
         }
-        let op_name = op.attributes.get("name")
+        let op_name = op
+            .attributes
+            .get("name")
             .and_then(|v| v.value.as_ref())
             .and_then(|iv| match iv {
                 apple_proto::mil_spec::value::Value::ImmediateValue(imv) => imv.value.as_ref(),
@@ -4635,7 +5076,9 @@ fn validate_fill_dtype_consistency(operations: &[apple_proto::mil_spec::Operatio
             .and_then(|v| match v {
                 apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv) => {
                     match tv.value.as_ref() {
-                        Some(apple_proto::mil_spec::tensor_value::Value::Strings(rs)) => rs.values.first().cloned(),
+                        Some(apple_proto::mil_spec::tensor_value::Value::Strings(rs)) => {
+                            rs.values.first().cloned()
+                        }
                         _ => None,
                     }
                 }
@@ -4644,11 +5087,12 @@ fn validate_fill_dtype_consistency(operations: &[apple_proto::mil_spec::Operatio
             .unwrap_or_else(|| format!("<unnamed {}>", op.r#type));
 
         // Extract value parameter: inputs["value"] → Argument → first Binding → Value
-        let value_entry = op.inputs.get("value")
-            .and_then(|arg| arg.arguments.first())
-            .and_then(|binding| match &binding.binding {
-                Some(apple_proto::mil_spec::argument::binding::Binding::Value(v)) => Some(v),
-                _ => None,
+        let value_entry =
+            op.inputs.get("value").and_then(|arg| arg.arguments.first()).and_then(|binding| {
+                match &binding.binding {
+                    Some(apple_proto::mil_spec::argument::binding::Binding::Value(v)) => Some(v),
+                    _ => None,
+                }
             });
 
         // Extract declared dtype from the value parameter's ValueType
@@ -4670,7 +5114,9 @@ fn validate_fill_dtype_consistency(operations: &[apple_proto::mil_spec::Operatio
                 _ => None,
             })
             .and_then(|v| match v {
-                apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv) => tv.value.as_ref(),
+                apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv) => {
+                    tv.value.as_ref()
+                }
                 _ => None,
             })
             .map(|tv| match tv {
@@ -4684,7 +5130,9 @@ fn validate_fill_dtype_consistency(operations: &[apple_proto::mil_spec::Operatio
             });
 
         // Extract output dtype (first output)
-        let output_dtype = op.outputs.first()
+        let output_dtype = op
+            .outputs
+            .first()
             .and_then(|nvt| nvt.r#type.as_ref())
             .and_then(|vt| vt.r#type.as_ref())
             .and_then(|t| match t {
@@ -4743,10 +5191,23 @@ fn validate_fill_dtype_consistency(operations: &[apple_proto::mil_spec::Operatio
 ///    got tensor<fp16, [...]>."
 fn validate_elementwise_broadcast_shapes(operations: &[apple_proto::mil_spec::Operation]) {
     let elementwise_types: &[&str] = &[
-        "mul", "add", "sub", "real_div", "maximum", "minimum",
-        "pow", "floor_div", "mod",
-        "equal", "not_equal", "greater", "greater_equal", "less", "less_equal",
-        "logical_and", "logical_or",
+        "mul",
+        "add",
+        "sub",
+        "real_div",
+        "maximum",
+        "minimum",
+        "pow",
+        "floor_div",
+        "mod",
+        "equal",
+        "not_equal",
+        "greater",
+        "greater_equal",
+        "less",
+        "less_equal",
+        "logical_and",
+        "logical_or",
     ];
 
     for op in operations {
@@ -4754,7 +5215,9 @@ fn validate_elementwise_broadcast_shapes(operations: &[apple_proto::mil_spec::Op
             continue;
         }
 
-        let op_name = op.attributes.get("name")
+        let op_name = op
+            .attributes
+            .get("name")
             .and_then(|v| v.value.as_ref())
             .and_then(|iv| match iv {
                 apple_proto::mil_spec::value::Value::ImmediateValue(imv) => imv.value.as_ref(),
@@ -4763,7 +5226,9 @@ fn validate_elementwise_broadcast_shapes(operations: &[apple_proto::mil_spec::Op
             .and_then(|v| match v {
                 apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv) => {
                     match tv.value.as_ref() {
-                        Some(apple_proto::mil_spec::tensor_value::Value::Strings(rs)) => rs.values.first().cloned(),
+                        Some(apple_proto::mil_spec::tensor_value::Value::Strings(rs)) => {
+                            rs.values.first().cloned()
+                        }
                         _ => None,
                     }
                 }
@@ -4773,7 +5238,8 @@ fn validate_elementwise_broadcast_shapes(operations: &[apple_proto::mil_spec::Op
 
         // Extract input shapes for x and y
         let extract_shape = |arg_name: &str| -> Option<Vec<u64>> {
-            op.inputs.get(arg_name)
+            op.inputs
+                .get(arg_name)
                 .and_then(|arg| arg.arguments.first())
                 .and_then(|binding| match &binding.binding {
                     Some(apple_proto::mil_spec::argument::binding::Binding::Value(v)) => Some(v),
@@ -4783,15 +5249,23 @@ fn validate_elementwise_broadcast_shapes(operations: &[apple_proto::mil_spec::Op
                 .and_then(|vt| vt.r#type.as_ref())
                 .and_then(|t| match t {
                     apple_proto::mil_spec::value_type::Type::TensorType(tt) => {
-                        if tt.dimensions.is_empty() { None } else { Some(tt.dimensions.clone()) }
+                        if tt.dimensions.is_empty() {
+                            None
+                        } else {
+                            Some(tt.dimensions.clone())
+                        }
                     }
                     _ => None,
                 })
                 .map(|dims| {
-                    dims.iter().filter_map(|d| match &d.dimension {
-                        Some(apple_proto::mil_spec::dimension::Dimension::Constant(cd)) => Some(cd.size),
-                        _ => None,
-                    }).collect::<Vec<_>>()
+                    dims.iter()
+                        .filter_map(|d| match &d.dimension {
+                            Some(apple_proto::mil_spec::dimension::Dimension::Constant(cd)) => {
+                                Some(cd.size)
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
                 })
                 .filter(|v: &Vec<u64>| !v.is_empty())
         };
@@ -4800,20 +5274,30 @@ fn validate_elementwise_broadcast_shapes(operations: &[apple_proto::mil_spec::Op
         let shape_y = extract_shape("y");
 
         // Extract declared output shape
-        let output_shape: Option<Vec<u64>> = op.outputs.first()
+        let output_shape: Option<Vec<u64>> = op
+            .outputs
+            .first()
             .and_then(|nvt| nvt.r#type.as_ref())
             .and_then(|vt| vt.r#type.as_ref())
             .and_then(|t| match t {
                 apple_proto::mil_spec::value_type::Type::TensorType(tt) => {
-                    if tt.dimensions.is_empty() { None } else { Some(tt.dimensions.clone()) }
+                    if tt.dimensions.is_empty() {
+                        None
+                    } else {
+                        Some(tt.dimensions.clone())
+                    }
                 }
                 _ => None,
             })
             .map(|dims| {
-                dims.iter().filter_map(|d| match &d.dimension {
-                    Some(apple_proto::mil_spec::dimension::Dimension::Constant(cd)) => Some(cd.size),
-                    _ => None,
-                }).collect::<Vec<_>>()
+                dims.iter()
+                    .filter_map(|d| match &d.dimension {
+                        Some(apple_proto::mil_spec::dimension::Dimension::Constant(cd)) => {
+                            Some(cd.size)
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
             })
             .filter(|v| !v.is_empty());
 
@@ -4857,7 +5341,9 @@ fn validate_matmul_shapes(operations: &[apple_proto::mil_spec::Operation]) {
             continue;
         }
 
-        let op_name = op.attributes.get("name")
+        let op_name = op
+            .attributes
+            .get("name")
             .and_then(|v| v.value.as_ref())
             .and_then(|iv| match iv {
                 apple_proto::mil_spec::value::Value::ImmediateValue(imv) => imv.value.as_ref(),
@@ -4866,17 +5352,20 @@ fn validate_matmul_shapes(operations: &[apple_proto::mil_spec::Operation]) {
             .and_then(|v| match v {
                 apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv) => {
                     match tv.value.as_ref() {
-                        Some(apple_proto::mil_spec::tensor_value::Value::Strings(rs)) => rs.values.first().cloned(),
+                        Some(apple_proto::mil_spec::tensor_value::Value::Strings(rs)) => {
+                            rs.values.first().cloned()
+                        }
                         _ => None,
                     }
                 }
                 _ => None,
             })
-            .unwrap_or_else(|| format!("<unnamed matmul>"));
+            .unwrap_or_else(|| "<unnamed matmul>".to_string());
 
         // Reuse the same shape extraction helper pattern
         let extract_shape = |arg_name: &str| -> Option<Vec<u64>> {
-            op.inputs.get(arg_name)
+            op.inputs
+                .get(arg_name)
                 .and_then(|arg| arg.arguments.first())
                 .and_then(|binding| match &binding.binding {
                     Some(apple_proto::mil_spec::argument::binding::Binding::Value(v)) => Some(v),
@@ -4886,15 +5375,23 @@ fn validate_matmul_shapes(operations: &[apple_proto::mil_spec::Operation]) {
                 .and_then(|vt| vt.r#type.as_ref())
                 .and_then(|t| match t {
                     apple_proto::mil_spec::value_type::Type::TensorType(tt) => {
-                        if tt.dimensions.is_empty() { None } else { Some(tt.dimensions.clone()) }
+                        if tt.dimensions.is_empty() {
+                            None
+                        } else {
+                            Some(tt.dimensions.clone())
+                        }
                     }
                     _ => None,
                 })
                 .map(|dims| {
-                    dims.iter().filter_map(|d| match &d.dimension {
-                        Some(apple_proto::mil_spec::dimension::Dimension::Constant(cd)) => Some(cd.size),
-                        _ => None,
-                    }).collect::<Vec<_>>()
+                    dims.iter()
+                        .filter_map(|d| match &d.dimension {
+                            Some(apple_proto::mil_spec::dimension::Dimension::Constant(cd)) => {
+                                Some(cd.size)
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
                 })
                 .filter(|v: &Vec<u64>| !v.is_empty())
         };
@@ -4903,20 +5400,30 @@ fn validate_matmul_shapes(operations: &[apple_proto::mil_spec::Operation]) {
         let shape_y = extract_shape("y");
 
         // Extract declared output shape
-        let output_shape: Option<Vec<u64>> = op.outputs.first()
+        let output_shape: Option<Vec<u64>> = op
+            .outputs
+            .first()
             .and_then(|nvt| nvt.r#type.as_ref())
             .and_then(|vt| vt.r#type.as_ref())
             .and_then(|t| match t {
                 apple_proto::mil_spec::value_type::Type::TensorType(tt) => {
-                    if tt.dimensions.is_empty() { None } else { Some(tt.dimensions.clone()) }
+                    if tt.dimensions.is_empty() {
+                        None
+                    } else {
+                        Some(tt.dimensions.clone())
+                    }
                 }
                 _ => None,
             })
             .map(|dims| {
-                dims.iter().filter_map(|d| match &d.dimension {
-                    Some(apple_proto::mil_spec::dimension::Dimension::Constant(cd)) => Some(cd.size),
-                    _ => None,
-                }).collect::<Vec<_>>()
+                dims.iter()
+                    .filter_map(|d| match &d.dimension {
+                        Some(apple_proto::mil_spec::dimension::Dimension::Constant(cd)) => {
+                            Some(cd.size)
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
             })
             .filter(|v| !v.is_empty());
 
@@ -4946,8 +5453,16 @@ fn validate_matmul_shapes(operations: &[apple_proto::mil_spec::Operation]) {
                 let mut expected = Vec::with_capacity(max_batch_rank + 2);
                 let mut batch_compatible = true;
                 for i in 0..max_batch_rank {
-                    let da = if i < max_batch_rank - batch_x.len() { 1u64 } else { batch_x[i - (max_batch_rank - batch_x.len())] };
-                    let db = if i < max_batch_rank - batch_y.len() { 1u64 } else { batch_y[i - (max_batch_rank - batch_y.len())] };
+                    let da = if i < max_batch_rank - batch_x.len() {
+                        1u64
+                    } else {
+                        batch_x[i - (max_batch_rank - batch_x.len())]
+                    };
+                    let db = if i < max_batch_rank - batch_y.len() {
+                        1u64
+                    } else {
+                        batch_y[i - (max_batch_rank - batch_y.len())]
+                    };
                     if da != db && da != 1 && db != 1 {
                         batch_compatible = false;
                         break;
@@ -4986,9 +5501,9 @@ fn validate_matmul_shapes(operations: &[apple_proto::mil_spec::Operation]) {
 /// 2. **Replace**: walk all operations and replace output names and input
 ///    name references with their sanitized equivalents
 fn sanitize_mil_identifiers(
-    operations: &mut Vec<apple_proto::mil_spec::Operation>,
-    block_output_names: &mut Vec<String>,
-    fn_input_names: &mut Vec<apple_proto::mil_spec::NamedValueType>,
+    operations: &mut [apple_proto::mil_spec::Operation],
+    block_output_names: &mut [String],
+    fn_input_names: &mut [apple_proto::mil_spec::NamedValueType],
 ) {
     // Phase 1: Collect all names that need sanitization
     let mut name_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -5001,7 +5516,7 @@ fn sanitize_mil_identifiers(
             }
         }
         // Also collect input name references that might be dotted
-        for (_key, arg) in &op.inputs {
+        for arg in op.inputs.values() {
             for binding in &arg.arguments {
                 if let Some(apple_proto::mil_spec::argument::binding::Binding::Name(ref n)) =
                     binding.binding
@@ -5101,11 +5616,7 @@ fn function_to_apple_proto(
     // reference unbound names and the runtime rejects the model.
     for state in &func.states {
         let dtype = coreml_dtype_to_apple_mil(&state.dtype);
-        fn_inputs.push(make_apple_state_named_value_type(
-            &state.name,
-            dtype,
-            &state.shape,
-        ));
+        fn_inputs.push(make_apple_state_named_value_type(&state.name, dtype, &state.shape));
     }
 
     let operations: Vec<apple_proto::mil_spec::Operation> = func
@@ -5653,10 +6164,7 @@ mod tests {
                 value: 0.0,
                 dtype: mir_compat::MilDtypeCompat::Fp16,
             },
-            mir_compat::MirOpCompat::Neg {
-                name: "neg".to_string(),
-                x: "x".to_string(),
-            },
+            mir_compat::MirOpCompat::Neg { name: "neg".to_string(), x: "x".to_string() },
         ];
 
         for op in &ops {
@@ -5785,12 +6293,17 @@ mod tests {
         };
         match &reps_tensor.value {
             Some(apple_proto::mil_spec::tensor_value::Value::Ints(ints)) => {
-                assert_eq!(ints.values, vec![1i32, 2, 1, 1],
-                    "tile.reps should be stored as INT32 elements");
+                assert_eq!(
+                    ints.values,
+                    vec![1i32, 2, 1, 1],
+                    "tile.reps should be stored as INT32 elements"
+                );
             }
             Some(apple_proto::mil_spec::tensor_value::Value::LongInts(_)) => {
-                panic!("tile.reps must NOT use INT64/LongInts — \
-                       Core ML ios19 rejects INT64 for shape-like parameters");
+                panic!(
+                    "tile.reps must NOT use INT64/LongInts — \
+                       Core ML ios19 rejects INT64 for shape-like parameters"
+                );
             }
             Some(apple_proto::mil_spec::tensor_value::Value::Bytes(_)) => {
                 panic!("tile.reps must NOT use bytes storage");
@@ -5803,8 +6316,11 @@ mod tests {
         // Verify INT32 DataType in the type field
         if let Some(vt) = &reps_binding.r#type {
             if let Some(apple_proto::mil_spec::value_type::Type::TensorType(tt)) = &vt.r#type {
-                assert_eq!(tt.data_type, apple_proto::mil_spec::DataType::Int32 as i32,
-                    "tile.reps tensor type should be INT32");
+                assert_eq!(
+                    tt.data_type,
+                    apple_proto::mil_spec::DataType::Int32 as i32,
+                    "tile.reps tensor type should be INT32"
+                );
             }
         }
 
@@ -5817,8 +6333,10 @@ mod tests {
         };
         let ops = mir_op_to_apple_ops(&fill_op, &[], &std::collections::HashMap::new());
         // Fill is now decomposed to const + add (ANE-legal), not raw "fill"
-        let const_op = ops.iter().find(|op| op.r#type == "const").expect("const op in Fill decomposition");
-        let add_op = ops.iter().find(|op| op.r#type == "add").expect("add op in Fill decomposition");
+        let const_op =
+            ops.iter().find(|op| op.r#type == "const").expect("const op in Fill decomposition");
+        let add_op =
+            ops.iter().find(|op| op.r#type == "add").expect("add op in Fill decomposition");
 
         // Verify the add op's output has the correct name
         assert_eq!(add_op.outputs[0].name, "fill_out", "add output should be fill_out");
@@ -5846,14 +6364,19 @@ mod tests {
                 Some(apple_proto::mil_spec::value::immediate_value::Value::Tensor(tv)) => {
                     match &tv.value {
                         Some(apple_proto::mil_spec::tensor_value::Value::Ints(ints)) => {
-                            assert_eq!(ints.values, vec![1i32, 512, 16, 128],
-                                "reshape.shape should be stored as INT32 elements");
+                            assert_eq!(
+                                ints.values,
+                                vec![1i32, 512, 16, 128],
+                                "reshape.shape should be stored as INT32 elements"
+                            );
                         }
                         Some(apple_proto::mil_spec::tensor_value::Value::LongInts(_)) => {
-                            panic!("reshape.shape must NOT use INT64/LongInts — \
+                            panic!(
+                                "reshape.shape must NOT use INT64/LongInts — \
                                    Core ML ios19.reshape rejects INT64: \
                                    'Expected {{ tensor<int32, [?]>, tensor<int16, [?]>, \
-                                   tensor<int8, [?]> }}; got tensor<int64, [N]>'");
+                                   tensor<int8, [?]> }}; got tensor<int64, [N]>'"
+                            );
                         }
                         other => panic!("reshape.shape unexpected variant: {:?}", other),
                     }
@@ -5866,8 +6389,11 @@ mod tests {
         // Verify INT32 DataType in the reshape shape type field
         if let Some(vt) = &shape_binding.r#type {
             if let Some(apple_proto::mil_spec::value_type::Type::TensorType(tt)) = &vt.r#type {
-                assert_eq!(tt.data_type, apple_proto::mil_spec::DataType::Int32 as i32,
-                    "reshape.shape tensor type should be INT32, not INT64");
+                assert_eq!(
+                    tt.data_type,
+                    apple_proto::mil_spec::DataType::Int32 as i32,
+                    "reshape.shape tensor type should be INT32, not INT64"
+                );
             }
         }
 
@@ -5895,12 +6421,17 @@ mod tests {
         };
         match &perm_tensor.value {
             Some(apple_proto::mil_spec::tensor_value::Value::Ints(ints)) => {
-                assert_eq!(ints.values, vec![0i32, 1, 3, 2],
-                    "transpose.perm should be stored as INT32 elements");
+                assert_eq!(
+                    ints.values,
+                    vec![0i32, 1, 3, 2],
+                    "transpose.perm should be stored as INT32 elements"
+                );
             }
             Some(apple_proto::mil_spec::tensor_value::Value::LongInts(_)) => {
-                panic!("transpose.perm must NOT use INT64/LongInts — \
-                       Core ML ios19 rejects INT64 for perm parameters");
+                panic!(
+                    "transpose.perm must NOT use INT64/LongInts — \
+                       Core ML ios19 rejects INT64 for perm parameters"
+                );
             }
             Some(apple_proto::mil_spec::tensor_value::Value::Bytes(_)) => {
                 panic!("transpose.perm must NOT use bytes storage");
@@ -5931,13 +6462,20 @@ mod tests {
                 assert_eq!(sdpa_op.query.as_ref().unwrap().name, "q");
                 assert_eq!(sdpa_op.key.as_ref().unwrap().name, "k");
                 assert_eq!(sdpa_op.value.as_ref().unwrap().name, "v");
-                assert_eq!(sdpa_op.attn_mask.as_ref().unwrap().name, "causal_mask",
-                    "attn_mask should be set in proto when attention_mask is Some");
-                assert!(sdpa_op.has_attn_mask,
-                    "has_attn_mask should be true when attention_mask is Some");
+                assert_eq!(
+                    sdpa_op.attn_mask.as_ref().unwrap().name,
+                    "causal_mask",
+                    "attn_mask should be set in proto when attention_mask is Some"
+                );
+                assert!(
+                    sdpa_op.has_attn_mask,
+                    "has_attn_mask should be true when attention_mask is Some"
+                );
                 assert!(!sdpa_op.causal, "causal should remain false by default");
-                assert!((sdpa_op.scale - 0.125).abs() < f32::EPSILON,
-                    "scale should be 0.125 in proto");
+                assert!(
+                    (sdpa_op.scale - 0.125).abs() < f32::EPSILON,
+                    "scale should be 0.125 in proto"
+                );
             }
             other => panic!("Expected ScaledDotProductAttentionOp, got {:?}", other),
         }
@@ -5958,12 +6496,15 @@ mod tests {
         assert_eq!(proto_op.name, "sdpa_plain");
         match &proto_op.operation {
             Some(proto::mil_operation::Operation::ScaledDotProductAttentionOp(sdpa_op)) => {
-                assert!(sdpa_op.attn_mask.is_none(),
-                    "attn_mask should be None in proto when attention_mask is None");
-                assert!(!sdpa_op.has_attn_mask,
-                    "has_attn_mask should be false when attention_mask is None");
-                assert_eq!(sdpa_op.scale, 0.0,
-                    "scale should be 0.0 in proto when scale is None");
+                assert!(
+                    sdpa_op.attn_mask.is_none(),
+                    "attn_mask should be None in proto when attention_mask is None"
+                );
+                assert!(
+                    !sdpa_op.has_attn_mask,
+                    "has_attn_mask should be false when attention_mask is None"
+                );
+                assert_eq!(sdpa_op.scale, 0.0, "scale should be 0.0 in proto when scale is None");
             }
             other => panic!("Expected ScaledDotProductAttentionOp, got {:?}", other),
         }
@@ -6007,8 +6548,10 @@ mod tests {
             Some(proto::mil_operation::Operation::ScaledDotProductAttentionOp(sdpa_op)) => {
                 assert!(sdpa_op.attn_mask.is_none());
                 assert!(!sdpa_op.has_attn_mask);
-                assert!((sdpa_op.scale - 0.0625).abs() < f32::EPSILON,
-                    "scale should be 0.0625 in proto");
+                assert!(
+                    (sdpa_op.scale - 0.0625).abs() < f32::EPSILON,
+                    "scale should be 0.0625 in proto"
+                );
             }
             other => panic!("Expected ScaledDotProductAttentionOp, got {:?}", other),
         }
@@ -6025,7 +6568,8 @@ mod tests {
             attention_mask: Some("mask".to_string()),
             scale: Some(0.125),
         };
-        let shapes = std::collections::HashMap::from([("sdpa_apple".to_string(), vec![1usize, 8, 64, 64])]);
+        let shapes =
+            std::collections::HashMap::from([("sdpa_apple".to_string(), vec![1usize, 8, 64, 64])]);
         let ops = mir_op_to_apple_ops(&compat, &[], &shapes);
         assert_eq!(ops.len(), 1);
         let op = &ops[0];
@@ -6034,10 +6578,11 @@ mod tests {
         assert!(op.inputs.contains_key("query"), "should have query input");
         assert!(op.inputs.contains_key("key"), "should have key input");
         assert!(op.inputs.contains_key("value"), "should have value input");
-        assert!(op.inputs.contains_key("attn_mask"),
-            "should have attn_mask input when attention_mask is Some");
-        assert!(op.inputs.contains_key("scale"),
-            "should have scale input when scale is Some");
+        assert!(
+            op.inputs.contains_key("attn_mask"),
+            "should have attn_mask input when attention_mask is Some"
+        );
+        assert!(op.inputs.contains_key("scale"), "should have scale input when scale is Some");
     }
 
     #[test]
@@ -6051,16 +6596,18 @@ mod tests {
             attention_mask: None,
             scale: None,
         };
-        let shapes = std::collections::HashMap::from([("sdpa_plain".to_string(), vec![1usize, 8, 64, 64])]);
+        let shapes =
+            std::collections::HashMap::from([("sdpa_plain".to_string(), vec![1usize, 8, 64, 64])]);
         let ops = mir_op_to_apple_ops(&compat, &[], &shapes);
         assert_eq!(ops.len(), 1);
         let op = &ops[0];
         assert!(op.inputs.contains_key("query"));
         assert!(op.inputs.contains_key("key"));
         assert!(op.inputs.contains_key("value"));
-        assert!(!op.inputs.contains_key("attn_mask"),
-            "should NOT have attn_mask input when attention_mask is None");
-        assert!(!op.inputs.contains_key("scale"),
-            "should NOT have scale input when scale is None");
+        assert!(
+            !op.inputs.contains_key("attn_mask"),
+            "should NOT have attn_mask input when attention_mask is None"
+        );
+        assert!(!op.inputs.contains_key("scale"), "should NOT have scale input when scale is None");
     }
 }

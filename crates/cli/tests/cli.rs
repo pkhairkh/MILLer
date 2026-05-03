@@ -68,10 +68,7 @@ fn test_compile_missing_input() {
         .expect("Failed to run CLI compile with missing input");
 
     // Should fail because --input is required
-    assert!(
-        !output.status.success(),
-        "compile without --input should fail"
-    );
+    assert!(!output.status.success(), "compile without --input should fail");
 }
 
 #[test]
@@ -84,8 +81,5 @@ fn test_compile_missing_output() {
         .expect("Failed to run CLI compile with missing output");
 
     // Should fail because --output is required
-    assert!(
-        !output.status.success(),
-        "compile without --output should fail"
-    );
+    assert!(!output.status.success(), "compile without --output should fail");
 }

@@ -1457,7 +1457,9 @@ impl MirOp {
             MirOp::MILConstexprSparseToDense { .. } => "constexpr_sparse_to_dense",
             MirOp::MILConstexprCast { .. } => "constexpr_cast",
             MirOp::MILConstexprLutToSparse { .. } => "constexpr_lut_to_sparse",
-            MirOp::MILConstexprSparseBlockwiseShiftScale { .. } => "constexpr_sparse_blockwise_shift_scale",
+            MirOp::MILConstexprSparseBlockwiseShiftScale { .. } => {
+                "constexpr_sparse_blockwise_shift_scale"
+            }
             MirOp::MILRnn { .. } => "rnn",
             MirOp::MILGru { .. } => "gru",
             MirOp::MILLstm { .. } => "lstm",

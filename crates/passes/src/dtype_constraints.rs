@@ -141,10 +141,7 @@ pub fn is_e4m3_zero_point_supported() -> bool {
 pub fn validate_int4_interleave(interleave: usize) -> Result<(), DtypeConstraintError> {
     if interleave != 8 {
         return Err(DtypeConstraintError::Int4ConstraintViolation {
-            message: format!(
-                "Int4 format requires interleave factor 8, got {}",
-                interleave
-            ),
+            message: format!("Int4 format requires interleave factor 8, got {}", interleave),
         });
     }
     Ok(())
@@ -157,10 +154,7 @@ pub fn validate_int4_interleave(interleave: usize) -> Result<(), DtypeConstraint
 pub fn validate_uint4_interleave(interleave: usize) -> Result<(), DtypeConstraintError> {
     if interleave != 8 {
         return Err(DtypeConstraintError::Int4ConstraintViolation {
-            message: format!(
-                "UInt4 format requires interleave factor 8, got {}",
-                interleave
-            ),
+            message: format!("UInt4 format requires interleave factor 8, got {}", interleave),
         });
     }
     Ok(())
@@ -286,7 +280,9 @@ mod tests {
 
     #[test]
     fn test_fp16_always_legal() {
-        for family in [AneFamily::A11Legacy, AneFamily::A12, AneFamily::A13, AneFamily::A14, AneFamily::A18] {
+        for family in
+            [AneFamily::A11Legacy, AneFamily::A12, AneFamily::A13, AneFamily::A14, AneFamily::A18]
+        {
             assert!(is_dtype_ane_legal(&MilDtype::Fp16, &family).is_ok());
         }
     }
@@ -316,8 +312,12 @@ mod tests {
     #[test]
     fn test_dequantization_constraints() {
         assert!(validate_dequantization_constraints(&MilDtype::Int8, &MilDtype::Fp16, None).is_ok());
-        assert!(validate_dequantization_constraints(&MilDtype::UInt8, &MilDtype::Fp16, None).is_ok());
-        assert!(validate_dequantization_constraints(&MilDtype::Fp16, &MilDtype::Fp16, None).is_err());
+        assert!(
+            validate_dequantization_constraints(&MilDtype::UInt8, &MilDtype::Fp16, None).is_ok()
+        );
+        assert!(
+            validate_dequantization_constraints(&MilDtype::Fp16, &MilDtype::Fp16, None).is_err()
+        );
     }
 
     #[test]
@@ -345,17 +345,27 @@ mod tests {
     #[test]
     fn test_int4_legal_on_all_families() {
         // Int4 is legal on ANE but requires interleave=8
-        for family in [AneFamily::A11Legacy, AneFamily::A12, AneFamily::A13, AneFamily::A14, AneFamily::A18] {
-            assert!(is_dtype_ane_legal(&MilDtype::Int4, &family).is_ok(),
-                "Int4 should be legal on {:?}", family);
+        for family in
+            [AneFamily::A11Legacy, AneFamily::A12, AneFamily::A13, AneFamily::A14, AneFamily::A18]
+        {
+            assert!(
+                is_dtype_ane_legal(&MilDtype::Int4, &family).is_ok(),
+                "Int4 should be legal on {:?}",
+                family
+            );
         }
     }
 
     #[test]
     fn test_uint4_legal_on_all_families() {
-        for family in [AneFamily::A11Legacy, AneFamily::A12, AneFamily::A13, AneFamily::A14, AneFamily::A18] {
-            assert!(is_dtype_ane_legal(&MilDtype::UInt4, &family).is_ok(),
-                "UInt4 should be legal on {:?}", family);
+        for family in
+            [AneFamily::A11Legacy, AneFamily::A12, AneFamily::A13, AneFamily::A14, AneFamily::A18]
+        {
+            assert!(
+                is_dtype_ane_legal(&MilDtype::UInt4, &family).is_ok(),
+                "UInt4 should be legal on {:?}",
+                family
+            );
         }
     }
 
@@ -377,17 +387,27 @@ mod tests {
     #[test]
     fn test_e5m2_rejected_on_all_families() {
         // E5M2 is NOT supported on any ANE family
-        for family in [AneFamily::A11Legacy, AneFamily::A12, AneFamily::A13, AneFamily::A14, AneFamily::A18] {
-            assert!(is_dtype_ane_legal(&MilDtype::E5M2, &family).is_err(),
-                "E5M2 should be rejected on {:?}", family);
+        for family in
+            [AneFamily::A11Legacy, AneFamily::A12, AneFamily::A13, AneFamily::A14, AneFamily::A18]
+        {
+            assert!(
+                is_dtype_ane_legal(&MilDtype::E5M2, &family).is_err(),
+                "E5M2 should be rejected on {:?}",
+                family
+            );
         }
     }
 
     #[test]
     fn test_uint16_legal_on_all_families() {
-        for family in [AneFamily::A11Legacy, AneFamily::A12, AneFamily::A13, AneFamily::A14, AneFamily::A18] {
-            assert!(is_dtype_ane_legal(&MilDtype::UInt16, &family).is_ok(),
-                "UInt16 should be legal on {:?}", family);
+        for family in
+            [AneFamily::A11Legacy, AneFamily::A12, AneFamily::A13, AneFamily::A14, AneFamily::A18]
+        {
+            assert!(
+                is_dtype_ane_legal(&MilDtype::UInt16, &family).is_ok(),
+                "UInt16 should be legal on {:?}",
+                family
+            );
         }
     }
 
@@ -458,7 +478,8 @@ mod tests {
             &MilDtype::Int4,
             &MilDtype::Fp16,
             Some(&DequantScaleType::PerOutputChannel),
-        ).is_err());
+        )
+        .is_err());
     }
 
     #[test]
@@ -468,19 +489,24 @@ mod tests {
             &MilDtype::Int4,
             &MilDtype::Fp16,
             Some(&DequantScaleType::PerTensor),
-        ).is_ok());
+        )
+        .is_ok());
     }
 
     #[test]
     fn test_dequantize_e5m2_input_rejected() {
         // E5M2 is NOT a valid dequantize input dtype
-        assert!(validate_dequantization_constraints(&MilDtype::E5M2, &MilDtype::Fp16, None).is_err());
+        assert!(
+            validate_dequantization_constraints(&MilDtype::E5M2, &MilDtype::Fp16, None).is_err()
+        );
     }
 
     #[test]
     fn test_dequantize_uint4_input_rejected() {
         // UInt4 is NOT listed as valid dequantize input in the ANE canon
-        assert!(validate_dequantization_constraints(&MilDtype::UInt4, &MilDtype::Fp16, None).is_err());
+        assert!(
+            validate_dequantization_constraints(&MilDtype::UInt4, &MilDtype::Fp16, None).is_err()
+        );
     }
 
     #[test]
@@ -498,7 +524,11 @@ mod tests {
         let err = is_dtype_ane_legal(&MilDtype::E5M2, &AneFamily::A14);
         assert!(err.is_err());
         let msg = format!("{}", err.unwrap_err());
-        assert!(msg.contains("E4M3 or E5M2 format not supported"), "Error message should match ANE error: {}", msg);
+        assert!(
+            msg.contains("E4M3 or E5M2 format not supported"),
+            "Error message should match ANE error: {}",
+            msg
+        );
     }
 
     #[test]
@@ -506,8 +536,11 @@ mod tests {
         let err = is_dtype_ane_legal(&MilDtype::E4M3, &AneFamily::A14);
         assert!(err.is_err());
         let msg = format!("{}", err.unwrap_err());
-        assert!(msg.contains("VersionGatedDtype") || msg.contains("A17") || msg.contains("E4M3"),
-            "Error should mention version gating: {}", msg);
+        assert!(
+            msg.contains("VersionGatedDtype") || msg.contains("A17") || msg.contains("E4M3"),
+            "Error should mention version gating: {}",
+            msg
+        );
     }
 
     #[test]

@@ -97,15 +97,19 @@ impl KnowledgeQueryable for KnowledgeStore {
     fn query(&self, query: &KnowledgeQuery) -> Result<Vec<KnowledgeUnit>> {
         // Use secondary indexes to narrow candidates before filtering.
         // If both type and source are specified, intersect the two ID sets.
-        let candidates: Vec<&KnowledgeEntry> = match (&query.knowledge_type, &query.evidence_source) {
+        let candidates: Vec<&KnowledgeEntry> = match (&query.knowledge_type, &query.evidence_source)
+        {
             (Some(kt), Some(source)) => {
                 // Intersect: only IDs present in both indexes
                 let type_ids: std::collections::HashSet<&String> =
                     self.type_index().get(kt).map(|v| v.iter().collect()).unwrap_or_default();
-                let source_ids = self.source_index().get(&source.to_string())
+                let source_ids = self
+                    .source_index()
+                    .get(&source.to_string())
                     .map(|v| v.as_slice())
                     .unwrap_or(&[]);
-                source_ids.iter()
+                source_ids
+                    .iter()
                     .filter(|id| type_ids.contains(id))
                     .filter_map(|id| self.get(id))
                     .collect()

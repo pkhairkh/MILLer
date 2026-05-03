@@ -206,13 +206,23 @@ impl KnowledgeStore {
         // Load seed entries
         let seeds_dir = store_path.join("seeds");
         if seeds_dir.exists() {
-            Self::load_entries_from_dir_indexed(&seeds_dir, &mut index, &mut type_index, &mut source_index)?;
+            Self::load_entries_from_dir_indexed(
+                &seeds_dir,
+                &mut index,
+                &mut type_index,
+                &mut source_index,
+            )?;
         }
 
         // Load observation entries
         let observations_dir = store_path.join("observations");
         if observations_dir.exists() {
-            Self::load_entries_from_dir_indexed(&observations_dir, &mut index, &mut type_index, &mut source_index)?;
+            Self::load_entries_from_dir_indexed(
+                &observations_dir,
+                &mut index,
+                &mut type_index,
+                &mut source_index,
+            )?;
         }
 
         Ok(Self { path: store_path.to_path_buf(), index, store_index, type_index, source_index })
@@ -235,7 +245,10 @@ impl KnowledgeStore {
                     .with_context(|| format!("Failed to parse entry: {}", path.display()))?;
                 let id = ke.unit.id.clone();
                 type_index.entry(ke.unit.knowledge_type).or_default().push(id.clone());
-                source_index.entry(ke.unit.evidence_source.to_string()).or_default().push(id.clone());
+                source_index
+                    .entry(ke.unit.evidence_source.to_string())
+                    .or_default()
+                    .push(id.clone());
                 index.insert(id, ke);
             }
         }
@@ -285,8 +298,14 @@ impl KnowledgeStore {
                                 unit: Arc::new(unit),
                             };
                             let id = knowledge_entry.unit.id.clone();
-                            self.type_index.entry(knowledge_entry.unit.knowledge_type).or_default().push(id.clone());
-                            self.source_index.entry(knowledge_entry.unit.evidence_source.to_string()).or_default().push(id.clone());
+                            self.type_index
+                                .entry(knowledge_entry.unit.knowledge_type)
+                                .or_default()
+                                .push(id.clone());
+                            self.source_index
+                                .entry(knowledge_entry.unit.evidence_source.to_string())
+                                .or_default()
+                                .push(id.clone());
                             self.index.insert(id, knowledge_entry);
                             loaded += 1;
                         }
@@ -356,12 +375,16 @@ impl KnowledgeStore {
                 }
                 self.type_index.entry(updated.unit.knowledge_type).or_default().push(id.clone());
             }
-            if existing.unit.evidence_source.to_string() != updated.unit.evidence_source.to_string() {
+            if existing.unit.evidence_source.to_string() != updated.unit.evidence_source.to_string()
+            {
                 let old_src = existing.unit.evidence_source.to_string();
                 if let Some(ids) = self.source_index.get_mut(&old_src) {
                     ids.retain(|x| x != &id);
                 }
-                self.source_index.entry(updated.unit.evidence_source.to_string()).or_default().push(id.clone());
+                self.source_index
+                    .entry(updated.unit.evidence_source.to_string())
+                    .or_default()
+                    .push(id.clone());
             }
 
             self.index.insert(id.clone(), updated);

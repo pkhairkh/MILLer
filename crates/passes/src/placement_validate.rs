@@ -34,12 +34,12 @@
 //! The dedicated match arm hard-rejects ArgMinMax on A18 with a clear
 //! diagnostic message.
 
+use crate::cpu_only_ops;
+use crate::dtype_constraints;
 use ane_ir::ane_layout::{AneInterleave, AneLayout};
 use ane_ir::ane_target::AneFamily;
 use ane_ir::common::MilDtype;
 use ane_ir::mir::MirOp;
-use crate::cpu_only_ops;
-use crate::dtype_constraints;
 
 /// Placement decision for a MIR op being considered for ANE execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,7 +125,11 @@ impl PlacementContext {
     }
 
     /// Create a context with dtype and interleave information.
-    pub fn with_dtype_and_interleave(dtype: MilDtype, interleave: AneInterleave, channels: u64) -> Self {
+    pub fn with_dtype_and_interleave(
+        dtype: MilDtype,
+        interleave: AneInterleave,
+        channels: u64,
+    ) -> Self {
         Self {
             dtype: Some(dtype),
             interleave: Some(interleave),
@@ -152,7 +156,13 @@ pub fn validate_placement(
     target_family: AneFamily,
     has_dynamic_shapes: bool,
 ) -> PlacementDecision {
-    validate_placement_with_context(op, input_shapes, target_family, has_dynamic_shapes, &PlacementContext::empty())
+    validate_placement_with_context(
+        op,
+        input_shapes,
+        target_family,
+        has_dynamic_shapes,
+        &PlacementContext::empty(),
+    )
 }
 
 /// Validate whether a MIR op can be placed on the ANE with full context.
@@ -359,8 +369,7 @@ pub fn validate_placement_with_context(
         // (all families up to A16), but there is NO LSE_7 converter for A18/M4.
         // Without this guard, ArgMinMax ops silently pass placement validation on
         // A18 and then fail at emission time because no ANEC converter exists.
-        MirOp::MILReduceArgmax { .. }
-        | MirOp::MILReduceArgmin { .. } => {
+        MirOp::MILReduceArgmax { .. } | MirOp::MILReduceArgmin { .. } => {
             if !target_family.supports_argminmax() {
                 return PlacementDecision::CpuOnly(format!(
                     "{}: ArgMinMax has no ANEC converter on A18 (LSE_7); \
@@ -396,9 +405,7 @@ pub fn validate_placement_with_context(
         // The ANE requires depth=1 for both inputs (rank ≤ 4), inner
         // dimensions to match, and output channels to be even (tiling).
         MirOp::MILMatMul { transpose_y, .. } => {
-            if let (Some(x_shape), Some(y_shape)) =
-                (input_shapes.first(), input_shapes.get(1))
-            {
+            if let (Some(x_shape), Some(y_shape)) = (input_shapes.first(), input_shapes.get(1)) {
                 if let Err(violation) = crate::op_constraints::validate_matmul_constraints(
                     x_shape,
                     y_shape,
@@ -418,11 +425,9 @@ pub fn validate_placement_with_context(
         // channel-axis, and depth-axis padding.
         MirOp::MILPad { mode, pad_amounts, .. } => {
             if let Some(shape) = input_shapes.first() {
-                if let Err(violation) = crate::op_constraints::validate_pad_constraints(
-                    mode,
-                    pad_amounts,
-                    shape.len(),
-                ) {
+                if let Err(violation) =
+                    crate::op_constraints::validate_pad_constraints(mode, pad_amounts, shape.len())
+                {
                     return PlacementDecision::CpuOnly(format!(
                         "MILPad: constraint '{}' — {}",
                         violation.constraint, violation.message
@@ -438,12 +443,9 @@ pub fn validate_placement_with_context(
         // T-25: ConstexprBlockwiseShiftScale — hard-reject on ANE.
         // Blockwise scale is never supported on ANE (returns false).
         MirOp::MILConstexprBlockwiseShiftScale { .. }
-        | MirOp::MILConstexprSparseBlockwiseShiftScale { .. } => {
-            PlacementDecision::CpuOnly(format!(
-                "{}: blockwise scale is not supported on ANE",
-                op_name(op)
-            ))
-        }
+        | MirOp::MILConstexprSparseBlockwiseShiftScale { .. } => PlacementDecision::CpuOnly(
+            format!("{}: blockwise scale is not supported on ANE", op_name(op)),
+        ),
 
         // T-25: Quantize — reject asymmetric quantization on ANE.
         MirOp::MILQuantize { .. } => {
@@ -977,7 +979,8 @@ mod tests {
     fn test_interleave_valid_factor4() {
         let op = make_relu();
         let shapes = vec![vec![1, 64]];
-        let ctx = PlacementContext::with_dtype_and_interleave(MilDtype::Fp16, AneInterleave::Factor4, 64);
+        let ctx =
+            PlacementContext::with_dtype_and_interleave(MilDtype::Fp16, AneInterleave::Factor4, 64);
         let decision = validate_placement_with_context(&op, &shapes, AneFamily::A16, false, &ctx);
         assert_eq!(decision, PlacementDecision::AneAllowed);
     }
@@ -1020,7 +1023,8 @@ mod tests {
     fn test_interleave_channel_not_divisible() {
         let op = make_relu();
         let shapes = vec![vec![1, 63]];
-        let ctx = PlacementContext::with_dtype_and_interleave(MilDtype::Fp16, AneInterleave::Factor4, 63);
+        let ctx =
+            PlacementContext::with_dtype_and_interleave(MilDtype::Fp16, AneInterleave::Factor4, 63);
         let decision = validate_placement_with_context(&op, &shapes, AneFamily::A16, false, &ctx);
         assert!(
             matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("interleave constraint"))
@@ -1133,10 +1137,7 @@ mod tests {
         // Any op with ctx.is_blockwise_scale=true is rejected
         let op = make_relu();
         let shapes = vec![vec![1, 64]];
-        let ctx = PlacementContext {
-            is_blockwise_scale: true,
-            ..PlacementContext::default()
-        };
+        let ctx = PlacementContext { is_blockwise_scale: true, ..PlacementContext::default() };
         let decision = validate_placement_with_context(&op, &shapes, AneFamily::A18, false, &ctx);
         assert!(
             matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("blockwise scale"))
@@ -1216,7 +1217,8 @@ mod tests {
         let op = make_add();
         let shapes = vec![vec![1, 64], vec![1, 64]];
         let ctx = PlacementContext::with_dtype(MilDtype::Fp32);
-        let decision = validate_placement_with_context(&op, &shapes, AneFamily::A11Legacy, false, &ctx);
+        let decision =
+            validate_placement_with_context(&op, &shapes, AneFamily::A11Legacy, false, &ctx);
         assert!(
             matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("broadcast dtype"))
         );
@@ -1230,7 +1232,11 @@ mod tests {
         let shapes = vec![vec![1, 64], vec![1, 64]];
         let decision1 = validate_placement(&op, &shapes, AneFamily::A16, false);
         let decision2 = validate_placement_with_context(
-            &op, &shapes, AneFamily::A16, false, &PlacementContext::empty(),
+            &op,
+            &shapes,
+            AneFamily::A16,
+            false,
+            &PlacementContext::empty(),
         );
         assert_eq!(decision1, decision2);
     }
@@ -1542,10 +1548,18 @@ mod tests {
         let shapes = vec![vec![1, 128]];
         let decision = validate_placement(&op, &shapes, AneFamily::A18, false);
         if let PlacementDecision::CpuOnly(reason) = decision {
-            assert!(reason.contains("MILReduceArgmax"), "Message should mention the op: {}", reason);
+            assert!(
+                reason.contains("MILReduceArgmax"),
+                "Message should mention the op: {}",
+                reason
+            );
             assert!(reason.contains("A18"), "Message should mention A18: {}", reason);
             assert!(reason.contains("LSE_7"), "Message should mention LSE_7: {}", reason);
-            assert!(reason.contains("ANEC converter"), "Message should mention ANEC converter: {}", reason);
+            assert!(
+                reason.contains("ANEC converter"),
+                "Message should mention ANEC converter: {}",
+                reason
+            );
         } else {
             panic!("Expected CpuOnly, got {:?}", decision);
         }

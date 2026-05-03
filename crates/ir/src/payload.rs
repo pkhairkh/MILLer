@@ -329,9 +329,15 @@ impl DecodeStepPayload {
         dtype_override: Option<&str>,
     ) -> Result<Self, String> {
         let (embed_dim, num_heads, head_dim, kv_len, batch_size, spec_dtype) = match &spec.op {
-            TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, dtype, .. } => {
-                (*embed_dim, *num_heads, *head_dim, *kv_len, *batch_size, dtype.clone())
-            }
+            TaskOp::DecodeStep {
+                embed_dim,
+                num_heads,
+                head_dim,
+                kv_len,
+                batch_size,
+                dtype,
+                ..
+            } => (*embed_dim, *num_heads, *head_dim, *kv_len, *batch_size, dtype.clone()),
             _ => return Err("Expected DecodeStep task for DecodeStepPayload".into()),
         };
 

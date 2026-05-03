@@ -246,7 +246,9 @@ impl<'a> SirBuildContext<'a> {
                         } else {
                             // Fallback: try the legacy position-based resolution
                             // (handles aliases that don't match the name tag pattern)
-                            if let Some(actual_id) = resolve_alias(&candidate, &actual_ids, &self.node_map) {
+                            if let Some(actual_id) =
+                                resolve_alias(&candidate, &actual_ids, &self.node_map)
+                            {
                                 alias_to_actual.entry(candidate).or_insert(actual_id);
                             }
                         }
@@ -260,10 +262,8 @@ impl<'a> SirBuildContext<'a> {
                     let json = serde_json::to_string(&node.op).unwrap();
                     let mut new_json = json.clone();
                     for (alias, actual) in &alias_to_actual {
-                        new_json = new_json.replace(
-                            &format!("\"{}\"", alias),
-                            &format!("\"{}\"", actual),
-                        );
+                        new_json =
+                            new_json.replace(&format!("\"{}\"", alias), &format!("\"{}\"", actual));
                     }
                     if new_json != json {
                         node.op = serde_json::from_str(&new_json).unwrap();
@@ -405,7 +405,14 @@ impl<'a> SirBuildContext<'a> {
         match op {
             // ─── Composite Ops: Decompose into primitives ───────────
             TracedOp::AttentionBlock { embed_dim, num_heads, head_dim, use_sdpa, has_qk_norm } => {
-                self.decompose_attention(*embed_dim, *num_heads, *head_dim, *use_sdpa, *has_qk_norm, node)
+                self.decompose_attention(
+                    *embed_dim,
+                    *num_heads,
+                    *head_dim,
+                    *use_sdpa,
+                    *has_qk_norm,
+                    node,
+                )
             }
             TracedOp::MlpBlock { input_dim, hidden_dim, output_dim, activation } => {
                 self.decompose_mlp(*input_dim, *hidden_dim, *output_dim, activation, node)
@@ -649,26 +656,20 @@ impl<'a> SirBuildContext<'a> {
                 // 5. Add: cond*x + (1-cond)*y (final result)
 
                 Ok(vec![
-                    (SirOp::Const {
-                        value_path: "scalar://fp16/1.0".to_string(),
-                        dtype: MilDtype::Fp16,
-                    }, "where_one".to_string()),
-                    (SirOp::Sub {
-                        x: one_alias,
-                        y: cond_id.clone(),
-                    }, "where_sub".to_string()),
-                    (SirOp::Mul {
-                        x: cond_id,
-                        y: x_id,
-                    }, "where_mul_x".to_string()),
-                    (SirOp::Mul {
-                        x: one_minus_cond_alias,
-                        y: y_id,
-                    }, "where_mul_y".to_string()),
-                    (SirOp::Add {
-                        x: cond_x_alias,
-                        y: one_minus_cond_y_alias,
-                    }, "where_add".to_string()),
+                    (
+                        SirOp::Const {
+                            value_path: "scalar://fp16/1.0".to_string(),
+                            dtype: MilDtype::Fp16,
+                        },
+                        "where_one".to_string(),
+                    ),
+                    (SirOp::Sub { x: one_alias, y: cond_id.clone() }, "where_sub".to_string()),
+                    (SirOp::Mul { x: cond_id, y: x_id }, "where_mul_x".to_string()),
+                    (SirOp::Mul { x: one_minus_cond_alias, y: y_id }, "where_mul_y".to_string()),
+                    (
+                        SirOp::Add { x: cond_x_alias, y: one_minus_cond_y_alias },
+                        "where_add".to_string(),
+                    ),
                 ])
             }
             TracedOp::KvCacheRead { layer_idx, head_dim, num_heads: _ } => {
@@ -919,28 +920,19 @@ impl<'a> SirBuildContext<'a> {
         // Core ML treats 0 as literal zero, and positional resolution is wrong
         // for rank-changing reshapes.
         ops.push((
-            SirOp::Reshape {
-                input: q_id,
-                target_shape: vec![batch, seq, num_heads, head_dim],
-            },
+            SirOp::Reshape { input: q_id, target_shape: vec![batch, seq, num_heads, head_dim] },
             "q_reshape_4d".to_string(),
         ));
         q_id = SirNodeId(format!("sir_q_reshape_4d_{}", node.id));
 
         ops.push((
-            SirOp::Reshape {
-                input: k_id,
-                target_shape: vec![batch, seq, num_kv_heads, head_dim],
-            },
+            SirOp::Reshape { input: k_id, target_shape: vec![batch, seq, num_kv_heads, head_dim] },
             "k_reshape_4d".to_string(),
         ));
         k_id = SirNodeId(format!("sir_k_reshape_4d_{}", node.id));
 
         ops.push((
-            SirOp::Reshape {
-                input: v_id,
-                target_shape: vec![batch, seq, num_kv_heads, head_dim],
-            },
+            SirOp::Reshape { input: v_id, target_shape: vec![batch, seq, num_kv_heads, head_dim] },
             "v_reshape_4d".to_string(),
         ));
         v_id = SirNodeId(format!("sir_v_reshape_4d_{}", node.id));
@@ -995,20 +987,14 @@ impl<'a> SirBuildContext<'a> {
 
             // Apply RoPE to Q
             ops.push((
-                SirOp::RoPETransform {
-                    input: q_id,
-                    tables: rope_tables.clone(),
-                },
+                SirOp::RoPETransform { input: q_id, tables: rope_tables.clone() },
                 "q_rope".to_string(),
             ));
             q_id = SirNodeId(format!("sir_q_rope_{}", node.id));
 
             // Apply RoPE to K (before split — each KV head gets its own RoPE)
             ops.push((
-                SirOp::RoPETransform {
-                    input: k_id,
-                    tables: rope_tables,
-                },
+                SirOp::RoPETransform { input: k_id, tables: rope_tables },
                 "k_rope".to_string(),
             ));
             k_id = SirNodeId(format!("sir_k_rope_{}", node.id));
@@ -1041,11 +1027,7 @@ impl<'a> SirBuildContext<'a> {
         // Q head maps to its own KV head — the split is still correct but
         // degenerates to per-head attention.
 
-        let fan_out = if num_kv_heads < num_heads {
-            num_heads / num_kv_heads
-        } else {
-            1
-        };
+        let fan_out = if num_kv_heads < num_heads { num_heads / num_kv_heads } else { 1 };
 
         // NOTE: We intentionally do NOT emit SirOp::Split here. Core ML's
         // split op returns a *list* of tensors, which our IR cannot model.
@@ -1085,23 +1067,23 @@ impl<'a> SirBuildContext<'a> {
             "causal_mask".to_string(),
         ));
         ops.push((
-            SirOp::Reshape {
-                input: causal_mask_id,
-                target_shape: vec![1, 1, seq, seq],
-            },
+            SirOp::Reshape { input: causal_mask_id, target_shape: vec![1, 1, seq, seq] },
             "causal_mask_4d".to_string(),
         ));
 
         // Per-head attention loop
         let mut ctx_parts: Vec<SirNodeId> = Vec::with_capacity(num_heads);
         // Track already-created K/V head slices to avoid duplicates in GQA
-        let mut k_head_ids: std::collections::HashMap<usize, SirNodeId> = std::collections::HashMap::new();
-        let mut v_head_ids: std::collections::HashMap<usize, SirNodeId> = std::collections::HashMap::new();
+        let mut k_head_ids: std::collections::HashMap<usize, SirNodeId> =
+            std::collections::HashMap::new();
+        let mut v_head_ids: std::collections::HashMap<usize, SirNodeId> =
+            std::collections::HashMap::new();
         // Also deduplicate K head transposes — each KV head only needs one transpose,
         // and multiple Q heads sharing the same KV head must reuse the same transposed K.
         // Without this, GQA with fan_out > 1 produces duplicate MIL output names
         // (e.g., "k_head_0_transpose" twice), violating MIL's SSA rule.
-        let mut k_head_t_ids: std::collections::HashMap<usize, SirNodeId> = std::collections::HashMap::new();
+        let mut k_head_t_ids: std::collections::HashMap<usize, SirNodeId> =
+            std::collections::HashMap::new();
 
         for head_idx in 0..num_heads {
             let kv_idx = head_idx / fan_out;
@@ -1185,10 +1167,7 @@ impl<'a> SirBuildContext<'a> {
             };
 
             let logits_id = SirNodeId(format!("sir_logits_{}_{}", head_idx, node.id));
-            ops.push((
-                SirOp::MatMul { a: q_i_id, b: k_i_t_id },
-                format!("logits_{}", head_idx),
-            ));
+            ops.push((SirOp::MatMul { a: q_i_id, b: k_i_t_id }, format!("logits_{}", head_idx)));
 
             // Scale: logits *= 1/√d_k
             let scaled_logits_id = SirNodeId(format!("sir_scaled_logits_{}_{}", head_idx, node.id));
@@ -1221,10 +1200,7 @@ impl<'a> SirBuildContext<'a> {
             // weights: [B, S, S], v_i: [B, S, D]
             // output: [B, S, D]
             let ctx_part_id = SirNodeId(format!("sir_ctx_{}_{}", head_idx, node.id));
-            ops.push((
-                SirOp::MatMul { a: weights_id, b: v_i_id },
-                format!("ctx_{}", head_idx),
-            ));
+            ops.push((SirOp::MatMul { a: weights_id, b: v_i_id }, format!("ctx_{}", head_idx)));
 
             // Expand dims: [B, S, D] → [B, 1, S, D] with head axis
             // for proper concat along axis 1
@@ -1239,10 +1215,7 @@ impl<'a> SirBuildContext<'a> {
 
         // Concat all per-head context: [B, 1, S, D] × hq → [B, hq, S, D]
         let ctx_concat_id = SirNodeId(format!("sir_ctx_concat_{}", node.id));
-        ops.push((
-            SirOp::Concat { inputs: ctx_parts, axis: 1 },
-            "ctx_concat".to_string(),
-        ));
+        ops.push((SirOp::Concat { inputs: ctx_parts, axis: 1 }, "ctx_concat".to_string()));
 
         // Output projection: its input is the attention computation output,
         // which is currently 4D [B, num_heads, S, D]. We need to reshape it
@@ -1320,8 +1293,7 @@ impl<'a> SirBuildContext<'a> {
         } else {
             false
         };
-        let is_swiglu = (has_gate && has_up)
-            || (self.config.hidden_act == "silu" && has_gate);
+        let is_swiglu = (self.config.hidden_act == "silu" || has_up) && has_gate;
 
         // Resolve weight names using module_path.
         // MLP module_path is typically "model.layers.0.mlp"
@@ -1533,7 +1505,12 @@ impl<'a> SirBuildContext<'a> {
         // This keeps sir_build.rs strategy-agnostic: it records the semantic
         // intent (RMSNorm) without committing to a specific decomposition.
         Ok(vec![(
-            SirOp::RMSNorm { input: input_id, weight: rms_weight, epsilon: effective_epsilon, axes: vec![2] },
+            SirOp::RMSNorm {
+                input: input_id,
+                weight: rms_weight,
+                epsilon: effective_epsilon,
+                axes: vec![2],
+            },
             format!("rms_norm_{}", hidden_size),
         )])
     }
@@ -1580,10 +1557,7 @@ impl<'a> SirBuildContext<'a> {
             },
             "sdpa_scale_const".to_string(),
         ));
-        ops.push((
-            SirOp::Mul { x: qk_id, y: scale_const_id },
-            "sdpa_scale".to_string(),
-        ));
+        ops.push((SirOp::Mul { x: qk_id, y: scale_const_id }, "sdpa_scale".to_string()));
 
         // Step 4: Softmax over the last dimension
         let scaled_id = SirNodeId(format!("sir_sdpa_scaled_{}", node.id));
@@ -1683,7 +1657,7 @@ mod tests {
                 model_type: "llama".to_string(),
                 model_class: "causal_lm".to_string(),
                 is_encoder_decoder: false,
-        head_dim: None,
+                head_dim: None,
             },
             nodes: vec![
                 TracedNode {
@@ -1793,7 +1767,7 @@ mod tests {
                 model_type: "bert".to_string(),
                 model_class: "causal_lm".to_string(),
                 is_encoder_decoder: false,
-        head_dim: None,
+                head_dim: None,
             },
             nodes: vec![
                 TracedNode {
@@ -1977,7 +1951,7 @@ mod tests {
             model_type: "qwen3_5_text".to_string(), // No hardcoded list needed!
             model_class: "causal_lm".to_string(),
             is_encoder_decoder: false,
-        head_dim: None,
+            head_dim: None,
         };
 
         let discovered = crate::graph::DiscoveredFeatures {
@@ -2030,7 +2004,7 @@ mod tests {
             model_type: "qwen3".to_string(),
             model_class: "causal_lm".to_string(),
             is_encoder_decoder: false,
-        head_dim: None,
+            head_dim: None,
         };
 
         let discovered = crate::graph::DiscoveredFeatures {
@@ -2076,7 +2050,7 @@ mod tests {
             model_type: "llama".to_string(),
             model_class: "causal_lm".to_string(),
             is_encoder_decoder: false,
-        head_dim: None,
+            head_dim: None,
         };
 
         let discovered = crate::graph::DiscoveredFeatures {
@@ -2124,7 +2098,7 @@ mod tests {
             model_type: "future_architecture_v7".to_string(), // Completely unknown!
             model_class: "causal_lm".to_string(),
             is_encoder_decoder: false,
-        head_dim: None,
+            head_dim: None,
         };
 
         let discovered = crate::graph::DiscoveredFeatures {
@@ -2211,7 +2185,7 @@ mod tests {
             model_type: "dolphin".to_string(),
             model_class: "seq2seq_lm".to_string(),
             is_encoder_decoder: true,
-        head_dim: None,
+            head_dim: None,
         };
 
         // Verify the new fields are set correctly
@@ -2244,7 +2218,7 @@ mod tests {
             model_type: "qwen3_asr".to_string(),
             model_class: "decoder_only".to_string(),
             is_encoder_decoder: false,
-        head_dim: None,
+            head_dim: None,
         };
 
         assert_eq!(config.model_class, "decoder_only");
@@ -2275,7 +2249,7 @@ mod tests {
             model_type: "llama".to_string(),
             model_class: "causal_lm".to_string(),
             is_encoder_decoder: false,
-        head_dim: None,
+            head_dim: None,
         };
 
         let json = serde_json::to_string(&config).expect("Should serialize");
@@ -2534,16 +2508,9 @@ mod tests {
         // Split-based per-head attention uses SliceByIndex directly on Q/K/V.
         // Split is intentionally NOT emitted (invalid MIL output arity).
         // Key ops: SliceByIndex, MatMul, Const(scale), Softmax
-        let has_split = sir.nodes.iter().any(|n| {
-            matches!(n.op, SirOp::Split { .. })
-        });
-        assert!(
-            !has_split,
-            "M2 attention decomposition must NOT include Split (invalid MIL)"
-        );
-        let has_slice = sir.nodes.iter().any(|n| {
-            matches!(n.op, SirOp::SliceByIndex { .. })
-        });
+        let has_split = sir.nodes.iter().any(|n| matches!(n.op, SirOp::Split { .. }));
+        assert!(!has_split, "M2 attention decomposition must NOT include Split (invalid MIL)");
+        let has_slice = sir.nodes.iter().any(|n| matches!(n.op, SirOp::SliceByIndex { .. }));
         assert!(
             has_slice,
             "M2 attention decomposition must include SliceByIndex for head extraction"
@@ -2557,17 +2524,13 @@ mod tests {
             "M2 attention decomposition must include a scale constant (1/√d_k)"
         );
 
-        let has_softmax = sir.nodes.iter().any(|n| {
-            matches!(n.op, SirOp::Softmax { .. })
-        });
+        let has_softmax = sir.nodes.iter().any(|n| matches!(n.op, SirOp::Softmax { .. }));
         assert!(
             has_softmax,
             "M2 attention decomposition must include Softmax for per-head attention"
         );
 
-        let has_matmul = sir.nodes.iter().any(|n| {
-            matches!(n.op, SirOp::MatMul { .. })
-        });
+        let has_matmul = sir.nodes.iter().any(|n| matches!(n.op, SirOp::MatMul { .. }));
         assert!(
             has_matmul,
             "M2 attention decomposition must include MatMul for per-head attention"
@@ -2617,38 +2580,22 @@ mod tests {
 
         // Split-based per-head attention uses SliceByIndex directly on Q/K/V.
         // Split is intentionally NOT emitted (invalid MIL output arity).
-        let has_split = sir.nodes.iter().any(|n| {
-            matches!(n.op, SirOp::Split { .. })
-        });
-        assert!(
-            !has_split,
-            "Attention decomposition must NOT use Split (invalid MIL)"
-        );
-        let has_slice = sir.nodes.iter().any(|n| {
-            matches!(n.op, SirOp::SliceByIndex { .. })
-        });
-        assert!(
-            has_slice,
-            "Attention decomposition must use SliceByIndex for head extraction"
-        );
+        let has_split = sir.nodes.iter().any(|n| matches!(n.op, SirOp::Split { .. }));
+        assert!(!has_split, "Attention decomposition must NOT use Split (invalid MIL)");
+        let has_slice = sir.nodes.iter().any(|n| matches!(n.op, SirOp::SliceByIndex { .. }));
+        assert!(has_slice, "Attention decomposition must use SliceByIndex for head extraction");
 
         // Should NOT see SDPA — split-based attention replaces it
-        let has_sdpa = sir.nodes.iter().any(|n| {
-            matches!(n.op, SirOp::ScaledDotProductAttention { .. })
-        });
+        let has_sdpa =
+            sir.nodes.iter().any(|n| matches!(n.op, SirOp::ScaledDotProductAttention { .. }));
         assert!(
             !has_sdpa,
             "Attention decomposition must NOT use SDPA (split-based attention replaces it)"
         );
 
         // Should NOT see Tile — ANE-illegal, eliminated by split-based approach
-        let has_tile = sir.nodes.iter().any(|n| {
-            matches!(n.op, SirOp::Tile { .. })
-        });
-        assert!(
-            !has_tile,
-            "Attention decomposition must NOT use Tile (ANE-illegal)"
-        );
+        let has_tile = sir.nodes.iter().any(|n| matches!(n.op, SirOp::Tile { .. }));
+        assert!(!has_tile, "Attention decomposition must NOT use Tile (ANE-illegal)");
     }
 
     /// Sprint 62: Verify that the Qwen3-0.6B fixture produces SIR RMSNorm ops
@@ -2666,7 +2613,9 @@ mod tests {
         let sir = build_sir_from_trace(&trace, AneFamily::A16).unwrap();
 
         // Find RMSNorm ops that have axes=[3] (q/k norm)
-        let axes3_norms: Vec<_> = sir.nodes.iter()
+        let axes3_norms: Vec<_> = sir
+            .nodes
+            .iter()
             .filter_map(|n| {
                 if let SirOp::RMSNorm { axes, weight, .. } = &n.op {
                     if axes.contains(&3) {
@@ -2681,7 +2630,9 @@ mod tests {
             .collect();
 
         // Find RMSNorm ops that have axes=[2] (standard layer norm)
-        let axes2_norms: Vec<_> = sir.nodes.iter()
+        let axes2_norms: Vec<_> = sir
+            .nodes
+            .iter()
             .filter_map(|n| {
                 if let SirOp::RMSNorm { axes, weight, .. } = &n.op {
                     if axes.contains(&2) && !axes.contains(&3) {
@@ -2711,14 +2662,8 @@ mod tests {
         // Verify the axes3 norms reference q_norm or k_norm weights
         let q_norm_count = axes3_norms.iter().filter(|(_, w, _)| w.contains("q_norm")).count();
         let k_norm_count = axes3_norms.iter().filter(|(_, w, _)| w.contains("k_norm")).count();
-        assert!(
-            q_norm_count > 0,
-            "Expected at least one q_norm RMSNorm with axes=[3], found 0"
-        );
-        assert!(
-            k_norm_count > 0,
-            "Expected at least one k_norm RMSNorm with axes=[3], found 0"
-        );
+        assert!(q_norm_count > 0, "Expected at least one q_norm RMSNorm with axes=[3], found 0");
+        assert!(k_norm_count > 0, "Expected at least one k_norm RMSNorm with axes=[3], found 0");
     }
 }
 
@@ -2850,7 +2795,8 @@ fn resolve_alias(
                         // Extract the counter from "sir_{counter}_{trace_id}"
                         let without_prefix = actual.strip_prefix("sir_").unwrap();
                         let without_suffix = without_prefix.strip_suffix(trace_id).unwrap();
-                        let counter_str = without_suffix.strip_suffix('_').unwrap_or(without_suffix);
+                        let counter_str =
+                            without_suffix.strip_suffix('_').unwrap_or(without_suffix);
                         if let Ok(counter) = counter_str.parse::<usize>() {
                             node_ids_for_trace.push((counter, actual.clone()));
                         }
@@ -2875,7 +2821,12 @@ fn resolve_alias(
                     }
                 }
 
-                candidates.push(format!("prefix='{}' trace_id='{}' nodes={}", semantic_prefix, trace_id, node_ids_for_trace.len()));
+                candidates.push(format!(
+                    "prefix='{}' trace_id='{}' nodes={}",
+                    semantic_prefix,
+                    trace_id,
+                    node_ids_for_trace.len()
+                ));
             }
         }
     }
@@ -2933,8 +2884,8 @@ fn semantic_prefix_to_position(prefix: &str) -> Option<usize> {
         "attn_scale_const" => Some(14),
         // Per-head attention ops start at position 15+ (variable count based on num_heads)
         // These are best resolved by name pattern matching, not position
-        "q_head" | "k_head" | "v_head" | "logits" | "scaled_logits"
-        | "masked_logits" | "weights" | "ctx" | "ctx_exp" => None,
+        "q_head" | "k_head" | "v_head" | "logits" | "scaled_logits" | "masked_logits"
+        | "weights" | "ctx" | "ctx_exp" => None,
         "ctx_concat" => None, // position varies based on num_heads
         "attn_reshape_3d" => None,
         "out_proj" => None,

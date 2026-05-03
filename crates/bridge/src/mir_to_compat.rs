@@ -371,7 +371,8 @@ pub fn mir_graph_to_compat_with_arch(
             continue;
         }
         // Fall back to the static compat_output_shape for this op
-        let shape = compat_output_shape(&node.id.0, &node.op, &node.shape, &node_shapes, max_seq_len);
+        let shape =
+            compat_output_shape(&node.id.0, &node.op, &node.shape, &node_shapes, max_seq_len);
         if !shape.is_empty() {
             node_shapes.insert(node.id.0.clone(), shape);
         }
@@ -507,8 +508,7 @@ fn compat_input_names(op: &MirOpCompat) -> Vec<String> {
         | MirOpCompat::FloorDiv { x, y, .. }
         | MirOpCompat::Mod { x, y, .. } => vec![x.clone(), y.clone()],
         // New variants: axis-based ops
-        MirOpCompat::ExpandDims { x, .. }
-        | MirOpCompat::Squeeze { x, .. } => vec![x.clone()],
+        MirOpCompat::ExpandDims { x, .. } | MirOpCompat::Squeeze { x, .. } => vec![x.clone()],
         // Clip: unary with scalar params
         MirOpCompat::Clip { x, .. } => vec![x.clone()],
         // Pad: unary with scalar/vector params
@@ -518,20 +518,26 @@ fn compat_input_names(op: &MirOpCompat) -> Vec<String> {
         | MirOpCompat::ReduceMin { x, .. }
         | MirOpCompat::ReduceProd { x, .. } => vec![x.clone()],
         // Select: ternary (like Where)
-        MirOpCompat::Select { condition, x, y, .. } => vec![condition.clone(), x.clone(), y.clone()],
+        MirOpCompat::Select { condition, x, y, .. } => {
+            vec![condition.clone(), x.clone(), y.clone()]
+        }
         // LeakyRelu: unary with alpha param
         MirOpCompat::LeakyRelu { x, .. } => vec![x.clone()],
         // T-39: Constexpr weight compression ops.
         // These use weight-name references as inputs (resolved to MIL Const ops).
-        MirOpCompat::ConstexprAffineDequantize { quantized_data, .. } => vec![quantized_data.clone()],
-        MirOpCompat::ConstexprBlockwiseShiftScale { data, scale, offset, .. } =>
-            vec![data.clone(), scale.clone(), offset.clone()],
+        MirOpCompat::ConstexprAffineDequantize { quantized_data, .. } => {
+            vec![quantized_data.clone()]
+        }
+        MirOpCompat::ConstexprBlockwiseShiftScale { data, scale, offset, .. } => {
+            vec![data.clone(), scale.clone(), offset.clone()]
+        }
         MirOpCompat::ConstexprLutToDense { indices, lut, .. } => vec![indices.clone(), lut.clone()],
         MirOpCompat::ConstexprSparseToDense { nonzero_data, .. } => vec![nonzero_data.clone()],
         MirOpCompat::ConstexprCast { data, .. } => vec![data.clone()],
         MirOpCompat::ConstexprLutToSparse { data, .. } => vec![data.clone()],
-        MirOpCompat::ConstexprSparseBlockwiseShiftScale { data, scale, offset, .. } =>
-            vec![data.clone(), scale.clone(), offset.clone()],
+        MirOpCompat::ConstexprSparseBlockwiseShiftScale { data, scale, offset, .. } => {
+            vec![data.clone(), scale.clone(), offset.clone()]
+        }
         MirOpCompat::Unsupported { .. } => vec![],
     }
 }
@@ -654,9 +660,12 @@ fn remap_compat_inputs(
             weight_name: remap_name(weight_name, aliases),
             bias_name: bias_name.map(|v| remap_name(v, aliases)),
         },
-        MirOpCompat::MatMul { name, x, y, transpose_y } => {
-            MirOpCompat::MatMul { name, x: remap_name(x, aliases), y: remap_name(y, aliases), transpose_y }
-        }
+        MirOpCompat::MatMul { name, x, y, transpose_y } => MirOpCompat::MatMul {
+            name,
+            x: remap_name(x, aliases),
+            y: remap_name(y, aliases),
+            transpose_y,
+        },
         MirOpCompat::Add { name, x, y } => {
             MirOpCompat::Add { name, x: remap_name(x, aliases), y: remap_name(y, aliases) }
         }
@@ -682,9 +691,25 @@ fn remap_compat_inputs(
         MirOpCompat::Transpose { name, x, perm } => {
             MirOpCompat::Transpose { name, x: remap_name(x, aliases), perm }
         }
-        MirOpCompat::SliceByIndex { name, x, begin, end, stride, begin_mask, end_mask, squeeze_mask } => {
-            MirOpCompat::SliceByIndex { name, x: remap_name(x, aliases), begin, end, stride, begin_mask, end_mask, squeeze_mask }
-        }
+        MirOpCompat::SliceByIndex {
+            name,
+            x,
+            begin,
+            end,
+            stride,
+            begin_mask,
+            end_mask,
+            squeeze_mask,
+        } => MirOpCompat::SliceByIndex {
+            name,
+            x: remap_name(x, aliases),
+            begin,
+            end,
+            stride,
+            begin_mask,
+            end_mask,
+            squeeze_mask,
+        },
         MirOpCompat::SliceUpdate { name, x, update, begin, end } => MirOpCompat::SliceUpdate {
             name,
             x: remap_name(x, aliases),
@@ -703,16 +728,21 @@ fn remap_compat_inputs(
         MirOpCompat::Gelu { name, x, mode } => {
             MirOpCompat::Gelu { name, x: remap_name(x, aliases), mode }
         }
-        MirOpCompat::ScaledDotProductAttention { name, query, key, value, attention_mask, scale } => {
-            MirOpCompat::ScaledDotProductAttention {
-                name,
-                query: remap_name(query, aliases),
-                key: remap_name(key, aliases),
-                value: remap_name(value, aliases),
-                attention_mask: attention_mask.map(|m| remap_name(m, aliases)),
-                scale,
-            }
-        }
+        MirOpCompat::ScaledDotProductAttention {
+            name,
+            query,
+            key,
+            value,
+            attention_mask,
+            scale,
+        } => MirOpCompat::ScaledDotProductAttention {
+            name,
+            query: remap_name(query, aliases),
+            key: remap_name(key, aliases),
+            value: remap_name(value, aliases),
+            attention_mask: attention_mask.map(|m| remap_name(m, aliases)),
+            scale,
+        },
         MirOpCompat::CoremlUpdateState { name, state_id, value } => {
             MirOpCompat::CoremlUpdateState {
                 name,
@@ -789,39 +819,23 @@ fn remap_compat_inputs(
             // Fill has no tensor inputs — nothing to remap
             MirOpCompat::Fill { name, shape, value, dtype }
         }
-        MirOpCompat::FillLike { name, ref_tensor, value, dtype } => {
-            MirOpCompat::FillLike {
-                name,
-                ref_tensor: remap_name(ref_tensor, aliases),
-                value,
-                dtype,
-            }
-        }
-        MirOpCompat::Neg { name, x } => {
-            MirOpCompat::Neg { name, x: remap_name(x, aliases) }
-        }
+        MirOpCompat::FillLike { name, ref_tensor, value, dtype } => MirOpCompat::FillLike {
+            name,
+            ref_tensor: remap_name(ref_tensor, aliases),
+            value,
+            dtype,
+        },
+        MirOpCompat::Neg { name, x } => MirOpCompat::Neg { name, x: remap_name(x, aliases) },
         // New variants: unary ops
-        MirOpCompat::Sqrt { name, x } => {
-            MirOpCompat::Sqrt { name, x: remap_name(x, aliases) }
-        }
+        MirOpCompat::Sqrt { name, x } => MirOpCompat::Sqrt { name, x: remap_name(x, aliases) },
         MirOpCompat::LogicalNot { name, x } => {
             MirOpCompat::LogicalNot { name, x: remap_name(x, aliases) }
         }
-        MirOpCompat::Ceil { name, x } => {
-            MirOpCompat::Ceil { name, x: remap_name(x, aliases) }
-        }
-        MirOpCompat::Floor { name, x } => {
-            MirOpCompat::Floor { name, x: remap_name(x, aliases) }
-        }
-        MirOpCompat::Round { name, x } => {
-            MirOpCompat::Round { name, x: remap_name(x, aliases) }
-        }
-        MirOpCompat::Sign { name, x } => {
-            MirOpCompat::Sign { name, x: remap_name(x, aliases) }
-        }
-        MirOpCompat::Log { name, x } => {
-            MirOpCompat::Log { name, x: remap_name(x, aliases) }
-        }
+        MirOpCompat::Ceil { name, x } => MirOpCompat::Ceil { name, x: remap_name(x, aliases) },
+        MirOpCompat::Floor { name, x } => MirOpCompat::Floor { name, x: remap_name(x, aliases) },
+        MirOpCompat::Round { name, x } => MirOpCompat::Round { name, x: remap_name(x, aliases) },
+        MirOpCompat::Sign { name, x } => MirOpCompat::Sign { name, x: remap_name(x, aliases) },
+        MirOpCompat::Log { name, x } => MirOpCompat::Log { name, x: remap_name(x, aliases) },
         // New variants: binary ops
         MirOpCompat::Pow { name, x, y } => {
             MirOpCompat::Pow { name, x: remap_name(x, aliases), y: remap_name(y, aliases) }
@@ -893,53 +907,65 @@ fn remap_compat_inputs(
             MirOpCompat::LeakyRelu { name, x: remap_name(x, aliases), alpha }
         }
         // T-39: Constexpr weight compression ops — remap weight-name references.
-        MirOpCompat::ConstexprAffineDequantize { name, quantized_data, scale, zero_point, axis } =>
-            MirOpCompat::ConstexprAffineDequantize {
-                name,
-                quantized_data: remap_name(quantized_data, aliases),
-                scale, zero_point, axis,
-            },
-        MirOpCompat::ConstexprBlockwiseShiftScale { name, data, scale, offset, block_size } =>
+        MirOpCompat::ConstexprAffineDequantize {
+            name,
+            quantized_data,
+            scale,
+            zero_point,
+            axis,
+        } => MirOpCompat::ConstexprAffineDequantize {
+            name,
+            quantized_data: remap_name(quantized_data, aliases),
+            scale,
+            zero_point,
+            axis,
+        },
+        MirOpCompat::ConstexprBlockwiseShiftScale { name, data, scale, offset, block_size } => {
             MirOpCompat::ConstexprBlockwiseShiftScale {
                 name,
                 data: remap_name(data, aliases),
                 scale: remap_name(scale, aliases),
                 offset: remap_name(offset, aliases),
                 block_size,
-            },
-        MirOpCompat::ConstexprLutToDense { name, indices, lut, num_bits } =>
+            }
+        }
+        MirOpCompat::ConstexprLutToDense { name, indices, lut, num_bits } => {
             MirOpCompat::ConstexprLutToDense {
                 name,
                 indices: remap_name(indices, aliases),
                 lut: remap_name(lut, aliases),
                 num_bits,
-            },
-        MirOpCompat::ConstexprSparseToDense { name, nonzero_data, shape, default_value } =>
+            }
+        }
+        MirOpCompat::ConstexprSparseToDense { name, nonzero_data, shape, default_value } => {
             MirOpCompat::ConstexprSparseToDense {
                 name,
                 nonzero_data: remap_name(nonzero_data, aliases),
-                shape, default_value,
-            },
-        MirOpCompat::ConstexprCast { name, data, dtype } =>
-            MirOpCompat::ConstexprCast {
-                name,
-                data: remap_name(data, aliases),
-                dtype,
-            },
-        MirOpCompat::ConstexprLutToSparse { name, data, num_bits } =>
-            MirOpCompat::ConstexprLutToSparse {
-                name,
-                data: remap_name(data, aliases),
-                num_bits,
-            },
-        MirOpCompat::ConstexprSparseBlockwiseShiftScale { name, data, scale, offset, block_size, block_axis } =>
-            MirOpCompat::ConstexprSparseBlockwiseShiftScale {
-                name,
-                data: remap_name(data, aliases),
-                scale: remap_name(scale, aliases),
-                offset: remap_name(offset, aliases),
-                block_size, block_axis,
-            },
+                shape,
+                default_value,
+            }
+        }
+        MirOpCompat::ConstexprCast { name, data, dtype } => {
+            MirOpCompat::ConstexprCast { name, data: remap_name(data, aliases), dtype }
+        }
+        MirOpCompat::ConstexprLutToSparse { name, data, num_bits } => {
+            MirOpCompat::ConstexprLutToSparse { name, data: remap_name(data, aliases), num_bits }
+        }
+        MirOpCompat::ConstexprSparseBlockwiseShiftScale {
+            name,
+            data,
+            scale,
+            offset,
+            block_size,
+            block_axis,
+        } => MirOpCompat::ConstexprSparseBlockwiseShiftScale {
+            name,
+            data: remap_name(data, aliases),
+            scale: remap_name(scale, aliases),
+            offset: remap_name(offset, aliases),
+            block_size,
+            block_axis,
+        },
         other => other,
     }
 }
@@ -961,7 +987,9 @@ fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
         MirOpCompat::Linear { name: _, x, weight_name, bias_name } => {
             MirOpCompat::Linear { name: new_name, x, weight_name, bias_name }
         }
-        MirOpCompat::MatMul { name: _, x, y, transpose_y } => MirOpCompat::MatMul { name: new_name, x, y, transpose_y },
+        MirOpCompat::MatMul { name: _, x, y, transpose_y } => {
+            MirOpCompat::MatMul { name: new_name, x, y, transpose_y }
+        }
         MirOpCompat::Add { name: _, x, y } => MirOpCompat::Add { name: new_name, x, y },
         MirOpCompat::Mul { name: _, x, y } => MirOpCompat::Mul { name: new_name, x, y },
         MirOpCompat::Sub { name: _, x, y } => MirOpCompat::Sub { name: new_name, x, y },
@@ -974,9 +1002,25 @@ fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
         MirOpCompat::Transpose { name: _, x, perm } => {
             MirOpCompat::Transpose { name: new_name, x, perm }
         }
-        MirOpCompat::SliceByIndex { name: _, x, begin, end, stride, begin_mask, end_mask, squeeze_mask } => {
-            MirOpCompat::SliceByIndex { name: new_name, x, begin, end, stride, begin_mask, end_mask, squeeze_mask }
-        }
+        MirOpCompat::SliceByIndex {
+            name: _,
+            x,
+            begin,
+            end,
+            stride,
+            begin_mask,
+            end_mask,
+            squeeze_mask,
+        } => MirOpCompat::SliceByIndex {
+            name: new_name,
+            x,
+            begin,
+            end,
+            stride,
+            begin_mask,
+            end_mask,
+            squeeze_mask,
+        },
         MirOpCompat::SliceUpdate { name: _, x, update, begin, end } => {
             MirOpCompat::SliceUpdate { name: new_name, x, update, begin, end }
         }
@@ -987,9 +1031,21 @@ fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
             MirOpCompat::Softmax { name: new_name, x, axis }
         }
         MirOpCompat::Gelu { name: _, x, mode } => MirOpCompat::Gelu { name: new_name, x, mode },
-        MirOpCompat::ScaledDotProductAttention { name: _, query, key, value, attention_mask, scale } => {
-            MirOpCompat::ScaledDotProductAttention { name: new_name, query, key, value, attention_mask, scale }
-        }
+        MirOpCompat::ScaledDotProductAttention {
+            name: _,
+            query,
+            key,
+            value,
+            attention_mask,
+            scale,
+        } => MirOpCompat::ScaledDotProductAttention {
+            name: new_name,
+            query,
+            key,
+            value,
+            attention_mask,
+            scale,
+        },
         MirOpCompat::ReadState { name: _, state_id, shape, dtype } => {
             MirOpCompat::ReadState { name: new_name, state_id, shape, dtype }
         }
@@ -1036,18 +1092,14 @@ fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
         MirOpCompat::Identity { name: _, x, dtype } => {
             MirOpCompat::Identity { name: new_name, x, dtype }
         }
-        MirOpCompat::Tile { name: _, x, reps } => {
-            MirOpCompat::Tile { name: new_name, x, reps }
-        }
+        MirOpCompat::Tile { name: _, x, reps } => MirOpCompat::Tile { name: new_name, x, reps },
         MirOpCompat::Fill { name: _, shape, value, dtype } => {
             MirOpCompat::Fill { name: new_name, shape, value, dtype }
         }
         MirOpCompat::FillLike { name: _, ref_tensor, value, dtype } => {
             MirOpCompat::FillLike { name: new_name, ref_tensor, value, dtype }
         }
-        MirOpCompat::Neg { name: _, x } => {
-            MirOpCompat::Neg { name: new_name, x }
-        }
+        MirOpCompat::Neg { name: _, x } => MirOpCompat::Neg { name: new_name, x },
         // New variants: unary ops
         MirOpCompat::Sqrt { name: _, x } => MirOpCompat::Sqrt { name: new_name, x },
         MirOpCompat::LogicalNot { name: _, x } => MirOpCompat::LogicalNot { name: new_name, x },
@@ -1061,10 +1113,14 @@ fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
         MirOpCompat::Equal { name: _, x, y } => MirOpCompat::Equal { name: new_name, x, y },
         MirOpCompat::NotEqual { name: _, x, y } => MirOpCompat::NotEqual { name: new_name, x, y },
         MirOpCompat::Greater { name: _, x, y } => MirOpCompat::Greater { name: new_name, x, y },
-        MirOpCompat::GreaterEqual { name: _, x, y } => MirOpCompat::GreaterEqual { name: new_name, x, y },
+        MirOpCompat::GreaterEqual { name: _, x, y } => {
+            MirOpCompat::GreaterEqual { name: new_name, x, y }
+        }
         MirOpCompat::Less { name: _, x, y } => MirOpCompat::Less { name: new_name, x, y },
         MirOpCompat::LessEqual { name: _, x, y } => MirOpCompat::LessEqual { name: new_name, x, y },
-        MirOpCompat::LogicalAnd { name: _, x, y } => MirOpCompat::LogicalAnd { name: new_name, x, y },
+        MirOpCompat::LogicalAnd { name: _, x, y } => {
+            MirOpCompat::LogicalAnd { name: new_name, x, y }
+        }
         MirOpCompat::LogicalOr { name: _, x, y } => MirOpCompat::LogicalOr { name: new_name, x, y },
         MirOpCompat::FloorDiv { name: _, x, y } => MirOpCompat::FloorDiv { name: new_name, x, y },
         MirOpCompat::Mod { name: _, x, y } => MirOpCompat::Mod { name: new_name, x, y },
@@ -1102,20 +1158,60 @@ fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
             MirOpCompat::LeakyRelu { name: new_name, x, alpha }
         }
         // T-39: Constexpr weight compression ops — rename output name.
-        MirOpCompat::ConstexprAffineDequantize { name: _, quantized_data, scale, zero_point, axis } =>
-            MirOpCompat::ConstexprAffineDequantize { name: new_name, quantized_data, scale, zero_point, axis },
-        MirOpCompat::ConstexprBlockwiseShiftScale { name: _, data, scale, offset, block_size } =>
-            MirOpCompat::ConstexprBlockwiseShiftScale { name: new_name, data, scale, offset, block_size },
-        MirOpCompat::ConstexprLutToDense { name: _, indices, lut, num_bits } =>
-            MirOpCompat::ConstexprLutToDense { name: new_name, indices, lut, num_bits },
-        MirOpCompat::ConstexprSparseToDense { name: _, nonzero_data, shape, default_value } =>
-            MirOpCompat::ConstexprSparseToDense { name: new_name, nonzero_data, shape, default_value },
-        MirOpCompat::ConstexprCast { name: _, data, dtype } =>
-            MirOpCompat::ConstexprCast { name: new_name, data, dtype },
-        MirOpCompat::ConstexprLutToSparse { name: _, data, num_bits } =>
-            MirOpCompat::ConstexprLutToSparse { name: new_name, data, num_bits },
-        MirOpCompat::ConstexprSparseBlockwiseShiftScale { name: _, data, scale, offset, block_size, block_axis } =>
-            MirOpCompat::ConstexprSparseBlockwiseShiftScale { name: new_name, data, scale, offset, block_size, block_axis },
+        MirOpCompat::ConstexprAffineDequantize {
+            name: _,
+            quantized_data,
+            scale,
+            zero_point,
+            axis,
+        } => MirOpCompat::ConstexprAffineDequantize {
+            name: new_name,
+            quantized_data,
+            scale,
+            zero_point,
+            axis,
+        },
+        MirOpCompat::ConstexprBlockwiseShiftScale { name: _, data, scale, offset, block_size } => {
+            MirOpCompat::ConstexprBlockwiseShiftScale {
+                name: new_name,
+                data,
+                scale,
+                offset,
+                block_size,
+            }
+        }
+        MirOpCompat::ConstexprLutToDense { name: _, indices, lut, num_bits } => {
+            MirOpCompat::ConstexprLutToDense { name: new_name, indices, lut, num_bits }
+        }
+        MirOpCompat::ConstexprSparseToDense { name: _, nonzero_data, shape, default_value } => {
+            MirOpCompat::ConstexprSparseToDense {
+                name: new_name,
+                nonzero_data,
+                shape,
+                default_value,
+            }
+        }
+        MirOpCompat::ConstexprCast { name: _, data, dtype } => {
+            MirOpCompat::ConstexprCast { name: new_name, data, dtype }
+        }
+        MirOpCompat::ConstexprLutToSparse { name: _, data, num_bits } => {
+            MirOpCompat::ConstexprLutToSparse { name: new_name, data, num_bits }
+        }
+        MirOpCompat::ConstexprSparseBlockwiseShiftScale {
+            name: _,
+            data,
+            scale,
+            offset,
+            block_size,
+            block_axis,
+        } => MirOpCompat::ConstexprSparseBlockwiseShiftScale {
+            name: new_name,
+            data,
+            scale,
+            offset,
+            block_size,
+            block_axis,
+        },
         MirOpCompat::Placeholder { name: _, dtype } => {
             MirOpCompat::Placeholder { name: new_name, dtype }
         }
@@ -1236,10 +1332,10 @@ pub fn mir_op_to_compat_with_shapes(
             //    This handles cases where infer_shape() failed to propagate shapes.
             //
             // 3. As a last resort, try positional resolution from node_shape.
-            let has_zeros = shape.iter().any(|&d| d == 0);
+            let has_zeros = shape.contains(&0);
             let node_shape_valid = !node_shape.is_empty()
                 && node_shape.len() == shape.len()
-                && !node_shape.iter().any(|&d| d == 0);
+                && !node_shape.contains(&0);
 
             let resolved_shape: Vec<i32> = if !has_zeros {
                 // No zeros — shape is already concrete
@@ -1253,11 +1349,11 @@ pub fn mir_op_to_compat_with_shapes(
             } else if !node_shape.is_empty() && node_shape.len() == shape.len() {
                 // node_shape has zeros too, but try positional fallback
                 let mut resolved = shape.clone();
-                for i in 0..resolved.len() {
-                    if resolved[i] == 0 {
+                for (i, slot) in resolved.iter_mut().enumerate() {
+                    if *slot == 0 {
                         if let Some(&dim) = node_shape.get(i) {
                             if dim != 0 {
-                                resolved[i] = dim;
+                                *slot = dim;
                             }
                         }
                     }
@@ -1273,7 +1369,7 @@ pub fn mir_op_to_compat_with_shapes(
             // models — Core ML treats 0 as a literal zero dimension, not "infer
             // from input". This is a hard gate; shape inference must succeed
             // before we can emit a valid model. (T-29 / I-08)
-            if resolved_shape.iter().any(|&d| d == 0) {
+            if resolved_shape.contains(&0) {
                 let zero_positions: Vec<usize> = resolved_shape
                     .iter()
                     .enumerate()
@@ -1286,16 +1382,16 @@ pub fn mir_op_to_compat_with_shapes(
                      node_shape: {:?}, input_shape: {:?}. \
                      Zero dimensions produce invalid Core ML models — shape inference \
                      must resolve all placeholders before emission.",
-                    name, zero_positions, resolved_shape, shape, node_shape,
+                    name,
+                    zero_positions,
+                    resolved_shape,
+                    shape,
+                    node_shape,
                     shape_map.get(&x.0).map(|s| s.as_slice()).unwrap_or(&[])
                 );
             }
 
-            Ok(MirOpCompat::Reshape {
-                name: name.clone(),
-                x: x.0.clone(),
-                shape: resolved_shape,
-            })
+            Ok(MirOpCompat::Reshape { name: name.clone(), x: x.0.clone(), shape: resolved_shape })
         }
 
         // All other ops delegate to the original mir_op_to_compat
@@ -1315,11 +1411,7 @@ pub fn mir_op_to_compat_with_shapes(
 ///    - Compute the product of non-zero target dimensions
 ///    - Distribute the remaining elements among the zero dimensions
 ///    - If batch=1 is assumed for the first zero, compute the rest
-fn resolve_reshape_shape(
-    target_shape: &[usize],
-    input_shape: &[usize],
-    _name: &str,
-) -> Vec<i32> {
+fn resolve_reshape_shape(target_shape: &[usize], input_shape: &[usize], _name: &str) -> Vec<i32> {
     let input_elements: usize = input_shape.iter().product();
     if input_elements == 0 {
         return target_shape.iter().map(|&d| d as i32).collect();
@@ -1329,10 +1421,10 @@ fn resolve_reshape_shape(
 
     // Step 1: Try positional resolution
     let mut positional_works = true;
-    for i in 0..resolved.len() {
-        if resolved[i] == 0 {
+    for (i, slot) in resolved.iter_mut().enumerate() {
+        if *slot == 0 {
             if let Some(&dim) = input_shape.get(i) {
-                resolved[i] = dim;
+                *slot = dim;
             } else {
                 positional_works = false;
                 break;
@@ -1374,14 +1466,14 @@ fn resolve_reshape_shape(
         0 => {} // No zeros (shouldn't reach here, but handle gracefully)
         1 => {
             // Single zero — resolve directly
-            for i in 0..resolved.len() {
-                if resolved[i] == 0 {
-                    resolved[i] = remaining;
+            for slot in &mut resolved {
+                if *slot == 0 {
+                    *slot = remaining;
                     break;
                 }
             }
         }
-        2 | _ => {
+        _ => {
             // Two or more zeros — set all but the last zero to 1 (batch
             // dimension heuristic), then compute the last from the remaining
             // product. This is the common case for [0, 0, embed] or
@@ -1399,7 +1491,7 @@ fn resolve_reshape_shape(
                 product_so_far *= resolved[pos];
             }
             if let Some(&last_pos) = zero_positions.last() {
-                if product_so_far > 0 && remaining % product_so_far == 0 {
+                if product_so_far > 0 && remaining.is_multiple_of(product_so_far) {
                     resolved[last_pos] = remaining / product_so_far;
                 }
             }
@@ -1454,9 +1546,12 @@ pub fn mir_op_to_compat(
             bias_name: bias.clone(),
         }),
 
-        MirOp::MILMatMul { name, x, y, transpose_y } => {
-            Ok(MirOpCompat::MatMul { name: name.clone(), x: x.0.clone(), y: y.0.clone(), transpose_y: *transpose_y })
-        }
+        MirOp::MILMatMul { name, x, y, transpose_y } => Ok(MirOpCompat::MatMul {
+            name: name.clone(),
+            x: x.0.clone(),
+            y: y.0.clone(),
+            transpose_y: *transpose_y,
+        }),
 
         MirOp::MILAdd { name, x, y } => {
             Ok(MirOpCompat::Add { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
@@ -1485,10 +1580,10 @@ pub fn mir_op_to_compat(
             // as the primary source. For the shape-aware version that can also
             // look up the input node's shape from the graph, see
             // mir_op_to_compat_with_shapes.
-            let has_zeros = shape.iter().any(|&d| d == 0);
+            let has_zeros = shape.contains(&0);
             let node_shape_valid = !node_shape.is_empty()
                 && node_shape.len() == shape.len()
-                && !node_shape.iter().any(|&d| d == 0);
+                && !node_shape.contains(&0);
 
             let resolved_shape: Vec<i32> = if !has_zeros {
                 // No zeros — shape is already concrete
@@ -1499,11 +1594,11 @@ pub fn mir_op_to_compat(
             } else {
                 // Fallback: try positional resolution from node_shape
                 let mut resolved = shape.clone();
-                for i in 0..resolved.len() {
-                    if resolved[i] == 0 {
+                for (i, slot) in resolved.iter_mut().enumerate() {
+                    if *slot == 0 {
                         if let Some(&dim) = node_shape.get(i) {
                             if dim != 0 {
-                                resolved[i] = dim;
+                                *slot = dim;
                             }
                         }
                     }
@@ -1516,7 +1611,7 @@ pub fn mir_op_to_compat(
             // models — Core ML treats 0 as a literal zero dimension, not "infer
             // from input". This is a hard gate; shape inference must succeed
             // before we can emit a valid model. (T-29 / I-08)
-            if resolved_shape.iter().any(|&d| d == 0) {
+            if resolved_shape.contains(&0) {
                 let zero_positions: Vec<usize> = resolved_shape
                     .iter()
                     .enumerate()
@@ -1529,15 +1624,15 @@ pub fn mir_op_to_compat(
                      node_shape: {:?}. \
                      Zero dimensions produce invalid Core ML models — shape inference \
                      must resolve all placeholders before emission.",
-                    name, zero_positions, resolved_shape, shape, node_shape
+                    name,
+                    zero_positions,
+                    resolved_shape,
+                    shape,
+                    node_shape
                 );
             }
 
-            Ok(MirOpCompat::Reshape {
-                name: name.clone(),
-                x: x.0.clone(),
-                shape: resolved_shape,
-            })
+            Ok(MirOpCompat::Reshape { name: name.clone(), x: x.0.clone(), shape: resolved_shape })
         }
 
         MirOp::MILTranspose { name, x, perm } => Ok(MirOpCompat::Transpose {
@@ -1555,18 +1650,16 @@ pub fn mir_op_to_compat(
             begin_mask,
             end_mask,
             squeeze_mask,
-        } => {
-            Ok(MirOpCompat::SliceByIndex {
-                name: name.clone(),
-                x: x.0.clone(),
-                begin: begin.iter().map(|&d| d as i32).collect(),
-                end: end.iter().map(|&d| d as i32).collect(),
-                stride: stride.iter().map(|&d| d as i32).collect(),
-                begin_mask: begin_mask.clone(),
-                end_mask: end_mask.clone(),
-                squeeze_mask: squeeze_mask.clone(),
-            })
-        }
+        } => Ok(MirOpCompat::SliceByIndex {
+            name: name.clone(),
+            x: x.0.clone(),
+            begin: begin.iter().map(|&d| d as i32).collect(),
+            end: end.iter().map(|&d| d as i32).collect(),
+            stride: stride.iter().map(|&d| d as i32).collect(),
+            begin_mask: begin_mask.clone(),
+            end_mask: end_mask.clone(),
+            squeeze_mask: squeeze_mask.clone(),
+        }),
 
         MirOp::MILConcat { name, values, axis } => Ok(MirOpCompat::Concat {
             name: name.clone(),
@@ -1582,21 +1675,16 @@ pub fn mir_op_to_compat(
             Ok(MirOpCompat::Gelu { name: name.clone(), x: x.0.clone(), mode: mode.clone() })
         }
 
-        MirOp::MILScaledDotProductAttention {
-            name,
-            query,
-            key,
-            value,
-            attention_mask,
-            scale,
-        } => Ok(MirOpCompat::ScaledDotProductAttention {
-            name: name.clone(),
-            query: query.0.clone(),
-            key: key.0.clone(),
-            value: value.0.clone(),
-            attention_mask: attention_mask.as_ref().map(|id| id.0.clone()),
-            scale: *scale,
-        }),
+        MirOp::MILScaledDotProductAttention { name, query, key, value, attention_mask, scale } => {
+            Ok(MirOpCompat::ScaledDotProductAttention {
+                name: name.clone(),
+                query: query.0.clone(),
+                key: key.0.clone(),
+                value: value.0.clone(),
+                attention_mask: attention_mask.as_ref().map(|id| id.0.clone()),
+                scale: *scale,
+            })
+        }
 
         MirOp::MILReadState { name, state_id, shape, dtype } => {
             // Propagate dtype from the MIR node's dtype field.
@@ -1757,10 +1845,7 @@ pub fn mir_op_to_compat(
         }),
 
         // ─── Neg: arithmetic negation (needed for RoPE rotate_half) ───
-        MirOp::MILNeg { name, x } => Ok(MirOpCompat::Neg {
-            name: name.clone(),
-            x: x.0.clone(),
-        }),
+        MirOp::MILNeg { name, x } => Ok(MirOpCompat::Neg { name: name.clone(), x: x.0.clone() }),
 
         MirOp::MILExpandDims { name, x, axis } => Ok(MirOpCompat::ExpandDims {
             name: name.clone(),
@@ -1773,101 +1858,156 @@ pub fn mir_op_to_compat(
             axis: axis.iter().map(|&a| a as i32).collect(),
         }),
         MirOp::MILSqrt { name, x } => Ok(MirOpCompat::Sqrt { name: name.clone(), x: x.0.clone() }),
-        MirOp::MILPow { name, x, y } => Ok(MirOpCompat::Pow { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
+        MirOp::MILPow { name, x, y } => {
+            Ok(MirOpCompat::Pow { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
         MirOp::MILClip { name, x, min_val, max_val } => Ok(MirOpCompat::Clip {
-            name: name.clone(), x: x.0.clone(), min_val: *min_val, max_val: *max_val,
+            name: name.clone(),
+            x: x.0.clone(),
+            min_val: *min_val,
+            max_val: *max_val,
         }),
-        MirOp::MILEqual { name, x, y } => Ok(MirOpCompat::Equal { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
-        MirOp::MILNotEqual { name, x, y } => Ok(MirOpCompat::NotEqual { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
-        MirOp::MILGreater { name, x, y } => Ok(MirOpCompat::Greater { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
-        MirOp::MILGreaterEqual { name, x, y } => Ok(MirOpCompat::GreaterEqual { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
-        MirOp::MILLess { name, x, y } => Ok(MirOpCompat::Less { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
-        MirOp::MILLessEqual { name, x, y } => Ok(MirOpCompat::LessEqual { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
-        MirOp::MILLogicalNot { name, x } => Ok(MirOpCompat::LogicalNot { name: name.clone(), x: x.0.clone() }),
-        MirOp::MILLogicalAnd { name, x, y } => Ok(MirOpCompat::LogicalAnd { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
-        MirOp::MILLogicalOr { name, x, y } => Ok(MirOpCompat::LogicalOr { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
+        MirOp::MILEqual { name, x, y } => {
+            Ok(MirOpCompat::Equal { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
+        MirOp::MILNotEqual { name, x, y } => {
+            Ok(MirOpCompat::NotEqual { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
+        MirOp::MILGreater { name, x, y } => {
+            Ok(MirOpCompat::Greater { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
+        MirOp::MILGreaterEqual { name, x, y } => {
+            Ok(MirOpCompat::GreaterEqual { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
+        MirOp::MILLess { name, x, y } => {
+            Ok(MirOpCompat::Less { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
+        MirOp::MILLessEqual { name, x, y } => {
+            Ok(MirOpCompat::LessEqual { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
+        MirOp::MILLogicalNot { name, x } => {
+            Ok(MirOpCompat::LogicalNot { name: name.clone(), x: x.0.clone() })
+        }
+        MirOp::MILLogicalAnd { name, x, y } => {
+            Ok(MirOpCompat::LogicalAnd { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
+        MirOp::MILLogicalOr { name, x, y } => {
+            Ok(MirOpCompat::LogicalOr { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
         MirOp::MILPad { name, x, pad_amounts, mode, constant_value } => Ok(MirOpCompat::Pad {
-            name: name.clone(), x: x.0.clone(),
-            pad_amounts: pad_amounts.iter().map(|&d| d as i32).collect(), mode: mode.clone(), constant_value: *constant_value,
+            name: name.clone(),
+            x: x.0.clone(),
+            pad_amounts: pad_amounts.iter().map(|&d| d as i32).collect(),
+            mode: mode.clone(),
+            constant_value: *constant_value,
         }),
         MirOp::MILReduceMax { name, x, axes, keep_dims } => Ok(MirOpCompat::ReduceMax {
-            name: name.clone(), x: x.0.clone(),
-            axes: axes.iter().map(|&a| a as i64).collect(), keep_dims: *keep_dims,
+            name: name.clone(),
+            x: x.0.clone(),
+            axes: axes.iter().map(|&a| a as i64).collect(),
+            keep_dims: *keep_dims,
         }),
         MirOp::MILReduceMin { name, x, axes, keep_dims } => Ok(MirOpCompat::ReduceMin {
-            name: name.clone(), x: x.0.clone(),
-            axes: axes.iter().map(|&a| a as i64).collect(), keep_dims: *keep_dims,
+            name: name.clone(),
+            x: x.0.clone(),
+            axes: axes.iter().map(|&a| a as i64).collect(),
+            keep_dims: *keep_dims,
         }),
         MirOp::MILReduceProd { name, x, axes, keep_dims } => Ok(MirOpCompat::ReduceProd {
-            name: name.clone(), x: x.0.clone(),
-            axes: axes.iter().map(|&a| a as i64).collect(), keep_dims: *keep_dims,
+            name: name.clone(),
+            x: x.0.clone(),
+            axes: axes.iter().map(|&a| a as i64).collect(),
+            keep_dims: *keep_dims,
         }),
         MirOp::MILSelect { name, condition, x, y } => Ok(MirOpCompat::Select {
-            name: name.clone(), condition: condition.0.clone(), x: x.0.clone(), y: y.0.clone(),
+            name: name.clone(),
+            condition: condition.0.clone(),
+            x: x.0.clone(),
+            y: y.0.clone(),
         }),
-        MirOp::MILLeakyRelu { name, x, alpha } => Ok(MirOpCompat::LeakyRelu {
-            name: name.clone(), x: x.0.clone(), alpha: *alpha,
-        }),
-        MirOp::MILFloorDiv { name, x, y } => Ok(MirOpCompat::FloorDiv { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
-        MirOp::MILMod { name, x, y } => Ok(MirOpCompat::Mod { name: name.clone(), x: x.0.clone(), y: y.0.clone() }),
+        MirOp::MILLeakyRelu { name, x, alpha } => {
+            Ok(MirOpCompat::LeakyRelu { name: name.clone(), x: x.0.clone(), alpha: *alpha })
+        }
+        MirOp::MILFloorDiv { name, x, y } => {
+            Ok(MirOpCompat::FloorDiv { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
+        MirOp::MILMod { name, x, y } => {
+            Ok(MirOpCompat::Mod { name: name.clone(), x: x.0.clone(), y: y.0.clone() })
+        }
         MirOp::MILCeil { name, x } => Ok(MirOpCompat::Ceil { name: name.clone(), x: x.0.clone() }),
-        MirOp::MILFloor { name, x } => Ok(MirOpCompat::Floor { name: name.clone(), x: x.0.clone() }),
-        MirOp::MILRound { name, x } => Ok(MirOpCompat::Round { name: name.clone(), x: x.0.clone() }),
+        MirOp::MILFloor { name, x } => {
+            Ok(MirOpCompat::Floor { name: name.clone(), x: x.0.clone() })
+        }
+        MirOp::MILRound { name, x } => {
+            Ok(MirOpCompat::Round { name: name.clone(), x: x.0.clone() })
+        }
         MirOp::MILSign { name, x } => Ok(MirOpCompat::Sign { name: name.clone(), x: x.0.clone() }),
-        MirOp::MILLog { name, x, .. } => Ok(MirOpCompat::Log { name: name.clone(), x: x.0.clone() }),
+        MirOp::MILLog { name, x, .. } => {
+            Ok(MirOpCompat::Log { name: name.clone(), x: x.0.clone() })
+        }
 
         // ─── Constexpr / Weight Compression (T-39: I-18) ────────────
-        MirOp::MILConstexprAffineDequantize { name, quantized_data, scale, zero_point, axis } =>
+        MirOp::MILConstexprAffineDequantize { name, quantized_data, scale, zero_point, axis } => {
             Ok(MirOpCompat::ConstexprAffineDequantize {
                 name: name.clone(),
                 quantized_data: quantized_data.clone(),
                 scale: *scale,
                 zero_point: *zero_point,
                 axis: *axis as i64,
-            }),
-        MirOp::MILConstexprBlockwiseShiftScale { name, data, scale, offset, block_size } =>
+            })
+        }
+        MirOp::MILConstexprBlockwiseShiftScale { name, data, scale, offset, block_size } => {
             Ok(MirOpCompat::ConstexprBlockwiseShiftScale {
                 name: name.clone(),
                 data: data.clone(),
                 scale: scale.clone(),
                 offset: offset.clone(),
                 block_size: block_size.iter().map(|&d| d as i64).collect(),
-            }),
-        MirOp::MILConstexprLutToDense { name, indices, lut, num_bits } =>
+            })
+        }
+        MirOp::MILConstexprLutToDense { name, indices, lut, num_bits } => {
             Ok(MirOpCompat::ConstexprLutToDense {
                 name: name.clone(),
                 indices: indices.clone(),
                 lut: lut.clone(),
                 num_bits: *num_bits as i64,
-            }),
-        MirOp::MILConstexprSparseToDense { name, nonzero_data, shape, default_value } =>
+            })
+        }
+        MirOp::MILConstexprSparseToDense { name, nonzero_data, shape, default_value } => {
             Ok(MirOpCompat::ConstexprSparseToDense {
                 name: name.clone(),
                 nonzero_data: nonzero_data.clone(),
                 shape: shape.iter().map(|&d| d as i64).collect(),
                 default_value: *default_value,
-            }),
-        MirOp::MILConstexprCast { name, data, dtype } =>
-            Ok(MirOpCompat::ConstexprCast {
-                name: name.clone(),
-                data: data.clone(),
-                dtype: mil_dtype_to_compat(dtype),
-            }),
-        MirOp::MILConstexprLutToSparse { name, data, num_bits } =>
+            })
+        }
+        MirOp::MILConstexprCast { name, data, dtype } => Ok(MirOpCompat::ConstexprCast {
+            name: name.clone(),
+            data: data.clone(),
+            dtype: mil_dtype_to_compat(dtype),
+        }),
+        MirOp::MILConstexprLutToSparse { name, data, num_bits } => {
             Ok(MirOpCompat::ConstexprLutToSparse {
                 name: name.clone(),
                 data: data.clone(),
                 num_bits: *num_bits as i64,
-            }),
-        MirOp::MILConstexprSparseBlockwiseShiftScale { name, data, scale, offset, block_size, block_axis } =>
-            Ok(MirOpCompat::ConstexprSparseBlockwiseShiftScale {
-                name: name.clone(),
-                data: data.clone(),
-                scale: scale.clone(),
-                offset: offset.clone(),
-                block_size: block_size.iter().map(|&d| d as i64).collect(),
-                block_axis: *block_axis as i64,
-            }),
+            })
+        }
+        MirOp::MILConstexprSparseBlockwiseShiftScale {
+            name,
+            data,
+            scale,
+            offset,
+            block_size,
+            block_axis,
+        } => Ok(MirOpCompat::ConstexprSparseBlockwiseShiftScale {
+            name: name.clone(),
+            data: data.clone(),
+            scale: scale.clone(),
+            offset: offset.clone(),
+            block_size: block_size.iter().map(|&d| d as i64).collect(),
+            block_axis: *block_axis as i64,
+        }),
 
         // ─── Full-coverage wildcard for all remaining MirOp variants ───
         // These map to MirOpCompat::Unsupported which carries the op kind
@@ -1895,7 +2035,9 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILEqual { .. } => unreachable!("MILEqual is handled by mir_op_to_compat"),
         MirOp::MILNotEqual { .. } => unreachable!("MILNotEqual is handled by mir_op_to_compat"),
         MirOp::MILGreater { .. } => unreachable!("MILGreater is handled by mir_op_to_compat"),
-        MirOp::MILGreaterEqual { .. } => unreachable!("MILGreaterEqual is handled by mir_op_to_compat"),
+        MirOp::MILGreaterEqual { .. } => {
+            unreachable!("MILGreaterEqual is handled by mir_op_to_compat")
+        }
         MirOp::MILLess { .. } => unreachable!("MILLess is handled by mir_op_to_compat"),
         MirOp::MILLessEqual { .. } => unreachable!("MILLessEqual is handled by mir_op_to_compat"),
         MirOp::MILLogicalAnd { .. } => unreachable!("MILLogicalAnd is handled by mir_op_to_compat"),
@@ -2056,7 +2198,10 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
             unreachable!("constexpr_affine_dequantize is now handled in mir_op_to_compat: {}", name)
         }
         MirOp::MILConstexprBlockwiseShiftScale { name, .. } => {
-            unreachable!("constexpr_blockwise_shift_scale is now handled in mir_op_to_compat: {}", name)
+            unreachable!(
+                "constexpr_blockwise_shift_scale is now handled in mir_op_to_compat: {}",
+                name
+            )
         }
         MirOp::MILConstexprLutToDense { name, .. } => {
             unreachable!("constexpr_lut_to_dense is now handled in mir_op_to_compat: {}", name)
@@ -2071,7 +2216,10 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
             unreachable!("constexpr_lut_to_sparse is now handled in mir_op_to_compat: {}", name)
         }
         MirOp::MILConstexprSparseBlockwiseShiftScale { name, .. } => {
-            unreachable!("constexpr_sparse_blockwise_shift_scale is now handled in mir_op_to_compat: {}", name)
+            unreachable!(
+                "constexpr_sparse_blockwise_shift_scale is now handled in mir_op_to_compat: {}",
+                name
+            )
         }
         MirOp::MILRnn { name, .. } => ("rnn".into(), name.clone(), "{}".into()),
         MirOp::MILGru { name, .. } => ("gru".into(), name.clone(), "{}".into()),
@@ -2742,8 +2890,11 @@ mod tests {
             MirOpCompat::Reshape { name, x, shape } => {
                 assert_eq!(name, "attn_q_4d");
                 assert_eq!(x, "q_proj");
-                assert_eq!(shape, vec![1, 512, 16, 128],
-                    "Zero placeholders must be resolved from node_shape");
+                assert_eq!(
+                    shape,
+                    vec![1, 512, 16, 128],
+                    "Zero placeholders must be resolved from node_shape"
+                );
             }
             _ => panic!("Expected Reshape compat"),
         }
@@ -2760,8 +2911,11 @@ mod tests {
         let compat2 = mir_op_to_compat(&op2, node_shape2, &resolver).unwrap();
         match compat2 {
             MirOpCompat::Reshape { shape, .. } => {
-                assert_eq!(shape, vec![1, 512, 2048],
-                    "3D zero placeholders must be resolved from node_shape");
+                assert_eq!(
+                    shape,
+                    vec![1, 512, 2048],
+                    "3D zero placeholders must be resolved from node_shape"
+                );
             }
             _ => panic!("Expected Reshape compat"),
         }
@@ -2794,327 +2948,378 @@ mod tests {
         let node_shape4: &[usize] = &[];
 
         let result4 = mir_op_to_compat(&op4, node_shape4, &resolver);
-        assert!(result4.is_err(),
-            "Reshape with unresolvable zero dimensions must return an error, not emit zeros");
+        assert!(
+            result4.is_err(),
+            "Reshape with unresolvable zero dimensions must return an error, not emit zeros"
+        );
         let err_msg = result4.unwrap_err().to_string();
-        assert!(err_msg.contains("unresolved zero dimensions"),
-            "Error message should mention unresolved zero dimensions, got: {err_msg}");
-        assert!(err_msg.contains("fallback"),
-            "Error message should mention the op name, got: {err_msg}");
+        assert!(
+            err_msg.contains("unresolved zero dimensions"),
+            "Error message should mention unresolved zero dimensions, got: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("fallback"),
+            "Error message should mention the op name, got: {err_msg}"
+        );
     }
 }
 
-    #[test]
-    fn test_resolve_reshape_shape_element_count_inference() {
-        // Test element-count-based zero resolution for rank-changing reshapes.
-        // This is the key scenario for attn_reshape_3d where positional
-        // resolution gives wrong results.
+#[test]
+fn test_resolve_reshape_shape_element_count_inference() {
+    // Test element-count-based zero resolution for rank-changing reshapes.
+    // This is the key scenario for attn_reshape_3d where positional
+    // resolution gives wrong results.
 
-        // Case 1: 3D→4D with same rank (positional works)
-        // input [1, 512, 2048] → target [0, 0, 16, 128]
-        let result = resolve_reshape_shape(&[0, 0, 16, 128], &[1, 512, 2048], "test");
-        assert_eq!(result, vec![1, 512, 16, 128], "3D→4D positional should work");
+    // Case 1: 3D→4D with same rank (positional works)
+    // input [1, 512, 2048] → target [0, 0, 16, 128]
+    let result = resolve_reshape_shape(&[0, 0, 16, 128], &[1, 512, 2048], "test");
+    assert_eq!(result, vec![1, 512, 16, 128], "3D→4D positional should work");
 
-        // Case 2: 4D→3D (positional WRONG, element-count needed)
-        // input [1, 16, 512, 128] → target [0, 0, 2048]
-        // Positional would give [1, 16, 2048] (wrong), element-count gives [1, 512, 2048]
-        let result = resolve_reshape_shape(&[0, 0, 2048], &[1, 16, 512, 128], "test");
-        assert_eq!(result, vec![1, 512, 2048], "4D→3D should use element-count");
+    // Case 2: 4D→3D (positional WRONG, element-count needed)
+    // input [1, 16, 512, 128] → target [0, 0, 2048]
+    // Positional would give [1, 16, 2048] (wrong), element-count gives [1, 512, 2048]
+    let result = resolve_reshape_shape(&[0, 0, 2048], &[1, 16, 512, 128], "test");
+    assert_eq!(result, vec![1, 512, 2048], "4D→3D should use element-count");
 
-        // Case 3: Single zero dimension
-        // input [1, 512, 1024] → target [1, 0, 1024]
-        let result = resolve_reshape_shape(&[1, 0, 1024], &[1, 512, 1024], "test");
-        assert_eq!(result, vec![1, 512, 1024], "Single zero should resolve directly");
+    // Case 3: Single zero dimension
+    // input [1, 512, 1024] → target [1, 0, 1024]
+    let result = resolve_reshape_shape(&[1, 0, 1024], &[1, 512, 1024], "test");
+    assert_eq!(result, vec![1, 512, 1024], "Single zero should resolve directly");
 
-        // Case 4: No zeros (concrete shape)
-        let result = resolve_reshape_shape(&[1, 512, 16, 128], &[1, 512, 2048], "test");
-        assert_eq!(result, vec![1, 512, 16, 128], "No zeros should pass through");
-    }
+    // Case 4: No zeros (concrete shape)
+    let result = resolve_reshape_shape(&[1, 512, 16, 128], &[1, 512, 2048], "test");
+    assert_eq!(result, vec![1, 512, 16, 128], "No zeros should pass through");
+}
 
-    #[test]
-    fn test_resolve_reshape_shape_two_zeros_product_so_far() {
-        // T-30 regression test: previously the 2-zero case used `% 1 == 0`
-        // which is always true, making the else branch dead code. Now uses
-        // `product_so_far` consistently. These tests verify the 2-zero case
-        // resolves correctly with the fixed algorithm.
+#[test]
+fn test_resolve_reshape_shape_two_zeros_product_so_far() {
+    // T-30 regression test: previously the 2-zero case used `% 1 == 0`
+    // which is always true, making the else branch dead code. Now uses
+    // `product_so_far` consistently. These tests verify the 2-zero case
+    // resolves correctly with the fixed algorithm.
 
-        // Case 1: Two zeros, attention reshape [0, 0, 2048] from [1, 16, 512, 128]
-        // Positional resolution gives [1, 16, 2048] which is wrong (1*16*2048 ≠ 1*16*512*128).
-        // Element-count: non_zero_product = 2048, remaining = 1048576/2048 = 512.
-        // Two zeros at positions 0,1: first→1, last→512. Result: [1, 512, 2048]
-        let result = resolve_reshape_shape(&[0, 0, 2048], &[1, 16, 512, 128], "test");
-        assert_eq!(result, vec![1, 512, 2048],
+    // Case 1: Two zeros, attention reshape [0, 0, 2048] from [1, 16, 512, 128]
+    // Positional resolution gives [1, 16, 2048] which is wrong (1*16*2048 ≠ 1*16*512*128).
+    // Element-count: non_zero_product = 2048, remaining = 1048576/2048 = 512.
+    // Two zeros at positions 0,1: first→1, last→512. Result: [1, 512, 2048]
+    let result = resolve_reshape_shape(&[0, 0, 2048], &[1, 16, 512, 128], "test");
+    assert_eq!(result, vec![1, 512, 2048],
             "Two zeros should use product_so_far factorization: first zero=1, last=remaining/product_so_far");
 
-        // Case 2: Two zeros [0, 0, 16, 128] from [1, 512, 2048]
-        // Positional works: [1, 512, 16, 128], elements = 1*512*16*128 = 1048576 = 1*512*2048
-        let result = resolve_reshape_shape(&[0, 0, 16, 128], &[1, 512, 2048], "test");
-        assert_eq!(result, vec![1, 512, 16, 128],
-            "Positional resolution should work when ranks allow it");
+    // Case 2: Two zeros [0, 0, 16, 128] from [1, 512, 2048]
+    // Positional works: [1, 512, 16, 128], elements = 1*512*16*128 = 1048576 = 1*512*2048
+    let result = resolve_reshape_shape(&[0, 0, 16, 128], &[1, 512, 2048], "test");
+    assert_eq!(
+        result,
+        vec![1, 512, 16, 128],
+        "Positional resolution should work when ranks allow it"
+    );
 
-        // Case 3: Two zeros with larger remaining product
-        // [0, 0, 64] from [2, 8, 4, 4] = 256 elements
-        // Positional: wrong rank, fallback to element-count.
-        // non_zero_product = 64, remaining = 4.
-        // first zero→1, last zero→4. Result: [1, 4, 64]
-        let result = resolve_reshape_shape(&[0, 0, 64], &[2, 8, 4, 4], "test");
-        assert_eq!(result, vec![1, 4, 64],
-            "Two zeros with even remaining should resolve via product_so_far");
+    // Case 3: Two zeros with larger remaining product
+    // [0, 0, 64] from [2, 8, 4, 4] = 256 elements
+    // Positional: wrong rank, fallback to element-count.
+    // non_zero_product = 64, remaining = 4.
+    // first zero→1, last zero→4. Result: [1, 4, 64]
+    let result = resolve_reshape_shape(&[0, 0, 64], &[2, 8, 4, 4], "test");
+    assert_eq!(
+        result,
+        vec![1, 4, 64],
+        "Two zeros with even remaining should resolve via product_so_far"
+    );
+}
+
+#[test]
+fn test_resolve_reshape_shape_three_plus_zeros() {
+    // Three or more zeros: all but last set to 1, last = remaining/product_so_far
+
+    // Case 1: [0, 0, 0, 512] from [2, 8, 4, 4, 4] = 1024 elements
+    // non_zero_product = 512, remaining = 2.
+    // Positions 0,1,2 are zeros: first two → 1, last → 2.
+    // Result: [1, 1, 2, 512]
+    let result = resolve_reshape_shape(&[0, 0, 0, 512], &[2, 8, 4, 4, 4], "test");
+    assert_eq!(
+        result,
+        vec![1, 1, 2, 512],
+        "Three zeros: first two become 1, last gets remaining/product_so_far"
+    );
+
+    // Case 2: [0, 0, 0, 0, 128] from [1, 512, 128] = 65536 elements
+    // non_zero_product = 128, remaining = 512.
+    // Positions 0,1,2,3 are zeros: first three → 1, last → 512.
+    // product_so_far = 1*1*1 = 1, remaining % 1 == 0 → true.
+    // Result: [1, 1, 1, 512, 128]
+    let result = resolve_reshape_shape(&[0, 0, 0, 0, 128], &[1, 512, 128], "test");
+    assert_eq!(
+        result,
+        vec![1, 1, 1, 512, 128],
+        "Four zeros: first three become 1, last gets remaining"
+    );
+}
+
+#[test]
+fn test_resolve_reshape_shape_single_zero() {
+    // Single zero should resolve directly to remaining
+
+    // [1, 0, 1024] from [1, 512, 1024] = 524288 elements
+    // non_zero_product = 1 * 1024 = 1024, remaining = 512
+    // Single zero at position 1 → 512
+    let result = resolve_reshape_shape(&[1, 0, 1024], &[1, 512, 1024], "test");
+    assert_eq!(result, vec![1, 512, 1024], "Single zero should resolve to remaining elements");
+}
+
+#[test]
+fn test_resolve_reshape_shape_zero_input() {
+    // Zero-element input shape should return target as-is
+
+    let result = resolve_reshape_shape(&[0, 0, 16, 128], &[0, 0, 0], "test");
+    assert_eq!(
+        result,
+        vec![0, 0, 16, 128],
+        "Zero-element input should return target shape unchanged"
+    );
+}
+
+#[test]
+fn test_resolve_reshape_shape_incompatible_count() {
+    // Element count doesn't divide evenly — return target as-is
+
+    // 2*3 = 6 elements, target [0, 4] = 4 * ? — 6/4 = 1.5, not divisible
+    let result = resolve_reshape_shape(&[0, 4], &[2, 3], "test");
+    assert_eq!(result, vec![0, 4], "Incompatible element count should return target unchanged");
+}
+
+// ─── SDPA attention_mask + scale tests (T-31) ───────────────────
+
+/// Helper to create MirNodeId from &str in tests.
+fn _mk_nid(s: &str) -> ane_ir::mir::MirNodeId {
+    ane_ir::mir::MirNodeId(s.to_string())
+}
+
+/// Dummy weight resolver for SDPA conversion tests.
+struct _DummyResolver;
+impl WeightResolver for _DummyResolver {
+    fn resolve(&self, _path: &str) -> Option<WeightData> {
+        None
     }
+}
 
-    #[test]
-    fn test_resolve_reshape_shape_three_plus_zeros() {
-        // Three or more zeros: all but last set to 1, last = remaining/product_so_far
-
-        // Case 1: [0, 0, 0, 512] from [2, 8, 4, 4, 4] = 1024 elements
-        // non_zero_product = 512, remaining = 2.
-        // Positions 0,1,2 are zeros: first two → 1, last → 2.
-        // Result: [1, 1, 2, 512]
-        let result = resolve_reshape_shape(&[0, 0, 0, 512], &[2, 8, 4, 4, 4], "test");
-        assert_eq!(result, vec![1, 1, 2, 512],
-            "Three zeros: first two become 1, last gets remaining/product_so_far");
-
-        // Case 2: [0, 0, 0, 0, 128] from [1, 512, 128] = 65536 elements
-        // non_zero_product = 128, remaining = 512.
-        // Positions 0,1,2,3 are zeros: first three → 1, last → 512.
-        // product_so_far = 1*1*1 = 1, remaining % 1 == 0 → true.
-        // Result: [1, 1, 1, 512, 128]
-        let result = resolve_reshape_shape(&[0, 0, 0, 0, 128], &[1, 512, 128], "test");
-        assert_eq!(result, vec![1, 1, 1, 512, 128],
-            "Four zeros: first three become 1, last gets remaining");
-    }
-
-    #[test]
-    fn test_resolve_reshape_shape_single_zero() {
-        // Single zero should resolve directly to remaining
-
-        // [1, 0, 1024] from [1, 512, 1024] = 524288 elements
-        // non_zero_product = 1 * 1024 = 1024, remaining = 512
-        // Single zero at position 1 → 512
-        let result = resolve_reshape_shape(&[1, 0, 1024], &[1, 512, 1024], "test");
-        assert_eq!(result, vec![1, 512, 1024],
-            "Single zero should resolve to remaining elements");
-    }
-
-    #[test]
-    fn test_resolve_reshape_shape_zero_input() {
-        // Zero-element input shape should return target as-is
-
-        let result = resolve_reshape_shape(&[0, 0, 16, 128], &[0, 0, 0], "test");
-        assert_eq!(result, vec![0, 0, 16, 128],
-            "Zero-element input should return target shape unchanged");
-    }
-
-    #[test]
-    fn test_resolve_reshape_shape_incompatible_count() {
-        // Element count doesn't divide evenly — return target as-is
-
-        // 2*3 = 6 elements, target [0, 4] = 4 * ? — 6/4 = 1.5, not divisible
-        let result = resolve_reshape_shape(&[0, 4], &[2, 3], "test");
-        assert_eq!(result, vec![0, 4],
-            "Incompatible element count should return target unchanged");
-    }
-
-    // ─── SDPA attention_mask + scale tests (T-31) ───────────────────
-
-    /// Helper to create MirNodeId from &str in tests.
-    fn mk_nid(s: &str) -> ane_ir::mir::MirNodeId {
-        ane_ir::mir::MirNodeId(s.to_string())
-    }
-
-    /// Dummy weight resolver for SDPA conversion tests.
-    struct DummyResolver;
-    impl WeightResolver for DummyResolver {
-        fn resolve(&self, _path: &str) -> Option<WeightData> { None }
-    }
-
-    #[test]
-    fn test_sdpa_compat_preserves_attention_mask() {
-        // attention_mask should be preserved through MirOp → MirOpCompat conversion
-        let op = MirOp::MILScaledDotProductAttention {
-            name: "sdpa_masked".into(),
-            query: mk_nid("q"),
-            key: mk_nid("k"),
-            value: mk_nid("v"),
-            attention_mask: Some(mk_nid("causal_mask")),
-            scale: None,
-        };
-        let resolver = DummyResolver;
-        let compat = mir_op_to_compat(&op, &[], &resolver).expect("SDPA conversion should succeed");
-        match compat {
-            MirOpCompat::ScaledDotProductAttention { attention_mask, scale, .. } => {
-                assert_eq!(attention_mask, Some("causal_mask".to_string()),
-                    "attention_mask should be preserved through MirOp → MirOpCompat conversion");
-                assert_eq!(scale, None,
-                    "scale should be None when source is None");
-            }
-            _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
+#[test]
+fn test_sdpa_compat_preserves_attention_mask() {
+    // attention_mask should be preserved through MirOp → MirOpCompat conversion
+    let op = MirOp::MILScaledDotProductAttention {
+        name: "sdpa_masked".into(),
+        query: _mk_nid("q"),
+        key: _mk_nid("k"),
+        value: _mk_nid("v"),
+        attention_mask: Some(_mk_nid("causal_mask")),
+        scale: None,
+    };
+    let resolver = _DummyResolver;
+    let compat = mir_op_to_compat(&op, &[], &resolver).expect("SDPA conversion should succeed");
+    match compat {
+        MirOpCompat::ScaledDotProductAttention { attention_mask, scale, .. } => {
+            assert_eq!(
+                attention_mask,
+                Some("causal_mask".to_string()),
+                "attention_mask should be preserved through MirOp → MirOpCompat conversion"
+            );
+            assert_eq!(scale, None, "scale should be None when source is None");
         }
+        _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
     }
+}
 
-    #[test]
-    fn test_sdpa_compat_preserves_scale() {
-        // scale should be preserved through MirOp → MirOpCompat conversion
-        let op = MirOp::MILScaledDotProductAttention {
-            name: "sdpa_scaled".into(),
-            query: mk_nid("q"),
-            key: mk_nid("k"),
-            value: mk_nid("v"),
-            attention_mask: None,
-            scale: Some(0.125),
-        };
-        let resolver = DummyResolver;
-        let compat = mir_op_to_compat(&op, &[], &resolver).expect("SDPA conversion should succeed");
-        match compat {
-            MirOpCompat::ScaledDotProductAttention { attention_mask, scale, .. } => {
-                assert!(attention_mask.is_none(),
-                    "attention_mask should be None when source is None");
-                assert_eq!(scale, Some(0.125),
-                    "scale should be preserved through MirOp → MirOpCompat conversion");
-            }
-            _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
+#[test]
+fn test_sdpa_compat_preserves_scale() {
+    // scale should be preserved through MirOp → MirOpCompat conversion
+    let op = MirOp::MILScaledDotProductAttention {
+        name: "sdpa_scaled".into(),
+        query: _mk_nid("q"),
+        key: _mk_nid("k"),
+        value: _mk_nid("v"),
+        attention_mask: None,
+        scale: Some(0.125),
+    };
+    let resolver = _DummyResolver;
+    let compat = mir_op_to_compat(&op, &[], &resolver).expect("SDPA conversion should succeed");
+    match compat {
+        MirOpCompat::ScaledDotProductAttention { attention_mask, scale, .. } => {
+            assert!(attention_mask.is_none(), "attention_mask should be None when source is None");
+            assert_eq!(
+                scale,
+                Some(0.125),
+                "scale should be preserved through MirOp → MirOpCompat conversion"
+            );
         }
+        _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
     }
+}
 
-    #[test]
-    fn test_sdpa_compat_preserves_both_mask_and_scale() {
-        // Both attention_mask and scale should be preserved together
-        let op = MirOp::MILScaledDotProductAttention {
-            name: "sdpa_full".into(),
-            query: mk_nid("q"),
-            key: mk_nid("k"),
-            value: mk_nid("v"),
-            attention_mask: Some(mk_nid("attn_mask")),
-            scale: Some(0.0625),
-        };
-        let resolver = DummyResolver;
-        let compat = mir_op_to_compat(&op, &[], &resolver).expect("SDPA conversion should succeed");
-        match compat {
-            MirOpCompat::ScaledDotProductAttention { name, query, key, value, attention_mask, scale } => {
-                assert_eq!(name, "sdpa_full");
-                assert_eq!(query, "q");
-                assert_eq!(key, "k");
-                assert_eq!(value, "v");
-                assert_eq!(attention_mask, Some("attn_mask".to_string()),
-                    "attention_mask should be preserved");
-                assert_eq!(scale, Some(0.0625),
-                    "scale should be preserved");
-            }
-            _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
+#[test]
+fn test_sdpa_compat_preserves_both_mask_and_scale() {
+    // Both attention_mask and scale should be preserved together
+    let op = MirOp::MILScaledDotProductAttention {
+        name: "sdpa_full".into(),
+        query: _mk_nid("q"),
+        key: _mk_nid("k"),
+        value: _mk_nid("v"),
+        attention_mask: Some(_mk_nid("attn_mask")),
+        scale: Some(0.0625),
+    };
+    let resolver = _DummyResolver;
+    let compat = mir_op_to_compat(&op, &[], &resolver).expect("SDPA conversion should succeed");
+    match compat {
+        MirOpCompat::ScaledDotProductAttention {
+            name,
+            query,
+            key,
+            value,
+            attention_mask,
+            scale,
+        } => {
+            assert_eq!(name, "sdpa_full");
+            assert_eq!(query, "q");
+            assert_eq!(key, "k");
+            assert_eq!(value, "v");
+            assert_eq!(
+                attention_mask,
+                Some("attn_mask".to_string()),
+                "attention_mask should be preserved"
+            );
+            assert_eq!(scale, Some(0.0625), "scale should be preserved");
         }
+        _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
     }
+}
 
-    #[test]
-    fn test_sdpa_compat_no_mask_no_scale() {
-        // SDPA without mask or scale should convert cleanly
-        let op = MirOp::MILScaledDotProductAttention {
-            name: "sdpa_plain".into(),
-            query: mk_nid("q"),
-            key: mk_nid("k"),
-            value: mk_nid("v"),
-            attention_mask: None,
-            scale: None,
-        };
-        let resolver = DummyResolver;
-        let compat = mir_op_to_compat(&op, &[], &resolver).expect("SDPA conversion should succeed");
-        match compat {
-            MirOpCompat::ScaledDotProductAttention { attention_mask, scale, .. } => {
-                assert!(attention_mask.is_none());
-                assert!(scale.is_none());
-            }
-            _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
+#[test]
+fn test_sdpa_compat_no_mask_no_scale() {
+    // SDPA without mask or scale should convert cleanly
+    let op = MirOp::MILScaledDotProductAttention {
+        name: "sdpa_plain".into(),
+        query: _mk_nid("q"),
+        key: _mk_nid("k"),
+        value: _mk_nid("v"),
+        attention_mask: None,
+        scale: None,
+    };
+    let resolver = _DummyResolver;
+    let compat = mir_op_to_compat(&op, &[], &resolver).expect("SDPA conversion should succeed");
+    match compat {
+        MirOpCompat::ScaledDotProductAttention { attention_mask, scale, .. } => {
+            assert!(attention_mask.is_none());
+            assert!(scale.is_none());
         }
+        _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
     }
+}
 
-    #[test]
-    fn test_sdpa_input_names_includes_mask() {
-        // compat_input_names() should include attention_mask when present
-        let compat = MirOpCompat::ScaledDotProductAttention {
-            name: "sdpa".into(),
-            query: "q".into(),
-            key: "k".into(),
-            value: "v".into(),
-            attention_mask: Some("mask".into()),
-            scale: None,
-        };
-        let names = compat_input_names(&compat);
-        assert!(names.contains(&"mask".to_string()),
-            "compat_input_names should include attention_mask name when present");
-        assert_eq!(names.len(), 4, "should have 4 inputs: q, k, v, mask");
-    }
+#[test]
+fn test_sdpa_input_names_includes_mask() {
+    // compat_input_names() should include attention_mask when present
+    let compat = MirOpCompat::ScaledDotProductAttention {
+        name: "sdpa".into(),
+        query: "q".into(),
+        key: "k".into(),
+        value: "v".into(),
+        attention_mask: Some("mask".into()),
+        scale: None,
+    };
+    let names = compat_input_names(&compat);
+    assert!(
+        names.contains(&"mask".to_string()),
+        "compat_input_names should include attention_mask name when present"
+    );
+    assert_eq!(names.len(), 4, "should have 4 inputs: q, k, v, mask");
+}
 
-    #[test]
-    fn test_sdpa_input_names_without_mask() {
-        // compat_input_names() should NOT include mask when absent
-        let compat = MirOpCompat::ScaledDotProductAttention {
-            name: "sdpa".into(),
-            query: "q".into(),
-            key: "k".into(),
-            value: "v".into(),
-            attention_mask: None,
-            scale: None,
-        };
-        let names = compat_input_names(&compat);
-        assert_eq!(names.len(), 3, "should have 3 inputs: q, k, v");
-        assert!(!names.iter().any(|n| n == "mask"),
-            "compat_input_names should not include mask when absent");
-    }
+#[test]
+fn test_sdpa_input_names_without_mask() {
+    // compat_input_names() should NOT include mask when absent
+    let compat = MirOpCompat::ScaledDotProductAttention {
+        name: "sdpa".into(),
+        query: "q".into(),
+        key: "k".into(),
+        value: "v".into(),
+        attention_mask: None,
+        scale: None,
+    };
+    let names = compat_input_names(&compat);
+    assert_eq!(names.len(), 3, "should have 3 inputs: q, k, v");
+    assert!(
+        !names.iter().any(|n| n == "mask"),
+        "compat_input_names should not include mask when absent"
+    );
+}
 
-    #[test]
-    fn test_sdpa_remap_input_names_preserves_mask() {
-        // remap_compat_inputs should remap the attention_mask name
-        let compat = MirOpCompat::ScaledDotProductAttention {
-            name: "sdpa".into(),
-            query: "q".into(),
-            key: "k".into(),
-            value: "v".into(),
-            attention_mask: Some("mask".into()),
-            scale: Some(0.5),
-        };
-        let aliases = HashMap::from([
-            ("q".to_string(), "q_alias".to_string()),
-            ("k".to_string(), "k_alias".to_string()),
-            ("v".to_string(), "v_alias".to_string()),
-            ("mask".to_string(), "mask_alias".to_string()),
-        ]);
-        let remapped = remap_compat_inputs(compat, &aliases);
-        match remapped {
-            MirOpCompat::ScaledDotProductAttention { query, key, value, attention_mask, scale, .. } => {
-                assert_eq!(query, "q_alias");
-                assert_eq!(key, "k_alias");
-                assert_eq!(value, "v_alias");
-                assert_eq!(attention_mask, Some("mask_alias".to_string()),
-                    "attention_mask should be remapped via aliases");
-                assert_eq!(scale, Some(0.5),
-                    "scale should pass through remap unchanged");
-            }
-            _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
+#[test]
+fn test_sdpa_remap_input_names_preserves_mask() {
+    // remap_compat_inputs should remap the attention_mask name
+    let compat = MirOpCompat::ScaledDotProductAttention {
+        name: "sdpa".into(),
+        query: "q".into(),
+        key: "k".into(),
+        value: "v".into(),
+        attention_mask: Some("mask".into()),
+        scale: Some(0.5),
+    };
+    let aliases = HashMap::from([
+        ("q".to_string(), "q_alias".to_string()),
+        ("k".to_string(), "k_alias".to_string()),
+        ("v".to_string(), "v_alias".to_string()),
+        ("mask".to_string(), "mask_alias".to_string()),
+    ]);
+    let remapped = remap_compat_inputs(compat, &aliases);
+    match remapped {
+        MirOpCompat::ScaledDotProductAttention {
+            query, key, value, attention_mask, scale, ..
+        } => {
+            assert_eq!(query, "q_alias");
+            assert_eq!(key, "k_alias");
+            assert_eq!(value, "v_alias");
+            assert_eq!(
+                attention_mask,
+                Some("mask_alias".to_string()),
+                "attention_mask should be remapped via aliases"
+            );
+            assert_eq!(scale, Some(0.5), "scale should pass through remap unchanged");
         }
+        _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
     }
+}
 
-    #[test]
-    fn test_sdpa_rename_preserves_mask_and_scale() {
-        // rename_compat_output should update the name but preserve attention_mask and scale
-        let compat = MirOpCompat::ScaledDotProductAttention {
-            name: "old_name".into(),
-            query: "q".into(),
-            key: "k".into(),
-            value: "v".into(),
-            attention_mask: Some("mask".into()),
-            scale: Some(0.125),
-        };
-        let renamed = rename_compat_output(compat, "new_name".to_string());
-        match renamed {
-            MirOpCompat::ScaledDotProductAttention { name, query, key, value, attention_mask, scale } => {
-                assert_eq!(name, "new_name", "name should be renamed");
-                assert_eq!(query, "q", "query should be preserved");
-                assert_eq!(key, "k", "key should be preserved");
-                assert_eq!(value, "v", "value should be preserved");
-                assert_eq!(attention_mask, Some("mask".to_string()),
-                    "attention_mask should survive rename");
-                assert_eq!(scale, Some(0.125),
-                    "scale should survive rename");
-            }
-            _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
+#[test]
+fn test_sdpa_rename_preserves_mask_and_scale() {
+    // rename_compat_output should update the name but preserve attention_mask and scale
+    let compat = MirOpCompat::ScaledDotProductAttention {
+        name: "old_name".into(),
+        query: "q".into(),
+        key: "k".into(),
+        value: "v".into(),
+        attention_mask: Some("mask".into()),
+        scale: Some(0.125),
+    };
+    let renamed = rename_compat_output(compat, "new_name".to_string());
+    match renamed {
+        MirOpCompat::ScaledDotProductAttention {
+            name,
+            query,
+            key,
+            value,
+            attention_mask,
+            scale,
+        } => {
+            assert_eq!(name, "new_name", "name should be renamed");
+            assert_eq!(query, "q", "query should be preserved");
+            assert_eq!(key, "k", "key should be preserved");
+            assert_eq!(value, "v", "value should be preserved");
+            assert_eq!(
+                attention_mask,
+                Some("mask".to_string()),
+                "attention_mask should survive rename"
+            );
+            assert_eq!(scale, Some(0.125), "scale should survive rename");
         }
+        _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
     }
+}

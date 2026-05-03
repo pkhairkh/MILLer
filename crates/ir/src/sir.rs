@@ -963,7 +963,6 @@ pub enum SirOp {
     Classify {
         input: SirNodeId,
     },
-
     // ─── KV Cache ──────────────────────────────────────────────
     // KV cache operations are represented by StateRead/StateWrite.
     // Optimization strategies (masked blend, ring buffer, paged) are

@@ -56,9 +56,7 @@ fn test_json_compilation_report_contains_key_fields() {
     let manifest = sample_manifest();
     let bridge = sample_bridge_result();
 
-    let report = reporter
-        .generate_compilation_report(&manifest, Some(&bridge))
-        .unwrap();
+    let report = reporter.generate_compilation_report(&manifest, Some(&bridge)).unwrap();
 
     assert_eq!(report.report_type, "compilation");
     assert_eq!(report.version, "1.0.0");
@@ -135,10 +133,7 @@ fn test_json_diagnostics_report_passthrough() {
 
     assert_eq!(report.report_type, "diagnostics");
     assert_eq!(report.data["status"], "error");
-    assert_eq!(
-        report.data["error_message"],
-        "Bridge subprocess exited with code 1"
-    );
+    assert_eq!(report.data["error_message"], "Bridge subprocess exited with code 1");
 }
 
 // ─── Markdown Report Tests ───────────────────────────────────────

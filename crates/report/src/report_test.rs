@@ -54,9 +54,7 @@ fn test_json_compilation_report_structure() {
     let manifest = sample_manifest();
     let bridge = sample_bridge_result();
 
-    let report = reporter
-        .generate_compilation_report(&manifest, Some(&bridge))
-        .unwrap();
+    let report = reporter.generate_compilation_report(&manifest, Some(&bridge)).unwrap();
 
     assert_eq!(report.report_type, "compilation");
     assert_eq!(report.version, "1.0.0");

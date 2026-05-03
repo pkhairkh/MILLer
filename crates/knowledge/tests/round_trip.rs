@@ -53,9 +53,8 @@ fn test_store_query_persist_reload_cycle() {
         store.insert_observation(unit_c).unwrap();
 
         // Step 2: Query before persist
-        let results = store
-            .query(&KnowledgeQuery::new().with_type(KnowledgeType::LegalityRule))
-            .unwrap();
+        let results =
+            store.query(&KnowledgeQuery::new().with_type(KnowledgeType::LegalityRule)).unwrap();
         assert_eq!(results.len(), 2, "Should find 2 LegalityRule entries");
 
         let best = store
@@ -71,9 +70,8 @@ fn test_store_query_persist_reload_cycle() {
         assert_eq!(store.list_ids().len(), 3, "All 3 entries must survive reload");
 
         // Step 4: Query after reload
-        let results = store
-            .query(&KnowledgeQuery::new().with_type(KnowledgeType::PrecisionHazard))
-            .unwrap();
+        let results =
+            store.query(&KnowledgeQuery::new().with_type(KnowledgeType::PrecisionHazard)).unwrap();
         assert_eq!(results.len(), 1, "PrecisionHazard entry must survive reload");
         assert_eq!(results[0].id, "obs_b");
     }
@@ -99,8 +97,7 @@ fn test_snapshot_export_import_roundtrip() {
     assert_eq!(snapshot.observations.len(), 1);
     assert_eq!(snapshot.observations[0].unit.id, "snapshot_obs");
 
-    let mut imported_store =
-        KnowledgeStore::open(&import_store_path.to_string_lossy()).unwrap();
+    let mut imported_store = KnowledgeStore::open(&import_store_path.to_string_lossy()).unwrap();
     let stats = SnapshotImport::import_into_store(&mut imported_store, &snapshot).unwrap();
     assert_eq!(stats.observations_imported, 1);
 
@@ -122,9 +119,7 @@ fn test_update_pipeline_and_query_cycle() {
     pipeline.ingest(unit).unwrap();
 
     // Step 2: Query through the same store
-    let results = store
-        .query(&KnowledgeQuery::new().with_min_confidence(0.3))
-        .unwrap();
+    let results = store.query(&KnowledgeQuery::new().with_min_confidence(0.3)).unwrap();
     assert!(!results.is_empty(), "Pipeline-ingested entry must be queryable");
 
     // Step 3: Verify persistence by reloading
@@ -167,11 +162,7 @@ fn test_store_counts_after_reload() {
     {
         let mut store = KnowledgeStore::open(&store_path_str).unwrap();
         for i in 0..3 {
-            let unit = make_unit(
-                &format!("obs_{}", i),
-                KnowledgeType::LegalityRule,
-                0.5,
-            );
+            let unit = make_unit(&format!("obs_{}", i), KnowledgeType::LegalityRule, 0.5);
             store.insert_observation(unit).unwrap();
         }
         assert_eq!(store.counts(), (0, 3));

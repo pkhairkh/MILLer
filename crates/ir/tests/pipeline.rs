@@ -9,9 +9,7 @@ use ane_ir::linear_slice::{
     lower_linear_projection_to_mir, sir_from_linear_projection, FamilyPayload,
 };
 use ane_ir::mir::{MirGraph, MirNode, MirNodeId, MirOp};
-use ane_ir::sir::{
-    SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin, QualityContract,
-};
+use ane_ir::sir::{QualityContract, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
 use ane_ir::task_spec::{MeasurementConfig, SyntheticTaskSpec, TaskOp};
 
 /// Helper: build a simple LinearProjection task spec.
@@ -47,8 +45,7 @@ fn test_sir_construction_from_spec() {
     assert!(!sir.outputs.is_empty(), "SIR graph must have outputs");
 
     // All node IDs must be unique
-    let ids: std::collections::HashSet<&str> =
-        sir.nodes.iter().map(|n| n.id.as_str()).collect();
+    let ids: std::collections::HashSet<&str> = sir.nodes.iter().map(|n| n.id.as_str()).collect();
     assert_eq!(ids.len(), sir.nodes.len(), "All SIR node IDs must be unique");
 }
 
@@ -66,8 +63,7 @@ fn test_mir_lowering_from_spec() {
     assert_eq!(mir.opset_version, ane_ir::DEFAULT_OPSET_VERSION);
 
     // All node IDs must be unique
-    let ids: std::collections::HashSet<&str> =
-        mir.nodes.iter().map(|n| n.id.as_str()).collect();
+    let ids: std::collections::HashSet<&str> = mir.nodes.iter().map(|n| n.id.as_str()).collect();
     assert_eq!(ids.len(), mir.nodes.len(), "All MIR node IDs must be unique");
 }
 
@@ -150,9 +146,18 @@ fn test_mir_node_dtypes_consistent() {
     // All nodes should have a valid dtype
     for node in &mir.nodes {
         match node.dtype {
-            MilDtype::Fp16 | MilDtype::Fp32 | MilDtype::Int32 | MilDtype::UInt8
-            | MilDtype::Bool | MilDtype::Fp64 | MilDtype::Int8 | MilDtype::Int16
-            | MilDtype::Int4 | MilDtype::UInt4 | MilDtype::E4M3 | MilDtype::E5M2
+            MilDtype::Fp16
+            | MilDtype::Fp32
+            | MilDtype::Int32
+            | MilDtype::UInt8
+            | MilDtype::Bool
+            | MilDtype::Fp64
+            | MilDtype::Int8
+            | MilDtype::Int16
+            | MilDtype::Int4
+            | MilDtype::UInt4
+            | MilDtype::E4M3
+            | MilDtype::E5M2
             | MilDtype::UInt16 => {}
         }
     }

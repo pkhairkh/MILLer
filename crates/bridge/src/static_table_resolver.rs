@@ -65,11 +65,7 @@ pub struct RopeTableConfig {
 
 impl Default for RopeTableConfig {
     fn default() -> Self {
-        Self {
-            rope_theta: 10_000.0,
-            head_dim: 64,
-            seq_len: 2048,
-        }
+        Self { rope_theta: 10_000.0, head_dim: 64, seq_len: 2048 }
     }
 }
 
@@ -111,11 +107,7 @@ impl StaticTableResolver {
     /// This is the preferred way to create a resolver — it reads all
     /// parameters from the model config rather than hardcoding model-specific values.
     pub fn from_model_config(rope_theta: f64, head_dim: usize, seq_len: usize) -> Self {
-        Self::new(RopeTableConfig {
-            rope_theta,
-            head_dim,
-            seq_len,
-        })
+        Self::new(RopeTableConfig { rope_theta, head_dim, seq_len })
     }
 
     /// Ensure the tables for a given tables_ref are computed and cached.
@@ -151,8 +143,8 @@ impl StaticTableResolver {
         // Shape: sin_tab and cos_tab = [1, 1, seq_len, head_dim] in fp16
         // The [1, 1, S, D] shape broadcasts correctly with Q/K [1, H, S, D]
         // where H = num_heads. Core ML broadcasting aligns right-to-left.
-        let mut sin_bytes = Vec::with_capacity(1 * 1 * seq * hd * 2);
-        let mut cos_bytes = Vec::with_capacity(1 * 1 * seq * hd * 2);
+        let mut sin_bytes = Vec::with_capacity(seq * hd * 2);
+        let mut cos_bytes = Vec::with_capacity(seq * hd * 2);
 
         for _batch in 0..1 {
             for _heads in 0..1 {
@@ -401,7 +393,8 @@ mod tests {
         assert_eq!(arange_data.data.len(), 8 * 4); // int32 = 4 bytes
 
         // Check arange_fp16_tab
-        let arange_fp16_data = resolver.resolve("static_tables/rope_tables_0/arange_fp16_tab").unwrap();
+        let arange_fp16_data =
+            resolver.resolve("static_tables/rope_tables_0/arange_fp16_tab").unwrap();
         assert_eq!(arange_fp16_data.shape, vec![8]);
         assert_eq!(arange_fp16_data.data.len(), 8 * 2); // fp16 = 2 bytes
     }
@@ -420,15 +413,21 @@ mod tests {
 
         // At position 0, angle = 0 for all frequencies → cos = 1.0, sin = 0.0
         // Read first element (position 0, dim 0) as fp16
-        let cos_first = half::f16::from_bits(u16::from_le_bytes([
-            cos_data.data[0], cos_data.data[1],
-        ]));
-        let sin_first = half::f16::from_bits(u16::from_le_bytes([
-            sin_data.data[0], sin_data.data[1],
-        ]));
+        let cos_first =
+            half::f16::from_bits(u16::from_le_bytes([cos_data.data[0], cos_data.data[1]]));
+        let sin_first =
+            half::f16::from_bits(u16::from_le_bytes([sin_data.data[0], sin_data.data[1]]));
 
-        assert!((cos_first.to_f32() - 1.0).abs() < 0.01, "cos(0) should be ~1.0, got {}", cos_first.to_f32());
-        assert!(sin_first.to_f32().abs() < 0.01, "sin(0) should be ~0.0, got {}", sin_first.to_f32());
+        assert!(
+            (cos_first.to_f32() - 1.0).abs() < 0.01,
+            "cos(0) should be ~1.0, got {}",
+            cos_first.to_f32()
+        );
+        assert!(
+            sin_first.to_f32().abs() < 0.01,
+            "sin(0) should be ~0.0, got {}",
+            sin_first.to_f32()
+        );
     }
 
     #[test]

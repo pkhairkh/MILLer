@@ -284,13 +284,13 @@ impl ModelArchConfig {
         let architecture = match model_type {
             "qwen2" | "qwen3" | "llama" => ModelArchitecture::Qwen3,
             _ => ModelArchitecture::Generic {
-                q_proj_pattern: format!(".self_attn.q_proj.weight"),
-                k_proj_pattern: format!(".self_attn.k_proj.weight"),
-                v_proj_pattern: format!(".self_attn.v_proj.weight"),
-                o_proj_pattern: format!(".self_attn.o_proj.weight"),
-                gate_proj_pattern: format!(".mlp.gate_proj.weight"),
-                up_proj_pattern: format!(".mlp.up_proj.weight"),
-                down_proj_pattern: format!(".mlp.down_proj.weight"),
+                q_proj_pattern: ".self_attn.q_proj.weight".to_string(),
+                k_proj_pattern: ".self_attn.k_proj.weight".to_string(),
+                v_proj_pattern: ".self_attn.v_proj.weight".to_string(),
+                o_proj_pattern: ".self_attn.o_proj.weight".to_string(),
+                gate_proj_pattern: ".mlp.gate_proj.weight".to_string(),
+                up_proj_pattern: ".mlp.up_proj.weight".to_string(),
+                down_proj_pattern: ".mlp.down_proj.weight".to_string(),
             },
         };
 
@@ -308,7 +308,11 @@ impl ModelArchConfig {
 
     /// Returns the effective KV head count (kv_heads if set, else num_heads).
     pub fn effective_kv_heads(&self) -> usize {
-        if self.kv_heads > 0 { self.kv_heads } else { self.num_heads }
+        if self.kv_heads > 0 {
+            self.kv_heads
+        } else {
+            self.num_heads
+        }
     }
 
     /// Returns the attention scale factor: 1/√head_dim.
@@ -378,14 +382,14 @@ mod tests {
     #[test]
     fn test_from_model_config_qwen3() {
         let config = ModelArchConfig::from_model_config(
-            1024,   // hidden_size
-            16,     // num_attention_heads
-            Some(8),// num_key_value_heads
-            Some(128),// head_dim
-            2048,   // intermediate_size
-            151936, // vocab_size
-            32768,  // max_position_embeddings
-            "qwen3",// model_type
+            1024,      // hidden_size
+            16,        // num_attention_heads
+            Some(8),   // num_key_value_heads
+            Some(128), // head_dim
+            2048,      // intermediate_size
+            151936,    // vocab_size
+            32768,     // max_position_embeddings
+            "qwen3",   // model_type
         );
         assert_eq!(config.vocab_size, 151936);
         assert_eq!(config.embed_dim, 1024);
@@ -397,19 +401,19 @@ mod tests {
     #[test]
     fn test_from_model_config_llama() {
         let config = ModelArchConfig::from_model_config(
-            4096,   // hidden_size
-            32,     // num_attention_heads
-            None,   // num_key_value_heads → defaults to 32
-            None,   // head_dim → derived as 4096/32 = 128
-            11008,  // intermediate_size
-            32000,  // vocab_size
-            4096,   // max_position_embeddings
-            "llama",// model_type
+            4096,    // hidden_size
+            32,      // num_attention_heads
+            None,    // num_key_value_heads → defaults to 32
+            None,    // head_dim → derived as 4096/32 = 128
+            11008,   // intermediate_size
+            32000,   // vocab_size
+            4096,    // max_position_embeddings
+            "llama", // model_type
         );
         assert_eq!(config.vocab_size, 32000);
         assert_eq!(config.embed_dim, 4096);
         assert_eq!(config.head_dim, 128); // 4096 / 32
-        assert_eq!(config.kv_heads, 32);  // defaulted from num_heads
+        assert_eq!(config.kv_heads, 32); // defaulted from num_heads
         assert_eq!(config.architecture, ModelArchitecture::Qwen3); // LLaMA uses same patterns
     }
 
@@ -432,34 +436,21 @@ mod tests {
 
     #[test]
     fn test_effective_kv_heads() {
-        let config = ModelArchConfig {
-            kv_heads: 8,
-            num_heads: 16,
-            ..ModelArchConfig::default()
-        };
+        let config = ModelArchConfig { kv_heads: 8, num_heads: 16, ..ModelArchConfig::default() };
         assert_eq!(config.effective_kv_heads(), 8);
 
-        let config_no_kv = ModelArchConfig {
-            kv_heads: 0,
-            num_heads: 16,
-            ..ModelArchConfig::default()
-        };
+        let config_no_kv =
+            ModelArchConfig { kv_heads: 0, num_heads: 16, ..ModelArchConfig::default() };
         assert_eq!(config_no_kv.effective_kv_heads(), 16); // Falls back to num_heads
     }
 
     #[test]
     fn test_attention_scale() {
-        let config = ModelArchConfig {
-            head_dim: 128,
-            ..ModelArchConfig::default()
-        };
+        let config = ModelArchConfig { head_dim: 128, ..ModelArchConfig::default() };
         let expected = 1.0f32 / (128.0f32).sqrt();
         assert!((config.attention_scale() - expected).abs() < 1e-6);
 
-        let config_64 = ModelArchConfig {
-            head_dim: 64,
-            ..ModelArchConfig::default()
-        };
+        let config_64 = ModelArchConfig { head_dim: 64, ..ModelArchConfig::default() };
         let expected_64 = 1.0f32 / (64.0f32).sqrt();
         assert!((config_64.attention_scale() - expected_64).abs() < 1e-6);
     }

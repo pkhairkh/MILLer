@@ -15,16 +15,18 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::PathBuf;
 
-use ane_bridge::subprocess::PythonBridge;
-use ane_ir::linear_slice::{lower_linear_projection_to_mir, sir_from_linear_projection, FamilyPayload};
-use ane_ir::task_spec::load_synthetic_task;
 use crate::baseline::BaselineComputer;
 use crate::drift::DriftDetector;
 use crate::harness::{
-    CompileStepResult, EnvironmentSummary, GeneratorProvenance, InspectionStepResult, LabRunBuilder,
-    VerificationScope,
+    CompileStepResult, EnvironmentSummary, GeneratorProvenance, InspectionStepResult,
+    LabRunBuilder, VerificationScope,
 };
 use crate::run_dir::{generate_run_id, layout, LabRunWriter};
+use ane_bridge::subprocess::PythonBridge;
+use ane_ir::linear_slice::{
+    lower_linear_projection_to_mir, sir_from_linear_projection, FamilyPayload,
+};
+use ane_ir::task_spec::load_synthetic_task;
 use sha2::Digest;
 
 // ---------------------------------------------------------------------------
@@ -731,7 +733,11 @@ pub fn ingest_knowledge_observations(
             for (key, value) in obj {
                 if !matches!(
                     key.as_str(),
-                    "knowledge_type" | "confidence" | "evidence_source" | "evidence_count" | "scope"
+                    "knowledge_type"
+                        | "confidence"
+                        | "evidence_source"
+                        | "evidence_count"
+                        | "scope"
                 ) {
                     payload.insert(key.clone(), value.clone());
                 }
@@ -972,10 +978,8 @@ impl LabSession {
         // Step 4: Host-side inspection
         let inspect_step = if self.do_inspect && compile_step.success {
             println!("[4/8] Performing host-side inspection...");
-            let inspector = crate::host_inspect::HostInspector::new(
-                &self.python_path,
-                &self.bridge_script,
-            );
+            let inspector =
+                crate::host_inspect::HostInspector::new(&self.python_path, &self.bridge_script);
             let mlpackage_path = result.output_path.as_deref().unwrap_or("");
             let inspect_result = inspector.inspect(mlpackage_path);
 
@@ -1031,7 +1035,8 @@ impl LabSession {
 
         // Step 5: Compute FP32 baseline reference
         println!("[5/8] Computing FP32 baseline reference...");
-        let mut baseline_result = compute_baseline(&spec, self.seed, input_dim, output_dim, batch_size)?;
+        let mut baseline_result =
+            compute_baseline(&spec, self.seed, input_dim, output_dim, batch_size)?;
         baseline_result.task_hash = Some(task_hash.clone());
         println!(
             "  Baseline: {} output elements, computed in {:.3}ms",
@@ -1049,8 +1054,9 @@ impl LabSession {
         // Step 6: Compute drift
         println!("[6/8] Computing drift metrics...");
         let drift_report = if compile_step.success {
-            let unavailable_report =
-                DriftDetector::unavailable("predict() requires Apple hardware with Core ML runtime");
+            let unavailable_report = DriftDetector::unavailable(
+                "predict() requires Apple hardware with Core ML runtime",
+            );
             println!("  Drift: UNAVAILABLE (no on-device predict output)");
             unavailable_report
         } else {
@@ -1092,7 +1098,9 @@ impl LabSession {
                 .inspect_result(inspect_step)
                 .artifact_directory(run_dir.to_string_lossy().to_string())
                 .adaptation_readiness("artifacts_only".to_string())
-                .warning("No device-backed profiling performed — requires Apple hardware".to_string())
+                .warning(
+                    "No device-backed profiling performed — requires Apple hardware".to_string(),
+                )
                 .warning(
                     "Drift metrics unavailable — requires Apple hardware for predict() output"
                         .to_string(),
@@ -1135,8 +1143,14 @@ impl LabSession {
             "  Compilation: {}",
             if lab_run.compile_result.success { "SUCCESS" } else { "FAILED" }
         );
-        println!("  Baseline: {} FP32 reference values computed", baseline_result.output_tensor.len());
-        println!("  Drift: {}", if drift_report.is_computed() { "computed" } else { "unavailable" });
+        println!(
+            "  Baseline: {} FP32 reference values computed",
+            baseline_result.output_tensor.len()
+        );
+        println!(
+            "  Drift: {}",
+            if drift_report.is_computed() { "computed" } else { "unavailable" }
+        );
         println!("  Artifacts: {}", run_dir.display());
 
         println!("\n=== Lab run complete ===");
@@ -1255,10 +1269,8 @@ impl LabLoopSession {
         // Step 4: Host-side inspection
         println!("[4/9] Performing host-side inspection...");
         let inspect_step = if compile_step.success {
-            let inspector = crate::host_inspect::HostInspector::new(
-                &self.python_path,
-                &self.bridge_script,
-            );
+            let inspector =
+                crate::host_inspect::HostInspector::new(&self.python_path, &self.bridge_script);
             let mlpackage_path = result.output_path.as_deref().unwrap_or("");
             let inspect_result = inspector.inspect(mlpackage_path);
 
@@ -1304,7 +1316,8 @@ impl LabLoopSession {
 
         // Step 5: Compute FP32 baseline reference
         println!("[5/9] Computing FP32 baseline reference...");
-        let mut baseline_result = compute_baseline(&spec, self.seed, input_dim, output_dim, batch_size)?;
+        let mut baseline_result =
+            compute_baseline(&spec, self.seed, input_dim, output_dim, batch_size)?;
         baseline_result.task_hash = Some(task_hash.clone());
         println!(
             "  Baseline: {} output elements, computed in {:.3}ms",
@@ -1321,8 +1334,9 @@ impl LabLoopSession {
         // Step 6: Compute drift
         println!("[6/9] Computing drift metrics...");
         let drift_report = if compile_step.success {
-            let unavailable_report =
-                DriftDetector::unavailable("predict() requires Apple hardware with Core ML runtime");
+            let unavailable_report = DriftDetector::unavailable(
+                "predict() requires Apple hardware with Core ML runtime",
+            );
             println!("  Drift: UNAVAILABLE (no on-device predict output)");
             unavailable_report
         } else {
@@ -1355,16 +1369,19 @@ impl LabLoopSession {
         // Open the knowledge store and ingest observations
         let knowledge_store_path = PathBuf::from(&self.knowledge_dir);
         let mut store = if knowledge_store_path.join("store_index.json").exists() {
-            ane_knowledge::store::KnowledgeStore::open(&self.knowledge_dir)
-                .map_err(|e| format!("Failed to open knowledge store at {}: {}", self.knowledge_dir, e))?
+            ane_knowledge::store::KnowledgeStore::open(&self.knowledge_dir).map_err(|e| {
+                format!("Failed to open knowledge store at {}: {}", self.knowledge_dir, e)
+            })?
         } else {
             std::fs::create_dir_all(&knowledge_store_path)
                 .map_err(|e| format!("Failed to create knowledge store directory: {}", e))?;
-            ane_knowledge::store::KnowledgeStore::open(&self.knowledge_dir)
-                .map_err(|e| format!("Failed to create knowledge store at {}: {}", self.knowledge_dir, e))?
+            ane_knowledge::store::KnowledgeStore::open(&self.knowledge_dir).map_err(|e| {
+                format!("Failed to create knowledge store at {}: {}", self.knowledge_dir, e)
+            })?
         };
 
-        let ingested_count = ingest_knowledge_observations(&mut store, &knowledge_update, &task_hash)?;
+        let ingested_count =
+            ingest_knowledge_observations(&mut store, &knowledge_update, &task_hash)?;
         println!(
             "  Ingested {} observations into knowledge store at {}",
             ingested_count, self.knowledge_dir
@@ -1404,7 +1421,9 @@ impl LabLoopSession {
                 .inspect_result(inspect_step)
                 .artifact_directory(run_dir.to_string_lossy().to_string())
                 .adaptation_readiness(readiness_level.to_string())
-                .warning("No device-backed profiling performed — requires Apple hardware".to_string())
+                .warning(
+                    "No device-backed profiling performed — requires Apple hardware".to_string(),
+                )
                 .warning(
                     "Drift metrics unavailable — requires Apple hardware for predict() output"
                         .to_string(),
@@ -1458,8 +1477,14 @@ impl LabLoopSession {
             "  Compilation: {}",
             if lab_run.compile_result.success { "SUCCESS" } else { "FAILED" }
         );
-        println!("  Baseline: {} FP32 reference values computed", baseline_result.output_tensor.len());
-        println!("  Drift: {}", if drift_report.is_computed() { "computed" } else { "unavailable" });
+        println!(
+            "  Baseline: {} FP32 reference values computed",
+            baseline_result.output_tensor.len()
+        );
+        println!(
+            "  Drift: {}",
+            if drift_report.is_computed() { "computed" } else { "unavailable" }
+        );
         println!("  Observations ingested: {}", ingested_count);
         println!("  Adaptation readiness: {}", readiness_level);
         println!("  Knowledge store: {}", self.knowledge_dir);

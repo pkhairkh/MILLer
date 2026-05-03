@@ -259,16 +259,16 @@ V17 is Apple M1, which uses A14-class ANE. The code mapped V17 to A18 family, gi
 
 ### I-20 · Formatting + Clippy Cleanup
 
-**Status:** ⬜ Open
+**Status:** ✅ FIXED (T-41)
 **Files:** All crates
 **AUDIT ref:** §III (CQ-9, CQ-10)
-**Severity:** LOW
+**Severity:** LOW → RESOLVED
 **Effort:** S (0.5 day)
 **Task:** T-41
 
 49 files need formatting, ~57 clippy warnings are auto-fixable.
 
-**Fix:** `cargo fmt && cargo clippy --fix`
+**Resolution:** Ran `cargo fmt --all` across the entire workspace, reformatting 52 files. Ran `cargo clippy --fix --allow-dirty --allow-staged` to address auto-fixable warnings. Remaining 11 clippy warnings are all `too_many_arguments` (8/7 through 16/7) which require manual refactoring (tracked by T-44). All 1099 tests pass.
 
 ---
 
@@ -310,7 +310,7 @@ The following issues from the previous tracker have been resolved and archived t
 | P0 | 3 | 0 | 0 | 3 |
 | P1 | 8 | 0 | 0 | 8 |
 | P2 | 8 | 1 | 0 | 7 |
-| P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **2** | **0** | **18** |
+| P3 | 1 | 0 | 0 | 1 |
+| **Total** | **20** | **1** | **0** | **19** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issues I-12, I-13, I-14, I-15, I-16, I-18, I-19 resolved by T-33, T-34, T-35, T-36, T-37, T-39, T-40.*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issues I-12, I-13, I-14, I-15, I-16, I-18, I-19 resolved by T-33, T-34, T-35, T-36, T-37, T-39, T-40. P3 issue I-20 resolved by T-41.*

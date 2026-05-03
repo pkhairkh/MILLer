@@ -94,10 +94,7 @@ pub fn run_kv_cache_rewrite_pass(
             .nodes
             .iter()
             .enumerate()
-            .find(|(_, node)| match &node.op {
-                SirOp::StateWrite { state_id: ws, .. } if ws == &state_id => true,
-                _ => false,
-            })
+            .find(|(_, node)| matches!(&node.op, SirOp::StateWrite { state_id: ws, .. } if ws == &state_id))
             .map(|(idx, _)| idx);
 
         if let Some(w_idx) = write_idx {

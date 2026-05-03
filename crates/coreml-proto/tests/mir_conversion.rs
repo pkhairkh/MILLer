@@ -7,7 +7,7 @@
 //! Run with: cargo test -p ane-coreml-proto --features mir-conversion
 
 use ane_coreml_proto::mir_compat::{MilDtypeCompat, MirOpCompat};
-use ane_ir::mir::{MirNodeId, MirOp, MilDtype};
+use ane_ir::mir::{MilDtype, MirNodeId, MirOp};
 
 fn nid(s: &str) -> MirNodeId {
     MirNodeId(s.to_string())
@@ -38,107 +38,53 @@ fn test_mir_op_to_compat_exhaustive_coverage() {
     let compat: MirOpCompat = op.into();
     assert!(matches!(compat, MirOpCompat::Linear { .. }));
 
-    let op = MirOp::MILMatMul {
-        name: "mm".into(),
-        x: nid("a"),
-        y: nid("b"),
-        transpose_y: false,
-    };
+    let op = MirOp::MILMatMul { name: "mm".into(), x: nid("a"), y: nid("b"), transpose_y: false };
     let compat: MirOpCompat = op.into();
     assert!(matches!(compat, MirOpCompat::MatMul { .. }));
 
     // ─── Elementwise Binary ──────────────────────────────────────
-    let op = MirOp::MILAdd {
-        name: "add1".into(),
-        x: nid("a"),
-        y: nid("b"),
-    };
+    let op = MirOp::MILAdd { name: "add1".into(), x: nid("a"), y: nid("b") };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::Add { .. }));
 
-    let op = MirOp::MILMul {
-        name: "mul1".into(),
-        x: nid("a"),
-        y: nid("b"),
-    };
+    let op = MirOp::MILMul { name: "mul1".into(), x: nid("a"), y: nid("b") };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::Mul { .. }));
 
-    let op = MirOp::MILRealDiv {
-        name: "div1".into(),
-        x: nid("a"),
-        y: nid("b"),
-    };
+    let op = MirOp::MILRealDiv { name: "div1".into(), x: nid("a"), y: nid("b") };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::RealDiv { .. }));
 
-    let op = MirOp::MILEqual {
-        name: "eq1".into(),
-        x: nid("a"),
-        y: nid("b"),
-    };
+    let op = MirOp::MILEqual { name: "eq1".into(), x: nid("a"), y: nid("b") };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::Equal { .. }));
 
     // ─── Elementwise Unary ───────────────────────────────────────
-    let op = MirOp::MILRelu {
-        name: "relu1".into(),
-        x: nid("a"),
-    };
+    let op = MirOp::MILRelu { name: "relu1".into(), x: nid("a") };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::Relu { .. }));
 
-    let op = MirOp::MILSilu {
-        name: "silu1".into(),
-        x: nid("a"),
-    };
+    let op = MirOp::MILSilu { name: "silu1".into(), x: nid("a") };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::Silu { .. }));
 
-    let op = MirOp::MILGelu {
-        name: "gelu1".into(),
-        x: nid("a"),
-        mode: "exact".into(),
-    };
+    let op = MirOp::MILGelu { name: "gelu1".into(), x: nid("a"), mode: "exact".into() };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::Gelu { .. }));
 
-    let op = MirOp::MILExp {
-        name: "exp1".into(),
-        x: nid("a"),
-    };
+    let op = MirOp::MILExp { name: "exp1".into(), x: nid("a") };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::Exp { .. }));
 
     // ─── Reduction ───────────────────────────────────────────────
-    let op = MirOp::MILReduceSum {
-        name: "rs".into(),
-        x: nid("a"),
-        axes: vec![1],
-        keep_dims: false,
-    };
+    let op =
+        MirOp::MILReduceSum { name: "rs".into(), x: nid("a"), axes: vec![1], keep_dims: false };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::ReduceSum { .. }));
 
-    let op = MirOp::MILReduceMean {
-        name: "rm".into(),
-        x: nid("a"),
-        axes: vec![1],
-        keep_dims: true,
-    };
+    let op =
+        MirOp::MILReduceMean { name: "rm".into(), x: nid("a"), axes: vec![1], keep_dims: true };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::ReduceMean { .. }));
 
     // ─── Tensor Transform ────────────────────────────────────────
-    let op = MirOp::MILReshape {
-        name: "r1".into(),
-        x: nid("a"),
-        shape: vec![1, 2, 3],
-    };
+    let op = MirOp::MILReshape { name: "r1".into(), x: nid("a"), shape: vec![1, 2, 3] };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::Reshape { .. }));
 
-    let op = MirOp::MILTranspose {
-        name: "t1".into(),
-        x: nid("a"),
-        perm: vec![1, 0],
-    };
+    let op = MirOp::MILTranspose { name: "t1".into(), x: nid("a"), perm: vec![1, 0] };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::Transpose { .. }));
 
-    let op = MirOp::MILConcat {
-        name: "c1".into(),
-        values: vec![nid("a"), nid("b")],
-        axis: 0,
-    };
+    let op = MirOp::MILConcat { name: "c1".into(), values: vec![nid("a"), nid("b")], axis: 0 };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::Concat { .. }));
 
     // ─── State ───────────────────────────────────────────────────
@@ -150,18 +96,11 @@ fn test_mir_op_to_compat_exhaustive_coverage() {
     };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::ReadState { .. }));
 
-    let op = MirOp::MILCoremlUpdateState {
-        name: "us".into(),
-        state_id: "kv".into(),
-        value: nid("v"),
-    };
+    let op =
+        MirOp::MILCoremlUpdateState { name: "us".into(), state_id: "kv".into(), value: nid("v") };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::CoremlUpdateState { .. }));
 
-    let op = MirOp::MILStateWrite {
-        name: "sw".into(),
-        state_ref: "kv".into(),
-        value: nid("v"),
-    };
+    let op = MirOp::MILStateWrite { name: "sw".into(), state_ref: "kv".into(), value: nid("v") };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::StateWrite { .. }));
 
     // ─── Attention ───────────────────────────────────────────────
@@ -175,7 +114,11 @@ fn test_mir_op_to_compat_exhaustive_coverage() {
     };
     let compat = MirOpCompat::from(op);
     if let MirOpCompat::ScaledDotProductAttention { scale, attention_mask, .. } = compat {
-        assert_eq!(scale, Some(0.125), "scale should be preserved through MirOp → MirOpCompat conversion");
+        assert_eq!(
+            scale,
+            Some(0.125),
+            "scale should be preserved through MirOp → MirOpCompat conversion"
+        );
         assert!(attention_mask.is_none(), "attention_mask should be None when source is None");
     } else {
         panic!("Expected MirOpCompat::ScaledDotProductAttention");
@@ -192,7 +135,11 @@ fn test_mir_op_to_compat_exhaustive_coverage() {
     };
     let compat_masked = MirOpCompat::from(op_with_mask);
     if let MirOpCompat::ScaledDotProductAttention { attention_mask, scale, .. } = compat_masked {
-        assert_eq!(attention_mask, Some("mask".to_string()), "attention_mask should be preserved through conversion");
+        assert_eq!(
+            attention_mask,
+            Some("mask".to_string()),
+            "attention_mask should be preserved through conversion"
+        );
         assert_eq!(scale, Some(0.0625), "scale should be preserved through conversion");
     } else {
         panic!("Expected MirOpCompat::ScaledDotProductAttention");
@@ -250,29 +197,17 @@ fn test_mir_op_to_compat_exhaustive_coverage() {
 /// Test that dtype conversion maps correctly.
 #[test]
 fn test_mir_op_dtype_conversion() {
-    let op = MirOp::MILCast {
-        name: "cast_fp16".into(),
-        x: nid("a"),
-        dtype: MilDtype::Fp16,
-    };
+    let op = MirOp::MILCast { name: "cast_fp16".into(), x: nid("a"), dtype: MilDtype::Fp16 };
     if let MirOpCompat::Cast { dtype, .. } = MirOpCompat::from(op) {
         assert_eq!(dtype, MilDtypeCompat::Fp16);
     }
 
-    let op = MirOp::MILCast {
-        name: "cast_fp32".into(),
-        x: nid("a"),
-        dtype: MilDtype::Fp32,
-    };
+    let op = MirOp::MILCast { name: "cast_fp32".into(), x: nid("a"), dtype: MilDtype::Fp32 };
     if let MirOpCompat::Cast { dtype, .. } = MirOpCompat::from(op) {
         assert_eq!(dtype, MilDtypeCompat::Fp32);
     }
 
-    let op = MirOp::MILCast {
-        name: "cast_int32".into(),
-        x: nid("a"),
-        dtype: MilDtype::Int32,
-    };
+    let op = MirOp::MILCast { name: "cast_int32".into(), x: nid("a"), dtype: MilDtype::Int32 };
     if let MirOpCompat::Cast { dtype, .. } = MirOpCompat::from(op) {
         assert_eq!(dtype, MilDtypeCompat::Int32);
     }
@@ -297,11 +232,7 @@ fn test_mir_op_field_values_preserved() {
         panic!("Expected MirOpCompat::Linear");
     }
 
-    let op = MirOp::MILSoftmax {
-        name: "sm".into(),
-        x: nid("logits"),
-        axis: -1,
-    };
+    let op = MirOp::MILSoftmax { name: "sm".into(), x: nid("logits"), axis: -1 };
     let compat = MirOpCompat::from(op);
     if let MirOpCompat::Softmax { axis, .. } = compat {
         assert_eq!(axis, -1);

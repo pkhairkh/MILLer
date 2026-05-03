@@ -309,15 +309,8 @@ impl ShardPlanPass {
         } else {
             0 // not used
         };
-        let total_shards = if has_io && has_sampler {
-            decoder_shard_start + decoder_shard_count + 1
-        } else if has_io || has_sampler {
-            decoder_shard_start + decoder_shard_count + 1
-        } else if !decoder_indices.is_empty() {
-            1
-        } else {
-            1
-        };
+        let total_shards =
+            if has_io || has_sampler { decoder_shard_start + decoder_shard_count + 1 } else { 1 };
 
         // Build the layer assignment vector
         let mut layer_assignment = vec![0; input.nodes.len()];
@@ -403,10 +396,8 @@ impl ShardPlanPass {
             // from StateRead ops instead of hardcoded placeholders.
             let mut kv_state_decls = Vec::new();
             for state_id in &kv_cache_state_ids {
-                let shape = kv_cache_shapes
-                    .get(state_id)
-                    .cloned()
-                    .unwrap_or_else(|| vec![2, 1, 1, 1, 1]);
+                let shape =
+                    kv_cache_shapes.get(state_id).cloned().unwrap_or_else(|| vec![2, 1, 1, 1, 1]);
                 kv_state_decls.push(StateDeclaration {
                     state_id: state_id.clone(),
                     shape,
@@ -486,7 +477,8 @@ impl ShardPlanPass {
         let mut order = 0;
         if has_io {
             // IO → Decoder handoff
-            let decoder_pkg = packages.iter().find(|p| matches!(p.role, PackageRole::DecoderShard(_)));
+            let decoder_pkg =
+                packages.iter().find(|p| matches!(p.role, PackageRole::DecoderShard(_)));
             if let Some(dec) = decoder_pkg {
                 handoffs.push(Handoff {
                     from_package: "io_model".to_string(),
@@ -505,7 +497,8 @@ impl ShardPlanPass {
 
         // Decoder → Sampler handoff
         if has_sampler {
-            let decoder_pkg = packages.iter().find(|p| matches!(p.role, PackageRole::DecoderShard(_)));
+            let decoder_pkg =
+                packages.iter().find(|p| matches!(p.role, PackageRole::DecoderShard(_)));
             if let Some(dec) = decoder_pkg {
                 handoffs.push(Handoff {
                     from_package: dec.name.clone(),
@@ -524,7 +517,8 @@ impl ShardPlanPass {
 
         // KV cache state handoff: StateWriteRead for persistence across decode steps
         if !kv_cache_state_ids.is_empty() {
-            let decoder_pkg = packages.iter().find(|p| matches!(p.role, PackageRole::DecoderShard(_)));
+            let decoder_pkg =
+                packages.iter().find(|p| matches!(p.role, PackageRole::DecoderShard(_)));
             if let Some(dec) = decoder_pkg {
                 for state_id in &kv_cache_state_ids {
                     let shape = kv_cache_shapes
@@ -576,11 +570,7 @@ impl ShardPlanPass {
             } else {
                 None
             },
-            io_model_spec: if has_io {
-                Some(ane_ir::sir::IoModelSpec::default())
-            } else {
-                None
-            },
+            io_model_spec: if has_io { Some(ane_ir::sir::IoModelSpec::default()) } else { None },
         };
 
         Ok((shard_plan, pir_graph))

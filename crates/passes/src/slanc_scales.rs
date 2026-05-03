@@ -68,7 +68,9 @@ pub fn run_slanc_scales_pass(graph: &mut SirGraph) -> NormStabilizationResult {
     for idx in rms_norm_indices {
         let node = &graph.nodes[idx];
         let (input_id, weight_name, epsilon, axes) = match &node.op {
-            SirOp::RMSNorm { input, weight, epsilon, axes } => (input.clone(), weight.clone(), *epsilon, axes.clone()),
+            SirOp::RMSNorm { input, weight, epsilon, axes } => {
+                (input.clone(), weight.clone(), *epsilon, axes.clone())
+            }
             _ => unreachable!(),
         };
 

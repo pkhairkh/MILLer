@@ -208,9 +208,7 @@ mod tests {
     use crate::knowledge_query::{
         ComputePlanPlacementInfo, LegalityInfo, NoKnowledge, PrecisionHazardInfo, RiskInfo,
     };
-    use ane_ir::sir::{
-        SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin,
-    };
+    use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
 
     /// A mock knowledge query that reports a precision hazard for LinearProjection.
     struct MockPrecisionHazardKnowledge;

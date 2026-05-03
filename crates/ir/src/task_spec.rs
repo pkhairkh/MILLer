@@ -270,7 +270,19 @@ impl TaskOp {
                 format!("LutProjection:vocab_size={},embed_dim={},num_groups={},lut_bitwidth={},batch_size={},dtype={}",
                     vocab_size, embed_dim, num_groups, lut_bitwidth, batch_size, dtype)
             }
-            TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, kv_heads, intermediate_size, vocab_size, dtype, uses_rope, has_qk_norm } => {
+            TaskOp::DecodeStep {
+                embed_dim,
+                num_heads,
+                head_dim,
+                kv_len,
+                batch_size,
+                kv_heads,
+                intermediate_size,
+                vocab_size,
+                dtype,
+                uses_rope,
+                has_qk_norm,
+            } => {
                 format!("DecodeStep:embed_dim={},num_heads={},head_dim={},kv_len={},batch_size={},kv_heads={},intermediate_size={},vocab_size={},dtype={},uses_rope={},has_qk_norm={}",
                     embed_dim, num_heads, head_dim, kv_len, batch_size, kv_heads, intermediate_size, vocab_size, dtype, uses_rope, has_qk_norm)
             }
@@ -403,7 +415,19 @@ impl TaskOp {
                     "dtype": dtype,
                 })
             }
-            TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, kv_heads, intermediate_size, vocab_size, dtype, uses_rope, has_qk_norm } => {
+            TaskOp::DecodeStep {
+                embed_dim,
+                num_heads,
+                head_dim,
+                kv_len,
+                batch_size,
+                kv_heads,
+                intermediate_size,
+                vocab_size,
+                dtype,
+                uses_rope,
+                has_qk_norm,
+            } => {
                 serde_json::json!({
                     "embed_dim": embed_dim,
                     "num_heads": num_heads,
@@ -1250,7 +1274,15 @@ metrics = ["Latency"]
         assert_eq!(spec.name, "test_decode");
         assert_eq!(spec.family, "DecodeStep");
         match spec.op {
-            TaskOp::DecodeStep { embed_dim, num_heads, head_dim, kv_len, batch_size, dtype, .. } => {
+            TaskOp::DecodeStep {
+                embed_dim,
+                num_heads,
+                head_dim,
+                kv_len,
+                batch_size,
+                dtype,
+                ..
+            } => {
                 assert_eq!(embed_dim, 128);
                 assert_eq!(num_heads, 4);
                 assert_eq!(head_dim, 32); // 128 / 4

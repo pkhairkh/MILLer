@@ -206,16 +206,15 @@ impl DecompositionContext {
         let kv_heads = if self.kv_heads > 0 { self.kv_heads } else { self.num_heads };
         if weight.contains(".self_attn.q_proj.weight") {
             self.num_heads * self.head_dim
-        } else if weight.contains(".self_attn.k_proj.weight") {
-            kv_heads * self.head_dim
-        } else if weight.contains(".self_attn.v_proj.weight") {
+        } else if weight.contains(".self_attn.k_proj.weight")
+            || weight.contains(".self_attn.v_proj.weight")
+        {
             kv_heads * self.head_dim
         } else if weight.contains(".self_attn.o_proj.weight")
             || weight.contains(".self_attn.out_proj.weight")
         {
             self.embed_dim
-        } else if weight.contains(".mlp.gate_proj.weight")
-            || weight.contains(".mlp.up_proj.weight")
+        } else if weight.contains(".mlp.gate_proj.weight") || weight.contains(".mlp.up_proj.weight")
         {
             if self.intermediate_size > 0 {
                 self.intermediate_size
@@ -225,7 +224,11 @@ impl DecompositionContext {
         } else if weight.contains(".mlp.down_proj.weight") {
             self.embed_dim
         } else if weight == "lm_head.weight" || weight.contains("lm_head.") {
-            if self.vocab_size > 0 { self.vocab_size } else { 0 }
+            if self.vocab_size > 0 {
+                self.vocab_size
+            } else {
+                0
+            }
         } else if weight.contains("embed_tokens") {
             self.embed_dim
         } else {
@@ -291,9 +294,7 @@ impl LegalityRewritePass {
                         .get(sir_input)
                         .cloned()
                         .unwrap_or_else(|| AirNodeId(sir_input.0.clone()));
-                    let output_dim = ctx
-                        .map(|c| c.output_dim_for_weight(weight))
-                        .unwrap_or(0);
+                    let output_dim = ctx.map(|c| c.output_dim_for_weight(weight)).unwrap_or(0);
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
@@ -425,8 +426,10 @@ impl LegalityRewritePass {
                     //     → Reshape([B, kv_heads*fan_out, S, D])
                     //
                     // This is fully ANE-compatible: Reshape and Mul both run on ANE.
-                    let input_air =
-                        sir_to_air.get(input).cloned().unwrap_or_else(|| AirNodeId(input.0.clone()));
+                    let input_air = sir_to_air
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| AirNodeId(input.0.clone()));
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let base = &sir_node.id.0;
 
@@ -468,10 +471,7 @@ impl LegalityRewritePass {
                         let reshape_id = AirNodeId(format!("{}_tile_reshape", base));
                         nodes.push(Self::make_air_node(
                             reshape_id.clone(),
-                            AirOp::Reshape {
-                                input: input_air,
-                                target_shape: reshape_shape,
-                            },
+                            AirOp::Reshape { input: input_air, target_shape: reshape_shape },
                             sir_node,
                             "mb.reshape",
                             knowledge_query,
@@ -503,10 +503,7 @@ impl LegalityRewritePass {
                         let final_reshape_id = air_id.clone();
                         nodes.push(Self::make_air_node(
                             final_reshape_id,
-                            AirOp::Reshape {
-                                input: mul_id,
-                                target_shape: final_shape,
-                            },
+                            AirOp::Reshape { input: mul_id, target_shape: final_shape },
                             sir_node,
                             "mb.reshape",
                             knowledge_query,
@@ -516,8 +513,10 @@ impl LegalityRewritePass {
                     }
                 }
                 SirOp::Add { x, y } => {
-                    let air_x = sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
-                    let air_y = sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
+                    let air_x =
+                        sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
+                    let air_y =
+                        sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
@@ -529,8 +528,10 @@ impl LegalityRewritePass {
                     (air_id, nodes, "mb.add")
                 }
                 SirOp::Mul { x, y } => {
-                    let air_x = sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
-                    let air_y = sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
+                    let air_x =
+                        sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
+                    let air_y =
+                        sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
@@ -546,9 +547,14 @@ impl LegalityRewritePass {
                 // Decompose: select/where(cond, x, y) → cond*x + (1-cond)*y
                 // using Const(1.0), Sub, Mul, Add — all fully ANE-legal.
                 SirOp::Select { condition, x, y } => {
-                    let cond_air = sir_to_air.get(condition).cloned().unwrap_or_else(|| AirNodeId(condition.0.clone()));
-                    let x_air = sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
-                    let y_air = sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
+                    let cond_air = sir_to_air
+                        .get(condition)
+                        .cloned()
+                        .unwrap_or_else(|| AirNodeId(condition.0.clone()));
+                    let x_air =
+                        sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
+                    let y_air =
+                        sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
                     let base = &sir_node.id.0;
                     let mut nodes = Vec::new();
 
@@ -556,8 +562,13 @@ impl LegalityRewritePass {
                     let one_id = AirNodeId(format!("{}_sel_one", base));
                     nodes.push(Self::make_air_node(
                         one_id.clone(),
-                        AirOp::Const { value_path: "scalar://fp16/1.0".to_string(), dtype: MilDtype::Fp16 },
-                        sir_node, "mb.const", knowledge_query,
+                        AirOp::Const {
+                            value_path: "scalar://fp16/1.0".to_string(),
+                            dtype: MilDtype::Fp16,
+                        },
+                        sir_node,
+                        "mb.const",
+                        knowledge_query,
                     ));
 
                     // 2. Sub: 1 - cond
@@ -565,7 +576,9 @@ impl LegalityRewritePass {
                     nodes.push(Self::make_air_node(
                         one_minus_cond_id.clone(),
                         AirOp::Sub { x: one_id, y: cond_air.clone() },
-                        sir_node, "mb.sub", knowledge_query,
+                        sir_node,
+                        "mb.sub",
+                        knowledge_query,
                     ));
 
                     // 3. Mul: cond * x
@@ -573,7 +586,9 @@ impl LegalityRewritePass {
                     nodes.push(Self::make_air_node(
                         cond_x_id.clone(),
                         AirOp::Mul { x: cond_air, y: x_air },
-                        sir_node, "mb.mul", knowledge_query,
+                        sir_node,
+                        "mb.mul",
+                        knowledge_query,
                     ));
 
                     // 4. Mul: (1-cond) * y
@@ -581,7 +596,9 @@ impl LegalityRewritePass {
                     nodes.push(Self::make_air_node(
                         one_minus_cond_y_id.clone(),
                         AirOp::Mul { x: one_minus_cond_id, y: y_air },
-                        sir_node, "mb.mul", knowledge_query,
+                        sir_node,
+                        "mb.mul",
+                        knowledge_query,
                     ));
 
                     // 5. Add: cond*x + (1-cond)*y (final result)
@@ -589,15 +606,22 @@ impl LegalityRewritePass {
                     nodes.push(Self::make_air_node(
                         air_id.clone(),
                         AirOp::Add { x: cond_x_id, y: one_minus_cond_y_id },
-                        sir_node, "mb.add", knowledge_query,
+                        sir_node,
+                        "mb.add",
+                        knowledge_query,
                     ));
 
                     (air_id, nodes, "ane.legal.select_decompose")
                 }
                 SirOp::Where { condition, x, y } => {
-                    let cond_air = sir_to_air.get(condition).cloned().unwrap_or_else(|| AirNodeId(condition.0.clone()));
-                    let x_air = sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
-                    let y_air = sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
+                    let cond_air = sir_to_air
+                        .get(condition)
+                        .cloned()
+                        .unwrap_or_else(|| AirNodeId(condition.0.clone()));
+                    let x_air =
+                        sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
+                    let y_air =
+                        sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
                     let base = &sir_node.id.0;
                     let mut nodes = Vec::new();
 
@@ -605,8 +629,13 @@ impl LegalityRewritePass {
                     let one_id = AirNodeId(format!("{}_where_one", base));
                     nodes.push(Self::make_air_node(
                         one_id.clone(),
-                        AirOp::Const { value_path: "scalar://fp16/1.0".to_string(), dtype: MilDtype::Fp16 },
-                        sir_node, "mb.const", knowledge_query,
+                        AirOp::Const {
+                            value_path: "scalar://fp16/1.0".to_string(),
+                            dtype: MilDtype::Fp16,
+                        },
+                        sir_node,
+                        "mb.const",
+                        knowledge_query,
                     ));
 
                     // 2. Sub: 1 - cond
@@ -614,7 +643,9 @@ impl LegalityRewritePass {
                     nodes.push(Self::make_air_node(
                         one_minus_cond_id.clone(),
                         AirOp::Sub { x: one_id, y: cond_air.clone() },
-                        sir_node, "mb.sub", knowledge_query,
+                        sir_node,
+                        "mb.sub",
+                        knowledge_query,
                     ));
 
                     // 3. Mul: cond * x
@@ -622,7 +653,9 @@ impl LegalityRewritePass {
                     nodes.push(Self::make_air_node(
                         cond_x_id.clone(),
                         AirOp::Mul { x: cond_air, y: x_air },
-                        sir_node, "mb.mul", knowledge_query,
+                        sir_node,
+                        "mb.mul",
+                        knowledge_query,
                     ));
 
                     // 4. Mul: (1-cond) * y
@@ -630,7 +663,9 @@ impl LegalityRewritePass {
                     nodes.push(Self::make_air_node(
                         one_minus_cond_y_id.clone(),
                         AirOp::Mul { x: one_minus_cond_id, y: y_air },
-                        sir_node, "mb.mul", knowledge_query,
+                        sir_node,
+                        "mb.mul",
+                        knowledge_query,
                     ));
 
                     // 5. Add: cond*x + (1-cond)*y (final result)
@@ -638,13 +673,18 @@ impl LegalityRewritePass {
                     nodes.push(Self::make_air_node(
                         air_id.clone(),
                         AirOp::Add { x: cond_x_id, y: one_minus_cond_y_id },
-                        sir_node, "mb.add", knowledge_query,
+                        sir_node,
+                        "mb.add",
+                        knowledge_query,
                     ));
 
                     (air_id, nodes, "ane.legal.where_decompose")
                 }
                 SirOp::Abs { input } => {
-                    let air_input = sir_to_air.get(input).cloned().unwrap_or_else(|| AirNodeId(input.0.clone()));
+                    let air_input = sir_to_air
+                        .get(input)
+                        .cloned()
+                        .unwrap_or_else(|| AirNodeId(input.0.clone()));
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
@@ -656,8 +696,10 @@ impl LegalityRewritePass {
                     (air_id, nodes, "mb.abs")
                 }
                 SirOp::Maximum { x, y } => {
-                    let air_x = sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
-                    let air_y = sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
+                    let air_x =
+                        sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
+                    let air_y =
+                        sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
@@ -669,8 +711,10 @@ impl LegalityRewritePass {
                     (air_id, nodes, "mb.maximum")
                 }
                 SirOp::Minimum { x, y } => {
-                    let air_x = sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
-                    let air_y = sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
+                    let air_x =
+                        sir_to_air.get(x).cloned().unwrap_or_else(|| AirNodeId(x.0.clone()));
+                    let air_y =
+                        sir_to_air.get(y).cloned().unwrap_or_else(|| AirNodeId(y.0.clone()));
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
@@ -979,7 +1023,12 @@ impl LegalityRewritePass {
             k_4d_id.clone(),
             AirOp::Reshape {
                 input: k_air,
-                target_shape: vec![batch as usize, seq as usize, kv_heads as usize, head_dim as usize],
+                target_shape: vec![
+                    batch as usize,
+                    seq as usize,
+                    kv_heads as usize,
+                    head_dim as usize,
+                ],
             },
             sir_node,
             "mb.reshape",
@@ -991,7 +1040,12 @@ impl LegalityRewritePass {
             v_4d_id.clone(),
             AirOp::Reshape {
                 input: v_air,
-                target_shape: vec![batch as usize, seq as usize, kv_heads as usize, head_dim as usize],
+                target_shape: vec![
+                    batch as usize,
+                    seq as usize,
+                    kv_heads as usize,
+                    head_dim as usize,
+                ],
             },
             sir_node,
             "mb.reshape",
@@ -1053,228 +1107,246 @@ impl LegalityRewritePass {
 
         if heads > 0 {
             // ── Split-based per-head attention (primary path) ──────────
-            let fan_out = if kv_heads > 0 && kv_heads < heads {
-                (heads / kv_heads) as usize
+            let fan_out =
+                if kv_heads > 0 && kv_heads < heads { (heads / kv_heads) as usize } else { 1 };
+
+            // NOTE: We intentionally do NOT emit mb.split here. Core ML's split op
+            // returns a *list* of tensors, which our IR cannot model (single output
+            // per op). Serialising a split with num_splits>1 as a single-output op
+            // is invalid MIL and causes "number of outputs must be within the range
+            // 2:MAX" errors from coremlcompiler. Instead, we slice individual heads
+            // directly from the original Q/K/V tensors using slice_by_index, which
+            // matches the Python reference emitter pattern and produces valid MIL.
+            let q_split_id = q_t_id.clone();
+            let k_split_id = k_t_id.clone();
+            let v_split_id = v_t_id.clone();
+
+            // Scale constant: 1/√d_k
+            // T-36 (I-15/CQ-17): Warn on missing head_dim instead of silently
+            // falling back to 128, which produces wrong attention scale for
+            // models with head_dim != 128.
+            let scale_val = if head_dim > 0 {
+                1.0 / (head_dim as f32).sqrt()
             } else {
-                1
-            };
-
-        // NOTE: We intentionally do NOT emit mb.split here. Core ML's split op
-        // returns a *list* of tensors, which our IR cannot model (single output
-        // per op). Serialising a split with num_splits>1 as a single-output op
-        // is invalid MIL and causes "number of outputs must be within the range
-        // 2:MAX" errors from coremlcompiler. Instead, we slice individual heads
-        // directly from the original Q/K/V tensors using slice_by_index, which
-        // matches the Python reference emitter pattern and produces valid MIL.
-        let q_split_id = q_t_id.clone();
-        let k_split_id = k_t_id.clone();
-        let v_split_id = v_t_id.clone();
-
-        // Scale constant: 1/√d_k
-        // T-36 (I-15/CQ-17): Warn on missing head_dim instead of silently
-        // falling back to 128, which produces wrong attention scale for
-        // models with head_dim != 128.
-        let scale_val = if head_dim > 0 {
-            1.0 / (head_dim as f32).sqrt()
-        } else {
-            eprintln!(
+                eprintln!(
                 "[ERROR] decompose_attention: head_dim is 0 — cannot compute correct attention scale. \
                  Using default 1/√128 which will be WRONG for models with head_dim != 128. \
                  Provide DecompositionContext with correct head_dim."
             );
-            1.0 / (128.0_f32).sqrt()
-        };
-        // Shared scale constant: 1/√d_k
-        // Uses scalar:// resolution so the value is correctly serialized as fp16.
-        // Duplicates are removed by the global AirNodeId dedup at the end
-        // of LegalityRewritePass::run().
-        let scale_const_id = AirNodeId("shared_attn_scale".to_string());
-        nodes.push(Self::make_air_node(
-            scale_const_id.clone(),
-            AirOp::Const {
-                value_path: format!("scalar://fp16/{:.10}", scale_val),
-                dtype: MilDtype::Fp16,
-            },
-            sir_node, "mb.const", kq,
-        ));
-
-        // Pre-slice K and V heads — one slice per KV head, not per Q head.
-        // This avoids duplicate MIL output names when GQA fan_out > 1.
-        // (Same fix as decompose_decode_step — see CRITICAL comment there.)
-        let mut k_head_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads.max(1) as usize);
-        for kv_idx in 0..(kv_heads.max(1) as usize) {
-            let k_i_id = AirNodeId(format!("{base}_k_head_{}", kv_idx));
-            nodes.push(Self::make_air_node(
-                k_i_id.clone(),
-                AirOp::SliceByIndex {
-                    input: k_split_id.clone(),
-                    begin: vec![0, kv_idx as i64, 0, 0],
-                    end: vec![0, (kv_idx as i64) + 1, 0, 0],
-                    stride: vec![1, 1, 1, 1],
-                    begin_mask: vec![true, false, true, true],
-                    end_mask: vec![true, false, true, true],
-                    squeeze_mask: vec![false, true, false, false],
-                },
-                sir_node, "mb.slice_by_index", kq,
-            ));
-            k_head_ids.push(k_i_id);
-        }
-
-        let mut v_head_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads.max(1) as usize);
-        for kv_idx in 0..(kv_heads.max(1) as usize) {
-            let v_i_id = AirNodeId(format!("{base}_v_head_{}", kv_idx));
-            nodes.push(Self::make_air_node(
-                v_i_id.clone(),
-                AirOp::SliceByIndex {
-                    input: v_split_id.clone(),
-                    begin: vec![0, kv_idx as i64, 0, 0],
-                    end: vec![0, (kv_idx as i64) + 1, 0, 0],
-                    stride: vec![1, 1, 1, 1],
-                    begin_mask: vec![true, false, true, true],
-                    end_mask: vec![true, false, true, true],
-                    squeeze_mask: vec![false, true, false, false],
-                },
-                sir_node, "mb.slice_by_index", kq,
-            ));
-            v_head_ids.push(v_i_id);
-        }
-
-        // Also pre-slice the K transposes, since each KV head only needs one transpose
-        // and multiple Q heads may reference the same transposed K.
-        let mut k_head_t_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads.max(1) as usize);
-        for kv_idx in 0..(kv_heads.max(1) as usize) {
-            let k_i_t_id = AirNodeId(format!("{base}_k_head_{}_t", kv_idx));
-            nodes.push(Self::make_air_node(
-                k_i_t_id.clone(),
-                AirOp::Transpose { input: k_head_ids[kv_idx].clone(), perm: vec![0, 2, 1] },
-                sir_node, "mb.transpose", kq,
-            ));
-            k_head_t_ids.push(k_i_t_id);
-        }
-
-        // Per-head attention loop
-        let mut ctx_parts: Vec<AirNodeId> = Vec::with_capacity(heads as usize);
-
-        for head_idx in 0..(heads as usize) {
-            let kv_idx = head_idx / fan_out;
-
-            // Extract Q head: SliceByIndex from q_split output
-            // Q shape per head: [B, 1, S, D] (squeeze dim 1 → [B, S, D])
-            let q_i_id = AirNodeId(format!("{base}_q_head_{}", head_idx));
-            nodes.push(Self::make_air_node(
-                q_i_id.clone(),
-                AirOp::SliceByIndex {
-                    input: q_split_id.clone(),
-                    begin: vec![0, head_idx as i64, 0, 0],
-                    end: vec![0, (head_idx as i64) + 1, 0, 0],
-                    stride: vec![1, 1, 1, 1],
-                    begin_mask: vec![true, false, true, true],
-                    end_mask: vec![true, false, true, true],
-                    squeeze_mask: vec![false, true, false, false],
-                },
-                sir_node, "mb.slice_by_index", kq,
-            ));
-
-            // Reuse pre-sliced K and V heads (no duplicate output names)
-            let _k_i_id = k_head_ids[kv_idx].clone();
-            let v_i_id = v_head_ids[kv_idx].clone();
-            let k_i_t_id = k_head_t_ids[kv_idx].clone();
-
-            // logits = matmul(q_i, k_i^T)
-            // q_i: [B, S, D], k_i_t: [B, D, S] (pre-transposed)
-            // matmul: [B, S, D] @ [B, D, S] = [B, S, S]
-            let logits_id = AirNodeId(format!("{base}_logits_{}", head_idx));
-            nodes.push(Self::make_air_node(
-                logits_id.clone(),
-                AirOp::MatMul { a: q_i_id, b: k_i_t_id },
-                sir_node, "mb.matmul", kq,
-            ));
-
-            // Scale: logits *= 1/√d_k
-            let scaled_logits_id = AirNodeId(format!("{base}_scaled_logits_{}", head_idx));
-            nodes.push(Self::make_air_node(
-                scaled_logits_id.clone(),
-                AirOp::Mul { x: logits_id, y: scale_const_id.clone() },
-                sir_node, "mb.mul", kq,
-            ));
-
-            // Apply causal mask if available
-            let masked_logits_id = if let Some(ref m) = mask_sir {
-                let mask_air_id = sir_to_air.get(m).cloned().unwrap_or_else(|| AirNodeId(m.0.clone()));
-                let ml_id = AirNodeId(format!("{base}_masked_logits_{}", head_idx));
-                nodes.push(Self::make_air_node(
-                    ml_id.clone(),
-                    AirOp::Add { x: scaled_logits_id, y: mask_air_id },
-                    sir_node, "mb.add", kq,
-                ));
-                ml_id
-            } else {
-                scaled_logits_id
+                1.0 / (128.0_f32).sqrt()
             };
-
-            // weights = softmax(logits, axis=-1)
-            let weights_id = AirNodeId(format!("{base}_weights_{}", head_idx));
+            // Shared scale constant: 1/√d_k
+            // Uses scalar:// resolution so the value is correctly serialized as fp16.
+            // Duplicates are removed by the global AirNodeId dedup at the end
+            // of LegalityRewritePass::run().
+            let scale_const_id = AirNodeId("shared_attn_scale".to_string());
             nodes.push(Self::make_air_node(
-                weights_id.clone(),
-                AirOp::Softmax { input: masked_logits_id, axis: -1 },
-                sir_node, "mb.softmax", kq,
+                scale_const_id.clone(),
+                AirOp::Const {
+                    value_path: format!("scalar://fp16/{:.10}", scale_val),
+                    dtype: MilDtype::Fp16,
+                },
+                sir_node,
+                "mb.const",
+                kq,
             ));
 
-            // ctx_part = matmul(weights, v_i)
-            // weights: [B, S, S], v_i: [B, S, D] → output: [B, S, D]
-            let ctx_part_id = AirNodeId(format!("{base}_ctx_{}", head_idx));
+            // Pre-slice K and V heads — one slice per KV head, not per Q head.
+            // This avoids duplicate MIL output names when GQA fan_out > 1.
+            // (Same fix as decompose_decode_step — see CRITICAL comment there.)
+            let mut k_head_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads.max(1) as usize);
+            for kv_idx in 0..(kv_heads.max(1) as usize) {
+                let k_i_id = AirNodeId(format!("{base}_k_head_{}", kv_idx));
+                nodes.push(Self::make_air_node(
+                    k_i_id.clone(),
+                    AirOp::SliceByIndex {
+                        input: k_split_id.clone(),
+                        begin: vec![0, kv_idx as i64, 0, 0],
+                        end: vec![0, (kv_idx as i64) + 1, 0, 0],
+                        stride: vec![1, 1, 1, 1],
+                        begin_mask: vec![true, false, true, true],
+                        end_mask: vec![true, false, true, true],
+                        squeeze_mask: vec![false, true, false, false],
+                    },
+                    sir_node,
+                    "mb.slice_by_index",
+                    kq,
+                ));
+                k_head_ids.push(k_i_id);
+            }
+
+            let mut v_head_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads.max(1) as usize);
+            for kv_idx in 0..(kv_heads.max(1) as usize) {
+                let v_i_id = AirNodeId(format!("{base}_v_head_{}", kv_idx));
+                nodes.push(Self::make_air_node(
+                    v_i_id.clone(),
+                    AirOp::SliceByIndex {
+                        input: v_split_id.clone(),
+                        begin: vec![0, kv_idx as i64, 0, 0],
+                        end: vec![0, (kv_idx as i64) + 1, 0, 0],
+                        stride: vec![1, 1, 1, 1],
+                        begin_mask: vec![true, false, true, true],
+                        end_mask: vec![true, false, true, true],
+                        squeeze_mask: vec![false, true, false, false],
+                    },
+                    sir_node,
+                    "mb.slice_by_index",
+                    kq,
+                ));
+                v_head_ids.push(v_i_id);
+            }
+
+            // Also pre-slice the K transposes, since each KV head only needs one transpose
+            // and multiple Q heads may reference the same transposed K.
+            let mut k_head_t_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads.max(1) as usize);
+            for (kv_idx, k_head_id) in k_head_ids.iter().enumerate().take(kv_heads.max(1) as usize)
+            {
+                let k_i_t_id = AirNodeId(format!("{base}_k_head_{}_t", kv_idx));
+                nodes.push(Self::make_air_node(
+                    k_i_t_id.clone(),
+                    AirOp::Transpose { input: k_head_id.clone(), perm: vec![0, 2, 1] },
+                    sir_node,
+                    "mb.transpose",
+                    kq,
+                ));
+                k_head_t_ids.push(k_i_t_id);
+            }
+
+            // Per-head attention loop
+            let mut ctx_parts: Vec<AirNodeId> = Vec::with_capacity(heads as usize);
+
+            for head_idx in 0..(heads as usize) {
+                let kv_idx = head_idx / fan_out;
+
+                // Extract Q head: SliceByIndex from q_split output
+                // Q shape per head: [B, 1, S, D] (squeeze dim 1 → [B, S, D])
+                let q_i_id = AirNodeId(format!("{base}_q_head_{}", head_idx));
+                nodes.push(Self::make_air_node(
+                    q_i_id.clone(),
+                    AirOp::SliceByIndex {
+                        input: q_split_id.clone(),
+                        begin: vec![0, head_idx as i64, 0, 0],
+                        end: vec![0, (head_idx as i64) + 1, 0, 0],
+                        stride: vec![1, 1, 1, 1],
+                        begin_mask: vec![true, false, true, true],
+                        end_mask: vec![true, false, true, true],
+                        squeeze_mask: vec![false, true, false, false],
+                    },
+                    sir_node,
+                    "mb.slice_by_index",
+                    kq,
+                ));
+
+                // Reuse pre-sliced K and V heads (no duplicate output names)
+                let _k_i_id = k_head_ids[kv_idx].clone();
+                let v_i_id = v_head_ids[kv_idx].clone();
+                let k_i_t_id = k_head_t_ids[kv_idx].clone();
+
+                // logits = matmul(q_i, k_i^T)
+                // q_i: [B, S, D], k_i_t: [B, D, S] (pre-transposed)
+                // matmul: [B, S, D] @ [B, D, S] = [B, S, S]
+                let logits_id = AirNodeId(format!("{base}_logits_{}", head_idx));
+                nodes.push(Self::make_air_node(
+                    logits_id.clone(),
+                    AirOp::MatMul { a: q_i_id, b: k_i_t_id },
+                    sir_node,
+                    "mb.matmul",
+                    kq,
+                ));
+
+                // Scale: logits *= 1/√d_k
+                let scaled_logits_id = AirNodeId(format!("{base}_scaled_logits_{}", head_idx));
+                nodes.push(Self::make_air_node(
+                    scaled_logits_id.clone(),
+                    AirOp::Mul { x: logits_id, y: scale_const_id.clone() },
+                    sir_node,
+                    "mb.mul",
+                    kq,
+                ));
+
+                // Apply causal mask if available
+                let masked_logits_id = if let Some(ref m) = mask_sir {
+                    let mask_air_id =
+                        sir_to_air.get(m).cloned().unwrap_or_else(|| AirNodeId(m.0.clone()));
+                    let ml_id = AirNodeId(format!("{base}_masked_logits_{}", head_idx));
+                    nodes.push(Self::make_air_node(
+                        ml_id.clone(),
+                        AirOp::Add { x: scaled_logits_id, y: mask_air_id },
+                        sir_node,
+                        "mb.add",
+                        kq,
+                    ));
+                    ml_id
+                } else {
+                    scaled_logits_id
+                };
+
+                // weights = softmax(logits, axis=-1)
+                let weights_id = AirNodeId(format!("{base}_weights_{}", head_idx));
+                nodes.push(Self::make_air_node(
+                    weights_id.clone(),
+                    AirOp::Softmax { input: masked_logits_id, axis: -1 },
+                    sir_node,
+                    "mb.softmax",
+                    kq,
+                ));
+
+                // ctx_part = matmul(weights, v_i)
+                // weights: [B, S, S], v_i: [B, S, D] → output: [B, S, D]
+                let ctx_part_id = AirNodeId(format!("{base}_ctx_{}", head_idx));
+                nodes.push(Self::make_air_node(
+                    ctx_part_id.clone(),
+                    AirOp::MatMul { a: weights_id, b: v_i_id },
+                    sir_node,
+                    "mb.matmul",
+                    kq,
+                ));
+
+                // Expand dims: [B, S, D] → [B, 1, S, D] for concat along axis 1
+                let ctx_expanded_id = AirNodeId(format!("{base}_ctx_exp_{}", head_idx));
+                nodes.push(Self::make_air_node(
+                    ctx_expanded_id.clone(),
+                    AirOp::ExpandDims { input: ctx_part_id, axis: vec![1] },
+                    sir_node,
+                    "mb.expand_dims",
+                    kq,
+                ));
+
+                ctx_parts.push(ctx_expanded_id);
+            }
+
+            // Concat all per-head context: [B, 1, S, D] × hq → [B, hq, S, D]
+            let ctx_concat_id = AirNodeId(format!("{base}_ctx_concat"));
             nodes.push(Self::make_air_node(
-                ctx_part_id.clone(),
-                AirOp::MatMul { a: weights_id, b: v_i_id },
-                sir_node, "mb.matmul", kq,
+                ctx_concat_id.clone(),
+                AirOp::Concat { inputs: ctx_parts, axis: 1 },
+                sir_node,
+                "mb.concat",
+                kq,
             ));
 
-            // Expand dims: [B, S, D] → [B, 1, S, D] for concat along axis 1
-            let ctx_expanded_id = AirNodeId(format!("{base}_ctx_exp_{}", head_idx));
+            // Step 8: Reshape back to [batch, seq, num_heads * head_dim]
+            // attn_flat_dim is defined above (before the if/else branch)
             nodes.push(Self::make_air_node(
-                ctx_expanded_id.clone(),
-                AirOp::ExpandDims { input: ctx_part_id, axis: vec![1] },
-                sir_node, "mb.expand_dims", kq,
+                attn_flat_id.clone(),
+                AirOp::Reshape {
+                    input: ctx_concat_id,
+                    target_shape: vec![batch as usize, seq as usize, attn_flat_dim as usize],
+                },
+                sir_node,
+                "mb.reshape",
+                kq,
             ));
-
-            ctx_parts.push(ctx_expanded_id);
-        }
-
-        // Concat all per-head context: [B, 1, S, D] × hq → [B, hq, S, D]
-        let ctx_concat_id = AirNodeId(format!("{base}_ctx_concat"));
-        nodes.push(Self::make_air_node(
-            ctx_concat_id.clone(),
-            AirOp::Concat { inputs: ctx_parts, axis: 1 },
-            sir_node, "mb.concat", kq,
-        ));
-
-        // Step 8: Reshape back to [batch, seq, num_heads * head_dim]
-        // attn_flat_dim is defined above (before the if/else branch)
-        nodes.push(Self::make_air_node(
-            attn_flat_id.clone(),
-            AirOp::Reshape {
-                input: ctx_concat_id,
-                target_shape: vec![batch as usize, seq as usize, attn_flat_dim as usize],
-            },
-            sir_node,
-            "mb.reshape",
-            kq,
-        ));
-
         } else {
             // ── SDPA fallback (no DecompositionContext) ───────────────
             // When heads=0 (no context), we don't know the head count for
             // per-head attention, so fall back to SDPA. This should only
             // occur in synthetic tests — production compilation always
             // provides a DecompositionContext.
-            let mask_air = mask_sir.as_ref().and_then(|m| {
-                sir_to_air.get(m).cloned().or_else(|| Some(AirNodeId(m.0.clone())))
-            });
-            let scale = if head_dim > 0 {
-                Some(1.0 / (head_dim as f32).sqrt())
-            } else {
-                None
-            };
+            let mask_air = mask_sir
+                .as_ref()
+                .and_then(|m| sir_to_air.get(m).cloned().or_else(|| Some(AirNodeId(m.0.clone()))));
+            let scale = if head_dim > 0 { Some(1.0 / (head_dim as f32).sqrt()) } else { None };
 
             let attn_id = AirNodeId(format!("{base}_attn"));
             nodes.push(Self::make_air_node(
@@ -1402,7 +1474,8 @@ impl LegalityRewritePass {
 
         // Extract dimensions from context or use placeholders
         let kv_heads_val = ctx.map(|c| c.kv_heads).unwrap_or(0);
-        let kv_heads = if kv_heads_val > 0 { kv_heads_val } else { ctx.map(|c| c.num_heads).unwrap_or(0) };
+        let kv_heads =
+            if kv_heads_val > 0 { kv_heads_val } else { ctx.map(|c| c.num_heads).unwrap_or(0) };
         let (batch, embed, heads, head_dim, kv_len) = match ctx {
             Some(c) => (
                 c.batch_size as i64,
@@ -1423,125 +1496,124 @@ impl LegalityRewritePass {
         // HuggingFace models which store q_proj/k_proj/v_proj separately).
         // When no separate weights, fall back to legacy fused QKV.
 
-        let (q_id, k_new_id, v_new_id) = if let (Some(qw), Some(kw), Some(vw)) =
-            (q_weight, k_weight, v_weight)
-        {
-            // Separate Q, K, V projections — each with its own weight name
-            let q_proj_dim = heads * head_dim;
-            let kv_proj_dim = kv_heads as i64 * head_dim;
+        let (q_id, k_new_id, v_new_id) =
+            if let (Some(qw), Some(kw), Some(vw)) = (q_weight, k_weight, v_weight) {
+                // Separate Q, K, V projections — each with its own weight name
+                let q_proj_dim = heads * head_dim;
+                let kv_proj_dim = kv_heads as i64 * head_dim;
 
-            let q_id = AirNodeId(format!("{base}_q_proj"));
-            nodes.push(Self::make_air_node(
-                q_id.clone(),
-                AirOp::Conv1x1AsLinear {
-                    input: token_air.clone(),
-                    weight: qw.to_string(),
-                    pad_type: "valid".into(),
-                    output_dim: q_proj_dim as usize,
-                },
-                sir_node,
-                "mb.linear",
-                kq,
-            ));
+                let q_id = AirNodeId(format!("{base}_q_proj"));
+                nodes.push(Self::make_air_node(
+                    q_id.clone(),
+                    AirOp::Conv1x1AsLinear {
+                        input: token_air.clone(),
+                        weight: qw.to_string(),
+                        pad_type: "valid".into(),
+                        output_dim: q_proj_dim as usize,
+                    },
+                    sir_node,
+                    "mb.linear",
+                    kq,
+                ));
 
-            let k_id = AirNodeId(format!("{base}_k_proj"));
-            nodes.push(Self::make_air_node(
-                k_id.clone(),
-                AirOp::Conv1x1AsLinear {
-                    input: token_air.clone(),
-                    weight: kw.to_string(),
-                    pad_type: "valid".into(),
-                    output_dim: kv_proj_dim as usize,
-                },
-                sir_node,
-                "mb.linear",
-                kq,
-            ));
+                let k_id = AirNodeId(format!("{base}_k_proj"));
+                nodes.push(Self::make_air_node(
+                    k_id.clone(),
+                    AirOp::Conv1x1AsLinear {
+                        input: token_air.clone(),
+                        weight: kw.to_string(),
+                        pad_type: "valid".into(),
+                        output_dim: kv_proj_dim as usize,
+                    },
+                    sir_node,
+                    "mb.linear",
+                    kq,
+                ));
 
-            let v_id = AirNodeId(format!("{base}_v_proj"));
-            nodes.push(Self::make_air_node(
-                v_id.clone(),
-                AirOp::Conv1x1AsLinear {
-                    input: token_air,
-                    weight: vw.to_string(),
-                    pad_type: "valid".into(),
-                    output_dim: kv_proj_dim as usize,
-                },
-                sir_node,
-                "mb.linear",
-                kq,
-            ));
+                let v_id = AirNodeId(format!("{base}_v_proj"));
+                nodes.push(Self::make_air_node(
+                    v_id.clone(),
+                    AirOp::Conv1x1AsLinear {
+                        input: token_air,
+                        weight: vw.to_string(),
+                        pad_type: "valid".into(),
+                        output_dim: kv_proj_dim as usize,
+                    },
+                    sir_node,
+                    "mb.linear",
+                    kq,
+                ));
 
-            (q_id, k_id, v_id)
-        } else {
-            // Legacy fallback: fused QKV projection + slice
-            let qkv_id = AirNodeId(format!("{base}_qkv_proj"));
-            nodes.push(Self::make_air_node(
-                qkv_id.clone(),
-                AirOp::Conv1x1AsLinear {
-                    input: token_air,
-                    weight: format!("{base}_w_qkv"),
-                    pad_type: "valid".into(),
-                    output_dim: (3 * embed) as usize,
-                },
-                sir_node,
-                "mb.linear",
-                kq,
-            ));
+                (q_id, k_id, v_id)
+            } else {
+                // Legacy fallback: fused QKV projection + slice
+                let qkv_id = AirNodeId(format!("{base}_qkv_proj"));
+                nodes.push(Self::make_air_node(
+                    qkv_id.clone(),
+                    AirOp::Conv1x1AsLinear {
+                        input: token_air,
+                        weight: format!("{base}_w_qkv"),
+                        pad_type: "valid".into(),
+                        output_dim: (3 * embed) as usize,
+                    },
+                    sir_node,
+                    "mb.linear",
+                    kq,
+                ));
 
-            let q_id = AirNodeId(format!("{base}_q"));
-            nodes.push(Self::make_air_node(
-                q_id.clone(),
-                AirOp::SliceByIndex {
-                    input: qkv_id.clone(),
-                    begin: vec![0, 0],
-                    end: vec![batch, embed],
-                    stride: vec![],
-                    begin_mask: vec![],
-                    end_mask: vec![],
-                    squeeze_mask: vec![],
-                },
-                sir_node,
-                "mb.slice_by_index",
-                kq,
-            ));
+                let q_id = AirNodeId(format!("{base}_q"));
+                nodes.push(Self::make_air_node(
+                    q_id.clone(),
+                    AirOp::SliceByIndex {
+                        input: qkv_id.clone(),
+                        begin: vec![0, 0],
+                        end: vec![batch, embed],
+                        stride: vec![],
+                        begin_mask: vec![],
+                        end_mask: vec![],
+                        squeeze_mask: vec![],
+                    },
+                    sir_node,
+                    "mb.slice_by_index",
+                    kq,
+                ));
 
-            let k_id = AirNodeId(format!("{base}_k_new"));
-            nodes.push(Self::make_air_node(
-                k_id.clone(),
-                AirOp::SliceByIndex {
-                    input: qkv_id.clone(),
-                    begin: vec![0, embed],
-                    end: vec![batch, 2 * embed],
-                    stride: vec![],
-                    begin_mask: vec![],
-                    end_mask: vec![],
-                    squeeze_mask: vec![],
-                },
-                sir_node,
-                "mb.slice_by_index",
-                kq,
-            ));
+                let k_id = AirNodeId(format!("{base}_k_new"));
+                nodes.push(Self::make_air_node(
+                    k_id.clone(),
+                    AirOp::SliceByIndex {
+                        input: qkv_id.clone(),
+                        begin: vec![0, embed],
+                        end: vec![batch, 2 * embed],
+                        stride: vec![],
+                        begin_mask: vec![],
+                        end_mask: vec![],
+                        squeeze_mask: vec![],
+                    },
+                    sir_node,
+                    "mb.slice_by_index",
+                    kq,
+                ));
 
-            let v_id = AirNodeId(format!("{base}_v_new"));
-            nodes.push(Self::make_air_node(
-                v_id.clone(),
-                AirOp::SliceByIndex {
-                    input: qkv_id,
-                    begin: vec![0, 2 * embed],
-                    end: vec![batch, 3 * embed],
-                    stride: vec![],
-                    begin_mask: vec![],
-                    end_mask: vec![],
-                    squeeze_mask: vec![],
-                },
-                sir_node,
-                "mb.slice_by_index",
-                kq,
-            ));
+                let v_id = AirNodeId(format!("{base}_v_new"));
+                nodes.push(Self::make_air_node(
+                    v_id.clone(),
+                    AirOp::SliceByIndex {
+                        input: qkv_id,
+                        begin: vec![0, 2 * embed],
+                        end: vec![batch, 3 * embed],
+                        stride: vec![],
+                        begin_mask: vec![],
+                        end_mask: vec![],
+                        squeeze_mask: vec![],
+                    },
+                    sir_node,
+                    "mb.slice_by_index",
+                    kq,
+                ));
 
-            (q_id, k_id, v_id)
-        };
+                (q_id, k_id, v_id)
+            };
 
         // ─────────────────────────────────────────────────────────────
         // Step 2: Optional QK-norm (RMSNorm with axes=[3])
@@ -1552,21 +1624,35 @@ impl LegalityRewritePass {
         // to apply axes=[3] correctly.
 
         let q_after_norm = if let Some(qnw) = q_norm_weight {
-            let q_normed = Self::apply_qk_norm_decode(
-                &q_id, qnw, norm_epsilon, heads as usize, head_dim as usize,
-                base, "_q_norm", sir_node, kq, &mut nodes,
-            );
-            q_normed
+            Self::apply_qk_norm_decode(
+                &q_id,
+                qnw,
+                norm_epsilon,
+                heads as usize,
+                head_dim as usize,
+                base,
+                "_q_norm",
+                sir_node,
+                kq,
+                &mut nodes,
+            )
         } else {
             q_id.clone()
         };
 
         let k_after_norm = if let Some(knw) = k_norm_weight {
-            let k_normed = Self::apply_qk_norm_decode(
-                &k_new_id, knw, norm_epsilon, kv_heads as usize, head_dim as usize,
-                base, "_k_norm", sir_node, kq, &mut nodes,
-            );
-            k_normed
+            Self::apply_qk_norm_decode(
+                &k_new_id,
+                knw,
+                norm_epsilon,
+                kv_heads,
+                head_dim as usize,
+                base,
+                "_k_norm",
+                sir_node,
+                kq,
+                &mut nodes,
+            )
         } else {
             k_new_id.clone()
         };
@@ -1577,7 +1663,7 @@ impl LegalityRewritePass {
         let k_state_id = state_map.first().cloned().unwrap_or_else(|| format!("{base}_k_cache"));
         let v_state_id = state_map.get(1).cloned().unwrap_or_else(|| format!("{base}_v_cache"));
 
-        let kv_embed = kv_heads as usize * head_dim as usize;
+        let kv_embed = kv_heads * head_dim as usize;
         let k_cache_id = AirNodeId(format!("{base}_k_cache_read"));
         nodes.push(Self::make_air_node(
             k_cache_id.clone(),
@@ -1628,7 +1714,7 @@ impl LegalityRewritePass {
             k_4d_id.clone(),
             AirOp::Reshape {
                 input: k_cache_id.clone(),
-                target_shape: vec![1, kv_heads as usize, kv_len as usize, head_dim as usize],
+                target_shape: vec![1, kv_heads, kv_len as usize, head_dim as usize],
             },
             sir_node,
             "mb.reshape",
@@ -1640,7 +1726,7 @@ impl LegalityRewritePass {
             v_4d_id.clone(),
             AirOp::Reshape {
                 input: v_cache_id.clone(),
-                target_shape: vec![1, kv_heads as usize, kv_len as usize, head_dim as usize],
+                target_shape: vec![1, kv_heads, kv_len as usize, head_dim as usize],
             },
             sir_node,
             "mb.reshape",
@@ -1673,11 +1759,8 @@ impl LegalityRewritePass {
         // maps to its own KV head — the split is still correct but
         // degenerates to per-head attention.
 
-        let fan_out = if (kv_heads as i64) < heads {
-            (heads / kv_heads as i64) as usize
-        } else {
-            1
-        };
+        let fan_out =
+            if (kv_heads as i64) < heads { (heads / kv_heads as i64) as usize } else { 1 };
         let _uses_gqa = (kv_heads as i64) < heads; // used for diagnostics only
 
         // Step 5a-prep: Reshape the new K value BEFORE applying RoPE.
@@ -1689,9 +1772,11 @@ impl LegalityRewritePass {
             k_new_4d_id.clone(),
             AirOp::Reshape {
                 input: k_after_norm.clone(),
-                target_shape: vec![1, kv_heads as usize, 1, head_dim as usize],
+                target_shape: vec![1, kv_heads, 1, head_dim as usize],
             },
-            sir_node, "mb.reshape", kq,
+            sir_node,
+            "mb.reshape",
+            kq,
         ));
 
         // Reshape the new V value for cache write:
@@ -1701,9 +1786,11 @@ impl LegalityRewritePass {
             v_new_4d_id.clone(),
             AirOp::Reshape {
                 input: v_new_id.clone(),
-                target_shape: vec![1, kv_heads as usize, 1, head_dim as usize],
+                target_shape: vec![1, kv_heads, 1, head_dim as usize],
             },
-            sir_node, "mb.reshape", kq,
+            sir_node,
+            "mb.reshape",
+            kq,
         ));
 
         // Step 5a: Apply RoPE to Q and the new K token.
@@ -1722,22 +1809,23 @@ impl LegalityRewritePass {
         // for decode, so broadcast works: [1, hq, 1, hd] * [1, 1, 1, hd]).
         let (q_for_attn, k_new_rope_id, kv_mask_write_id, causal_mask_id) =
             if let Some(tables_ref) = rope_tables {
-            let (q_rope, _cos_tab, _sin_tab, k_new_rope, kv_mask, causal_mask) = Self::apply_rope_decode(
-                &q_4d_id,
-                &k_new_4d_id,
-                tables_ref,
-                position,
-                &sir_to_air,
-                base,
-                sir_node,
-                kq,
-                ctx,
-                &mut nodes,
-            );
-            (q_rope, k_new_rope, kv_mask, causal_mask)
-        } else {
-            (q_4d_id, k_new_4d_id.clone(), None, None)
-        };
+                let (q_rope, _cos_tab, _sin_tab, k_new_rope, kv_mask, causal_mask) =
+                    Self::apply_rope_decode(
+                        &q_4d_id,
+                        &k_new_4d_id,
+                        tables_ref,
+                        position,
+                        sir_to_air,
+                        base,
+                        sir_node,
+                        kq,
+                        ctx,
+                        &mut nodes,
+                    );
+                (q_rope, k_new_rope, kv_mask, causal_mask)
+            } else {
+                (q_4d_id, k_new_4d_id.clone(), None, None)
+            };
 
         // Step 5b: KV Cache write — masked blend (NOT SliceUpdate)
         //
@@ -1764,7 +1852,9 @@ impl LegalityRewritePass {
                     input: kv_mask_row.clone(),
                     target_shape: vec![1, 1, kv_len as usize, 1],
                 },
-                sir_node, "mb.reshape", kq,
+                sir_node,
+                "mb.reshape",
+                kq,
             ));
 
             // mask_keep = 1.0 - mask_write
@@ -1775,18 +1865,19 @@ impl LegalityRewritePass {
             let one_const_id = AirNodeId("shared_scalar_one".to_string());
             nodes.push(Self::make_air_node(
                 one_const_id.clone(),
-                AirOp::Const {
-                    value_path: "scalar://fp16/1.0".to_string(),
-                    dtype: MilDtype::Fp16,
-                },
-                sir_node, "mb.const", kq,
+                AirOp::Const { value_path: "scalar://fp16/1.0".to_string(), dtype: MilDtype::Fp16 },
+                sir_node,
+                "mb.const",
+                kq,
             ));
 
             let mask_keep_id = AirNodeId(format!("{base}_mask_keep"));
             nodes.push(Self::make_air_node(
                 mask_keep_id.clone(),
                 AirOp::Sub { x: one_const_id, y: mask_write_id.clone() },
-                sir_node, "mb.sub", kq,
+                sir_node,
+                "mb.sub",
+                kq,
             ));
 
             // K cache: _append(k_cache, k_new_rope, mask_keep, mask_write)
@@ -1796,21 +1887,27 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 k_old_masked_id.clone(),
                 AirOp::Mul { x: k_4d_id.clone(), y: mask_keep_id.clone() },
-                sir_node, "mb.mul", kq,
+                sir_node,
+                "mb.mul",
+                kq,
             ));
 
             let k_new_masked_id = AirNodeId(format!("{base}_k_new_masked"));
             nodes.push(Self::make_air_node(
                 k_new_masked_id.clone(),
                 AirOp::Mul { x: k_new_rope_id, y: mask_write_id.clone() },
-                sir_node, "mb.mul", kq,
+                sir_node,
+                "mb.mul",
+                kq,
             ));
 
             let next_k_id = AirNodeId(format!("{base}_next_k_cache"));
             nodes.push(Self::make_air_node(
                 next_k_id.clone(),
                 AirOp::Add { x: k_old_masked_id, y: k_new_masked_id },
-                sir_node, "mb.add", kq,
+                sir_node,
+                "mb.add",
+                kq,
             ));
 
             // V cache: _append(v_cache, v_new_4d, mask_keep, mask_write)
@@ -1821,21 +1918,27 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 v_old_masked_id.clone(),
                 AirOp::Mul { x: v_4d_id.clone(), y: mask_keep_id },
-                sir_node, "mb.mul", kq,
+                sir_node,
+                "mb.mul",
+                kq,
             ));
 
             let v_new_masked_id = AirNodeId(format!("{base}_v_new_masked"));
             nodes.push(Self::make_air_node(
                 v_new_masked_id.clone(),
                 AirOp::Mul { x: v_new_4d_id, y: mask_write_id },
-                sir_node, "mb.mul", kq,
+                sir_node,
+                "mb.mul",
+                kq,
             ));
 
             let next_v_id = AirNodeId(format!("{base}_next_v_cache"));
             nodes.push(Self::make_air_node(
                 next_v_id.clone(),
                 AirOp::Add { x: v_old_masked_id, y: v_new_masked_id },
-                sir_node, "mb.add", kq,
+                sir_node,
+                "mb.add",
+                kq,
             ));
 
             (next_k_id, next_v_id)
@@ -1930,8 +2033,8 @@ impl LegalityRewritePass {
 
         // Pre-slice K and V heads — one slice per KV head, not per Q head.
         // This avoids duplicate output names when GQA fan_out > 1.
-        let mut k_head_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads as usize);
-        for kv_idx in 0..(kv_heads as usize) {
+        let mut k_head_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads);
+        for kv_idx in 0..kv_heads {
             let k_i_id = AirNodeId(format!("{base}_k_head_{}", kv_idx));
             nodes.push(Self::make_air_node(
                 k_i_id.clone(),
@@ -1944,13 +2047,15 @@ impl LegalityRewritePass {
                     end_mask: vec![true, false, true, true],
                     squeeze_mask: vec![false, true, false, false],
                 },
-                sir_node, "mb.slice_by_index", kq,
+                sir_node,
+                "mb.slice_by_index",
+                kq,
             ));
             k_head_ids.push(k_i_id);
         }
 
-        let mut v_head_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads as usize);
-        for kv_idx in 0..(kv_heads as usize) {
+        let mut v_head_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads);
+        for kv_idx in 0..kv_heads {
             let v_i_id = AirNodeId(format!("{base}_v_head_{}", kv_idx));
             nodes.push(Self::make_air_node(
                 v_i_id.clone(),
@@ -1963,7 +2068,9 @@ impl LegalityRewritePass {
                     end_mask: vec![true, false, true, true],
                     squeeze_mask: vec![false, true, false, false],
                 },
-                sir_node, "mb.slice_by_index", kq,
+                sir_node,
+                "mb.slice_by_index",
+                kq,
             ));
             v_head_ids.push(v_i_id);
         }
@@ -1975,13 +2082,15 @@ impl LegalityRewritePass {
         // Without this transpose, the matmul would be:
         //   [1, 1, hd] × [1, seq, hd]  ← inner dims mismatch (hd ≠ seq)
         // This matches the pattern used in decompose_attention_block (line 1017-1028).
-        let mut k_head_t_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads as usize);
-        for kv_idx in 0..(kv_heads as usize) {
+        let mut k_head_t_ids: Vec<AirNodeId> = Vec::with_capacity(kv_heads);
+        for (kv_idx, k_head_id) in k_head_ids.iter().enumerate().take(kv_heads) {
             let k_i_t_id = AirNodeId(format!("{base}_k_head_{}_t", kv_idx));
             nodes.push(Self::make_air_node(
                 k_i_t_id.clone(),
-                AirOp::Transpose { input: k_head_ids[kv_idx].clone(), perm: vec![0, 2, 1] },
-                sir_node, "mb.transpose", kq,
+                AirOp::Transpose { input: k_head_id.clone(), perm: vec![0, 2, 1] },
+                sir_node,
+                "mb.transpose",
+                kq,
             ));
             k_head_t_ids.push(k_i_t_id);
         }
@@ -1997,7 +2106,9 @@ impl LegalityRewritePass {
                 value_path: format!("scalar://fp16/{:.10}", scale_val),
                 dtype: MilDtype::Fp16,
             },
-            sir_node, "mb.const", kq,
+            sir_node,
+            "mb.const",
+            kq,
         ));
 
         let mut ctx_parts: Vec<AirNodeId> = Vec::with_capacity(heads as usize);
@@ -2020,7 +2131,9 @@ impl LegalityRewritePass {
                     end_mask: vec![true, false, true, true],
                     squeeze_mask: vec![false, true, false, false],
                 },
-                sir_node, "mb.slice_by_index", kq,
+                sir_node,
+                "mb.slice_by_index",
+                kq,
             ));
 
             // Reuse pre-sliced V heads (no duplicate output names)
@@ -2035,7 +2148,9 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 logits_id.clone(),
                 AirOp::MatMul { a: q_i_id, b: k_i_t_id },
-                sir_node, "mb.matmul", kq,
+                sir_node,
+                "mb.matmul",
+                kq,
             ));
 
             // logits *= scale (using pre-hoisted shared_attn_scale)
@@ -2043,7 +2158,9 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 scaled_logits_id.clone(),
                 AirOp::Mul { x: logits_id, y: scale_const_id.clone() },
-                sir_node, "mb.mul", kq,
+                sir_node,
+                "mb.mul",
+                kq,
             ));
 
             // logits += causal_mask (if available)
@@ -2056,14 +2173,18 @@ impl LegalityRewritePass {
                         input: mask_row.clone(),
                         target_shape: vec![1, 1, 1, kv_len as usize],
                     },
-                    sir_node, "mb.reshape", kq,
+                    sir_node,
+                    "mb.reshape",
+                    kq,
                 ));
 
                 let ml_id = AirNodeId(format!("{base}_masked_logits_{}", hi));
                 nodes.push(Self::make_air_node(
                     ml_id.clone(),
                     AirOp::Add { x: scaled_logits_id, y: mask_4d_id },
-                    sir_node, "mb.add", kq,
+                    sir_node,
+                    "mb.add",
+                    kq,
                 ));
                 ml_id
             } else if let Some(mref) = mask_ref {
@@ -2071,11 +2192,10 @@ impl LegalityRewritePass {
                 let ml_id = AirNodeId(format!("{base}_masked_logits_{}", hi));
                 nodes.push(Self::make_air_node(
                     ml_id.clone(),
-                    AirOp::Add {
-                        x: scaled_logits_id,
-                        y: AirNodeId(mref.to_string()),
-                    },
-                    sir_node, "mb.add", kq,
+                    AirOp::Add { x: scaled_logits_id, y: AirNodeId(mref.to_string()) },
+                    sir_node,
+                    "mb.add",
+                    kq,
                 ));
                 ml_id
             } else {
@@ -2087,7 +2207,9 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 weights_id.clone(),
                 AirOp::Softmax { input: masked_logits_id, axis: -1 },
-                sir_node, "mb.softmax", kq,
+                sir_node,
+                "mb.softmax",
+                kq,
             ));
 
             // ctx_part = matmul(weights, v_i)
@@ -2097,7 +2219,9 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 ctx_part_id.clone(),
                 AirOp::MatMul { a: weights_id, b: v_i_id },
-                sir_node, "mb.matmul", kq,
+                sir_node,
+                "mb.matmul",
+                kq,
             ));
 
             // Expand dims: [B, 1, 1, hd] → [B, 1, 1, hd] with head axis
@@ -2106,7 +2230,9 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 ctx_expanded_id.clone(),
                 AirOp::ExpandDims { input: ctx_part_id, axis: vec![1] },
-                sir_node, "mb.expand_dims", kq,
+                sir_node,
+                "mb.expand_dims",
+                kq,
             ));
 
             ctx_parts.push(ctx_expanded_id);
@@ -2117,7 +2243,9 @@ impl LegalityRewritePass {
         nodes.push(Self::make_air_node(
             ctx_concat_id.clone(),
             AirOp::Concat { inputs: ctx_parts, axis: 1 },
-            sir_node, "mb.concat", kq,
+            sir_node,
+            "mb.concat",
+            kq,
         ));
 
         // Step 7: Reshape back to flat [B, num_heads * head_dim]
@@ -2134,13 +2262,13 @@ impl LegalityRewritePass {
                 input: ctx_concat_id,
                 target_shape: vec![batch as usize, attn_flat_dim as usize],
             },
-            sir_node, "mb.reshape", kq,
+            sir_node,
+            "mb.reshape",
+            kq,
         ));
 
         // Step 8: Output projection
-        let out_w = out_weight
-            .map(|w| w.to_string())
-            .unwrap_or_else(|| format!("{base}_w_out"));
+        let out_w = out_weight.map(|w| w.to_string()).unwrap_or_else(|| format!("{base}_w_out"));
         let out_id = AirNodeId(format!("{base}_out_proj"));
         nodes.push(Self::make_air_node(
             out_id.clone(),
@@ -2326,7 +2454,7 @@ impl LegalityRewritePass {
     /// K values, so no full-cache RoPE re-application is needed.
     fn apply_rope_decode(
         q_4d_id: &AirNodeId,
-        k_new_4d_id: &AirNodeId,  // new K token to apply RoPE to
+        k_new_4d_id: &AirNodeId, // new K token to apply RoPE to
         tables_ref: &str,
         position: &Option<ane_ir::sir::SirNodeId>,
         sir_to_air: &std::collections::HashMap<ane_ir::sir::SirNodeId, AirNodeId>,
@@ -2334,10 +2462,19 @@ impl LegalityRewritePass {
         sir_node: &ane_ir::sir::SirNode,
         kq: &dyn PassKnowledgeQuery,
         ctx: Option<&DecompositionContext>,
-        mut nodes: &mut Vec<AirNode>,
-    ) -> (AirNodeId, Option<AirNodeId>, Option<AirNodeId>, AirNodeId, Option<AirNodeId>, Option<AirNodeId>) {
+        nodes: &mut Vec<AirNode>,
+    ) -> (
+        AirNodeId,
+        Option<AirNodeId>,
+        Option<AirNodeId>,
+        AirNodeId,
+        Option<AirNodeId>,
+        Option<AirNodeId>,
+    ) {
         let head_dim = ctx.map(|c| c.head_dim).unwrap_or(0);
-        let head_dim = if head_dim > 0 { head_dim } else {
+        let head_dim = if head_dim > 0 {
+            head_dim
+        } else {
             // T-36 (I-15/CQ-17): Previously fell back to 128 silently, which
             // produces wrong RoPE slicing for models with head_dim != 128.
             // Now we return a default value with a strong warning; the caller
@@ -2404,7 +2541,9 @@ impl LegalityRewritePass {
                     value_path: format!("static_tables/{}/cos_tab", tables_ref),
                     dtype: MilDtype::Fp16,
                 },
-                sir_node, "mb.const", kq,
+                sir_node,
+                "mb.const",
+                kq,
             ));
             shared_cos_id
         };
@@ -2420,7 +2559,9 @@ impl LegalityRewritePass {
                     value_path: format!("static_tables/{}/sin_tab", tables_ref),
                     dtype: MilDtype::Fp16,
                 },
-                sir_node, "mb.const", kq,
+                sir_node,
+                "mb.const",
+                kq,
             ));
             shared_sin_id
         };
@@ -2432,7 +2573,8 @@ impl LegalityRewritePass {
         // still use it, and as a fallback for very large seq_len where
         // eye_tab/mask_tab are impractical (> 128 MB each).
         let _arange_tab_id = {
-            let arange_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_arange_tab_{}", tables_ref));
+            let arange_sir_id =
+                ane_ir::sir::SirNodeId(format!("sir_static_arange_tab_{}", tables_ref));
             if sir_to_air.contains_key(&arange_sir_id) {
                 AirNodeId(arange_sir_id.0.clone())
             } else {
@@ -2444,7 +2586,9 @@ impl LegalityRewritePass {
                         value_path: format!("static_tables/{}/arange_tab", tables_ref),
                         dtype: MilDtype::Int32,
                     },
-                    sir_node, "mb.const", kq,
+                    sir_node,
+                    "mb.const",
+                    kq,
                 ));
                 shared_arange_id.clone()
             }
@@ -2458,9 +2602,8 @@ impl LegalityRewritePass {
         // cos_tab shape: [1, 1, seq_len, head_dim]
         // Gather along axis 2 with position index → [1, 1, 1, head_dim]
         let (cos_for_q, sin_for_q, kv_mask_write, causal_mask) = if let Some(pos_sir) = position {
-            let pos_air = sir_to_air.get(pos_sir)
-                .cloned()
-                .unwrap_or_else(|| AirNodeId(pos_sir.0.clone()));
+            let pos_air =
+                sir_to_air.get(pos_sir).cloned().unwrap_or_else(|| AirNodeId(pos_sir.0.clone()));
 
             // ── ANE-LEGAL RoPE table lookup: SliceByIndex (NOT Gather) ──
             //
@@ -2537,13 +2680,17 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 pos_fp16_id.clone(),
                 AirOp::Cast { input: pos_air.clone(), dtype: MilDtype::Fp16 },
-                sir_node, "mb.cast", kq,
+                sir_node,
+                "mb.cast",
+                kq,
             ));
 
             // Shared arange_fp16_tab Const
-            let shared_arange_fp16_id = AirNodeId(format!("shared_rope_{}_arange_fp16_tab", tables_ref));
+            let shared_arange_fp16_id =
+                AirNodeId(format!("shared_rope_{}_arange_fp16_tab", tables_ref));
             let arange_fp16_id = {
-                let arange_fp16_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_arange_fp16_tab_{}", tables_ref));
+                let arange_fp16_sir_id =
+                    ane_ir::sir::SirNodeId(format!("sir_static_arange_fp16_tab_{}", tables_ref));
                 if sir_to_air.contains_key(&arange_fp16_sir_id) {
                     AirNodeId(arange_fp16_sir_id.0.clone())
                 } else {
@@ -2553,7 +2700,9 @@ impl LegalityRewritePass {
                             value_path: format!("static_tables/{}/arange_fp16_tab", tables_ref),
                             dtype: MilDtype::Fp16,
                         },
-                        sir_node, "mb.const", kq,
+                        sir_node,
+                        "mb.const",
+                        kq,
                     ));
                     shared_arange_fp16_id
                 }
@@ -2565,7 +2714,9 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 kv_diff_id.clone(),
                 AirOp::Sub { x: arange_fp16_id.clone(), y: pos_fp16_id.clone() },
-                sir_node, "mb.sub", kq,
+                sir_node,
+                "mb.sub",
+                kq,
             ));
 
             // abs_diff = Abs(diff)
@@ -2573,25 +2724,28 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 kv_abs_id.clone(),
                 AirOp::Abs { input: kv_diff_id },
-                sir_node, "mb.abs", kq,
+                sir_node,
+                "mb.abs",
+                kq,
             ));
 
             // clipped = Minimum(abs_diff, 1.0)
             let kv_one_const_id = AirNodeId("shared_scalar_one".to_string());
             nodes.push(Self::make_air_node(
                 kv_one_const_id.clone(),
-                AirOp::Const {
-                    value_path: "scalar://fp16/1.0".to_string(),
-                    dtype: MilDtype::Fp16,
-                },
-                sir_node, "mb.const", kq,
+                AirOp::Const { value_path: "scalar://fp16/1.0".to_string(), dtype: MilDtype::Fp16 },
+                sir_node,
+                "mb.const",
+                kq,
             ));
 
             let kv_clipped_id = AirNodeId(format!("{base}_kv_mask_clipped"));
             nodes.push(Self::make_air_node(
                 kv_clipped_id.clone(),
                 AirOp::Minimum { x: kv_abs_id, y: kv_one_const_id.clone() },
-                sir_node, "mb.minimum", kq,
+                sir_node,
+                "mb.minimum",
+                kq,
             ));
 
             // one_hot = Sub(1.0, clipped) → 1 at pos, 0 elsewhere → shape [seq_len]
@@ -2599,7 +2753,9 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 kv_mask_gathered_id.clone(),
                 AirOp::Sub { x: kv_one_const_id.clone(), y: kv_clipped_id },
-                sir_node, "mb.sub", kq,
+                sir_node,
+                "mb.sub",
+                kq,
             ));
 
             // ── ANE-LEGAL RoPE table lookup using Mul+ReduceSum (no Gather) ──
@@ -2618,7 +2774,9 @@ impl LegalityRewritePass {
                     input: kv_mask_gathered_id.clone(),
                     target_shape: vec![1, 1, ctx.map(|c| c.seq_len).unwrap_or(0), 1],
                 },
-                sir_node, "mb.reshape", kq,
+                sir_node,
+                "mb.reshape",
+                kq,
             ));
 
             // cos_for_pos = ReduceSum(Mul(cos_tab, one_hot_4d), axis=2)
@@ -2626,14 +2784,18 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 cos_masked_id.clone(),
                 AirOp::Mul { x: cos_id.clone(), y: kv_one_hot_4d_id.clone() },
-                sir_node, "mb.mul", kq,
+                sir_node,
+                "mb.mul",
+                kq,
             ));
 
             let cos_gathered_id = AirNodeId(format!("{base}_cos_gathered"));
             nodes.push(Self::make_air_node(
                 cos_gathered_id.clone(),
                 AirOp::ReduceSum { input: cos_masked_id, axes: vec![2], keep_dims: true },
-                sir_node, "mb.reduce_sum", kq,
+                sir_node,
+                "mb.reduce_sum",
+                kq,
             ));
 
             // sin_for_pos = ReduceSum(Mul(sin_tab, one_hot_4d), axis=2)
@@ -2641,14 +2803,18 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 sin_masked_id.clone(),
                 AirOp::Mul { x: sin_id.clone(), y: kv_one_hot_4d_id },
-                sir_node, "mb.mul", kq,
+                sir_node,
+                "mb.mul",
+                kq,
             ));
 
             let sin_gathered_id = AirNodeId(format!("{base}_sin_gathered"));
             nodes.push(Self::make_air_node(
                 sin_gathered_id.clone(),
                 AirOp::ReduceSum { input: sin_masked_id, axes: vec![2], keep_dims: true },
-                sir_node, "mb.reduce_sum", kq,
+                sir_node,
+                "mb.reduce_sum",
+                kq,
             ));
 
             // ── Causal attention mask: 0 for allowed, -65504 for blocked ──
@@ -2662,14 +2828,18 @@ impl LegalityRewritePass {
                     value_path: format!("scalar://fp16/{}", seq_len_val.saturating_sub(1)),
                     dtype: MilDtype::Fp16,
                 },
-                sir_node, "mb.const", kq,
+                sir_node,
+                "mb.const",
+                kq,
             ));
 
             let offset_id = AirNodeId(format!("{base}_mask_offset"));
             nodes.push(Self::make_air_node(
                 offset_id.clone(),
                 AirOp::Sub { x: seq_minus_1_id, y: pos_fp16_id.clone() },
-                sir_node, "mb.sub", kq,
+                sir_node,
+                "mb.sub",
+                kq,
             ));
 
             // distance = Sub(arange_fp16, offset) → negative for blocked, ≥0 for allowed
@@ -2677,7 +2847,9 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 dist_id.clone(),
                 AirOp::Sub { x: arange_fp16_id, y: offset_id },
-                sir_node, "mb.sub", kq,
+                sir_node,
+                "mb.sub",
+                kq,
             ));
 
             // shifted = Add(distance, 1.0) → ≥1 for allowed, ≤0 for blocked
@@ -2685,32 +2857,37 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 shifted_id.clone(),
                 AirOp::Add { x: dist_id, y: kv_one_const_id.clone() },
-                sir_node, "mb.add", kq,
+                sir_node,
+                "mb.add",
+                kq,
             ));
 
             // is_allowed = Minimum(Maximum(shifted, 0.0), 1.0)
             let zero_const_id = AirNodeId("shared_scalar_zero".to_string());
             nodes.push(Self::make_air_node(
                 zero_const_id.clone(),
-                AirOp::Const {
-                    value_path: "scalar://fp16/0.0".to_string(),
-                    dtype: MilDtype::Fp16,
-                },
-                sir_node, "mb.const", kq,
+                AirOp::Const { value_path: "scalar://fp16/0.0".to_string(), dtype: MilDtype::Fp16 },
+                sir_node,
+                "mb.const",
+                kq,
             ));
 
             let clamped_pos_id = AirNodeId(format!("{base}_mask_clamped_pos"));
             nodes.push(Self::make_air_node(
                 clamped_pos_id.clone(),
                 AirOp::Maximum { x: shifted_id, y: zero_const_id },
-                sir_node, "mb.maximum", kq,
+                sir_node,
+                "mb.maximum",
+                kq,
             ));
 
             let is_allowed_id = AirNodeId(format!("{base}_mask_is_allowed"));
             nodes.push(Self::make_air_node(
                 is_allowed_id.clone(),
                 AirOp::Minimum { x: clamped_pos_id, y: kv_one_const_id.clone() },
-                sir_node, "mb.minimum", kq,
+                sir_node,
+                "mb.minimum",
+                kq,
             ));
 
             // is_blocked = Sub(1.0, is_allowed) → 0 for allowed, 1 for blocked
@@ -2718,7 +2895,9 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 is_blocked_id.clone(),
                 AirOp::Sub { x: kv_one_const_id.clone(), y: is_allowed_id },
-                sir_node, "mb.sub", kq,
+                sir_node,
+                "mb.sub",
+                kq,
             ));
 
             // mask = Mul(is_blocked, -65504.0) → 0 for allowed, -65504 for blocked
@@ -2730,14 +2909,18 @@ impl LegalityRewritePass {
                     value_path: "scalar://fp16/-65504.0".to_string(),
                     dtype: MilDtype::Fp16,
                 },
-                sir_node, "mb.const", kq,
+                sir_node,
+                "mb.const",
+                kq,
             ));
 
             let mask_gathered_id = AirNodeId(format!("{base}_mask_gathered"));
             nodes.push(Self::make_air_node(
                 mask_gathered_id.clone(),
                 AirOp::Mul { x: is_blocked_id, y: neg_inf_id },
-                sir_node, "mb.mul", kq,
+                sir_node,
+                "mb.mul",
+                kq,
             ));
 
             (cos_gathered_id, sin_gathered_id, Some(kv_mask_gathered_id), Some(mask_gathered_id))
@@ -2750,8 +2933,7 @@ impl LegalityRewritePass {
         // Q has shape [B, H, 1, D] and cos/sin are [1, 1, 1, D] (gathered)
         // or [1, 1, seq_len, D] (full broadcast for prefill).
         let q_rope = Self::apply_rotary_half(
-            q_4d_id, &cos_for_q, &sin_for_q, half, base, "_q_rope",
-            sir_node, kq, &mut nodes,
+            q_4d_id, &cos_for_q, &sin_for_q, half, base, "_q_rope", sir_node, kq, nodes,
         );
 
         // Apply RoPE to the NEW K token: output = k_new * cos + rotate_half(k_new) * sin
@@ -2760,8 +2942,15 @@ impl LegalityRewritePass {
         // The RoPE'd K is then written to the cache, so the cache stores
         // pre-RoPE'd values and no full-cache RoPE re-application is needed.
         let k_new_rope = Self::apply_rotary_half(
-            k_new_4d_id, &cos_for_q, &sin_for_q, half, base, "_k_new_rope",
-            sir_node, kq, &mut nodes,
+            k_new_4d_id,
+            &cos_for_q,
+            &sin_for_q,
+            half,
+            base,
+            "_k_new_rope",
+            sir_node,
+            kq,
+            nodes,
         );
 
         (q_rope, Some(cos_id), Some(sin_id), k_new_rope, kv_mask_write, causal_mask)
@@ -2837,10 +3026,7 @@ impl LegalityRewritePass {
         let rotated_id = AirNodeId(format!("{base}{suffix}_rotated"));
         nodes.push(Self::make_air_node(
             rotated_id.clone(),
-            AirOp::Concat {
-                inputs: vec![neg_x2_id, x1_id],
-                axis: 3,
-            },
+            AirOp::Concat { inputs: vec![neg_x2_id, x1_id], axis: 3 },
             sir_node,
             "mb.concat",
             kq,
@@ -3032,11 +3218,7 @@ impl LegalityRewritePass {
         let max_abs_id = AirNodeId(format!("{base}_max_abs"));
         nodes.push(Self::make_air_node(
             max_abs_id.clone(),
-            AirOp::ReduceMax {
-                input: abs_x_id,
-                axes: effective_axes.clone(),
-                keep_dims: true,
-            },
+            AirOp::ReduceMax { input: abs_x_id, axes: effective_axes.clone(), keep_dims: true },
             sir_node,
             "mb.reduce_max",
             kq,
@@ -3090,11 +3272,7 @@ impl LegalityRewritePass {
         let mean_id = AirNodeId(format!("{base}_mean"));
         nodes.push(Self::make_air_node(
             mean_id.clone(),
-            AirOp::ReduceMean {
-                input: x_sq_id,
-                axes: effective_axes.clone(),
-                keep_dims: true,
-            },
+            AirOp::ReduceMean { input: x_sq_id, axes: effective_axes.clone(), keep_dims: true },
             sir_node,
             "mb.reduce_mean",
             kq,
@@ -3173,10 +3351,7 @@ impl LegalityRewritePass {
         };
         nodes.push(Self::make_air_node(
             mul_out_id.clone(),
-            AirOp::Mul {
-                x: normed_id,
-                y: AirNodeId(weight.into()),
-            },
+            AirOp::Mul { x: normed_id, y: AirNodeId(weight.into()) },
             sir_node,
             "mb.mul",
             kq,
@@ -4671,11 +4846,10 @@ mod tests {
 
         // After the ANE legality rewrite, Conv1x1AsLinear → MILLinear → MILMatMul
         // (MILLinear is replaced with MILMatMul by the post-lowering rewrite)
-        let matmul_node = mirs[0]
-            .nodes
-            .iter()
-            .find(|n| matches!(n.op, MirOp::MILMatMul { .. }))
-            .expect("Expected MILMatMul node (replaced from MILLinear by ANE legality rewrite)");
+        let matmul_node =
+            mirs[0].nodes.iter().find(|n| matches!(n.op, MirOp::MILMatMul { .. })).expect(
+                "Expected MILMatMul node (replaced from MILLinear by ANE legality rewrite)",
+            );
         assert_eq!(
             matmul_node.dtype,
             MilDtype::Fp32,
@@ -4740,14 +4914,8 @@ mod tests {
         let has_sdpa =
             air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
         let has_tile = air.nodes.iter().any(|n| matches!(n.op, AirOp::Tile { .. }));
-        assert!(
-            has_sdpa,
-            "Without DecompositionContext, AttentionBlock falls back to SDPA"
-        );
-        assert!(
-            !has_tile,
-            "AttentionBlock decomposition must NOT include Tile (ANE-illegal)"
-        );
+        assert!(has_sdpa, "Without DecompositionContext, AttentionBlock falls back to SDPA");
+        assert!(!has_tile, "AttentionBlock decomposition must NOT include Tile (ANE-illegal)");
     }
 
     /// Test that DecodeStep decomposes into AIR ops including state read/write.
@@ -4787,16 +4955,16 @@ mod tests {
         // loop has real dimensions to work with. Without a context, the loop
         // over heads produces zero MatMul nodes (no-op).
         let ctx = DecompositionContext::for_decode_step_full(
-            1,    // batch_size
-            2048, // embed_dim
-            16,   // num_heads
-            128,  // head_dim
-            512,  // kv_len
-            8,    // kv_heads (GQA)
-            4096, // intermediate_size
+            1,      // batch_size
+            2048,   // embed_dim
+            16,     // num_heads
+            128,    // head_dim
+            512,    // kv_len
+            8,      // kv_heads (GQA)
+            4096,   // intermediate_size
             151936, // vocab_size
-            false, // uses_rope
-            false, // has_qk_norm
+            false,  // uses_rope
+            false,  // has_qk_norm
         );
 
         let pass = LegalityRewritePass::new();
@@ -4825,12 +4993,18 @@ mod tests {
         // Sprint 67: SDPA should NOT be present (replaced by per-head matmul+softmax)
         assert!(!has_sdpa, "DecodeStep decomposition must NOT include ScaledDotProductAttention (ANE-illegal in decoder shards)");
         assert!(has_matmul, "DecodeStep decomposition must include MatMul for per-head attention");
-        assert!(has_softmax, "DecodeStep decomposition must include Softmax for per-head attention");
+        assert!(
+            has_softmax,
+            "DecodeStep decomposition must include Softmax for per-head attention"
+        );
         // Split is intentionally NOT emitted (invalid MIL output arity).
         // Instead, SliceByIndex is used to extract individual heads.
         assert!(!has_split, "DecodeStep decomposition must NOT include Split (invalid MIL)");
         let has_slice = air.nodes.iter().any(|n| matches!(n.op, AirOp::SliceByIndex { .. }));
-        assert!(has_slice, "DecodeStep decomposition must include SliceByIndex for head extraction");
+        assert!(
+            has_slice,
+            "DecodeStep decomposition must include SliceByIndex for head extraction"
+        );
         assert!(
             has_linear,
             "DecodeStep decomposition must include Conv1x1AsLinear for QKV and output projections"
@@ -4866,10 +5040,7 @@ mod tests {
 
         let has_reduce_mean = air.nodes.iter().any(|n| matches!(n.op, AirOp::ReduceMean { .. }));
         let has_rsqrt = air.nodes.iter().any(|n| matches!(n.op, AirOp::Rsqrt { .. }));
-        let has_mul = air
-            .nodes
-            .iter()
-            .any(|n| matches!(n.op, AirOp::Mul { .. }));
+        let has_mul = air.nodes.iter().any(|n| matches!(n.op, AirOp::Mul { .. }));
 
         assert!(has_reduce_mean, "RMSNorm decomposition must include ReduceMean");
         assert!(has_rsqrt, "RMSNorm decomposition must include Rsqrt");
@@ -4912,9 +5083,18 @@ mod tests {
 
         assert!(!has_cos, "RoPETransform decomposition must NOT include Cos (ANE-illegal)");
         assert!(!has_sin, "RoPETransform decomposition must NOT include Sin (ANE-illegal)");
-        assert!(has_const, "RoPETransform decomposition must include Const for static cos/sin tables");
-        assert!(has_mul, "RoPETransform decomposition must include Mul for x*cos and rotate_half*sin");
-        assert!(has_add, "RoPETransform decomposition must include Add for x*cos + rotate_half*sin");
+        assert!(
+            has_const,
+            "RoPETransform decomposition must include Const for static cos/sin tables"
+        );
+        assert!(
+            has_mul,
+            "RoPETransform decomposition must include Mul for x*cos and rotate_half*sin"
+        );
+        assert!(
+            has_add,
+            "RoPETransform decomposition must include Add for x*cos + rotate_half*sin"
+        );
     }
 
     /// Test that Sampler decomposes into Topk + Softmax + Gather.
@@ -5299,7 +5479,7 @@ mod tests {
     /// q_norm weight cannot broadcast with [1,512,2048] flat projection.
     #[test]
     fn test_rms_norm_4d_reshape_for_qk_norm() {
-        use ane_ir::sir::{SirGraph, SirNode, SirNodeId, SirOp, SirMetadata, TaskOrigin};
+        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
 
         // Simulate a q_norm RMSNorm SIR node: axes=[3] means per-head-dimension norm
         let sir = SirGraph {
@@ -5324,17 +5504,14 @@ mod tests {
         };
 
         // Qwen3-0.6B dimensions
-        let ctx = DecompositionContext::for_attention_full(
-            1, 1024, 16, 128, 512, 8, 3072, 151936,
-        );
+        let ctx = DecompositionContext::for_attention_full(1, 1024, 16, 128, 512, 8, 3072, 151936);
 
         let pass = LegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // Must contain Reshape ops (3D→4D and 4D→3D)
-        let reshape_count = air.nodes.iter()
-            .filter(|n| matches!(n.op, AirOp::Reshape { .. }))
-            .count();
+        let reshape_count =
+            air.nodes.iter().filter(|n| matches!(n.op, AirOp::Reshape { .. })).count();
         assert!(
             reshape_count >= 2,
             "q_norm with axes=[3] must produce at least 2 Reshape ops (3D→4D and 4D→3D), got {}",
@@ -5342,7 +5519,9 @@ mod tests {
         );
 
         // The first Reshape should produce [1, 512, 16, 128] (4D head layout)
-        let reshape_shapes: Vec<Vec<usize>> = air.nodes.iter()
+        let reshape_shapes: Vec<Vec<usize>> = air
+            .nodes
+            .iter()
             .filter_map(|n| {
                 if let AirOp::Reshape { target_shape, .. } = &n.op {
                     Some(target_shape.clone())
@@ -5358,9 +5537,15 @@ mod tests {
         );
 
         // ReduceMean must use axes=[3] (not axes=[2])
-        let reduce_mean_axes: Vec<Vec<usize>> = air.nodes.iter()
+        let reduce_mean_axes: Vec<Vec<usize>> = air
+            .nodes
+            .iter()
             .filter_map(|n| {
-                if let AirOp::ReduceMean { axes, .. } = &n.op { Some(axes.clone()) } else { None }
+                if let AirOp::ReduceMean { axes, .. } = &n.op {
+                    Some(axes.clone())
+                } else {
+                    None
+                }
             })
             .collect();
         assert!(
@@ -5382,7 +5567,7 @@ mod tests {
     /// node ID (since SIR node IDs are counter-based like "sir_7_layer_0_self_attn").
     #[test]
     fn test_rms_norm_4d_reshape_k_norm_uses_kv_heads() {
-        use ane_ir::sir::{SirGraph, SirNode, SirNodeId, SirOp, SirMetadata, TaskOrigin};
+        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
 
         // Simulate a k_norm RMSNorm: the SIR node ID is counter-based (no "k_norm"),
         // but the WEIGHT name contains "k_norm" for detection.
@@ -5407,15 +5592,15 @@ mod tests {
             outputs: vec![SirNodeId("sir_7_layer_0_self_attn".into())],
         };
 
-        let ctx = DecompositionContext::for_attention_full(
-            1, 1024, 16, 128, 512, 8, 3072, 151936,
-        );
+        let ctx = DecompositionContext::for_attention_full(1, 1024, 16, 128, 512, 8, 3072, 151936);
 
         let pass = LegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // The 4D reshape must use kv_heads=8, producing [1, 512, 8, 128]
-        let reshape_shapes: Vec<Vec<usize>> = air.nodes.iter()
+        let reshape_shapes: Vec<Vec<usize>> = air
+            .nodes
+            .iter()
             .filter_map(|n| {
                 if let AirOp::Reshape { target_shape, .. } = &n.op {
                     Some(target_shape.clone())
@@ -5436,7 +5621,7 @@ mod tests {
     /// should fall back to axes=[2] or skip the 4D reshape safely.
     #[test]
     fn test_rms_norm_axes3_without_context_falls_back_gracefully() {
-        use ane_ir::sir::{SirGraph, SirNode, SirNodeId, SirOp, SirMetadata, TaskOrigin};
+        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
 
         let sir = SirGraph {
             nodes: vec![SirNode {
@@ -5469,9 +5654,15 @@ mod tests {
         //
         // Currently, the code produces ReduceMean(axes=[3]) without reshape,
         // which would be invalid on a 3D tensor. This test documents the bug.
-        let reduce_mean_axes: Vec<Vec<usize>> = air.nodes.iter()
+        let reduce_mean_axes: Vec<Vec<usize>> = air
+            .nodes
+            .iter()
             .filter_map(|n| {
-                if let AirOp::ReduceMean { axes, .. } = &n.op { Some(axes.clone()) } else { None }
+                if let AirOp::ReduceMean { axes, .. } = &n.op {
+                    Some(axes.clone())
+                } else {
+                    None
+                }
             })
             .collect();
         let has_reshape = air.nodes.iter().any(|n| matches!(n.op, AirOp::Reshape { .. }));
@@ -5505,7 +5696,7 @@ mod tests {
     ///   residual add:    [1, 512, 1024]   (attn_out + residual)
     #[test]
     fn test_full_attention_block_with_qk_norm_shape_flow() {
-        use ane_ir::sir::{SirGraph, SirNode, SirNodeId, SirOp, SirMetadata, TaskOrigin};
+        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
 
         // Build a minimal SIR that mimics the Qwen3 attention decomposition:
         // LinearProjection(q) → RMSNorm(q, axes=3) → LinearProjection(k) →
@@ -5620,9 +5811,7 @@ mod tests {
             outputs: vec![SirNodeId("sir_8_layer_0_self_attn".into())],
         };
 
-        let ctx = DecompositionContext::for_attention_full(
-            1, 1024, 16, 128, 512, 8, 3072, 151936,
-        );
+        let ctx = DecompositionContext::for_attention_full(1, 1024, 16, 128, 512, 8, 3072, 151936);
 
         let pass = LegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
@@ -5633,11 +5822,12 @@ mod tests {
         //   - 3 from attention_block (q/k/v 3D→4D before transpose)
         //   - 1 from attention_block (4D→3D after SDPA)
         // Total: 8
-        let reshape_count = air.nodes.iter()
-            .filter(|n| matches!(n.op, AirOp::Reshape { .. }))
-            .count();
+        let reshape_count =
+            air.nodes.iter().filter(|n| matches!(n.op, AirOp::Reshape { .. })).count();
 
-        let reshape_shapes: Vec<Vec<usize>> = air.nodes.iter()
+        let reshape_shapes: Vec<Vec<usize>> = air
+            .nodes
+            .iter()
             .filter_map(|n| {
                 if let AirOp::Reshape { target_shape, .. } = &n.op {
                     Some(target_shape.clone())
@@ -5847,7 +6037,8 @@ mod tests {
             AirOp::BandPart { input, .. } => vec![input.clone()],
             AirOp::Shape { input } => vec![input.clone()],
             AirOp::Crop { input, .. } => vec![input.clone()],
-            AirOp::Gather { input, indices, .. } | AirOp::GatherAlongAxis { input, indices, .. } => {
+            AirOp::Gather { input, indices, .. }
+            | AirOp::GatherAlongAxis { input, indices, .. } => {
                 vec![input.clone(), indices.clone()]
             }
             AirOp::GatherNd { input, indices } => vec![input.clone(), indices.clone()],
@@ -6035,11 +6226,8 @@ mod tests {
 
         // ── Decomposition correctness ──
         // Must have Conv1x1AsLinear for QKV+output projections
-        let linear_nodes: Vec<_> = air
-            .nodes
-            .iter()
-            .filter(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }))
-            .collect();
+        let linear_nodes: Vec<_> =
+            air.nodes.iter().filter(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. })).collect();
         assert!(
             !linear_nodes.is_empty(),
             "DecodeStep must decompose into Conv1x1AsLinear projections"
@@ -6047,15 +6235,10 @@ mod tests {
 
         // Must have MatMul for per-head attention (NOT SDPA)
         let has_matmul = air.nodes.iter().any(|n| matches!(n.op, AirOp::MatMul { .. }));
-        let has_sdpa = air
-            .nodes
-            .iter()
-            .any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
+        let has_sdpa =
+            air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
         assert!(has_matmul, "DecodeStep must include MatMul for per-head attention");
-        assert!(
-            !has_sdpa,
-            "DecodeStep must NOT include SDPA (ANE-illegal in decoder shards)"
-        );
+        assert!(!has_sdpa, "DecodeStep must NOT include SDPA (ANE-illegal in decoder shards)");
 
         // Must have state ops for KV cache
         let has_state_read = air.nodes.iter().any(|n| matches!(n.op, AirOp::StateReadFixed { .. }));
@@ -6070,9 +6253,9 @@ mod tests {
 
         // Must have RoPE decomposition (Const tables + Gather + Mul + Add)
         let has_gather = air.nodes.iter().any(|n| matches!(n.op, AirOp::Gather { .. }));
-        let has_rope_const = air.nodes.iter().any(|n| {
-            matches!(n.op, AirOp::Const { ref value_path, .. } if value_path.contains("rope"))
-        });
+        let has_rope_const = air.nodes.iter().any(
+            |n| matches!(n.op, AirOp::Const { ref value_path, .. } if value_path.contains("rope")),
+        );
         assert!(
             has_gather || has_rope_const,
             "DecodeStep with uses_rope=true must include RoPE decomposition (Gather or Const tables)"
@@ -6130,10 +6313,7 @@ mod tests {
         });
         if let Some(o) = o_proj {
             if let AirOp::Conv1x1AsLinear { output_dim, .. } = &o.op {
-                assert_eq!(
-                    *output_dim, 1024,
-                    "O projection output_dim should be embed_dim = 1024"
-                );
+                assert_eq!(*output_dim, 1024, "O projection output_dim should be embed_dim = 1024");
             }
         }
 
@@ -6155,11 +6335,8 @@ mod tests {
         // ── GQA: verify fan_out = num_heads / kv_heads = 16 / 8 = 2 ──
         // Each KV head is shared by 2 Q heads. The per-head attention loop
         // should produce fan_out MatMul ops per KV head group.
-        let matmul_count = air
-            .nodes
-            .iter()
-            .filter(|n| matches!(n.op, AirOp::MatMul { .. }))
-            .count();
+        let matmul_count =
+            air.nodes.iter().filter(|n| matches!(n.op, AirOp::MatMul { .. })).count();
         assert!(
             matmul_count >= ctx.num_heads,
             "GQA decode must have at least {} MatMul ops (one per Q head), got {}",
@@ -6168,10 +6345,7 @@ mod tests {
         );
 
         // ── Verify the output is reachable ──
-        assert!(
-            !air.outputs.is_empty(),
-            "AIR graph must have at least one output"
-        );
+        assert!(!air.outputs.is_empty(), "AIR graph must have at least one output");
         assert!(
             air.nodes.iter().any(|n| n.id == air.outputs[0]),
             "AIR output node must exist in graph"
@@ -6247,13 +6421,7 @@ mod tests {
                 },
                 SirNode {
                     id: SirNodeId("attn_0".into()),
-                    op: SirOp::AttentionBlock {
-                        q: q_id,
-                        k: k_id,
-                        v: v_id,
-                        mask: None,
-                        rope: None,
-                    },
+                    op: SirOp::AttentionBlock { q: q_id, k: k_id, v: v_id, mask: None, rope: None },
                     name: "attention_layer_0".into(),
                     metadata: SirMetadata {
                         task_origin: TaskOrigin::RealModel { name: "Qwen3-0.6B".into() },
@@ -6276,10 +6444,8 @@ mod tests {
         // ── Decomposition correctness ──
         // Must have per-head MatMul, NOT SDPA
         let has_matmul = air.nodes.iter().any(|n| matches!(n.op, AirOp::MatMul { .. }));
-        let has_sdpa = air
-            .nodes
-            .iter()
-            .any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
+        let has_sdpa =
+            air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
         let has_tile = air.nodes.iter().any(|n| matches!(n.op, AirOp::Tile { .. }));
 
         assert!(has_matmul, "AttentionBlock with context must use per-head MatMul");
@@ -6288,14 +6454,18 @@ mod tests {
 
         // Must have Concat to merge per-head outputs
         let has_concat = air.nodes.iter().any(|n| matches!(n.op, AirOp::Concat { .. }));
-        assert!(has_concat, "AttentionBlock must include Concat to merge per-head attention outputs");
+        assert!(
+            has_concat,
+            "AttentionBlock must include Concat to merge per-head attention outputs"
+        );
 
         // Must have Conv1x1AsLinear for output projection
         let has_out_proj = air
             .nodes
             .iter()
             .any(|n| matches!(&n.op, AirOp::Conv1x1AsLinear { weight, .. } if weight.contains("o_proj") || n.id.0.contains("out_proj")));
-        let has_any_conv1x1 = air.nodes.iter().any(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }));
+        let has_any_conv1x1 =
+            air.nodes.iter().any(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }));
         assert!(
             has_any_conv1x1,
             "AttentionBlock decomposition must include Conv1x1AsLinear for projections"
@@ -6303,40 +6473,34 @@ mod tests {
 
         // ── Shape consistency ──
         // Q reshape: [1, 512, 16, 128] (batch, seq, num_heads, head_dim)
-        let q_4d = air
-            .nodes
-            .iter()
-            .find(|n| n.id.0 == "attn_0_q_4d")
-            .expect("Expected attn_0_q_4d node");
+        let q_4d =
+            air.nodes.iter().find(|n| n.id.0 == "attn_0_q_4d").expect("Expected attn_0_q_4d node");
         if let AirOp::Reshape { target_shape, .. } = &q_4d.op {
             assert_eq!(
-                target_shape, &vec![1, 512, 16, 128],
+                target_shape,
+                &vec![1, 512, 16, 128],
                 "Q 4D reshape should be [batch, seq, num_heads, head_dim]"
             );
         }
 
         // K reshape: [1, 512, 8, 128] (uses kv_heads for GQA)
-        let k_4d = air
-            .nodes
-            .iter()
-            .find(|n| n.id.0 == "attn_0_k_4d")
-            .expect("Expected attn_0_k_4d node");
+        let k_4d =
+            air.nodes.iter().find(|n| n.id.0 == "attn_0_k_4d").expect("Expected attn_0_k_4d node");
         if let AirOp::Reshape { target_shape, .. } = &k_4d.op {
             assert_eq!(
-                target_shape, &vec![1, 512, 8, 128],
+                target_shape,
+                &vec![1, 512, 8, 128],
                 "K 4D reshape should use kv_heads=8 for GQA: [1, 512, 8, 128]"
             );
         }
 
         // V reshape: [1, 512, 8, 128] (uses kv_heads for GQA)
-        let v_4d = air
-            .nodes
-            .iter()
-            .find(|n| n.id.0 == "attn_0_v_4d")
-            .expect("Expected attn_0_v_4d node");
+        let v_4d =
+            air.nodes.iter().find(|n| n.id.0 == "attn_0_v_4d").expect("Expected attn_0_v_4d node");
         if let AirOp::Reshape { target_shape, .. } = &v_4d.op {
             assert_eq!(
-                target_shape, &vec![1, 512, 8, 128],
+                target_shape,
+                &vec![1, 512, 8, 128],
                 "V 4D reshape should use kv_heads=8 for GQA: [1, 512, 8, 128]"
             );
         }
@@ -6355,11 +6519,8 @@ mod tests {
         }
 
         // ── GQA: MatMul count should equal num_heads (16) ──
-        let matmul_count = air
-            .nodes
-            .iter()
-            .filter(|n| matches!(n.op, AirOp::MatMul { .. }))
-            .count();
+        let matmul_count =
+            air.nodes.iter().filter(|n| matches!(n.op, AirOp::MatMul { .. })).count();
         assert!(
             matmul_count >= ctx.num_heads,
             "GQA attention must have at least {} MatMul ops (one per Q head), got {}",
@@ -6452,22 +6613,15 @@ mod tests {
 
         // ── Shared nodes must be deduplicated ──
         // The shared_attn_scale should appear exactly once (not once per layer)
-        let shared_scale_count = air
-            .nodes
-            .iter()
-            .filter(|n| n.id.0 == "shared_attn_scale")
-            .count();
+        let shared_scale_count = air.nodes.iter().filter(|n| n.id.0 == "shared_attn_scale").count();
         assert_eq!(
             shared_scale_count, 1,
             "shared_attn_scale must be deduplicated across layers (should appear exactly once)"
         );
 
         // ── Both layers must be fully decomposed ──
-        let state_read_count = air
-            .nodes
-            .iter()
-            .filter(|n| matches!(n.op, AirOp::StateReadFixed { .. }))
-            .count();
+        let state_read_count =
+            air.nodes.iter().filter(|n| matches!(n.op, AirOp::StateReadFixed { .. })).count();
         // Each layer reads 2 KV caches (K + V) → at least 4 state reads
         assert!(
             state_read_count >= 4,
@@ -6475,11 +6629,8 @@ mod tests {
             state_read_count
         );
 
-        let state_write_count = air
-            .nodes
-            .iter()
-            .filter(|n| matches!(n.op, AirOp::StateWriteFixed { .. }))
-            .count();
+        let state_write_count =
+            air.nodes.iter().filter(|n| matches!(n.op, AirOp::StateWriteFixed { .. })).count();
         // Each layer writes 2 KV caches (K + V) → at least 4 state writes
         assert!(
             state_write_count >= 4,
@@ -6490,10 +6641,7 @@ mod tests {
         // ── Layer 1 references layer 0 output as token input ──
         // The AIR graph should contain nodes whose inputs reference
         // the final AIR node of decode_layer_0's decomposition.
-        assert!(
-            !air.outputs.is_empty(),
-            "AIR graph must have outputs"
-        );
+        assert!(!air.outputs.is_empty(), "AIR graph must have outputs");
     }
 
     /// T-37: Roundtrip test for a realistic multi-op pipeline that combines
@@ -6625,10 +6773,7 @@ mod tests {
                 },
                 SirNode {
                     id: reshape_id.clone(),
-                    op: SirOp::Reshape {
-                        input: attn_id,
-                        target_shape: vec![1, 512, 1024],
-                    },
+                    op: SirOp::Reshape { input: attn_id, target_shape: vec![1, 512, 1024] },
                     name: "attn_reshape".into(),
                     metadata: SirMetadata {
                         task_origin: TaskOrigin::Synthetic,
@@ -6639,10 +6784,7 @@ mod tests {
                 },
                 SirNode {
                     id: add_id.clone(),
-                    op: SirOp::Add {
-                        x: reshape_id,
-                        y: residual_id.clone(),
-                    },
+                    op: SirOp::Add { x: reshape_id, y: residual_id.clone() },
                     name: "residual_add".into(),
                     metadata: SirMetadata {
                         task_origin: TaskOrigin::Synthetic,
@@ -6705,10 +6847,8 @@ mod tests {
 
         // ── AttentionBlock must use per-head MatMul (NOT SDPA/Tile) ──
         let has_matmul = air.nodes.iter().any(|n| matches!(n.op, AirOp::MatMul { .. }));
-        let has_sdpa = air
-            .nodes
-            .iter()
-            .any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
+        let has_sdpa =
+            air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
         let has_tile = air.nodes.iter().any(|n| matches!(n.op, AirOp::Tile { .. }));
         assert!(has_matmul, "Transformer layer must include MatMul for per-head attention");
         assert!(!has_sdpa, "Transformer layer must NOT include SDPA");
@@ -7097,7 +7237,9 @@ mod tests {
                     },
                     name: "decode_step".into(),
                     metadata: SirMetadata {
-                        task_origin: TaskOrigin::TransformersTrace { name: "qwen3-0.6b-trace".into() },
+                        task_origin: TaskOrigin::TransformersTrace {
+                            name: "qwen3-0.6b-trace".into(),
+                        },
                         model_id: Some("qwen3-0.6b".into()),
                         quality_contract: None,
                         precision_override: None,
@@ -7264,11 +7406,7 @@ mod tests {
     /// conversion — should produce an empty AIR graph with no nodes.
     #[test]
     fn test_empty_graph_roundtrip() {
-        let sir = SirGraph {
-            nodes: vec![],
-            inputs: vec![],
-            outputs: vec![],
-        };
+        let sir = SirGraph { nodes: vec![], inputs: vec![], outputs: vec![] };
 
         let pass = LegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
@@ -7324,10 +7462,7 @@ mod tests {
                 },
                 SirNode {
                     id: SirNodeId("mul_0".into()),
-                    op: SirOp::Mul {
-                        x: SirNodeId("add_0".into()),
-                        y: SirNodeId("input_a".into()),
-                    },
+                    op: SirOp::Mul { x: SirNodeId("add_0".into()), y: SirNodeId("input_a".into()) },
                     name: "mul".into(),
                     metadata: SirMetadata {
                         task_origin: TaskOrigin::Synthetic,
@@ -7475,10 +7610,8 @@ mod tests {
 
         // ── DecodeStep decomposition ──
         let has_matmul = air.nodes.iter().any(|n| matches!(n.op, AirOp::MatMul { .. }));
-        let has_sdpa = air
-            .nodes
-            .iter()
-            .any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
+        let has_sdpa =
+            air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
         assert!(has_matmul, "DecodeStep must include MatMul");
         assert!(!has_sdpa, "DecodeStep must NOT include SDPA");
     }
@@ -7499,15 +7632,10 @@ mod tests {
         let ctx_no_gqa = DecompositionContext::for_decode_step_full(
             1, 4096, 32, 128, 2048, 32, 11008, 32000, false, false,
         );
-        assert!(
-            !ctx_no_gqa.uses_gqa,
-            "GQA should NOT be detected when kv_heads == num_heads"
-        );
+        assert!(!ctx_no_gqa.uses_gqa, "GQA should NOT be detected when kv_heads == num_heads");
 
         // Edge case: kv_heads=0 → uses_gqa = false
-        let ctx_zero_kv = DecompositionContext::for_decode_step(
-            1, 128, 4, 32, 64,
-        );
+        let ctx_zero_kv = DecompositionContext::for_decode_step(1, 128, 4, 32, 64);
         assert!(
             !ctx_zero_kv.uses_gqa,
             "GQA should NOT be detected when kv_heads=0 (defaults to num_heads)"

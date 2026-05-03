@@ -172,13 +172,13 @@
 
 ## 🟢 LOW — Do These When Convenient
 
-### T-41 · Run `cargo fmt` and `cargo clippy --fix`
+### T-41 · Run `cargo fmt` and `cargo clippy --fix` ✅
 
 - **ISSUES ref**: I-20
 - **AUDIT ref**: §III (CQ-9, CQ-10)
-- **Severity**: LOW
+- **Severity**: LOW → RESOLVED
 - **Effort**: S (0.5 day)
-- **Description**: 49 files need formatting, ~57 clippy warnings are auto-fixable.
+- **Resolution**: Ran `cargo fmt --all` across the entire workspace, reformatting 52 files. Ran `cargo clippy --fix --allow-dirty --allow-staged` to address auto-fixable warnings. Remaining 11 clippy warnings are all `too_many_arguments` (8/7 through 16/7) which require manual refactoring and are tracked by T-44. All 1099 tests pass.
 
 ### T-42 · Fix Chip Comment Errors
 
@@ -233,7 +233,7 @@
 | T-38 | I-17 | MEDIUM | L | ⬜ |
 | T-39 | I-18 | MEDIUM | M | ✅ |
 | T-40 | I-19 | MEDIUM | S | ✅ |
-| T-41 | I-20 | LOW | S | ⬜ |
+| T-41 | I-20 | LOW | S | ✅ |
 | T-42 | — | LOW | S | ⬜ |
 | T-43 | — | LOW | S | ⬜ |
 | T-44 | — | LOW | M | ⬜ |

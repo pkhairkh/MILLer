@@ -16,11 +16,7 @@ fn test_hash_bytes_deterministic_and_prefixed() {
     let hash_a = hash_bytes(b"test content");
     let hash_b = hash_bytes(b"test content");
     assert_eq!(hash_a, hash_b, "Same input must produce identical hashes");
-    assert!(
-        hash_a.starts_with("sha256:"),
-        "Hash must be prefixed with 'sha256:', got: {}",
-        hash_a
-    );
+    assert!(hash_a.starts_with("sha256:"), "Hash must be prefixed with 'sha256:', got: {}", hash_a);
     // SHA-256 hex digest is 64 characters after the prefix
     let hex_part = &hash_a[7..];
     assert_eq!(hex_part.len(), 64, "SHA-256 hex digest must be 64 chars");
@@ -30,10 +26,7 @@ fn test_hash_bytes_deterministic_and_prefixed() {
 fn test_hash_bytes_known_empty_input() {
     let hash = hash_bytes(&[]);
     // Well-known SHA-256 of empty input
-    assert_eq!(
-        hash,
-        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    );
+    assert_eq!(hash, "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 }
 
 #[test]

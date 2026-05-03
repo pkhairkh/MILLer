@@ -223,11 +223,7 @@ pub fn load_shard_template_seeds(dir: &str) -> Result<Vec<ValidatedShardTemplate
         let seed_file: ShardTemplateSeedFile = match serde_json::from_str(&json) {
             Ok(f) => f,
             Err(e) => {
-                log::warn!(
-                    "skipping malformed shard template seed file {}: {}",
-                    path.display(),
-                    e
-                );
+                log::warn!("skipping malformed shard template seed file {}: {}", path.display(), e);
                 continue;
             }
         };
@@ -243,7 +239,8 @@ pub fn load_shard_template_seeds(dir: &str) -> Result<Vec<ValidatedShardTemplate
                 Err(e) => {
                     log::warn!(
                         "skipping invalid shard template seed entry '{}': {}",
-                        seed_entry.id, e
+                        seed_entry.id,
+                        e
                     );
                 }
             }

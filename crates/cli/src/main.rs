@@ -823,7 +823,8 @@ fn run_compile(
 
     // Step 6: Write artifact manifest
     println!("[6/7] Writing artifact manifest...");
-    let mut manifest = build_artifact_manifest(&spec, &result, &task_hash, env!("CARGO_PKG_VERSION"));
+    let mut manifest =
+        build_artifact_manifest(&spec, &result, &task_hash, env!("CARGO_PKG_VERSION"));
     // Add knowledge consultation status to the manifest
     if knowledge_consulted {
         if let Some(obj) = manifest.as_object_mut() {
@@ -1896,8 +1897,10 @@ fn run_compile_full_sharded(
         // Run static_tables pass — inserts Const nodes for RoPE tables
         let static_tables_result = run_static_tables_pass(&mut shard_sir);
         if static_tables_result.rope_converted > 0 {
-            println!("    StaticTables: {} RoPE pattern(s), {} const node(s)",
-                static_tables_result.rope_converted, static_tables_result.tables_inserted);
+            println!(
+                "    StaticTables: {} RoPE pattern(s), {} const node(s)",
+                static_tables_result.rope_converted, static_tables_result.tables_inserted
+            );
         }
 
         let mut precision_policy = PrecisionPolicyPass::new();
@@ -3943,7 +3946,9 @@ fn run_trace_compile(
         emit_mir_graph_proto_direct_with_resolver, validate_proto_direct_package,
     };
     use ane_bridge::safetensors_resolver::SafetensorsWeightResolver;
-    use ane_bridge::static_table_resolver::{ChainedResolver, RopeTableConfig, StaticTableResolver};
+    use ane_bridge::static_table_resolver::{
+        ChainedResolver, RopeTableConfig, StaticTableResolver,
+    };
     use ane_passes::knowledge_query::NoKnowledge;
     use ane_passes::legality_rewrite::{DecompositionContext, LegalityRewritePass};
     use ane_passes::mil_lower::MilLowerPass;
@@ -4051,10 +4056,14 @@ fn run_trace_compile(
     // Collect the rope table references from the SIR for static table pre-computation.
     // These are the `tables` field values from SirOp::RoPETransform nodes and
     // the `rope_tables` field from SirOp::DecodeStep nodes.
-    let rope_tables_refs: Vec<String> = sir.nodes.iter()
+    let rope_tables_refs: Vec<String> = sir
+        .nodes
+        .iter()
         .filter_map(|node| match &node.op {
             ane_ir::sir::SirOp::RoPETransform { tables, .. } => Some(tables.clone()),
-            ane_ir::sir::SirOp::DecodeStep { rope_tables: Some(tables), .. } => Some(tables.clone()),
+            ane_ir::sir::SirOp::DecodeStep { rope_tables: Some(tables), .. } => {
+                Some(tables.clone())
+            }
             _ => None,
         })
         .collect();
@@ -4065,8 +4074,11 @@ fn run_trace_compile(
         refs
     };
     if !unique_rope_refs.is_empty() {
-        println!("  RoPE table references: {} unique (from {} RoPE ops)",
-            unique_rope_refs.len(), rope_tables_refs.len());
+        println!(
+            "  RoPE table references: {} unique (from {} RoPE ops)",
+            unique_rope_refs.len(),
+            rope_tables_refs.len()
+        );
     }
 
     // Step 5: Run LegalityRewritePass (SIR→AIR)
@@ -4113,7 +4125,10 @@ fn run_trace_compile(
         traced_graph.model_config.num_attention_heads,
         head_dim,
         seq_len,
-        traced_graph.model_config.num_key_value_heads.unwrap_or(traced_graph.model_config.num_attention_heads),
+        traced_graph
+            .model_config
+            .num_key_value_heads
+            .unwrap_or(traced_graph.model_config.num_attention_heads),
         traced_graph.model_config.intermediate_size,
         traced_graph.model_config.vocab_size,
     );
@@ -4148,7 +4163,9 @@ fn run_trace_compile(
     for input_id in &air.inputs {
         let shape = if input_id.0.contains("input_ids") || input_id.0.starts_with("sir_0_") {
             // Use the traced graph's actual input shape, falling back to CLI args
-            let traced_input_shape = traced_graph.inputs.first()
+            let traced_input_shape = traced_graph
+                .inputs
+                .first()
                 .map(|spec| spec.shape.dims.clone())
                 .filter(|dims| dims.len() >= 2);
             match traced_input_shape {
@@ -4192,40 +4209,41 @@ fn run_trace_compile(
     // Compute actual_max_seq_len early — needed for the decode_step resolver.
     // The embedding function uses seq_len (prefill length), but decode_step
     // needs actual_max_seq_len (the full KV cache dimension) for its tables.
-    let actual_max_seq_len = traced_graph.model_config.max_position_embeddings
-        .max(config.max_seq_len);
+    let actual_max_seq_len =
+        traced_graph.model_config.max_position_embeddings.max(config.max_seq_len);
 
     // Embedding resolver: uses seq_len (prefill length, e.g., 512)
-    let mut embedding_static_table_resolver = StaticTableResolver::new(RopeTableConfig::new(
-        rope_theta,
-        head_dim,
-        seq_len,
-    ));
+    let mut embedding_static_table_resolver =
+        StaticTableResolver::new(RopeTableConfig::new(rope_theta, head_dim, seq_len));
     // Pre-compute all static tables for every unique rope reference
     for rope_ref in &unique_rope_refs {
         embedding_static_table_resolver.ensure_tables_computed(rope_ref);
     }
     if !unique_rope_refs.is_empty() {
-        println!("  Pre-computed {} static table set(s) for embedding (seq_len={})",
-            unique_rope_refs.len(), seq_len);
+        println!(
+            "  Pre-computed {} static table set(s) for embedding (seq_len={})",
+            unique_rope_refs.len(),
+            seq_len
+        );
     }
 
     // Decode_step resolver: uses actual_max_seq_len (full KV cache length, e.g., 40960)
-    let mut decode_static_table_resolver = StaticTableResolver::new(RopeTableConfig::new(
-        rope_theta,
-        head_dim,
-        actual_max_seq_len,
-    ));
+    let mut decode_static_table_resolver =
+        StaticTableResolver::new(RopeTableConfig::new(rope_theta, head_dim, actual_max_seq_len));
     for rope_ref in &unique_rope_refs {
         decode_static_table_resolver.ensure_tables_computed(rope_ref);
     }
     if !unique_rope_refs.is_empty() {
-        println!("  Pre-computed {} static table set(s) for decode_step (seq_len={})",
-            unique_rope_refs.len(), actual_max_seq_len);
+        println!(
+            "  Pre-computed {} static table set(s) for decode_step (seq_len={})",
+            unique_rope_refs.len(),
+            actual_max_seq_len
+        );
     }
 
     // Build the chained resolvers: static tables first, then safetensors fallback
-    let embedding_resolver = ChainedResolver::new(embedding_static_table_resolver, weight_resolver.clone());
+    let embedding_resolver =
+        ChainedResolver::new(embedding_static_table_resolver, weight_resolver.clone());
     let decode_resolver = ChainedResolver::new(decode_static_table_resolver, weight_resolver);
 
     // Build weight_shapes for mil_lower, merging resolved weights with config-derived
@@ -4253,22 +4271,12 @@ fn run_trace_compile(
     // NOTE: eye_tab and mask_tab removed — replaced by arithmetic mask path.
     // arange_fp16_tab added — used by the arithmetic mask computation.
     for rope_ref in &unique_rope_refs {
-        weight_shapes.insert(
-            format!("static_tables/{}/sin_tab", rope_ref),
-            vec![1, 1, seq_len, head_dim],
-        );
-        weight_shapes.insert(
-            format!("static_tables/{}/cos_tab", rope_ref),
-            vec![1, 1, seq_len, head_dim],
-        );
-        weight_shapes.insert(
-            format!("static_tables/{}/arange_tab", rope_ref),
-            vec![seq_len],
-        );
-        weight_shapes.insert(
-            format!("static_tables/{}/arange_fp16_tab", rope_ref),
-            vec![seq_len],
-        );
+        weight_shapes
+            .insert(format!("static_tables/{}/sin_tab", rope_ref), vec![1, 1, seq_len, head_dim]);
+        weight_shapes
+            .insert(format!("static_tables/{}/cos_tab", rope_ref), vec![1, 1, seq_len, head_dim]);
+        weight_shapes.insert(format!("static_tables/{}/arange_tab", rope_ref), vec![seq_len]);
+        weight_shapes.insert(format!("static_tables/{}/arange_fp16_tab", rope_ref), vec![seq_len]);
     }
     // Scalar constants used by arithmetic mask computation and other ops.
     // All scalar://fp16/* and scalar://fp32/* paths produce 1-element tensors.
@@ -4319,10 +4327,8 @@ fn run_trace_compile(
             format!("static_tables/{}/cos_tab", rope_ref),
             vec![1, 1, actual_max_seq_len, head_dim],
         );
-        decode_weight_shapes.insert(
-            format!("static_tables/{}/arange_tab", rope_ref),
-            vec![actual_max_seq_len],
-        );
+        decode_weight_shapes
+            .insert(format!("static_tables/{}/arange_tab", rope_ref), vec![actual_max_seq_len]);
         decode_weight_shapes.insert(
             format!("static_tables/{}/arange_fp16_tab", rope_ref),
             vec![actual_max_seq_len],
@@ -4386,8 +4392,8 @@ fn run_trace_compile(
     // inference: every forward pass recomputes the entire KV cache from
     // scratch, and autoregressive generation is impossible.
     let emit_result = if with_kv_cache && mirs.len() == 1 {
-        use ane_bridge::proto_direct::emit_proto_direct_multifunction;
         use ane_bridge::mir_to_compat::mir_graph_to_compat;
+        use ane_bridge::proto_direct::emit_proto_direct_multifunction;
 
         println!("  KV-cache enabled: emitting multi-function model (embedding + decode_step)");
 
@@ -4448,7 +4454,7 @@ fn run_trace_compile(
             num_kv_heads,
             traced_graph.model_config.intermediate_size,
             traced_graph.model_config.vocab_size,
-            traced_graph.model_config.uses_rope,  // uses_rope: from model config
+            traced_graph.model_config.uses_rope, // uses_rope: from model config
             traced_graph.model_config.has_qk_norm, // has_qk_norm: from model config
         );
 
@@ -4457,14 +4463,22 @@ fn run_trace_compile(
             .map_err(|e| format!("LegalityRewritePass for decode_step failed: {}", e))?;
 
         // DIAGNOSTIC: Verify that the decode_step AIR contains state ops
-        let ds_state_reads = decode_step_air.nodes.iter()
+        let ds_state_reads = decode_step_air
+            .nodes
+            .iter()
             .filter(|n| matches!(n.op, ane_ir::air::AirOp::StateReadFixed { .. }))
             .count();
-        let ds_state_writes = decode_step_air.nodes.iter()
+        let ds_state_writes = decode_step_air
+            .nodes
+            .iter()
             .filter(|n| matches!(n.op, ane_ir::air::AirOp::StateWriteFixed { .. }))
             .count();
-        println!("  Decode-step AIR: {} nodes, {} StateRead ops, {} StateWrite ops",
-            decode_step_air.nodes.len(), ds_state_reads, ds_state_writes);
+        println!(
+            "  Decode-step AIR: {} nodes, {} StateRead ops, {} StateWrite ops",
+            decode_step_air.nodes.len(),
+            ds_state_reads,
+            ds_state_writes
+        );
         if ds_state_reads == 0 || ds_state_writes == 0 {
             return Err(format!(
                 "BUG: Decode-step AIR has no state ops (reads={}, writes={}). \
@@ -4489,15 +4503,19 @@ fn run_trace_compile(
                 vec![1]
             } else {
                 // Fallback: use the embedding input shapes if the ID matches
-                input_shapes.get(input_id).cloned()
-                    .unwrap_or_else(|| vec![batch_size, hidden_size])
+                input_shapes.get(input_id).cloned().unwrap_or_else(|| vec![batch_size, hidden_size])
             };
             decode_input_shapes.insert(input_id.clone(), shape);
         }
         println!("  Decode-step input shapes: {} entries", decode_input_shapes.len());
 
         let decode_step_mirs = mil_lower
-            .run_with_weight_shapes(&decode_step_air, &shard_plan, &decode_input_shapes, &decode_weight_shapes)
+            .run_with_weight_shapes(
+                &decode_step_air,
+                &shard_plan,
+                &decode_input_shapes,
+                &decode_weight_shapes,
+            )
             .map_err(|e| format!("MilLowerPass for decode_step failed: {}", e))?;
 
         if decode_step_mirs.is_empty() {
@@ -4508,10 +4526,14 @@ fn run_trace_compile(
 
         // DIAGNOSTIC: Verify that the decode_step MIR contains state ops
         use ane_ir::mir::MirOp;
-        let mir_state_reads = decode_step_mir.nodes.iter()
+        let mir_state_reads = decode_step_mir
+            .nodes
+            .iter()
             .filter(|n| matches!(n.op, MirOp::MILReadState { .. }))
             .count();
-        let mir_state_writes = decode_step_mir.nodes.iter()
+        let mir_state_writes = decode_step_mir
+            .nodes
+            .iter()
             .filter(|n| matches!(n.op, MirOp::MILCoremlUpdateState { .. }))
             .count();
         println!(
@@ -4525,7 +4547,8 @@ fn run_trace_compile(
             decode_step_mir.nodes.len(),
             decode_step_mir.inputs.len(),
             decode_step_mir.outputs.len(),
-            mir_state_reads, mir_state_writes
+            mir_state_reads,
+            mir_state_writes
         );
         if mir_state_reads == 0 || mir_state_writes == 0 {
             return Err(format!(
@@ -4553,12 +4576,16 @@ fn run_trace_compile(
         // Check for ReadState/CoremlUpdateState by looking at the debug format
         // since MirOpCompat is private from this crate.
         let compat_total = decode_step_compat.ops.len();
-        let compat_has_read_state = decode_step_compat.ops.iter()
-            .any(|op| format!("{:?}", op).contains("ReadState"));
-        let compat_has_write_state = decode_step_compat.ops.iter()
+        let compat_has_read_state =
+            decode_step_compat.ops.iter().any(|op| format!("{:?}", op).contains("ReadState"));
+        let compat_has_write_state = decode_step_compat
+            .ops
+            .iter()
             .any(|op| format!("{:?}", op).contains("CoremlUpdateState"));
-        println!("  Decode-step compat: {} ops, has_read_state={}, has_write_state={}",
-            compat_total, compat_has_read_state, compat_has_write_state);
+        println!(
+            "  Decode-step compat: {} ops, has_read_state={}, has_write_state={}",
+            compat_total, compat_has_read_state, compat_has_write_state
+        );
         if !compat_has_read_state || !compat_has_write_state {
             return Err(format!(
                 "BUG: Decode-step compat has no state ops (has_read={}, has_write={}). \
@@ -4723,7 +4750,9 @@ fn build_decode_step_sir(
     _max_seq_len: usize,
     _batch_size: usize,
 ) -> ane_ir::sir::SirGraph {
-    use ane_ir::sir::{QualityContract, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+    use ane_ir::sir::{
+        QualityContract, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin,
+    };
 
     let mut sir_nodes: Vec<SirNode> = Vec::new();
     let mut sir_inputs: Vec<SirNodeId> = Vec::new();
@@ -4732,9 +4761,7 @@ fn build_decode_step_sir(
 
     // Helper to create metadata
     let make_metadata = || SirMetadata {
-        task_origin: TaskOrigin::TransformersTrace {
-            name: traced_graph.model_id.clone(),
-        },
+        task_origin: TaskOrigin::TransformersTrace { name: traced_graph.model_id.clone() },
         model_id: Some(traced_graph.model_id.clone()),
         quality_contract: Some(QualityContract {
             max_perplexity_delta: Some(0.1),
@@ -4815,16 +4842,14 @@ fn build_decode_step_sir(
         node_counter += 1;
         sir_nodes.push(SirNode {
             id: residual1_id.clone(),
-            op: SirOp::Add {
-                x: current_hidden.clone(),
-                y: attn_id,
-            },
+            op: SirOp::Add { x: current_hidden.clone(), y: attn_id },
             name: format!("residual1_{}", layer_idx),
             metadata: make_metadata(),
         });
 
         // Step 4: Post-attention RMS norm
-        let post_attn_norm_id = SirNodeId(format!("sir_{}_post_attn_norm_{}", node_counter, layer_idx));
+        let post_attn_norm_id =
+            SirNodeId(format!("sir_{}_post_attn_norm_{}", node_counter, layer_idx));
         node_counter += 1;
         sir_nodes.push(SirNode {
             id: post_attn_norm_id.clone(),
@@ -4882,10 +4907,7 @@ fn build_decode_step_sir(
         node_counter += 1;
         sir_nodes.push(SirNode {
             id: mlp_hidden_id.clone(),
-            op: SirOp::Mul {
-                x: gate_silu_id,
-                y: up_id,
-            },
+            op: SirOp::Mul { x: gate_silu_id, y: up_id },
             name: format!("mlp_hidden_{}", layer_idx),
             metadata: make_metadata(),
         });
@@ -4909,10 +4931,7 @@ fn build_decode_step_sir(
         node_counter += 1;
         sir_nodes.push(SirNode {
             id: residual2_id.clone(),
-            op: SirOp::Add {
-                x: residual1_id,
-                y: mlp_out_id,
-            },
+            op: SirOp::Add { x: residual1_id, y: mlp_out_id },
             name: format!("residual2_{}", layer_idx),
             metadata: make_metadata(),
         });
@@ -4951,11 +4970,7 @@ fn build_decode_step_sir(
     // Output: logits [1, vocab_size]
     sir_outputs.push(lm_head_id);
 
-    SirGraph {
-        nodes: sir_nodes,
-        inputs: sir_inputs,
-        outputs: sir_outputs,
-    }
+    SirGraph { nodes: sir_nodes, inputs: sir_inputs, outputs: sir_outputs }
 }
 
 /// Identify weights that are shared between the embedding and decode_step MIRs.
@@ -4992,35 +5007,26 @@ fn identify_shared_weights(
         .collect();
 
     // Intersection = shared weights
-    let shared: Vec<String> = embedding_weights
-        .intersection(&decode_step_weights)
-        .cloned()
-        .collect();
+    let shared: Vec<String> =
+        embedding_weights.intersection(&decode_step_weights).cloned().collect();
 
     // Also force-include well-known shared weights even if they're
     // represented differently in the two MIRs (e.g., embed_tokens
     // might be a Gather in embedding but a MILLinear in decode_step).
     let mut result = shared;
-    let known_shared = [
-        "model.embed_tokens.weight",
-        "lm_head.weight",
-    ];
+    let known_shared = ["model.embed_tokens.weight", "lm_head.weight"];
     for name in &known_shared {
         if !result.iter().any(|r| r == name) {
             // Check if this weight appears in either MIR
-            let in_embedding = embedding_mir.nodes.iter().any(|n| {
-                match &n.op {
-                    MirOp::MILLinear { weight, .. } => weight == name,
-                    MirOp::MILGather { x, .. } => &x.0 == name,
-                    _ => false,
-                }
+            let in_embedding = embedding_mir.nodes.iter().any(|n| match &n.op {
+                MirOp::MILLinear { weight, .. } => weight == name,
+                MirOp::MILGather { x, .. } => &x.0 == name,
+                _ => false,
             });
-            let in_decode = decode_step_mir.nodes.iter().any(|n| {
-                match &n.op {
-                    MirOp::MILLinear { weight, .. } => weight == name,
-                    MirOp::MILGather { x, .. } => &x.0 == name,
-                    _ => false,
-                }
+            let in_decode = decode_step_mir.nodes.iter().any(|n| match &n.op {
+                MirOp::MILLinear { weight, .. } => weight == name,
+                MirOp::MILGather { x, .. } => &x.0 == name,
+                _ => false,
             });
             if in_embedding || in_decode {
                 result.push(name.to_string());

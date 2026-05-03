@@ -91,7 +91,7 @@ impl ConflictDetector {
             type_groups.entry(entry.unit.knowledge_type).or_default().push(i);
         }
 
-        for (_kt, indices) in &type_groups {
+        for indices in type_groups.values() {
             for i_pos in 0..indices.len() {
                 let i = indices[i_pos];
                 for &j in &indices[i_pos + 1..] {

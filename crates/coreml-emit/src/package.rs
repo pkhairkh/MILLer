@@ -156,7 +156,8 @@ impl MlPackageWriter {
         // Deterministic UUIDs: same model content always produces the same manifest.
         // Uses UUID v5 (SHA-1 name-based) with a stable namespace so that two
         // consecutive builds of the same model produce identical Manifest.json files.
-        let namespace = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"miller.coreml-emit.internal");
+        let namespace =
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"miller.coreml-emit.internal");
         let model_uuid = uuid::Uuid::new_v5(&namespace, model.default_function_name.as_bytes());
         let weights_uuid = uuid::Uuid::new_v5(&namespace, b"weights");
 

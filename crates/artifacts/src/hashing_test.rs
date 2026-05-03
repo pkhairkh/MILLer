@@ -13,10 +13,7 @@ fn test_hash_bytes_empty() {
     let hash = hash_bytes(&[]);
     assert!(hash.starts_with("sha256:"), "Hash must be prefixed with sha256:");
     // SHA-256 of empty input is well-known
-    assert_eq!(
-        hash,
-        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    );
+    assert_eq!(hash, "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 }
 
 #[test]
