@@ -76,7 +76,10 @@ use serde::{Deserialize, Serialize};
 // ─── Core ML Types (hand-written for environments without proto compilation) ─
 
 /// Data type for tensor elements.
-/// Mirrors `ArrayDataType` from DataStructures.proto.
+/// Mirrors `ArrayDataType` from DataStructures.proto plus `DataType` from MIL.proto.
+///
+/// T-35 (I-14): Added Int4, UInt4, E4M3, E5M2, UInt16 for proper
+/// quantization and float8 constraint enforcement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CoreMlDataType {
     Unknown,
@@ -87,6 +90,16 @@ pub enum CoreMlDataType {
     UInt8,
     Int8,
     Bool,
+    /// 4-bit signed integer (MIL proto DataType::INT4 = 25).
+    Int4,
+    /// 4-bit unsigned integer (MIL proto DataType::UINT4 = 35).
+    UInt4,
+    /// 8-bit float E4M3 (MIL proto DataType::FLOAT8E4M3FN = 40).
+    E4M3,
+    /// 8-bit float E5M2 (MIL proto DataType::FLOAT8E5M2 = 41).
+    E5M2,
+    /// 16-bit unsigned integer (MIL proto DataType::UINT16 = 32).
+    UInt16,
 }
 
 impl CoreMlDataType {
@@ -97,6 +110,11 @@ impl CoreMlDataType {
             crate::mir_compat::MilDtypeCompat::Fp32 => CoreMlDataType::Float32,
             crate::mir_compat::MilDtypeCompat::Int32 => CoreMlDataType::Int32,
             crate::mir_compat::MilDtypeCompat::UInt8 => CoreMlDataType::UInt8,
+            crate::mir_compat::MilDtypeCompat::Int4 => CoreMlDataType::Int4,
+            crate::mir_compat::MilDtypeCompat::UInt4 => CoreMlDataType::UInt4,
+            crate::mir_compat::MilDtypeCompat::E4M3 => CoreMlDataType::E4M3,
+            crate::mir_compat::MilDtypeCompat::E5M2 => CoreMlDataType::E5M2,
+            crate::mir_compat::MilDtypeCompat::UInt16 => CoreMlDataType::UInt16,
         }
     }
 
@@ -107,6 +125,9 @@ impl CoreMlDataType {
             CoreMlDataType::Float16 => 2,
             CoreMlDataType::Int32 => 4,
             CoreMlDataType::UInt8 | CoreMlDataType::Int8 | CoreMlDataType::Bool => 1,
+            CoreMlDataType::Int4 | CoreMlDataType::UInt4 => 1, // 4-bit types stored as 1 byte
+            CoreMlDataType::E4M3 | CoreMlDataType::E5M2 => 1,  // 8-bit float types
+            CoreMlDataType::UInt16 => 2,
             CoreMlDataType::Unknown => 0,
         }
     }
@@ -122,6 +143,12 @@ impl CoreMlDataType {
             CoreMlDataType::UInt8 => 5,
             CoreMlDataType::Int8 => 6,
             CoreMlDataType::Bool => 7,
+            // T-35: new dtypes use Apple MIL proto DataType values
+            CoreMlDataType::Int4 => 25,    // DataType::INT4
+            CoreMlDataType::UInt4 => 35,   // DataType::UINT4
+            CoreMlDataType::E4M3 => 40,    // DataType::FLOAT8E4M3FN
+            CoreMlDataType::E5M2 => 41,    // DataType::FLOAT8E5M2
+            CoreMlDataType::UInt16 => 32,  // DataType::UINT16
         }
     }
 }
@@ -308,12 +335,26 @@ pub mod mir_compat {
     use serde::{Deserialize, Serialize};
 
     /// MIR dtype compatibility type.
+    ///
+    /// T-35 (I-14): Added Int4, UInt4, E4M3, E5M2, UInt16 for proper
+    /// quantization and float8 constraint enforcement. These map directly
+    /// to Apple's MIL proto DataType enum values.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     pub enum MilDtypeCompat {
         Fp16,
         Fp32,
         Int32,
         UInt8,
+        /// 4-bit signed integer. Used for palettized/quantized weights.
+        Int4,
+        /// 4-bit unsigned integer. Used for palettized weights.
+        UInt4,
+        /// 8-bit floating point (4-bit exponent, 3-bit mantissa).
+        E4M3,
+        /// 8-bit floating point (5-bit exponent, 2-bit mantissa).
+        E5M2,
+        /// 16-bit unsigned integer.
+        UInt16,
     }
 
     /// Compute unit hint compatibility type.
@@ -863,12 +904,18 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
 
         /// Convert ane-ir MilDtype to compat MilDtypeCompat.
         /// Types without a compat representation map to Fp32 (conservative default).
+        /// T-35: Int4, UInt4, E4M3, E5M2, UInt16 now have proper compat representations.
         fn convert_dtype(d: ane_ir::mir::MilDtype) -> MilDtypeCompat {
             match d {
                 ane_ir::mir::MilDtype::Fp16 => MilDtypeCompat::Fp16,
                 ane_ir::mir::MilDtype::Fp32 => MilDtypeCompat::Fp32,
                 ane_ir::mir::MilDtype::Int32 => MilDtypeCompat::Int32,
                 ane_ir::mir::MilDtype::UInt8 => MilDtypeCompat::UInt8,
+                ane_ir::mir::MilDtype::Int4 => MilDtypeCompat::Int4,
+                ane_ir::mir::MilDtype::UInt4 => MilDtypeCompat::UInt4,
+                ane_ir::mir::MilDtype::E4M3 => MilDtypeCompat::E4M3,
+                ane_ir::mir::MilDtype::E5M2 => MilDtypeCompat::E5M2,
+                ane_ir::mir::MilDtype::UInt16 => MilDtypeCompat::UInt16,
                 // No compat representation; Fp32 is the safest default
                 ane_ir::mir::MilDtype::Bool
                 | ane_ir::mir::MilDtype::Fp64
@@ -1232,6 +1279,13 @@ pub fn data_type_to_proto(dt: &CoreMlDataType) -> i32 {
         CoreMlDataType::UInt8 => proto::ArrayDataType::Uint8 as i32,
         CoreMlDataType::Int8 => proto::ArrayDataType::Int8 as i32,
         CoreMlDataType::Bool => proto::ArrayDataType::Bool as i32,
+        // T-35: new dtypes — legacy proto ArrayDataType doesn't have these,
+        // map to Unknown since they should use the MIL proto DataType path
+        CoreMlDataType::Int4
+        | CoreMlDataType::UInt4
+        | CoreMlDataType::E4M3
+        | CoreMlDataType::E5M2
+        | CoreMlDataType::UInt16 => proto::ArrayDataType::Unknown as i32,
     }
 }
 
@@ -1257,12 +1311,22 @@ pub fn spec_version_to_proto(sv: &SpecVersion) -> i32 {
 }
 
 /// Convert `MilDtypeCompat` → `proto::ArrayDataType` (prost enum as i32).
+///
+/// T-35: New dtypes (Int4, UInt4, E4M3, E5M2, UInt16) use raw proto values
+/// since they are not in the legacy `ArrayDataType` enum. These correspond
+/// to Apple's MIL proto `DataType` enum values.
 pub fn mil_dtype_to_proto(dt: &mir_compat::MilDtypeCompat) -> i32 {
     match dt {
         mir_compat::MilDtypeCompat::Fp16 => proto::ArrayDataType::Float16 as i32,
         mir_compat::MilDtypeCompat::Fp32 => proto::ArrayDataType::Float32 as i32,
         mir_compat::MilDtypeCompat::Int32 => proto::ArrayDataType::Int32 as i32,
         mir_compat::MilDtypeCompat::UInt8 => proto::ArrayDataType::Uint8 as i32,
+        // T-35: new dtypes — use raw MIL proto DataType values
+        mir_compat::MilDtypeCompat::Int4 => 25,    // DataType::INT4
+        mir_compat::MilDtypeCompat::UInt4 => 35,   // DataType::UINT4
+        mir_compat::MilDtypeCompat::E4M3 => 40,    // DataType::FLOAT8E4M3FN
+        mir_compat::MilDtypeCompat::E5M2 => 41,    // DataType::FLOAT8E5M2
+        mir_compat::MilDtypeCompat::UInt16 => 32,  // DataType::UINT16
     }
 }
 
@@ -1323,10 +1387,16 @@ pub fn weight_data_inline(
     let value = match dtype {
         mir_compat::MilDtypeCompat::Fp16
         | mir_compat::MilDtypeCompat::Fp32
-        | mir_compat::MilDtypeCompat::UInt8 => {
+        | mir_compat::MilDtypeCompat::UInt8
+        | mir_compat::MilDtypeCompat::E4M3
+        | mir_compat::MilDtypeCompat::E5M2 => {
             proto::weight_value::Value::FloatValue(data.to_vec())
         }
         mir_compat::MilDtypeCompat::Int32 => proto::weight_value::Value::IntValue(data.to_vec()),
+        // T-35: Int4, UInt4, UInt16 stored as integer data
+        mir_compat::MilDtypeCompat::Int4
+        | mir_compat::MilDtypeCompat::UInt4
+        | mir_compat::MilDtypeCompat::UInt16 => proto::weight_value::Value::IntValue(data.to_vec()),
     };
 
     proto::WeightData {
@@ -1900,12 +1970,20 @@ pub fn convert_to_proto_model(model: &CoreMlModel, weight_entries: &[WeightEntry
 // This is the format Core ML's runtime expects for .mlpackage models.
 
 /// Convert `MilDtypeCompat` → `apple_proto::mil_spec::DataType` (Apple enum values).
+///
+/// T-35: Added Int4, UInt4, E4M3, E5M2, UInt16 mapping to Apple's MIL proto DataType.
 pub fn mil_dtype_to_apple(dt: &mir_compat::MilDtypeCompat) -> i32 {
     match dt {
         mir_compat::MilDtypeCompat::Fp16 => apple_proto::mil_spec::DataType::Float16 as i32,
         mir_compat::MilDtypeCompat::Fp32 => apple_proto::mil_spec::DataType::Float32 as i32,
         mir_compat::MilDtypeCompat::Int32 => apple_proto::mil_spec::DataType::Int32 as i32,
         mir_compat::MilDtypeCompat::UInt8 => apple_proto::mil_spec::DataType::Uint8 as i32,
+        // T-35: new dtypes — Apple MIL proto v2 DataType values
+        mir_compat::MilDtypeCompat::Int4 => apple_proto::mil_spec::DataType::Int4 as i32,
+        mir_compat::MilDtypeCompat::UInt4 => apple_proto::mil_spec::DataType::Uint4 as i32,
+        mir_compat::MilDtypeCompat::E4M3 => apple_proto::mil_spec::DataType::Float8e4m3fn as i32,
+        mir_compat::MilDtypeCompat::E5M2 => apple_proto::mil_spec::DataType::Float8e5m2 as i32,
+        mir_compat::MilDtypeCompat::UInt16 => apple_proto::mil_spec::DataType::Uint16 as i32,
     }
 }
 
@@ -1920,6 +1998,12 @@ pub fn coreml_dtype_to_apple_mil(dt: &CoreMlDataType) -> i32 {
         CoreMlDataType::Float64 => apple_proto::mil_spec::DataType::Float64 as i32,
         CoreMlDataType::Unknown => apple_proto::mil_spec::DataType::UnusedType as i32,
         CoreMlDataType::Bool => apple_proto::mil_spec::DataType::Bool as i32,
+        // T-35: new dtypes
+        CoreMlDataType::Int4 => apple_proto::mil_spec::DataType::Int4 as i32,
+        CoreMlDataType::UInt4 => apple_proto::mil_spec::DataType::Uint4 as i32,
+        CoreMlDataType::E4M3 => apple_proto::mil_spec::DataType::Float8e4m3fn as i32,
+        CoreMlDataType::E5M2 => apple_proto::mil_spec::DataType::Float8e5m2 as i32,
+        CoreMlDataType::UInt16 => apple_proto::mil_spec::DataType::Uint16 as i32,
     }
 }
 
@@ -1930,6 +2014,12 @@ fn compat_dtype_to_apple_mil(dt: &mir_compat::MilDtypeCompat) -> i32 {
         mir_compat::MilDtypeCompat::Fp32 => apple_proto::mil_spec::DataType::Float32 as i32,
         mir_compat::MilDtypeCompat::Int32 => apple_proto::mil_spec::DataType::Int32 as i32,
         mir_compat::MilDtypeCompat::UInt8 => apple_proto::mil_spec::DataType::Uint8 as i32,
+        // T-35: new dtypes
+        mir_compat::MilDtypeCompat::Int4 => apple_proto::mil_spec::DataType::Int4 as i32,
+        mir_compat::MilDtypeCompat::UInt4 => apple_proto::mil_spec::DataType::Uint4 as i32,
+        mir_compat::MilDtypeCompat::E4M3 => apple_proto::mil_spec::DataType::Float8e4m3fn as i32,
+        mir_compat::MilDtypeCompat::E5M2 => apple_proto::mil_spec::DataType::Float8e5m2 as i32,
+        mir_compat::MilDtypeCompat::UInt16 => apple_proto::mil_spec::DataType::Uint16 as i32,
     }
 }
 
@@ -1943,10 +2033,18 @@ pub fn coreml_dtype_to_apple_array(dt: &CoreMlDataType) -> i32 {
         CoreMlDataType::UInt8 => apple_proto::array_feature_type::ArrayDataType::Int8 as i32,
         CoreMlDataType::Int8 => apple_proto::array_feature_type::ArrayDataType::Int8 as i32,
         CoreMlDataType::Float64 => apple_proto::array_feature_type::ArrayDataType::Double as i32,
-        CoreMlDataType::Unknown => {
+        // T-35: new dtypes — the FeatureTypes proto doesn't have these ArrayDataType
+        // variants yet, so map to InvalidArrayDataType as fallback. The MIL proto
+        // DataType enum (used in operations) handles them properly via
+        // coreml_dtype_to_apple_mil().
+        CoreMlDataType::Int4
+        | CoreMlDataType::UInt4
+        | CoreMlDataType::E4M3
+        | CoreMlDataType::E5M2
+        | CoreMlDataType::UInt16 => {
             apple_proto::array_feature_type::ArrayDataType::InvalidArrayDataType as i32
         }
-        CoreMlDataType::Bool => {
+        CoreMlDataType::Unknown | CoreMlDataType::Bool => {
             apple_proto::array_feature_type::ArrayDataType::InvalidArrayDataType as i32
         }
     }
@@ -3339,6 +3437,12 @@ fn mir_op_to_apple_ops(
                 mir_compat::MilDtypeCompat::Fp32 => "fp32",
                 mir_compat::MilDtypeCompat::Int32 => "int32",
                 mir_compat::MilDtypeCompat::UInt8 => "uint8",
+                // T-35: new dtype strings for Cast op
+                mir_compat::MilDtypeCompat::Int4 => "int4",
+                mir_compat::MilDtypeCompat::UInt4 => "uint4",
+                mir_compat::MilDtypeCompat::E4M3 => "e4m3",
+                mir_compat::MilDtypeCompat::E5M2 => "e5m2",
+                mir_compat::MilDtypeCompat::UInt16 => "uint16",
             };
             let dtype_const_name = format!("{name}_dtype_0");
 

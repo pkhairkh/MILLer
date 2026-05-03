@@ -120,13 +120,13 @@
 - **Effort**: S (0.5 day)
 - **Resolution**: Added 62 comprehensive tests for the `StaticizePass` module, which previously had zero test coverage. Tests cover: (1) empty/minimal graphs (empty graph, default/new equivalence); (2) single-node graphs (Const, Fill, Identity placeholder); (3) LinearProjection (core vertical slice, with bias); (4) RMSNorm, RoPETransform; (5) DecodeStep (minimal, with QK-norm); (6) SDPA (without mask, with mask+scale) and AttentionBlock; (7) StateRead/StateWrite (KV cache operations); (8) 20 unary elementwise ops; (9) 13 binary elementwise ops; (10) 7 reduction ops; (11) tensor transform ops (Reshape, Transpose, Concat, Split, ExpandDims, Squeeze, Tile, Pad); (12) Gather; (13) MatMul; (14) Cast, Select, Where; (15) Softmax; (16) Conv; (17) SliceByIndex; (18) Quantize/Dequantize and Constexpr ops (AffineDequantize, LutToDense, SparseToDense, ConstexprCast, ConstexprBlockwiseShiftScale); (19) Sampler; (20) LayerNorm, BatchNorm; (21) realistic multi-node decode pipeline; (22) metadata preservation (all fields, all TaskOrigin variants); (23) graph I/O preservation (multiple inputs, multiple outputs, empty inputs); (24) Result type consistency (always Ok, unwraps cleanly); (25) idempotency (single pass, multi-node triple pass); (26) 50-node stress test; (27) Topk; (28) pooling ops (MaxPool, AvgPool); (29) recurrent ops (RNN, GRU, LSTM); (30) control flow (Cond, WhileLoop); (31) random ops; (32) ConvTranspose; (33) ReshapeLike, Flatten2d, Reverse; (34) DepthToSpace/SpaceToDepth/PixelShuffle/PixelUnshuffle; (35) Cumsum, FillLike, OneHot, Range1d; (36) parametric activations (LeakyRelu, ScaledTanh, ThresholdedRelu); (37) Einsum. All 1036 tests pass.
 
-### T-35 · Expand `MilDtype` with Int4, UInt4, E4M3, E5M2
+### T-35 · Expand `MilDtype` with Int4, UInt4, E4M3, E5M2 ✅
 
 - **ISSUES ref**: I-14
 - **AUDIT ref**: §III (CQ-15)
-- **Severity**: MEDIUM
+- **Severity**: MEDIUM → RESOLVED
 - **Effort**: M (1 day)
-- **Description**: Cannot enforce Int4-per-cout-dequant or float8 rules without these dtype variants.
+- **Resolution**: Added 5 new dtype variants to `MilDtype` (Int4, UInt4, E4M3, E5M2, UInt16) and 5 corresponding variants to `MilDtypeCompat`. Updated all 18 exhaustive match sites across 8 crates. Added `AneFamily::supports_e4m3()` method (true only on A18). Enforced ANE constraints in `dtype_constraints.rs`: (1) Int4/UInt4 legal but require interleave=8 (`validate_int4_interleave`, `validate_uint4_interleave`, `dtype_requires_interleave_8`); (2) E4M3 version-gated — rejected on A11-A16, allowed on A18; (3) E5M2 rejected on all families ("E4M3 or E5M2 format not supported"); (4) UInt16 legal on all families; (5) Updated quantization constraints — output can be Int8/UInt8/E4M3/E5M2 per ANE canon; (6) Updated dequantization constraints — input can be Int8/UInt8/Int4/E4M3, but Int4 per-cout dequant rejected; (7) Added `is_int4_per_cout_dequant_supported()`, `is_e4m3_zero_point_supported()`, `DequantScaleType` enum. Updated `CoreMlDataType` with 5 new variants and proper proto value mappings. Updated `BlobDataType` with UInt16=7, Int4=8, UInt4=11, Float8E4M3FN=16, Float8E5M2=17. Updated Cast op dtype strings. Updated `parse_dtype` in sir_build.rs with all new string formats. Updated string→MilDtype matches in shard_desc.rs, linear_slice.rs, mil_lower.rs. 25 new tests covering all constraint paths. All 1061 tests pass.
 
 ### T-36 · Parameterize Model-Specific Constants
 
@@ -227,7 +227,7 @@
 | T-32 | I-11 | MEDIUM | S | ✅ |
 | T-33 | I-12 | MEDIUM | M | ✅ |
 | T-34 | I-13 | MEDIUM | S | ✅ |
-| T-35 | I-14 | MEDIUM | M | ⬜ |
+| T-35 | I-14 | MEDIUM | M | ✅ |
 | T-36 | I-15 | MEDIUM | M | ⬜ |
 | T-37 | I-16 | MEDIUM | M | ⬜ |
 | T-38 | I-17 | MEDIUM | L | ⬜ |

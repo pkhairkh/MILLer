@@ -151,7 +151,9 @@ fn test_mir_node_dtypes_consistent() {
     for node in &mir.nodes {
         match node.dtype {
             MilDtype::Fp16 | MilDtype::Fp32 | MilDtype::Int32 | MilDtype::UInt8
-            | MilDtype::Bool | MilDtype::Fp64 | MilDtype::Int8 | MilDtype::Int16 => {}
+            | MilDtype::Bool | MilDtype::Fp64 | MilDtype::Int8 | MilDtype::Int16
+            | MilDtype::Int4 | MilDtype::UInt4 | MilDtype::E4M3 | MilDtype::E5M2
+            | MilDtype::UInt16 => {}
         }
     }
 }

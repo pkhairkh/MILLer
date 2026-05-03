@@ -163,16 +163,16 @@ Even the current pass-through implementation needs a smoke test. Any future chan
 
 ### I-14 · `MilDtype` Missing Int4, UInt4, E4M3, E5M2
 
-**Status:** ⬜ Open
-**Files:** `crates/ir/src/common.rs:15-24`
+**Status:** ✅ FIXED (T-35)
+**Files:** `crates/ir/src/common.rs`, `crates/passes/src/dtype_constraints.rs`, `crates/ir/src/ane_target.rs`, `crates/coreml-proto/src/lib.rs`, `crates/bridge/src/mir_to_compat.rs`, `crates/coreml-emit/src/weights.rs`, `crates/trace/src/sir_build.rs`, `crates/trace/src/bin/verify_pipeline.rs`, `crates/ir/src/shard_desc.rs`, `crates/ir/src/linear_slice.rs`, `crates/passes/src/mil_lower.rs`, `crates/ir/tests/pipeline.rs`
 **AUDIT ref:** §III (CQ-15)
-**Severity:** MEDIUM — Cannot enforce Int4-per-cout-dequant or float8 rules
+**Severity:** MEDIUM → RESOLVED
 **Effort:** M (1 day)
 **Task:** T-35
 
 The `MilDtype` enum only has: Fp16, Fp32, Int32, UInt8, Bool, Fp64, Int8, Int16. Missing: Int4, UInt4, E4M3, E5M2, UInt16. Without these, the constraint "Int4 Per-Cout Dequant is not supported" and "E4M3 is not supported on this architecture" cannot be enforced.
 
-**Fix:** Add missing dtype variants and enforce constraints in `dtype_constraints.rs`.
+**Resolution:** Added 5 new dtype variants (Int4, UInt4, E4M3, E5M2, UInt16) to both `MilDtype` and `MilDtypeCompat`. Added `AneFamily::supports_e4m3()` for version gating. Enforced all ANE constraints: Int4/UInt4 require interleave=8, E4M3 only on A18, E5M2 rejected on all families. Updated quantization/dequantization constraints per ANE canon. 25 new tests.
 
 ---
 
@@ -309,8 +309,8 @@ The following issues from the previous tracker have been resolved and archived t
 |----------|-------|------|-------------|-------|
 | P0 | 3 | 0 | 0 | 3 |
 | P1 | 8 | 0 | 0 | 8 |
-| P2 | 8 | 6 | 0 | 2 |
+| P2 | 8 | 5 | 0 | 3 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **7** | **0** | **13** |
+| **Total** | **20** | **6** | **0** | **14** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issues I-12, I-13 resolved by T-33, T-34.*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issues I-12, I-13, I-14 resolved by T-33, T-34, T-35.*

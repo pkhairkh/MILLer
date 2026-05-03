@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// Sprint 58 (S58.2): MilDtypeRepr was removed. All IR levels now
 /// use this single unified type.
+///
+/// T-35 (I-14): Added Int4, UInt4, E4M3, E5M2, UInt16 for proper
+/// quantization and float8 constraint enforcement.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MilDtype {
     Fp16,
@@ -21,6 +24,22 @@ pub enum MilDtype {
     Fp64,
     Int8,
     Int16,
+    /// 4-bit signed integer. Used for palettized/quantized weights.
+    /// ANE constraint: must use interleave factor 8.
+    /// ANE constraint: Int4 per-cout dequant is NOT supported.
+    Int4,
+    /// 4-bit unsigned integer. Used for palettized weights.
+    UInt4,
+    /// 8-bit floating point (4-bit exponent, 3-bit mantissa).
+    /// ANE constraint: architecture-dependent support.
+    /// NOT supported on most families; limited support on A17/A18.
+    /// ANE constraint: zero point is NOT supported for E4M3 quant.
+    E4M3,
+    /// 8-bit floating point (5-bit exponent, 2-bit mantissa).
+    /// ANE constraint: NOT supported on ANE ("E4M3 or E5M2 format not supported").
+    E5M2,
+    /// 16-bit unsigned integer.
+    UInt16,
 }
 
 // ─── Compute Unit Hints ──────────────────────────────────────────

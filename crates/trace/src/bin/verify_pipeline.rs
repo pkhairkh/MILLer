@@ -465,6 +465,12 @@ fn validate_mir(mir: &MirGraph) -> bool {
             MilDtype::Int16 => "int16",
             MilDtype::Fp64 => "fp64",
             MilDtype::UInt8 => "uint8",
+            // T-35: new dtype display names
+            MilDtype::Int4 => "int4",
+            MilDtype::UInt4 => "uint4",
+            MilDtype::E4M3 => "e4m3",
+            MilDtype::E5M2 => "e5m2",
+            MilDtype::UInt16 => "uint16",
         };
         *dtype_counts.entry(dtype_name.to_string()).or_insert(0) += 1;
     }

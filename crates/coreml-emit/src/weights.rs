@@ -77,10 +77,9 @@ const BLOB_ALIGNMENT: u64 = 64;
 ///
 /// These values match Apple's `BlobDataType` enum from
 /// `mlmodel/src/MILBlob/Blob/BlobDataType.hpp` in the coremltools source.
-/// Only variants used by MILLer's supported CoreMlDataTypes are included.
-/// The full Apple enum also defines: BFloat16=5, Int16=6, UInt16=7,
-/// Int4=8, UInt1=9, UInt2=10, UInt4=11, UInt3=12, UInt6=13, UInt32=15,
-/// Float8E4M3FN=16, Float8E5M2=17.
+///
+/// T-35: Added UInt16, Int4, UInt4, Float8E4M3FN, Float8E5M2 variants
+/// matching Apple's full BlobDataType enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 enum BlobDataType {
@@ -88,7 +87,12 @@ enum BlobDataType {
     Float32 = 2,
     UInt8 = 3,
     Int8 = 4,
+    UInt16 = 7,
+    Int4 = 8,
+    UInt4 = 11,
     Int32 = 14,
+    Float8E4M3FN = 16,
+    Float8E5M2 = 17,
 }
 
 /// Map CoreMlDataType to MILBlob BlobDataType enum value.
@@ -102,6 +106,12 @@ fn coreml_dtype_to_blob_dtype(dtype: &CoreMlDataType) -> u32 {
         CoreMlDataType::UInt8 => BlobDataType::UInt8 as u32,
         CoreMlDataType::Int8 => BlobDataType::Int8 as u32,
         CoreMlDataType::Int32 => BlobDataType::Int32 as u32,
+        // T-35: new dtype blob mappings
+        CoreMlDataType::UInt16 => BlobDataType::UInt16 as u32,
+        CoreMlDataType::Int4 => BlobDataType::Int4 as u32,
+        CoreMlDataType::UInt4 => BlobDataType::UInt4 as u32,
+        CoreMlDataType::E4M3 => BlobDataType::Float8E4M3FN as u32,
+        CoreMlDataType::E5M2 => BlobDataType::Float8E5M2 as u32,
         // Conservatively map unknown/unsupported types to Float32
         CoreMlDataType::Float64
         | CoreMlDataType::Bool

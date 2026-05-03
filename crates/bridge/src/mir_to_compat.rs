@@ -1944,12 +1944,20 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
 }
 
 /// Convert `MilDtype` → `MilDtypeCompat`.
+///
+/// T-35: Int4, UInt4, E4M3, E5M2, UInt16 now have proper compat representations
+/// instead of being mapped to lossy approximations.
 pub fn mil_dtype_to_compat(dtype: &MilDtype) -> MilDtypeCompat {
     match dtype {
         MilDtype::Fp16 => MilDtypeCompat::Fp16,
         MilDtype::Fp32 => MilDtypeCompat::Fp32,
         MilDtype::Int32 => MilDtypeCompat::Int32,
         MilDtype::UInt8 => MilDtypeCompat::UInt8,
+        MilDtype::Int4 => MilDtypeCompat::Int4,
+        MilDtype::UInt4 => MilDtypeCompat::UInt4,
+        MilDtype::E4M3 => MilDtypeCompat::E4M3,
+        MilDtype::E5M2 => MilDtypeCompat::E5M2,
+        MilDtype::UInt16 => MilDtypeCompat::UInt16,
         MilDtype::Bool => MilDtypeCompat::UInt8, // No Bool compat; approximate as UInt8
         MilDtype::Fp64 => MilDtypeCompat::Fp32,  // No Fp64 compat; downcast to Fp32
         MilDtype::Int8 => MilDtypeCompat::Int32, // No Int8 compat; promote to Int32
@@ -1974,6 +1982,10 @@ fn compat_dtype_element_size(dtype: &MilDtypeCompat) -> usize {
         MilDtypeCompat::Fp32 => 4,
         MilDtypeCompat::Int32 => 4,
         MilDtypeCompat::UInt8 => 1,
+        // T-35: new dtype element sizes
+        MilDtypeCompat::Int4 | MilDtypeCompat::UInt4 => 1, // 4-bit stored as 1 byte
+        MilDtypeCompat::E4M3 | MilDtypeCompat::E5M2 => 1,  // 8-bit float
+        MilDtypeCompat::UInt16 => 2,
     }
 }
 

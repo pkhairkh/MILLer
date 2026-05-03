@@ -1632,14 +1632,23 @@ impl<'a> SirBuildContext<'a> {
 }
 
 /// Parse a dtype string into a MilDtype.
+///
+/// T-35: Added int4, uint4, e4m3, e5m2, uint16, fp64, int16 parsing.
 fn parse_dtype(dtype_str: &str) -> Result<MilDtype, String> {
     match dtype_str.to_lowercase().as_str() {
         "fp16" | "float16" | "half" => Ok(MilDtype::Fp16),
         "fp32" | "float32" | "float" => Ok(MilDtype::Fp32),
+        "fp64" | "float64" | "double" => Ok(MilDtype::Fp64),
         "int32" | "int" => Ok(MilDtype::Int32),
+        "int16" | "short" => Ok(MilDtype::Int16),
         "int8" => Ok(MilDtype::Int8),
+        "int4" => Ok(MilDtype::Int4),
         "uint8" => Ok(MilDtype::UInt8),
+        "uint16" => Ok(MilDtype::UInt16),
+        "uint4" => Ok(MilDtype::UInt4),
         "bool" => Ok(MilDtype::Bool),
+        "e4m3" | "float8_e4m3" | "float8e4m3fn" => Ok(MilDtype::E4M3),
+        "e5m2" | "float8_e5m2" | "float8e5m2" => Ok(MilDtype::E5M2),
         _ => Err(format!("Unknown dtype '{}'", dtype_str)),
     }
 }

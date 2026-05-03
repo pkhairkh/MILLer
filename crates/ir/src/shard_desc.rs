@@ -87,6 +87,11 @@ pub fn lower_shard_to_mir(
     let mil_dtype = match dtype {
         "fp16" => MilDtype::Fp16,
         "fp32" => MilDtype::Fp32,
+        "int4" => MilDtype::Int4,
+        "uint4" => MilDtype::UInt4,
+        "e4m3" => MilDtype::E4M3,
+        "e5m2" => MilDtype::E5M2,
+        "uint16" => MilDtype::UInt16,
         _ => MilDtype::Fp16,
     };
 

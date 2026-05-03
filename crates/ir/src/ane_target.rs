@@ -78,6 +78,17 @@ impl AneFamily {
     pub fn supports_argminmax(&self) -> bool {
         !matches!(self, AneFamily::A18)
     }
+
+    /// Whether this family supports E4M3 (FP8) data type on ANE.
+    ///
+    /// Per the per-op support matrix, E4M3/E5M2 is ❌ on A11 through A16,
+    /// and ⚠️ (conditionally supported) on A17/A18.
+    /// The ANE error message is: "E4M3 is not supported" on older architectures.
+    ///
+    /// T-35 (I-14): E4M3 dtype constraint enforcement.
+    pub fn supports_e4m3(&self) -> bool {
+        matches!(self, AneFamily::A18)
+    }
 }
 
 /// ANE hardware revision — corresponds to specific silicon versions.
@@ -203,5 +214,17 @@ mod tests {
         assert!(AneFamily::A15.supports_argminmax());
         assert!(AneFamily::A16.supports_argminmax());
         assert!(!AneFamily::A18.supports_argminmax());
+    }
+
+    #[test]
+    fn test_supports_e4m3() {
+        // E4M3 (FP8) is NOT supported on A11-A16; only A18+ has limited support
+        assert!(!AneFamily::A11Legacy.supports_e4m3());
+        assert!(!AneFamily::A12.supports_e4m3());
+        assert!(!AneFamily::A13.supports_e4m3());
+        assert!(!AneFamily::A14.supports_e4m3());
+        assert!(!AneFamily::A15.supports_e4m3());
+        assert!(!AneFamily::A16.supports_e4m3());
+        assert!(AneFamily::A18.supports_e4m3());
     }
 }
