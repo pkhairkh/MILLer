@@ -23,6 +23,7 @@
 
 use ane_coreml_proto::mir_compat::MilDtypeCompat;
 use ane_ir::mir::{MilDtype, MirOp};
+use ane_ir::shape_ops;
 use std::collections::HashMap;
 
 /// Infer the output dtype for a compat graph input node.
@@ -195,12 +196,20 @@ pub fn compat_output_shape(
         MirOp::MILReshape { shape, .. } => shape.to_vec(),
         MirOp::MILTranspose { x, perm, .. } => {
             if let Some(input_shape) = node_shapes.get(&x.0) {
-                perm.iter().map(|&p| input_shape.get(p).copied().unwrap_or(0)).collect()
+                shape_ops::transpose_shape(input_shape, perm)
             } else {
                 vec![]
             }
         }
-        MirOp::MILTile { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
+        MirOp::MILTile { x, reps, .. } => {
+            // CQ-22 fix: previously just propagated input shape, ignoring reps.
+            // Now correctly computes out[i] = input_shape[i] * reps[i].
+            if let Some(input_shape) = node_shapes.get(&x.0) {
+                shape_ops::tile_shape(input_shape, reps)
+            } else {
+                vec![]
+            }
+        }
         MirOp::MILFill { shape, .. } => shape.to_vec(),
         MirOp::MILFillLike { ref_tensor, .. } => {
             node_shapes.get(&ref_tensor.0).cloned().unwrap_or_default()
@@ -240,17 +249,10 @@ pub fn compat_output_shape(
         }
         // ExpandDims: insert 1-sized dims at specified axes
         MirOp::MILExpandDims { x, axis, .. } => {
+            // CQ-22: Delegates to shape_ops::expand_dims_shape which uses
+            // Core ML semantics (axes specify output positions).
             if let Some(input_shape) = node_shapes.get(&x.0) {
-                let mut out = input_shape.clone();
-                let mut sorted_axes: Vec<usize> = axis.to_vec();
-                sorted_axes.sort_unstable();
-                for &ax in &sorted_axes {
-                    // Insert at the output position; since we iterate in sorted order,
-                    // each insertion shifts subsequent positions automatically.
-                    let insert_pos = if ax >= out.len() { out.len() } else { ax };
-                    out.insert(insert_pos, 1);
-                }
-                out
+                shape_ops::expand_dims_shape(input_shape, axis)
             } else {
                 vec![]
             }
@@ -258,15 +260,7 @@ pub fn compat_output_shape(
         // Squeeze: remove dims at specified axes
         MirOp::MILSqueeze { x, axis, .. } => {
             if let Some(input_shape) = node_shapes.get(&x.0) {
-                let mut out = input_shape.clone();
-                let mut sorted_axes: Vec<usize> = axis.to_vec();
-                sorted_axes.sort_unstable_by(|a, b| b.cmp(a)); // Remove from back to front
-                for &ax in &sorted_axes {
-                    if ax < out.len() {
-                        out.remove(ax);
-                    }
-                }
-                out
+                shape_ops::squeeze_shape(input_shape, axis)
             } else {
                 vec![]
             }
@@ -274,14 +268,8 @@ pub fn compat_output_shape(
         // Pad: output shape = input shape + pad amounts
         MirOp::MILPad { x, pad_amounts, .. } => {
             if let Some(input_shape) = node_shapes.get(&x.0) {
-                let rank = input_shape.len();
-                let mut out = input_shape.clone();
-                for (i, slot) in out.iter_mut().enumerate().take(rank) {
-                    let before = pad_amounts.get(i).copied().unwrap_or(0) as usize;
-                    let after = pad_amounts.get(i + rank).copied().unwrap_or(0) as usize;
-                    *slot += before + after;
-                }
-                out
+                let pad: Vec<usize> = pad_amounts.iter().map(|&p| p as usize).collect();
+                shape_ops::pad_shape(input_shape, &pad)
             } else {
                 vec![]
             }
@@ -289,8 +277,20 @@ pub fn compat_output_shape(
         // ReduceMax/Min/Prod: same as ReduceMean shape propagation
         MirOp::MILReduceMax { x, axes, keep_dims, .. }
         | MirOp::MILReduceMin { x, axes, keep_dims, .. }
-        | MirOp::MILReduceProd { x, axes, keep_dims, .. } => {
+        | MirOp::MILReduceProd { x, axes, keep_dims, .. }
+        // Additional reduce ops (CQ-22: previously fell through to empty vec)
+        | MirOp::MILReduceSum { x, axes, keep_dims, .. }
+        | MirOp::MILReduceSumSquare { x, axes, keep_dims, .. }
+        | MirOp::MILReduceL2Norm { x, axes, keep_dims, .. }
+        | MirOp::MILReduceL1Norm { x, axes, keep_dims, .. }
+        | MirOp::MILReduceLogSumExp { x, axes, keep_dims, .. }
+        | MirOp::MILReduceLogSum { x, axes, keep_dims, .. } => {
             reduce_shape(x, axes, *keep_dims, node_shapes)
+        }
+        // ReduceArgmax/Argmin: reduce along a single axis
+        MirOp::MILReduceArgmax { x, axis, keep_dims, .. }
+        | MirOp::MILReduceArgmin { x, axis, keep_dims, .. } => {
+            reduce_shape(x, &[*axis], *keep_dims, node_shapes)
         }
         // ─── Concat: sum input dims along the concat axis ───────────────
         // CRITICAL: This was the root cause of the "cannot reshape tensor
@@ -451,6 +451,72 @@ pub fn compat_output_shape(
                 vec![]
             }
         }
+        // ─── Additional shape-propagating ops (CQ-22: previously fell through to empty vec) ───
+        // These fallbacks are only hit when MIR node.shape is empty (i.e., when
+        // infer_shape in mil_lower failed to compute a shape). When shape inference
+        // works correctly, these branches are never reached.
+
+        // Normalization ops: propagate input shape
+        MirOp::MILBatchNorm { x, .. }
+        | MirOp::MILInstanceNorm { x, .. }
+        | MirOp::MILL2Norm { x, .. }
+        | MirOp::MILLocalResponseNorm { x, .. } => {
+            node_shapes.get(&x.0).cloned().unwrap_or_default()
+        }
+        // Quantize/Dequantize: propagate input shape
+        MirOp::MILQuantize { x, .. }
+        | MirOp::MILDequantize { x, .. } => {
+            node_shapes.get(&x.0).cloned().unwrap_or_default()
+        }
+        // Unary elementwise ops: propagate input shape
+        MirOp::MILSquare { x, .. }
+        | MirOp::MILPrelu { x, .. }
+        | MirOp::MILSoftsign { x, .. }
+        | MirOp::MILElu { x, .. }
+        | MirOp::MILReverse { x, .. }
+        | MirOp::MILDepthToSpace { x, .. }
+        | MirOp::MILSpaceToDepth { x, .. }
+        | MirOp::MILPixelShuffle { x, .. }
+        | MirOp::MILPixelUnshuffle { x, .. }
+        | MirOp::MILCumsum { x, .. } => {
+            node_shapes.get(&x.0).cloned().unwrap_or_default()
+        }
+        // Parametric activations: propagate input shape
+        MirOp::MILRelu6 { x, .. }
+        | MirOp::MILSigmoidHard { x, .. }
+        | MirOp::MILThresholdedRelu { x, .. }
+        | MirOp::MILClampedRelu { x, .. }
+        | MirOp::MILLinearActivation { x, .. }
+        | MirOp::MILScaledTanh { x, .. }
+        | MirOp::MILSoftplusParametric { x, .. }
+        | MirOp::MILThreshold { x, .. }
+        | MirOp::MILInverse { x, .. }
+        | MirOp::MILExp2 { x, .. } => {
+            node_shapes.get(&x.0).cloned().unwrap_or_default()
+        }
+        // ConvTranspose: use output_shape field if available, else propagate
+        MirOp::MILConvTranspose { x, output_shape, .. } => {
+            if !output_shape.is_empty() {
+                output_shape.clone()
+            } else {
+                node_shapes.get(&x.0).cloned().unwrap_or_default()
+            }
+        }
+        // ReshapeLike: derive shape from ref_tensor
+        MirOp::MILReshapeLike { ref_tensor, .. } => {
+            node_shapes.get(&ref_tensor.0).cloned().unwrap_or_default()
+        }
+        // Flatten2d: reshape-like, compute from input
+        MirOp::MILFlatten2d { x, axis, .. } => {
+            if let Some(input_shape) = node_shapes.get(&x.0) {
+                let product: usize = input_shape[*axis..].iter().product();
+                let mut out = input_shape[..*axis].to_vec();
+                out.push(product);
+                out
+            } else {
+                vec![]
+            }
+        }
         // Catch-all: return empty shape rather than a wrong hardcoded value.
         // An empty shape means "unknown" which Core ML will try to infer from
         // the graph — better than a wrong shape that causes type inference failure.
@@ -464,22 +530,15 @@ pub fn compat_output_shape(
 /// of the two inputs. Missing dimensions in the shorter shape are treated as 1.
 /// Returns `None` if the shapes are not broadcast-compatible.
 fn broadcast_shape_compat(a: &[usize], b: &[usize]) -> Option<Vec<usize>> {
-    let max_rank = a.len().max(b.len());
-    let mut result = Vec::with_capacity(max_rank);
-    for i in 0..max_rank {
-        let da = if i < max_rank - a.len() { 1 } else { a[i - (max_rank - a.len())] };
-        let db = if i < max_rank - b.len() { 1 } else { b[i - (max_rank - b.len())] };
-        if da != db && da != 1 && db != 1 {
-            return None; // incompatible
-        }
-        result.push(da.max(db));
-    }
-    Some(result)
+    shape_ops::broadcast_shape(a, b)
 }
 
 /// Compute the output shape of a reduction operation.
 ///
-/// Shared by `ReduceMean`, `ReduceMax`, `ReduceMin`, and `ReduceProd`.
+/// Shared by `ReduceMean`, `ReduceMax`, `ReduceMin`, `ReduceProd`, and the
+/// additional reduce variants added below.
+///
+/// Delegates to [`shape_ops::reduce_shape`].
 fn reduce_shape(
     x: &ane_ir::mir::MirNodeId,
     axes: &[usize],
@@ -487,23 +546,7 @@ fn reduce_shape(
     node_shapes: &HashMap<String, Vec<usize>>,
 ) -> Vec<usize> {
     if let Some(input_shape) = node_shapes.get(&x.0) {
-        let mut out = input_shape.clone();
-        if keep_dims {
-            for &ax in axes {
-                if ax < out.len() {
-                    out[ax] = 1;
-                }
-            }
-        } else {
-            let mut sorted_axes: Vec<usize> = axes.to_vec();
-            sorted_axes.sort_unstable_by(|a, b| b.cmp(a));
-            for &ax in &sorted_axes {
-                if ax < out.len() {
-                    out.remove(ax);
-                }
-            }
-        }
-        out
+        shape_ops::reduce_shape(input_shape, axes, keep_dims)
     } else {
         vec![]
     }
@@ -1045,10 +1088,42 @@ mod tests {
     // ─── compat_output_shape: tile ────────────────────────────────────────
 
     #[test]
-    fn test_tile_propagates_input_shape() {
+    fn test_tile_multiplies_by_reps() {
+        // CQ-22 fix: tile now correctly multiplies dims by reps instead of
+        // just propagating the input shape.
         let op = MirOp::MILTile { name: "t".into(), x: nid("x"), reps: vec![2, 3] };
         let ns = shapes_with(vec![("x", vec![1, 64])]);
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![2, 192]);
+    }
+
+    #[test]
+    fn test_tile_identity_reps() {
+        // Tile with all-1 reps preserves input shape
+        let op = MirOp::MILTile { name: "t".into(), x: nid("x"), reps: vec![1, 1] };
+        let ns = shapes_with(vec![("x", vec![1, 64])]);
         assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 64]);
+    }
+
+    #[test]
+    fn test_tile_gqa_style() {
+        // GQA tile: repeat along head dimension
+        let op = MirOp::MILTile {
+            name: "t".into(),
+            x: nid("x"),
+            reps: vec![1, 1, 2, 1, 1],
+        };
+        let ns = shapes_with(vec![("x", vec![1, 8, 1, 512, 128])]);
+        assert_eq!(
+            compat_output_shape_default("node", &op, &[], &ns),
+            vec![1, 8, 2, 512, 128]
+        );
+    }
+
+    #[test]
+    fn test_tile_unknown_input_returns_empty() {
+        let op = MirOp::MILTile { name: "t".into(), x: nid("unknown"), reps: vec![2, 3] };
+        let ns = shapes();
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), Vec::<usize>::new());
     }
 
     // ─── compat_output_shape: fill / fill_like ────────────────────────────
@@ -1754,8 +1829,14 @@ mod tests {
     #[test]
     fn test_unknown_op_returns_empty_shape() {
         // Use an op variant that doesn't have a specific case in compat_output_shape.
-        // MILReverse is not handled (falls through to `_ => vec![]`)
-        let op = MirOp::MILReverse { name: "rev".into(), x: nid("x"), axes: vec![0] };
+        // MILResizeBilinear is not handled (falls through to `_ => vec![]`)
+        let op = MirOp::MILResizeBilinear {
+            name: "rb".into(),
+            x: nid("x"),
+            target_height: 8,
+            target_width: 8,
+            align_corners: false,
+        };
         let ns = shapes_with(vec![("x", vec![3, 4])]);
         assert_eq!(compat_output_shape_default("node", &op, &[], &ns), Vec::<usize>::new());
     }
@@ -1878,5 +1959,188 @@ mod tests {
         let x = nid("x");
         let ns = shapes_with(vec![("x", vec![2, 3])]);
         assert_eq!(reduce_shape(&x, &[5], true, &ns), vec![2, 3]);
+    }
+
+    // ─── CQ-22: Additional reduce ops ─────────────────────────────────
+
+    #[test]
+    fn test_reduce_sum_no_keep_dims() {
+        let op = MirOp::MILReduceSum { name: "rs".into(), x: nid("x"), axes: vec![1], keep_dims: false };
+        let ns = shapes_with(vec![("x", vec![1, 512, 1024])]);
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 1024]);
+    }
+
+    #[test]
+    fn test_reduce_sum_square_keep_dims() {
+        let op = MirOp::MILReduceSumSquare { name: "rss".into(), x: nid("x"), axes: vec![2], keep_dims: true };
+        let ns = shapes_with(vec![("x", vec![1, 512, 1024])]);
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 512, 1]);
+    }
+
+    #[test]
+    fn test_reduce_l2_norm_no_keep() {
+        let op = MirOp::MILReduceL2Norm { name: "rl2".into(), x: nid("x"), axes: vec![1, 2], keep_dims: false };
+        let ns = shapes_with(vec![("x", vec![1, 512, 1024])]);
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1]);
+    }
+
+    #[test]
+    fn test_reduce_argmax_keep_dims() {
+        let op = MirOp::MILReduceArgmax { name: "ram".into(), x: nid("x"), axis: 2, keep_dims: true };
+        let ns = shapes_with(vec![("x", vec![1, 512, 1024])]);
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 512, 1]);
+    }
+
+    #[test]
+    fn test_reduce_argmin_no_keep_dims() {
+        let op = MirOp::MILReduceArgmin { name: "rin".into(), x: nid("x"), axis: 1, keep_dims: false };
+        let ns = shapes_with(vec![("x", vec![1, 512, 1024])]);
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 1024]);
+    }
+
+    // ─── CQ-22: Normalization ops ─────────────────────────────────────
+
+    #[test]
+    fn test_batch_norm_propagates_shape() {
+        let op = MirOp::MILBatchNorm {
+            name: "bn".into(),
+            x: nid("x"),
+            mean: "m.bin".into(),
+            variance: "v.bin".into(),
+            gamma: Some("g.bin".into()),
+            beta: Some("b.bin".into()),
+            epsilon: 1e-5,
+        };
+        let ns = shapes_with(vec![("x", vec![1, 512, 64])]);
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 512, 64]);
+    }
+
+    #[test]
+    fn test_instance_norm_propagates_shape() {
+        let op = MirOp::MILInstanceNorm {
+            name: "in".into(),
+            x: nid("x"),
+            gamma: Some("g.bin".into()),
+            beta: Some("b.bin".into()),
+            epsilon: 1e-5,
+        };
+        let ns = shapes_with(vec![("x", vec![1, 64, 32])]);
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 64, 32]);
+    }
+
+    #[test]
+    fn test_l2_norm_propagates_shape() {
+        let op = MirOp::MILL2Norm { name: "l2".into(), x: nid("x"), epsilon: 1e-12, axes: vec![1] };
+        let ns = shapes_with(vec![("x", vec![1, 512])]);
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 512]);
+    }
+
+    // ─── CQ-22: Quantize/Dequantize ───────────────────────────────────
+
+    #[test]
+    fn test_quantize_propagates_shape() {
+        let op = MirOp::MILQuantize {
+            name: "q".into(),
+            x: nid("x"),
+            scale: 0.1,
+            zero_point: 128,
+            axis: 0,
+            output_dtype: MilDtype::UInt8,
+        };
+        let ns = shapes_with(vec![("x", vec![1, 512, 1024])]);
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 512, 1024]);
+    }
+
+    #[test]
+    fn test_dequantize_propagates_shape() {
+        let op = MirOp::MILDequantize {
+            name: "dq".into(),
+            x: nid("x"),
+            scale: 0.1,
+            zero_point: 128,
+            axis: 0,
+            output_dtype: MilDtype::UInt8,
+        };
+        let ns = shapes_with(vec![("x", vec![1, 512, 1024])]);
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 512, 1024]);
+    }
+
+    // ─── CQ-22: Additional unary ops ──────────────────────────────────
+
+    #[test]
+    fn test_square_propagates_shape() {
+        let op = MirOp::MILSquare { name: "sq".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![2, 3])]);
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![2, 3]);
+    }
+
+    #[test]
+    fn test_prelu_propagates_shape() {
+        let op = MirOp::MILPrelu { name: "pr".into(), x: nid("x"), alpha: "a.bin".into() };
+        let ns = shapes_with(vec![("x", vec![1, 64])]);
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 64]);
+    }
+
+    // ─── CQ-22: ConvTranspose ─────────────────────────────────────────
+
+    #[test]
+    fn test_conv_transpose_with_output_shape() {
+        let op = MirOp::MILConvTranspose {
+            name: "ct".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
+            output_shape: vec![1, 64, 256],
+        };
+        let ns = shapes_with(vec![("x", vec![1, 64, 128])]);
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 64, 256]);
+    }
+
+    #[test]
+    fn test_conv_transpose_without_output_shape() {
+        let op = MirOp::MILConvTranspose {
+            name: "ct".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
+            output_shape: vec![],
+        };
+        let ns = shapes_with(vec![("x", vec![1, 64, 128])]);
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 64, 128]);
+    }
+
+    // ─── CQ-22: ReshapeLike ───────────────────────────────────────────
+
+    #[test]
+    fn test_reshape_like_uses_ref_tensor_shape() {
+        let op = MirOp::MILReshapeLike { name: "rl".into(), x: nid("x"), ref_tensor: nid("r") };
+        let ns = shapes_with(vec![("x", vec![1, 512, 1024]), ("r", vec![1, 64, 8192])]);
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 64, 8192]);
+    }
+
+    // ─── CQ-22: Flatten2d ─────────────────────────────────────────────
+
+    #[test]
+    fn test_flatten2d_axis_1() {
+        let op = MirOp::MILFlatten2d { name: "f2".into(), x: nid("x"), axis: 1 };
+        let ns = shapes_with(vec![("x", vec![1, 512, 1024])]);
+        // Flatten dims from axis 1 onwards: product = 512 * 1024 = 524288
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 524288]);
+    }
+
+    #[test]
+    fn test_flatten2d_axis_0() {
+        let op = MirOp::MILFlatten2d { name: "f2".into(), x: nid("x"), axis: 0 };
+        let ns = shapes_with(vec![("x", vec![2, 3, 4])]);
+        // Flatten all dims: product = 2 * 3 * 4 = 24
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![24]);
     }
 }

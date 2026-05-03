@@ -37,126 +37,18 @@
 use super::shard_plan::ShardPlan;
 use ane_ir::air::{AirGraph, AirNodeId, AirOp};
 use ane_ir::mir::{ComputeUnitHint, MilDtype, MirGraph, MirNode, MirNodeId, MirOp};
+use ane_ir::shape_ops;
 use anyhow::Result;
 use std::collections::HashMap;
 
 /// Resolve zero-placeholder dimensions in a reshape target shape.
 ///
-/// Core ML's ios19.reshape treats 0 as a literal zero dimension, not as
-/// an "infer from input" sentinel (unlike PyTorch's -1). This function
-/// attempts to resolve zero placeholders using two strategies:
-///
-/// 1. Positional: copy dim from input_shape[i] → target[i]
-///    Works when input and target have the same rank (e.g., 3D→4D
-///    where the first dims align: [B,S,E]→[B,S,H,D])
-/// 2. Element-count-based: compute zeros from the total element count
-///    Works for rank-changing reshapes where positional is wrong
-///    (e.g., [B,H,S,D]→[B,S,E]: pos 1 gives H instead of S)
-///    For 2+ zeros, assumes batch=1 for the first zero.
-///
-/// Returns an error if zero-resolution fails — this indicates a malformed
-/// reshape that would produce a Core ML model with literal zero dimensions,
-/// which is invalid.
+/// Delegates to [`shape_ops::resolve_reshape_zeros`]. See that function's
+/// documentation for the full algorithm (positional + element-count-based
+/// inference with batch=1 assumption for 2+ zeros).
 fn resolve_reshape_zeros(input_shape: &[usize], target_shape: &[usize]) -> Result<Vec<usize>> {
-    let input_elements: usize = input_shape.iter().product();
-    let mut resolved = target_shape.to_vec();
-    let has_zeros = resolved.contains(&0);
-
-    if !has_zeros || input_elements == 0 {
-        return Ok(resolved);
-    }
-
-    // Step 1: Try positional resolution
-    let mut positional_works = true;
-    for (i, slot) in resolved.iter_mut().enumerate() {
-        if *slot == 0 {
-            if let Some(&dim) = input_shape.get(i) {
-                *slot = dim;
-            } else {
-                positional_works = false;
-                break;
-            }
-        }
-    }
-
-    // Verify element count after positional resolution
-    if positional_works {
-        let resolved_elements: usize = resolved.iter().product();
-        if resolved_elements != input_elements {
-            // Positional resolution produced wrong count —
-            // reset and use element-count-based inference
-            resolved = target_shape.to_vec();
-            positional_works = false;
-        }
-    }
-
-    if !positional_works {
-        // Step 2: Element-count-based inference
-        let non_zero_product: usize = resolved.iter().filter(|&&d| d != 0).product();
-        if let Some(remaining) = input_elements
-            .checked_div(non_zero_product)
-            .filter(|&r| r * non_zero_product == input_elements)
-        {
-            // Collect zero positions safely (replaces the previous .unwrap()
-            // on .position() / .rposition() which could panic if the slice
-            // had no zeros despite zero_count indicating otherwise).
-            let zero_positions: Vec<usize> =
-                resolved.iter().enumerate().filter(|(_, &d)| d == 0).map(|(i, _)| i).collect();
-
-            if zero_positions.is_empty() {
-                anyhow::bail!(
-                    "Reshape zero-resolution internal error: zero_count indicated \
-                     zeros exist in target_shape {:?} but no zero positions found",
-                    target_shape
-                );
-            }
-
-            match zero_positions.len() {
-                1 => {
-                    resolved[zero_positions[0]] = remaining;
-                }
-                _ => {
-                    // Two or more zeros: assume batch=1 for all but the last,
-                    // compute last from remaining elements
-                    for &pos in &zero_positions[..zero_positions.len() - 1] {
-                        resolved[pos] = 1;
-                    }
-                    if let Some(&last_pos) = zero_positions.last() {
-                        resolved[last_pos] = remaining;
-                    }
-                }
-            }
-        }
-    }
-
-    // Final validation: if zeros remain after resolution, this reshape is
-    // malformed and would produce a Core ML model with literal zero
-    // dimensions, which is invalid.
-    if resolved.contains(&0) {
-        anyhow::bail!(
-            "Reshape zero-resolution failed: could not resolve all zero placeholders \
-             in target_shape {:?} with input_shape {:?}. Resolved shape still contains \
-             zeros: {:?}. Input has {} elements, non-zero target dims product is {}.",
-            target_shape,
-            input_shape,
-            resolved,
-            input_elements,
-            resolved.iter().filter(|&&d| d != 0).product::<usize>()
-        );
-    }
-
-    // Warn on element count mismatch (soft diagnostic — the shape may still
-    // be usable for metadata purposes even if counts don't match exactly)
-    let resolved_elements: usize = resolved.iter().product();
-    if resolved_elements != input_elements && input_elements != 0 {
-        eprintln!(
-            "[WARN] Reshape zero-resolution mismatch: {:?} → {:?} \
-             ({} vs {} elements). The source may have incorrect dims.",
-            input_shape, resolved, input_elements, resolved_elements
-        );
-    }
-
-    Ok(resolved)
+    shape_ops::resolve_reshape_zeros(input_shape, target_shape)
+        .map_err(|e| anyhow::anyhow!("{}", e))
 }
 
 /// Infer the output shape of an AIR op given the shapes of its inputs.
@@ -295,17 +187,13 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
             }
         }
         AirOp::Transpose { input, perm } => Ok(if let Some(shape) = node_shapes.get(input) {
-            perm.iter().map(|&p| shape.get(p).copied().unwrap_or(0)).collect()
+            shape_ops::transpose_shape(shape, perm)
         } else {
             vec![]
         }),
         AirOp::Split { input, axis, num_splits } => {
             Ok(if let Some(shape) = node_shapes.get(input) {
-                let mut out = shape.clone();
-                if let Some(dim) = out.get_mut(*axis) {
-                    *dim /= num_splits;
-                }
-                out
+                shape_ops::split_shape(shape, *axis, *num_splits)
             } else {
                 vec![]
             })
@@ -318,19 +206,9 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
             // non-trivial axis (e.g., RoPE rotate_half concatenates two
             // [B,H,S,D/2] halves along axis=3, producing [B,H,S,D]).
             Ok(if let Some(first_shape) = inputs.first().and_then(|id| node_shapes.get(id)) {
-                let mut out = first_shape.clone();
-                if *axis < out.len() {
-                    let mut total_dim = 0usize;
-                    for id in inputs {
-                        if let Some(shape) = node_shapes.get(id) {
-                            if let Some(&dim) = shape.get(*axis) {
-                                total_dim += dim;
-                            }
-                        }
-                    }
-                    out[*axis] = total_dim;
-                }
-                out
+                let input_shapes: Vec<&[usize]> =
+                    inputs.iter().filter_map(|id| node_shapes.get(id).map(|s| s.as_slice())).collect();
+                shape_ops::concat_shape(&input_shapes, *axis).unwrap_or_else(|| first_shape.clone())
             } else {
                 vec![]
             })
@@ -356,13 +234,9 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         | AirOp::LayerNorm { input, .. } => Ok(node_shapes.get(input).cloned().unwrap_or_default()),
         AirOp::RealDiv { x, .. } => Ok(node_shapes.get(x).cloned().unwrap_or_default()),
         AirOp::Topk { input, k, axis } => Ok(if let Some(shape) = node_shapes.get(input) {
-            let mut out = shape.clone();
             let ax =
-                if *axis >= 0 { *axis as usize } else { out.len().saturating_add(*axis as usize) };
-            if ax < out.len() {
-                out[ax] = *k;
-            }
-            out
+                if *axis >= 0 { *axis as usize } else { shape.len().saturating_add(*axis as usize) };
+            shape_ops::topk_shape(shape, *k, ax)
         } else {
             vec![]
         }),
@@ -380,15 +254,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
                     } else {
                         input_shape.len().saturating_sub((-*axis) as usize)
                     };
-                    let mut out = Vec::new();
-                    for (i, &dim) in input_shape.iter().enumerate() {
-                        if i == ax {
-                            out.extend_from_slice(indices_shape);
-                        } else {
-                            out.push(dim);
-                        }
-                    }
-                    out
+                    shape_ops::gather_shape(input_shape, indices_shape, ax)
                 }
                 (Some(input_shape), None) => {
                     // Indices shape unknown: use input shape as fallback
@@ -404,15 +270,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
             // Tile replicates the input tensor along each dimension by the
             // corresponding factor in `reps`. Output shape[i] = input_shape[i] * reps[i].
             Ok(if let Some(input_shape) = node_shapes.get(input) {
-                // Broadcast reps to match input rank if needed
-                let mut out = Vec::with_capacity(input_shape.len().max(reps.len()));
-                let max_len = input_shape.len().max(reps.len());
-                for i in 0..max_len {
-                    let dim = input_shape.get(i).copied().unwrap_or(1);
-                    let rep = reps.get(i).copied().unwrap_or(1);
-                    out.push(dim * rep);
-                }
-                out
+                shape_ops::tile_shape(input_shape, reps)
             } else {
                 vec![]
             })
@@ -512,14 +370,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         // ─── ExpandDims: insert 1-sized dims at specified axes ───
         AirOp::ExpandDims { input, axis } => {
             Ok(if let Some(input_shape) = node_shapes.get(input) {
-                let mut out = input_shape.clone();
-                let mut sorted_axes: Vec<usize> = axis.to_vec();
-                sorted_axes.sort_unstable();
-                for (i, &ax) in sorted_axes.iter().enumerate() {
-                    let insert_pos = if ax >= out.len() { out.len() } else { ax + i };
-                    out.insert(insert_pos, 1);
-                }
-                out
+                shape_ops::expand_dims_shape(input_shape, axis)
             } else {
                 vec![]
             })
@@ -527,15 +378,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         // ─── Squeeze: remove dims at specified axes ───
         AirOp::Squeeze { input, axis } => {
             Ok(if let Some(input_shape) = node_shapes.get(input) {
-                let mut out = input_shape.clone();
-                let mut sorted_axes: Vec<usize> = axis.to_vec();
-                sorted_axes.sort_unstable_by(|a, b| b.cmp(a)); // Remove from back to front
-                for &ax in &sorted_axes {
-                    if ax < out.len() {
-                        out.remove(ax);
-                    }
-                }
-                out
+                shape_ops::squeeze_shape(input_shape, axis)
             } else {
                 vec![]
             })
@@ -546,10 +389,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         // a=[3,4] → [2,3,4].
         AirOp::Stack { values, axis } => {
             Ok(if let Some(first_shape) = values.first().and_then(|id| node_shapes.get(id)) {
-                let mut out = first_shape.clone();
-                let ax = if *axis <= out.len() { *axis } else { out.len() };
-                out.insert(ax, values.len());
-                out
+                shape_ops::stack_shape(first_shape, *axis, values.len())
             } else {
                 vec![]
             })
@@ -600,44 +440,24 @@ fn validate_sdpa_constraints(
 }
 
 /// Helper: compute the output shape of a reduce op (ReduceMean / ReduceSum).
-fn reduce_shape(mut shape: Vec<usize>, axes: &[usize], keep_dims: bool) -> Vec<usize> {
-    if keep_dims {
-        for &ax in axes {
-            if ax < shape.len() {
-                shape[ax] = 1;
-            }
-        }
-        shape
-    } else {
-        shape.iter().enumerate().filter(|(i, _)| !axes.contains(i)).map(|(_, &dim)| dim).collect()
-    }
+///
+/// Delegates to [`shape_ops::reduce_shape`].
+fn reduce_shape(shape: Vec<usize>, axes: &[usize], keep_dims: bool) -> Vec<usize> {
+    shape_ops::reduce_shape(&shape, axes, keep_dims)
 }
 
 /// Compute the broadcast output shape from two input shapes.
 ///
-/// Standard numpy-style right-aligned broadcasting: for each dimension pair
-/// (from the right), the output dimension is the larger of the two inputs
-/// (or the non-1 dimension if one is 1). Missing dimensions in the shorter
-/// shape are treated as 1.
-///
-/// Returns `None` if the shapes are not broadcast-compatible.
+/// Delegates to [`shape_ops::broadcast_shape`].
 fn broadcast_shape(a: &[usize], b: &[usize]) -> Option<Vec<usize>> {
-    let max_rank = a.len().max(b.len());
-    let mut result = Vec::with_capacity(max_rank);
-    for i in 0..max_rank {
-        let da = if i < max_rank - a.len() { 1 } else { a[i - (max_rank - a.len())] };
-        let db = if i < max_rank - b.len() { 1 } else { b[i - (max_rank - b.len())] };
-        if da != db && da != 1 && db != 1 {
-            return None; // incompatible
-        }
-        result.push(da.max(db));
-    }
-    Some(result)
+    shape_ops::broadcast_shape(a, b)
 }
 
-/// Sprint 62: Format a shape as a human-readable string like "[1, 512, 2048]".
+/// Format a shape as a human-readable string like "[1, 512, 2048]".
+///
+/// Delegates to [`shape_ops::format_shape`].
 fn format_shape(shape: &[usize]) -> String {
-    format!("[{}]", shape.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", "))
+    shape_ops::format_shape(shape)
 }
 
 /// MIL Lower pass implementation.

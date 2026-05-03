@@ -208,6 +208,13 @@
 - **Effort**: S (0.5 day)
 - **Resolution**: Changed `pub mod kv_cache_rewrite` to `pub(crate) mod kv_cache_rewrite` in `passes/src/lib.rs`. The module was already marked `#[deprecated]` and is not used anywhere outside the `ane-passes` crate. Making it `pub(crate)` prevents external consumers from accidentally depending on this deprecated, ANE-illegal code path while keeping it accessible within the crate for any internal cleanup needs.
 
+### T-46 · Extract Shared Shape Operations Module (CQ-22) ✅
+
+- **AUDIT ref**: §III (CQ-22)
+- **Severity**: MEDIUM → RESOLVED
+- **Effort**: M (1.5 days)
+- **Resolution**: Created `crates/ir/src/shape_ops.rs` with 13 shared pure functions on `Vec<usize>`, eliminating the dual shape inference implementation in `passes/mil_lower.rs` and `bridge/shape_inference.rs`. Both crates now delegate to the shared module. Key changes: (1) **Bug fix**: `MILTile` in bridge previously just propagated the input shape, ignoring `reps` entirely — now correctly computes `out[i] = input_shape[i] * reps[i]`. (2) **Consolidation**: `broadcast_shape`, `reduce_shape`, `resolve_reshape_zeros`, `format_shape` are no longer duplicated. (3) **New shared functions**: `tile_shape`, `expand_dims_shape`, `squeeze_shape`, `transpose_shape`, `pad_shape`, `concat_shape`, `split_shape`, `stack_shape`, `gather_shape`, `topk_shape`. (4) **Bridge coverage**: Added 30+ missing `MirOp` variants to `compat_output_shape`: `MILReduceSum/SumSquare/L2Norm/L1Norm/LogSumExp/LogSum`, `MILReduceArgmax/Argmin`, `MILBatchNorm`, `MILInstanceNorm`, `MILL2Norm`, `MILLocalResponseNorm`, `MILQuantize`, `MILDequantize`, `MILSquare`, `MILPrelu`, `MILSoftsign`, `MILElu`, `MILReverse`, `MILDepthToSpace`, `MILSpaceToDepth`, `MILPixelShuffle`, `MILPixelUnshuffle`, `MILCumsum`, `MILRelu6/SigmoidHard/ThresholdedRelu/ClampedRelu/LinearActivation/ScaledTanh/SoftplusParametric/Threshold`, `MILInverse`, `MILExp2`, `MILConvTranspose`, `MILReshapeLike`, `MILFlatten2d`. (5) **Tests**: 45 new tests in `shape_ops.rs`, 20+ new tests in `bridge/shape_inference.rs`. All 1200+ tests pass.
+
 ---
 
 ## Task → Issue Cross-Reference
@@ -238,6 +245,7 @@
 | T-43 | — | LOW | S | ✅ |
 | T-44 | — | LOW | M | ✅ |
 | T-45 | — | LOW | S | ✅ |
+| T-46 | — | MEDIUM | M | ✅ |
 
 ---
 

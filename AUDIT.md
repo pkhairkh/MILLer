@@ -140,17 +140,17 @@ These ops are listed in `cpu_only_ops.rs` but `default_engine()` returns a non-N
 | CQ-11 | Deprecated `kv_cache_rewrite` still `pub` | `passes/src/lib.rs:21` | **FIXED T-45**: Changed to `pub(crate)` | ~~LOW~~ |
 | CQ-12 | Chip comments wrong | `ir/ane_target.rs:11-22` | **FIXED T-24**: Corrected A11≠M1, A12≠M2, A14≠M3 comments; added iPhone chip IDs | ~~LOW~~ |
 | CQ-13 | V6 (A12 silicon) mapped to A14 family | `ir/ane_target.rs:68` | **FIXED T-24**: Added `AneFamily::A13`, mapped V6→A13 | ~~HIGH~~ |
-| CQ-14 | V17 (M1) mapped to A18 family | `ir/ane_target.rs:71-73` | M1 is A14-class, gets A18's SDPA/LayerNorm gates | MEDIUM |
-| CQ-15 | `MilDtype` missing Int4, UInt4, E4M3, E5M2 | `ir/common.rs:15-24` | Cannot enforce Int4-per-cout-dequant or float8 rules | HIGH |
-| CQ-16 | Model-specific `vocab_size=32000` default | `passes/role_mir.rs:640-642,1103` | Read from TaskSpec instead | MEDIUM |
-| CQ-17 | Model-specific `head_dim=128` fallback | `passes/legality_rewrite.rs:1077,1876,2325` | Error rather than silently using wrong value | MEDIUM |
-| CQ-18 | Qwen3 weight name patterns in alias builder | `bridge/mir_to_compat.rs:510` | Parameterize with model-architecture callback | MEDIUM |
-| CQ-19 | `vec![1, 512]` shape inference fallback | `bridge/shape_inference.rs:54-58` | Parameterize from TaskSpec | MEDIUM |
-| CQ-20 | `MirOpCompat` dual definition (167 vs ~50 variants) | `coreml-proto/src/lib.rs` | Implement `ToProto` trait per T-17 roadmap | HIGH |
-| CQ-21 | ~1150 lines per-variant match-arm boilerplate | `bridge/mir_to_compat.rs` | Replace with derive macro or visitor pattern | MEDIUM |
-| CQ-22 | Dual shape inference in two crates | `passes/mil_lower.rs`, `bridge/shape_inference.rs` | Extract shared module to `ane-ir` | MEDIUM |
-| CQ-23 | SDPA compat missing `attention_mask` and `scale` | `coreml-proto/src/lib.rs` | Add fields to `MirOpCompat::ScaledDotProductAttention` | HIGH |
-| CQ-24 | Proto-direct path cannot emit palettized weights | `coreml-proto/src/lib.rs` | Add ConstexprLutToDense etc. to MirOpCompat | HIGH |
+| CQ-14 | V17 (M1) mapped to A18 family | `ir/ane_target.rs:71-73` | **FIXED T-40**: V17→A14 mapping; M1 gets correct A14-class constraints | ~~MEDIUM~~ |
+| CQ-15 | `MilDtype` missing Int4, UInt4, E4M3, E5M2 | `ir/common.rs:15-24` | **FIXED T-35**: Added 5 new dtype variants, 18 exhaustive match updates, ANE constraints | ~~HIGH~~ |
+| CQ-16 | Model-specific `vocab_size=32000` default | `passes/role_mir.rs:640-642,1103` | **FIXED T-36**: Centralized `ModelArchConfig` with Qwen3-0.6B defaults | ~~MEDIUM~~ |
+| CQ-17 | Model-specific `head_dim=128` fallback | `passes/legality_rewrite.rs:1077,1876,2325` | **FIXED T-36**: Strong diagnostic messages flagging wrong-scale risk | ~~MEDIUM~~ |
+| CQ-18 | Qwen3 weight name patterns in alias builder | `bridge/mir_to_compat.rs:510` | **FIXED T-36**: Parameterized with `ModelArchitecture` pattern methods | ~~MEDIUM~~ |
+| CQ-19 | `vec![1, 512]` shape inference fallback | `bridge/shape_inference.rs:54-58` | **FIXED T-36**: Parameterized with `max_seq_len` from `ModelArchConfig` | ~~MEDIUM~~ |
+| CQ-20 | `MirOpCompat` dual definition (167 vs ~50 variants) | `coreml-proto/src/lib.rs` | **FIXED T-38**: `ToProto` trait consolidates variant-to-proto mapping, ~750 lines eliminated | ~~HIGH~~ |
+| CQ-21 | ~1150 lines per-variant match-arm boilerplate | `bridge/mir_to_compat.rs` | **FIXED T-38**: Refactored to delegate to `MirOpCompat` methods, net -750 lines | ~~MEDIUM~~ |
+| CQ-22 | Dual shape inference in two crates | `passes/mil_lower.rs`, `bridge/shape_inference.rs` | **FIXED T-46**: Extracted `shape_ops` module to `ane-ir` with 13 shared pure functions. Fixed MILTile bug (ignored reps). Added 30+ missing MirOp variants to bridge. Both crates now delegate to shared module | ~~MEDIUM~~ |
+| CQ-23 | SDPA compat missing `attention_mask` and `scale` | `coreml-proto/src/lib.rs` | **FIXED T-31**: Added both fields to `MirOpCompat::ScaledDotProductAttention` | ~~HIGH~~ |
+| CQ-24 | Proto-direct path cannot emit palettized weights | `coreml-proto/src/lib.rs` | **FIXED T-39**: Added 7 Constexpr* variants to MirOpCompat | ~~HIGH~~ |
 
 ---
 

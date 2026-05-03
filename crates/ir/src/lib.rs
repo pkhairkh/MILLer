@@ -29,6 +29,7 @@ pub mod payload;
 pub mod pir;
 pub mod prof_ir;
 pub mod serialize;
+pub mod shape_ops;
 pub mod shard_desc;
 pub mod sir;
 pub mod strategy;
