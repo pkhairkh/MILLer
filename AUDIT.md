@@ -129,7 +129,7 @@ These ops are listed in `cpu_only_ops.rs` but `default_engine()` returns a non-N
 |---|---|---|---|---|
 | CQ-1 | `clippy::modulo_one` (deny) | `bridge/mir_to_compat.rs:1265,1271` | Replace `% 1` with correct divisor (likely `product_so_far`); remove `/ 1` on lines 1266/1272 | HIGH |
 | CQ-2 | `clippy::eq_op` (deny) | `passes/mil_lower.rs:3796` | Remove redundant `perm == &[0usize,2,1,3]` second operand | HIGH |
-| CQ-3 | `.unwrap()` on reshape zero-dim search | `passes/mil_lower.rs:220-221` | Return `Result` or use `?` with proper error type | HIGH |
+| CQ-3 | `.unwrap()` on reshape zero-dim search | `passes/mil_lower.rs:220-221` | **FIXED T-28**: Extracted `resolve_reshape_zeros()` returning `Result`, changed `infer_shape` to `Result<Vec<usize>>` | ~~HIGH~~ |
 | CQ-4 | `.expect()` on PIR package lookup | `ir/linear_slice.rs:321,326` | Return `Result` — missing package is a user error, not a bug | MEDIUM |
 | CQ-5 | 5 `panic!()` in proto validation | `coreml-proto/src/lib.rs:4236,4255,4264,4375,4474` | Return `Result<(), ProtoValidationError>` — dtype/shape mismatches are user-facing errors | MEDIUM |
 | CQ-6 | `if_same_then_else` in shard_plan | `passes/shard_plan.rs:312-320` | Three if-branches produce identical results — confirm intentional or fix | MEDIUM |

@@ -40,23 +40,151 @@ use ane_ir::mir::{ComputeUnitHint, MilDtype, MirGraph, MirNode, MirNodeId, MirOp
 use anyhow::Result;
 use std::collections::HashMap;
 
+/// Resolve zero-placeholder dimensions in a reshape target shape.
+///
+/// Core ML's ios19.reshape treats 0 as a literal zero dimension, not as
+/// an "infer from input" sentinel (unlike PyTorch's -1). This function
+/// attempts to resolve zero placeholders using two strategies:
+///
+/// 1. Positional: copy dim from input_shape[i] → target[i]
+///    Works when input and target have the same rank (e.g., 3D→4D
+///    where the first dims align: [B,S,E]→[B,S,H,D])
+/// 2. Element-count-based: compute zeros from the total element count
+///    Works for rank-changing reshapes where positional is wrong
+///    (e.g., [B,H,S,D]→[B,S,E]: pos 1 gives H instead of S)
+///    For 2+ zeros, assumes batch=1 for the first zero.
+///
+/// Returns an error if zero-resolution fails — this indicates a malformed
+/// reshape that would produce a Core ML model with literal zero dimensions,
+/// which is invalid.
+fn resolve_reshape_zeros(
+    input_shape: &[usize],
+    target_shape: &[usize],
+) -> Result<Vec<usize>> {
+    let input_elements: usize = input_shape.iter().product();
+    let mut resolved = target_shape.to_vec();
+    let has_zeros = resolved.iter().any(|&d| d == 0);
+
+    if !has_zeros || input_elements == 0 {
+        return Ok(resolved);
+    }
+
+    // Step 1: Try positional resolution
+    let mut positional_works = true;
+    for i in 0..resolved.len() {
+        if resolved[i] == 0 {
+            if let Some(&dim) = input_shape.get(i) {
+                resolved[i] = dim;
+            } else {
+                positional_works = false;
+                break;
+            }
+        }
+    }
+
+    // Verify element count after positional resolution
+    if positional_works {
+        let resolved_elements: usize = resolved.iter().product();
+        if resolved_elements != input_elements {
+            // Positional resolution produced wrong count —
+            // reset and use element-count-based inference
+            resolved = target_shape.to_vec();
+            positional_works = false;
+        }
+    }
+
+    if !positional_works {
+        // Step 2: Element-count-based inference
+        let non_zero_product: usize =
+            resolved.iter().filter(|&&d| d != 0).product();
+        if non_zero_product > 0 {
+            let remaining = input_elements / non_zero_product;
+            if remaining * non_zero_product == input_elements {
+                // Collect zero positions safely (replaces the previous .unwrap()
+                // on .position() / .rposition() which could panic if the slice
+                // had no zeros despite zero_count indicating otherwise).
+                let zero_positions: Vec<usize> = resolved
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, &d)| d == 0)
+                    .map(|(i, _)| i)
+                    .collect();
+
+                if zero_positions.is_empty() {
+                    anyhow::bail!(
+                        "Reshape zero-resolution internal error: zero_count indicated \
+                         zeros exist in target_shape {:?} but no zero positions found",
+                        target_shape
+                    );
+                }
+
+                match zero_positions.len() {
+                    1 => {
+                        resolved[zero_positions[0]] = remaining;
+                    }
+                    _ => {
+                        // Two or more zeros: assume batch=1 for all but the last,
+                        // compute last from remaining elements
+                        for &pos in &zero_positions[..zero_positions.len() - 1] {
+                            resolved[pos] = 1;
+                        }
+                        if let Some(&last_pos) = zero_positions.last() {
+                            resolved[last_pos] = remaining;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Final validation: if zeros remain after resolution, this reshape is
+    // malformed and would produce a Core ML model with literal zero
+    // dimensions, which is invalid.
+    if resolved.iter().any(|&d| d == 0) {
+        anyhow::bail!(
+            "Reshape zero-resolution failed: could not resolve all zero placeholders \
+             in target_shape {:?} with input_shape {:?}. Resolved shape still contains \
+             zeros: {:?}. Input has {} elements, non-zero target dims product is {}.",
+            target_shape, input_shape, resolved,
+            input_elements,
+            resolved.iter().filter(|&&d| d != 0).product::<usize>()
+        );
+    }
+
+    // Warn on element count mismatch (soft diagnostic — the shape may still
+    // be usable for metadata purposes even if counts don't match exactly)
+    let resolved_elements: usize = resolved.iter().product();
+    if resolved_elements != input_elements && input_elements != 0 {
+        eprintln!(
+            "[WARN] Reshape zero-resolution mismatch: {:?} → {:?} \
+             ({} vs {} elements). The source may have incorrect dims.",
+            input_shape, resolved, input_elements, resolved_elements
+        );
+    }
+
+    Ok(resolved)
+}
+
 /// Infer the output shape of an AIR op given the shapes of its inputs.
 ///
 /// Sprint 57: this helper propagates shape information from AIR into
 /// `MirNode.shape` during lowering. When an input shape is not available
 /// (e.g., the input is an external graph input not yet processed), an
 /// empty vec is returned as a conservative fallback.
-fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<usize> {
+///
+/// T-28: Changed return type from `Vec<usize>` to `Result<Vec<usize>>` to
+/// properly propagate reshape zero-resolution failures instead of panicking.
+fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Result<Vec<usize>> {
     match op {
         // ─── Identity: propagate input shape (critical for graph I/O nodes) ───
-        AirOp::Identity { input } => node_shapes.get(input).cloned().unwrap_or_default(),
+        AirOp::Identity { input } => Ok(node_shapes.get(input).cloned().unwrap_or_default()),
 
         // ─── MatMul: batched [*, M, K] × [*, K, N] → [*, M, N]; 1-D broadcast cases ───
         // Sprint 63: extended from 2-D only to arbitrary batched matmul.
         // Batch dims broadcast right-aligned; last two dims are the matrix dims.
         // E.g. [1,16,512,128] × [1,16,128,512] → [1,16,512,512]
         AirOp::MatMul { a, b, .. } => {
-            match (node_shapes.get(a), node_shapes.get(b)) {
+            Ok(match (node_shapes.get(a), node_shapes.get(b)) {
                 (Some(a_shape), Some(b_shape)) => {
                     let a_rank = a_shape.len();
                     let b_rank = b_shape.len();
@@ -97,7 +225,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                     }
                 }
                 _ => vec![],
-            }
+            })
         }
 
         // ─── Conv1x1AsLinear: semantically a linear projection ───
@@ -105,7 +233,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
         // A linear projection y = x @ W^T maps [batch, seq, input_dim] → [batch, seq, output_dim].
         // When output_dim is 0 (unknown), fall back to propagating the input shape.
         AirOp::Conv1x1AsLinear { input, output_dim, .. } => {
-            match (node_shapes.get(input), output_dim) {
+            Ok(match (node_shapes.get(input), output_dim) {
                 (Some(input_shape), od) if *od > 0 => {
                     // Replace the last dimension with the output_dim
                     let mut out = input_shape.clone();
@@ -119,7 +247,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                     input_shape.clone()
                 }
                 _ => vec![],
-            }
+            })
         }
 
         AirOp::Add { x, y } | AirOp::Mul { x, y } | AirOp::Sub { x, y }
@@ -134,7 +262,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
             // (e.g., GQA tile: [1,8,1,512,128] * [1,1,2,1,1] → [1,8,2,512,128]).
             let shape_a = node_shapes.get(x).cloned().unwrap_or_default();
             let shape_b = node_shapes.get(y).cloned().unwrap_or_default();
-            if !shape_a.is_empty() && !shape_b.is_empty() {
+            Ok(if !shape_a.is_empty() && !shape_b.is_empty() {
                 if let Some(bs) = broadcast_shape(&shape_a, &shape_b) {
                     bs
                 } else {
@@ -153,120 +281,29 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 shape_a
             } else {
                 shape_b
-            }
+            })
         }
         AirOp::Reshape { input, target_shape } => {
-            // Resolve zero-placeholder dimensions in the target shape.
-            // Core ML's ios19.reshape treats 0 as a literal zero dimension,
-            // not as an "infer from input" sentinel (unlike PyTorch's -1).
-            //
-            // Resolution strategy (in order of priority):
-            // 1. Positional: copy dim from input_shape[i] → target[i]
-            //    Works when input and target have the same rank (e.g., 3D→4D
-            //    where the first dims align: [B,S,E]→[B,S,H,D])
-            // 2. Element-count-based: compute zeros from the total element count
-            //    Works for rank-changing reshapes where positional is wrong
-            //    (e.g., [B,H,S,D]→[B,S,E]: pos 1 gives H instead of S)
-            //    For 2+ zeros, assumes batch=1 for the first zero.
+            // Delegate to resolve_reshape_zeros which returns Result instead of
+            // panicking on edge cases (T-28: fixes .unwrap() on position/rposition
+            // calls that could panic if shape inference produces no zero-dim
+            // placeholders).
             if let Some(input_shape) = node_shapes.get(input) {
-                let input_elements: usize = input_shape.iter().product();
-                let mut resolved = target_shape.clone();
-                let has_zeros = resolved.iter().any(|&d| d == 0);
-
-                if has_zeros && input_elements > 0 {
-                    // Step 1: Try positional resolution
-                    let mut positional_works = true;
-                    for i in 0..resolved.len() {
-                        if resolved[i] == 0 {
-                            if let Some(&dim) = input_shape.get(i) {
-                                resolved[i] = dim;
-                            } else {
-                                positional_works = false;
-                                break;
-                            }
-                        }
-                    }
-
-                    // Verify element count after positional resolution
-                    if positional_works {
-                        let resolved_elements: usize = resolved.iter().product();
-                        if resolved_elements != input_elements {
-                            // Positional resolution produced wrong count —
-                            // reset and use element-count-based inference
-                            resolved = target_shape.clone();
-                            positional_works = false;
-                        }
-                    }
-
-                    if !positional_works {
-                        // Step 2: Element-count-based inference
-                        let non_zero_product: usize =
-                            resolved.iter().filter(|&&d| d != 0).product();
-                        if non_zero_product > 0 {
-                            let remaining = input_elements / non_zero_product;
-                            if remaining * non_zero_product == input_elements {
-                                let zero_count = resolved.iter().filter(|&&d| d == 0).count();
-                                match zero_count {
-                                    1 => {
-                                        for i in 0..resolved.len() {
-                                            if resolved[i] == 0 {
-                                                resolved[i] = remaining;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    2 => {
-                                        // Two zeros — assume batch=1, compute the other
-                                        let first = resolved.iter().position(|&d| d == 0).unwrap();
-                                        let last = resolved.iter().rposition(|&d| d == 0).unwrap();
-                                        resolved[first] = 1;
-                                        resolved[last] = remaining;
-                                    }
-                                    _ => {
-                                        // Set all zeros to 1 except the last, compute last
-                                        let zero_positions: Vec<usize> = resolved
-                                            .iter()
-                                            .enumerate()
-                                            .filter(|(_, &d)| d == 0)
-                                            .map(|(i, _)| i)
-                                            .collect();
-                                        for &pos in &zero_positions[..zero_positions.len() - 1] {
-                                            resolved[pos] = 1;
-                                        }
-                                        if let Some(&last_pos) = zero_positions.last() {
-                                            resolved[last_pos] = remaining;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if has_zeros {
-                    let resolved_elements: usize = resolved.iter().product();
-                    if resolved_elements != input_elements && input_elements != 0 {
-                        eprintln!(
-                            "[WARN] Reshape zero-resolution mismatch: {:?} → {:?} \
-                             ({} vs {} elements). The source may have incorrect dims.",
-                            input_shape, resolved, input_elements, resolved_elements
-                        );
-                    }
-                }
-                resolved
+                resolve_reshape_zeros(input_shape, target_shape)
             } else {
-                target_shape.clone()
+                // No input shape available — return target_shape as-is (best effort)
+                Ok(target_shape.clone())
             }
         }
         AirOp::Transpose { input, perm } => {
-            if let Some(shape) = node_shapes.get(input) {
+            Ok(if let Some(shape) = node_shapes.get(input) {
                 perm.iter().map(|&p| shape.get(p).copied().unwrap_or(0)).collect()
             } else {
                 vec![]
-            }
+            })
         }
         AirOp::Split { input, axis, num_splits } => {
-            if let Some(shape) = node_shapes.get(input) {
+            Ok(if let Some(shape) = node_shapes.get(input) {
                 let mut out = shape.clone();
                 if let Some(dim) = out.get_mut(*axis) {
                     *dim /= num_splits;
@@ -274,7 +311,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 out
             } else {
                 vec![]
-            }
+            })
         }
         AirOp::Concat { inputs, axis } => {
             // The output shape matches the first input's shape except at the
@@ -283,7 +320,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
             // shape unchanged, which is wrong when concatenating along a
             // non-trivial axis (e.g., RoPE rotate_half concatenates two
             // [B,H,S,D/2] halves along axis=3, producing [B,H,S,D]).
-            if let Some(first_shape) = inputs.first().and_then(|id| node_shapes.get(id)) {
+            Ok(if let Some(first_shape) = inputs.first().and_then(|id| node_shapes.get(id)) {
                 let mut out = first_shape.clone();
                 if *axis < out.len() {
                     let mut total_dim = 0usize;
@@ -299,16 +336,16 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 out
             } else {
                 vec![]
-            }
+            })
         }
-        AirOp::Softmax { input, .. } => node_shapes.get(input).cloned().unwrap_or_default(),
-        AirOp::StateReadFixed { shape, .. } => shape.clone(),
-        AirOp::StateWriteFixed { .. } => vec![],
+        AirOp::Softmax { input, .. } => Ok(node_shapes.get(input).cloned().unwrap_or_default()),
+        AirOp::StateReadFixed { shape, .. } => Ok(shape.clone()),
+        AirOp::StateWriteFixed { .. } => Ok(vec![]),
         AirOp::ReduceMean { input, axes, keep_dims } => {
-            reduce_shape(node_shapes.get(input).cloned().unwrap_or_default(), axes, *keep_dims)
+            Ok(reduce_shape(node_shapes.get(input).cloned().unwrap_or_default(), axes, *keep_dims))
         }
         AirOp::ReduceSum { input, axes, keep_dims } => {
-            reduce_shape(node_shapes.get(input).cloned().unwrap_or_default(), axes, *keep_dims)
+            Ok(reduce_shape(node_shapes.get(input).cloned().unwrap_or_default(), axes, *keep_dims))
         }
         AirOp::Rsqrt { input }
         | AirOp::Cos { input }
@@ -319,10 +356,10 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
         | AirOp::Gelu { input, .. }
         | AirOp::Relu { input }
         | AirOp::SliceUpdate { input, .. }
-        | AirOp::LayerNorm { input, .. } => node_shapes.get(input).cloned().unwrap_or_default(),
-        AirOp::RealDiv { x, .. } => node_shapes.get(x).cloned().unwrap_or_default(),
+        | AirOp::LayerNorm { input, .. } => Ok(node_shapes.get(input).cloned().unwrap_or_default()),
+        AirOp::RealDiv { x, .. } => Ok(node_shapes.get(x).cloned().unwrap_or_default()),
         AirOp::Topk { input, k, axis } => {
-            if let Some(shape) = node_shapes.get(input) {
+            Ok(if let Some(shape) = node_shapes.get(input) {
                 let mut out = shape.clone();
                 let ax = if *axis >= 0 {
                     *axis as usize
@@ -335,7 +372,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 out
             } else {
                 vec![]
-            }
+            })
         }
         AirOp::Gather { input, indices, axis } => {
             // Embedding lookup: Gather(embed_weight, input_ids, axis=0)
@@ -343,7 +380,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
             // table) with the shape of the indices tensor. For a 2D weight
             // [vocab, embed_dim] gathered by [batch, seq] along axis 0, the result
             // is [batch, seq, embed_dim].
-            match (node_shapes.get(input), node_shapes.get(indices)) {
+            Ok(match (node_shapes.get(input), node_shapes.get(indices)) {
                 (Some(input_shape), Some(indices_shape)) => {
                     // Replace the axis dimension of input_shape with indices_shape
                     let ax = if *axis >= 0 {
@@ -366,15 +403,15 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                     input_shape.clone()
                 }
                 _ => vec![],
-            }
+            })
         }
         AirOp::ScaledDotProductAttention { query, .. } => {
-            node_shapes.get(query).cloned().unwrap_or_default()
+            Ok(node_shapes.get(query).cloned().unwrap_or_default())
         }
         AirOp::Tile { input, reps } => {
             // Tile replicates the input tensor along each dimension by the
             // corresponding factor in `reps`. Output shape[i] = input_shape[i] * reps[i].
-            if let Some(input_shape) = node_shapes.get(input) {
+            Ok(if let Some(input_shape) = node_shapes.get(input) {
                 // Broadcast reps to match input rank if needed
                 let mut out = Vec::with_capacity(input_shape.len().max(reps.len()));
                 let max_len = input_shape.len().max(reps.len());
@@ -386,14 +423,14 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 out
             } else {
                 vec![]
-            }
+            })
         }
         AirOp::SliceByIndex { input, begin, end, begin_mask, end_mask, squeeze_mask, .. } => {
             // Compute the output shape respecting begin_mask, end_mask, and squeeze_mask.
             // begin_mask[i]=true  → ignore begin[i], start from 0
             // end_mask[i]=true    → ignore end[i], go to full extent of dimension
             // squeeze_mask[i]=true → remove this dimension from the output (size must be 1)
-            if let Some(input_shape) = node_shapes.get(input) {
+            Ok(if let Some(input_shape) = node_shapes.get(input) {
                 let sliced: Vec<usize> = (0..begin.len())
                     .map(|i| {
                         let b = if begin_mask.get(i).copied().unwrap_or(false) {
@@ -443,27 +480,27 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 }
             } else {
                 vec![]
-            }
+            })
         }
-        AirOp::Where { x, .. } | AirOp::Select { x, .. } => node_shapes.get(x).cloned().unwrap_or_default(),
-        AirOp::StaticLUTProjection { .. } => vec![],
+        AirOp::Where { x, .. } | AirOp::Select { x, .. } => Ok(node_shapes.get(x).cloned().unwrap_or_default()),
+        AirOp::StaticLUTProjection { .. } => Ok(vec![]),
         // ─── Fill: shape is explicitly given; FillLike: derives from ref_tensor ───
-        AirOp::Fill { shape, .. } => shape.clone(),
+        AirOp::Fill { shape, .. } => Ok(shape.clone()),
         AirOp::FillLike { ref_tensor, .. } => {
-            node_shapes.get(ref_tensor).cloned().unwrap_or_default()
+            Ok(node_shapes.get(ref_tensor).cloned().unwrap_or_default())
         }
         // ─── Unary ops that pass through input shape ───
         AirOp::Silu { input }
         | AirOp::Neg { input }
         | AirOp::Sqrt { input }
-        | AirOp::Cast { input, .. } => node_shapes.get(input).cloned().unwrap_or_default(),
+        | AirOp::Cast { input, .. } => Ok(node_shapes.get(input).cloned().unwrap_or_default()),
         // ─── Const: look up shape from value_path in node_shapes ───
         // Const nodes for static tables have value_paths like "static_tables/rope_tables/cos_tab"
         // which are seeded into node_shapes from weight_shapes during lowering.
         // Scalar constants have value_paths like "scalar://fp16/1.0" — these are
         // always 1-element tensors regardless of the specific value.
         AirOp::Const { value_path, .. } => {
-            if let Some(shape) = node_shapes.get(&AirNodeId(value_path.clone())) {
+            Ok(if let Some(shape) = node_shapes.get(&AirNodeId(value_path.clone())) {
                 shape.clone()
             } else if value_path.starts_with("scalar://") {
                 // All scalar constants (scalar://fp16/*, scalar://fp32/*) are
@@ -473,11 +510,11 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 vec![1]
             } else {
                 vec![]
-            }
+            })
         }
         // ─── ExpandDims: insert 1-sized dims at specified axes ───
         AirOp::ExpandDims { input, axis } => {
-            if let Some(input_shape) = node_shapes.get(input) {
+            Ok(if let Some(input_shape) = node_shapes.get(input) {
                 let mut out = input_shape.clone();
                 let mut sorted_axes: Vec<usize> = axis.iter().map(|&a| a as usize).collect();
                 sorted_axes.sort_unstable();
@@ -488,11 +525,11 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 out
             } else {
                 vec![]
-            }
+            })
         }
         // ─── Squeeze: remove dims at specified axes ───
         AirOp::Squeeze { input, axis } => {
-            if let Some(input_shape) = node_shapes.get(input) {
+            Ok(if let Some(input_shape) = node_shapes.get(input) {
                 let mut out = input_shape.clone();
                 let mut sorted_axes: Vec<usize> = axis.iter().map(|&a| a as usize).collect();
                 sorted_axes.sort_unstable_by(|a, b| b.cmp(a)); // Remove from back to front
@@ -504,24 +541,24 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
                 out
             } else {
                 vec![]
-            }
+            })
         }
         // ─── Stack: like Concat but inserts a new dimension at `axis` ───
         // Stack([t1, t2, ..., tN], axis) → shape is same as t1 but with a new
         // dim of size N inserted at `axis`. E.g. Stack([a,b], axis=0) where
         // a=[3,4] → [2,3,4].
         AirOp::Stack { values, axis } => {
-            if let Some(first_shape) = values.first().and_then(|id| node_shapes.get(id)) {
+            Ok(if let Some(first_shape) = values.first().and_then(|id| node_shapes.get(id)) {
                 let mut out = first_shape.clone();
                 let ax = if *axis <= out.len() { *axis } else { out.len() };
                 out.insert(ax, values.len());
                 out
             } else {
                 vec![]
-            }
+            })
         }
         // All remaining AIR ops: conservatively return empty shape
-        _ => vec![],
+        _ => Ok(vec![]),
     }
 }
 
@@ -2703,11 +2740,13 @@ impl MilLowerPass {
 
             // Sprint 57: infer the output shape from the AIR op and propagate
             // it into the MirNode and the node_shapes map.
-            let inferred_shape = infer_shape(&air_node.op, &node_shapes);
+            // T-28: infer_shape now returns Result — reshape zero-resolution
+            // failures (previously panics via .unwrap()) propagate as errors.
+            let inferred_shape = infer_shape(&air_node.op, &node_shapes)?;
 
             // Preserve pre-seeded shapes for graph inputs. When a graph input
             // is an Identity node with input="__placeholder__", infer_shape
-            // returns empty because "__placeholder__" isn't in node_shapes.
+            // returns Ok(empty) because "__placeholder__" isn't in node_shapes.
             // Without this guard, the seeded shape (e.g., [1, 512] for
             // input_ids) would be overwritten with [], producing wrong
             // metadata throughout the rest of the graph.
@@ -5125,5 +5164,144 @@ mod tests {
             Some(&[1, 8, 4, 64]),
         );
         assert!(result.is_ok(), "SDPA with valid mask should pass validation");
+    }
+
+    // ─── T-28: resolve_reshape_zeros tests ───
+
+    #[test]
+    fn test_resolve_reshape_zeros_no_zeros() {
+        // Target shape has no zero placeholders — should return target as-is
+        let result = resolve_reshape_zeros(&[2, 3, 4], &[6, 4]).unwrap();
+        assert_eq!(result, vec![6, 4]);
+    }
+
+    #[test]
+    fn test_resolve_reshape_zeros_single_zero_positional() {
+        // [1,8,512,128] → [1,8,0,128]: positional resolution copies 512
+        let result = resolve_reshape_zeros(&[1, 8, 512, 128], &[1, 8, 0, 128]).unwrap();
+        assert_eq!(result, vec![1, 8, 512, 128]);
+    }
+
+    #[test]
+    fn test_resolve_reshape_zeros_single_zero_element_count() {
+        // [1,8,512,128] = 524288 → [0,8,128]: positional gives [1,8,128] = 1024 ≠ 524288,
+        // falls back to element-count: 524288/8/128 = 512
+        let result = resolve_reshape_zeros(&[1, 8, 512, 128], &[0, 8, 128]).unwrap();
+        assert_eq!(result, vec![512, 8, 128]);
+    }
+
+    #[test]
+    fn test_resolve_reshape_zeros_two_zeros_element_count() {
+        // [1,8,512,128] = 524288 → [0,0,128]: positional gives [1,8,128] = 1024 ≠ 524288,
+        // element-count: 524288/128 = 4096, first zero → 1, last zero → 4096
+        let result = resolve_reshape_zeros(&[1, 8, 512, 128], &[0, 0, 128]).unwrap();
+        assert_eq!(result, vec![1, 4096, 128]);
+    }
+
+    #[test]
+    fn test_resolve_reshape_zeros_three_zeros() {
+        // [1,2,3] → [0,0,0]: positional gives [1,2,3] = 6 = input_elements, so positional works
+        let result = resolve_reshape_zeros(&[1, 2, 3], &[0, 0, 0]).unwrap();
+        assert_eq!(result, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_resolve_reshape_zeros_positional_wrong_count_falls_back() {
+        // [2,3,4] = 24 elements → [2,0,4]: positional gives [2,3,4] = 24 ✓
+        // This actually works because element counts match
+        let result = resolve_reshape_zeros(&[2, 3, 4], &[2, 0, 4]).unwrap();
+        assert_eq!(result, vec![2, 3, 4]);
+
+        // [2,3,4] = 24 elements → [0,4]: positional can't work (different rank)
+        // Element-count: 24/4 = 6
+        let result = resolve_reshape_zeros(&[2, 3, 4], &[0, 4]).unwrap();
+        assert_eq!(result, vec![6, 4]);
+    }
+
+    #[test]
+    fn test_resolve_reshape_zeros_positional_fails_then_element_count() {
+        // [2,3,4] = 24 → [0,3,4]: positional gives [2,3,4] = 24 ✓
+        let result = resolve_reshape_zeros(&[2, 3, 4], &[0, 3, 4]).unwrap();
+        assert_eq!(result, vec![2, 3, 4]);
+
+        // But [2,3,4] = 24 → [0,4,4]: positional gives [2,4,4] = 32 ≠ 24
+        // Falls back to element-count: 24/4/4 = 1.5 → not divisible → fails
+        let result = resolve_reshape_zeros(&[2, 3, 4], &[0, 4, 4]);
+        assert!(result.is_err(), "Should fail: 24 elements can't form [_,4,4]");
+    }
+
+    #[test]
+    fn test_resolve_reshape_zeros_incompatible_elements_returns_error() {
+        // [2,3,5] = 30 → [0,7]: 30/7 is not integer → resolution fails → zeros remain → error
+        let result = resolve_reshape_zeros(&[2, 3, 5], &[0, 7]);
+        assert!(result.is_err(), "Should fail: 30 elements can't form [_,7]");
+        assert!(result.unwrap_err().to_string().contains("zero-resolution failed"));
+    }
+
+    #[test]
+    fn test_resolve_reshape_zeros_zero_input_elements() {
+        // Input has 0 elements → no resolution attempted, return target as-is
+        let result = resolve_reshape_zeros(&[0, 3, 4], &[0, 12]).unwrap();
+        assert_eq!(result, vec![0, 12]);
+    }
+
+    #[test]
+    fn test_resolve_reshape_zeros_realistic_reshape_bshe_to_bs_hd() {
+        // Qwen3-0.6B: [1,8,512,128] → [1,512,0]: resolve to [1,512,1024]
+        // (8 heads × 128 head_dim = 1024 embed_dim)
+        let result = resolve_reshape_zeros(&[1, 8, 512, 128], &[1, 512, 0]).unwrap();
+        assert_eq!(result, vec![1, 512, 1024]);
+    }
+
+    #[test]
+    fn test_resolve_reshape_zeros_realistic_rank_changing() {
+        // [1,8,512,128] = 524288 → [1,0,0]: positional gives [1,8,512] = 4096 ≠ 524288,
+        // element-count: 524288/1 = 524288, first zero → 1, last zero → 524288
+        let result = resolve_reshape_zeros(&[1, 8, 512, 128], &[1, 0, 0]).unwrap();
+        assert_eq!(result, vec![1, 1, 524288]);
+    }
+
+    #[test]
+    fn test_resolve_reshape_zeros_all_zeros_in_target() {
+        // [2,3,4] = 24 → [0,0,0]: positional gives [2,3,4] = 24 = input_elements, so positional works
+        let result = resolve_reshape_zeros(&[2, 3, 4], &[0, 0, 0]).unwrap();
+        assert_eq!(result, vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn test_resolve_reshape_zeros_non_divisible_remaining_returns_error() {
+        // [7] → [0,3]: 7/3 is not integer → zeros remain → error
+        let result = resolve_reshape_zeros(&[7], &[0, 3]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_reshape_zeros_flatten_reshape() {
+        // [2,3,4] = 24 → [0]: single zero resolves to 24
+        let result = resolve_reshape_zeros(&[2, 3, 4], &[0]).unwrap();
+        assert_eq!(result, vec![24]);
+    }
+
+    #[test]
+    fn test_resolve_reshape_zeros_no_input_zeros_in_target() {
+        // Target has no zeros, input shape is irrelevant
+        let result = resolve_reshape_zeros(&[2, 3, 4], &[4, 6]).unwrap();
+        assert_eq!(result, vec![4, 6]);
+    }
+
+    #[test]
+    fn test_resolve_reshape_zeros_large_tensor() {
+        // [1,16,512,128] = 1048576 → [1,0,128]: positional gives [1,16,128] = 2048 ≠ 1048576,
+        // element-count: 1048576/1/128 = 8192
+        let result = resolve_reshape_zeros(&[1, 16, 512, 128], &[1, 0, 128]).unwrap();
+        assert_eq!(result, vec![1, 8192, 128]);
+    }
+
+    #[test]
+    fn test_resolve_reshape_zeros_error_message_contains_shapes() {
+        let err = resolve_reshape_zeros(&[2, 3], &[0, 7]).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("zero-resolution failed"), "Error message should describe the failure: {}", msg);
+        assert!(msg.contains("[0, 7]"), "Error message should include target shape: {}", msg);
     }
 }

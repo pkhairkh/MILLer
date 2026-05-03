@@ -60,13 +60,13 @@
 - **Effort**: M (1 day)
 - **Resolution**: Added `validate_pad_constraints()` to `op_constraints.rs` enforcing six ANE Pad hard constraints: (1) **mode gate** — replication (`replicate`/`replication`) and symmetric padding modes rejected, only `constant` and `reflection` legal; (2) **no negative padding** — all pad_amounts must be ≥ 0; (3) **no batch-axis padding** — axis 0 pad amounts must be zero for rank ≥ 4 (NCHW); (4) **no channel-axis padding** — channel axis (axis 1 for rank ≥ 4, axis 0 for rank < 4) pad amounts must be zero; (5) **no depth-axis padding** — axis 2 pad amounts must be zero for rank-5 (NCDHW) inputs; (6) **pad_amounts length** — must match 2 × input_rank. Rank-aware axis mapping: for rank < 4, axis 0 is channel (no batch dim), for rank ≥ 4, axis 0 is batch and axis 1 is channel. Wired into `placement_validate.rs` with dedicated `MILPad` match arm. Added 25 new unit tests + 10 integration tests. All 762 tests pass.
 
-### T-28 · Fix Reshape `.unwrap()` Panic
+### T-28 · Fix Reshape `.unwrap()` Panic ✅
 
 - **ISSUES ref**: I-07
 - **AUDIT ref**: §III (CQ-3), §IV (B-5)
-- **Severity**: HIGH
+- **Severity**: HIGH → RESOLVED
 - **Effort**: S (0.5 day)
-- **Description**: `mil_lower.rs:220-221` calls `.unwrap()` on reshape zero-dim search. If `resolved` has no zeros (edge case in shape inference), this panics during compilation. Replace with `Result` or `?` with proper error type.
+- **Resolution**: Extracted reshape zero-resolution logic into `resolve_reshape_zeros(input_shape, target_shape) -> Result<Vec<usize>>` with safe zero-position collection (replaces `.unwrap()` on `.position()`/`.rposition()` that could panic). Changed `infer_shape` return type from `Vec<usize>` to `Result<Vec<usize>>` so reshape failures propagate as compilation errors via `?` instead of panicking. Added final validation that rejects shapes with unresolved zeros (produces `anyhow::bail!` with diagnostic context including both input and target shapes). Added 17 new unit tests covering: positional resolution, element-count fallback, single/dual/triple zero placeholders, incompatible element counts, zero input elements, flatten reshape, and error message content. All 780+ tests pass.
 
 ### T-29 · Add Zero-Dimension Validation Before Emission
 
@@ -220,7 +220,7 @@
 | T-25 | I-04 | HIGH | S | ✅ |
 | T-26 | I-05 | HIGH | S | ✅ |
 | T-27 | I-06 | HIGH | M | ✅ |
-| T-28 | I-07 | HIGH | S | ⬜ |
+| T-28 | I-07 | HIGH | S | ✅ |
 | T-29 | I-08 | HIGH | S | ⬜ |
 | T-30 | I-09 | HIGH | S | ⬜ |
 | T-31 | I-10 | HIGH | M | ⬜ |

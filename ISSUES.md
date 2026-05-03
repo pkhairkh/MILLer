@@ -81,16 +81,11 @@ ANE-legal ops that still lack MirOpCompat variants (BatchNorm, MaxPool, AvgPool,
 
 ### I-07 · Reshape `.unwrap()` Panic in MIR Lowering
 
-**Status:** ⬜ Open
+**Status:** ✅ FIXED (T-28)
 **Files:** `crates/passes/src/mil_lower.rs:220-221`
 **AUDIT ref:** §III (CQ-3), §IV (B-5)
-**Severity:** HIGH — Compiler panics on edge-case reshape
-**Effort:** S (0.5 day)
-**Task:** T-28
-
-`resolved.iter().position(|&d| d == 0).unwrap()` and `resolved.iter().rposition(|&d| d == 0).unwrap()` will panic if `resolved` has no zeros. This can happen when shape inference fails to produce a zero-dim placeholder for reshape inference targets.
-
-**Fix:** Return `Result` with proper error type, or use `ok_or(MilLowerError::...)` with `?`.
+**Severity:** HIGH → RESOLVED
+**Resolution:** Extracted reshape zero-resolution logic into `resolve_reshape_zeros(input_shape, target_shape) -> Result<Vec<usize>>` with safe zero-position collection using `Iterator::filter().collect()` instead of `.unwrap()` on `.position()`/`.rposition()`. Changed `infer_shape` return type from `Vec<usize>` to `Result<Vec<usize>>` so reshape failures propagate as compilation errors via `?` operator instead of panicking. Added final validation that rejects shapes with unresolved zero placeholders (bails with diagnostic context including both input and target shapes). Updated caller in `run_with_weight_shapes` to use `?` for error propagation. Added 17 new unit tests.
 
 ---
 
@@ -333,9 +328,9 @@ The following issues from the previous tracker have been resolved and archived t
 | Priority | Total | Open | In Progress | Fixed |
 |----------|-------|------|-------------|-------|
 | P0 | 3 | 0 | 0 | 3 |
-| P1 | 8 | 5 | 0 | 3 |
+| P1 | 8 | 4 | 0 | 4 |
 | P2 | 8 | 8 | 0 | 0 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **14** | **0** | **6** |
+| **Total** | **20** | **13** | **0** | **7** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04, I-05, and I-06 resolved by T-25, T-26, and T-27.*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04, I-05, I-06, and I-07 resolved by T-25, T-26, T-27, and T-28.*

@@ -160,3 +160,7 @@ Full-spectrum diagnostic sweep performed. See `AUDIT.md` for complete findings.
 ### T-27 · Add `validate_pad_constraints()` ✅
 - **ISSUES ref**: I-06
 - **Resolution**: Added `validate_pad_constraints()` to `op_constraints.rs` enforcing six ANE Pad hard constraints: mode gate (reject replication/symmetric), no negative padding, no batch-axis padding (rank ≥ 4), no channel-axis padding (rank-aware axis mapping), no depth-axis padding (rank-5), and pad_amounts length validation. Wired into `placement_validate.rs` with dedicated `MILPad` match arm. 25 unit tests + 10 integration tests. 762 total tests passing.
+
+### T-28 · Fix Reshape `.unwrap()` Panic ✅
+- **ISSUES ref**: I-07
+- **Resolution**: Extracted reshape zero-resolution logic into `resolve_reshape_zeros(input_shape, target_shape) -> Result<Vec<usize>>` with safe zero-position collection (replaces `.unwrap()` on `.position()`/`.rposition()`). Changed `infer_shape` return type from `Vec<usize>` to `Result<Vec<usize>>` so reshape failures propagate as compilation errors via `?` instead of panicking. Added final validation rejecting shapes with unresolved zeros. 17 new unit tests. 780+ total tests passing.
