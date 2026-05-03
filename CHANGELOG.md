@@ -164,3 +164,7 @@ Full-spectrum diagnostic sweep performed. See `AUDIT.md` for complete findings.
 ### T-28 · Fix Reshape `.unwrap()` Panic ✅
 - **ISSUES ref**: I-07
 - **Resolution**: Extracted reshape zero-resolution logic into `resolve_reshape_zeros(input_shape, target_shape) -> Result<Vec<usize>>` with safe zero-position collection (replaces `.unwrap()` on `.position()`/`.rposition()`). Changed `infer_shape` return type from `Vec<usize>` to `Result<Vec<usize>>` so reshape failures propagate as compilation errors via `?` instead of panicking. Added final validation rejecting shapes with unresolved zeros. 17 new unit tests. 780+ total tests passing.
+
+### T-29 · Add Zero-Dimension Validation Before Emission ✅
+- **ISSUES ref**: I-08
+- **Resolution**: Two-pronged approach: (1) Changed `eprintln!` warnings in `mir_to_compat.rs` to `anyhow::bail!()` hard gates — reshape ops with unresolved zero dimensions now produce compilation errors instead of silently emitting invalid shapes. Both `mir_op_to_compat_with_shapes()` and `mir_op_to_compat()` reject zeros with diagnostic messages including zero positions, raw shape, node_shape, and input_shape. (2) Added defense-in-depth zero-dim validation gate in `mir_to_proto.rs` `convert_mir_to_proto_multifunction()` that scans all `MirOpCompat::Reshape` and `MirOpCompat::Fill` ops for zero dimensions in shape vectors. Fixed `test_reshape_zero_placeholders_resolved_from_node_shape` Case 4 to assert error instead of asserting zeros survive. Added 7 new emission-layer tests. 785 total tests pass.

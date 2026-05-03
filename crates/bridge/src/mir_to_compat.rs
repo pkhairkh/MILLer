@@ -1160,12 +1160,25 @@ pub fn mir_op_to_compat_with_shapes(
             };
 
             // Validate: no zeros should remain in the resolved shape.
+            // Zero dimensions in emitted Core ML reshape targets produce invalid
+            // models — Core ML treats 0 as a literal zero dimension, not "infer
+            // from input". This is a hard gate; shape inference must succeed
+            // before we can emit a valid model. (T-29 / I-08)
             if resolved_shape.iter().any(|&d| d == 0) {
-                eprintln!(
-                    "[ERROR] Reshape '{}' still has zero dimensions after resolution: {:?}. \
-                     This will be rejected by Core ML. Raw shape: {:?}, node_shape: {:?}, \
-                     input_shape: {:?}",
-                    name, resolved_shape, shape, node_shape, shape_map.get(&x.0)
+                let zero_positions: Vec<usize> = resolved_shape
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, &d)| d == 0)
+                    .map(|(i, _)| i)
+                    .collect();
+                anyhow::bail!(
+                    "Reshape '{}' has unresolved zero dimensions at positions {:?} after all \
+                     resolution strategies failed. Resolved shape: {:?}, raw shape: {:?}, \
+                     node_shape: {:?}, input_shape: {:?}. \
+                     Zero dimensions produce invalid Core ML models — shape inference \
+                     must resolve all placeholders before emission.",
+                    name, zero_positions, resolved_shape, shape, node_shape,
+                    shape_map.get(&x.0).map(|s| s.as_slice()).unwrap_or(&[])
                 );
             }
 
@@ -1397,11 +1410,24 @@ pub fn mir_op_to_compat(
             };
 
             // Validate: no zeros should remain in the resolved shape.
+            // Zero dimensions in emitted Core ML reshape targets produce invalid
+            // models — Core ML treats 0 as a literal zero dimension, not "infer
+            // from input". This is a hard gate; shape inference must succeed
+            // before we can emit a valid model. (T-29 / I-08)
             if resolved_shape.iter().any(|&d| d == 0) {
-                eprintln!(
-                    "[ERROR] Reshape '{}' still has zero dimensions after resolution: {:?}. \
-                     This will be rejected by Core ML. Raw shape: {:?}, node_shape: {:?}",
-                    name, resolved_shape, shape, node_shape
+                let zero_positions: Vec<usize> = resolved_shape
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, &d)| d == 0)
+                    .map(|(i, _)| i)
+                    .collect();
+                anyhow::bail!(
+                    "Reshape '{}' has unresolved zero dimensions at positions {:?} after all \
+                     resolution strategies failed. Resolved shape: {:?}, raw shape: {:?}, \
+                     node_shape: {:?}. \
+                     Zero dimensions produce invalid Core ML models — shape inference \
+                     must resolve all placeholders before emission.",
+                    name, zero_positions, resolved_shape, shape, node_shape
                 );
             }
 
@@ -2584,7 +2610,10 @@ mod tests {
             _ => panic!("Expected Reshape compat"),
         }
 
-        // Case 4: Empty node_shape — defensive fallback with zero-resolution
+        // Case 4: Empty node_shape — unresolved zeros must produce an error
+        // (T-29 / I-08): Zero dimensions in reshape targets produce invalid
+        // Core ML models. The compat converter must reject them rather than
+        // silently emitting zeros.
         let op4 = MirOp::MILReshape {
             name: "fallback".into(),
             x: MirNodeId("x".into()),
@@ -2592,15 +2621,14 @@ mod tests {
         };
         let node_shape4: &[usize] = &[];
 
-        let compat4 = mir_op_to_compat(&op4, node_shape4, &resolver).unwrap();
-        match compat4 {
-            MirOpCompat::Reshape { shape, .. } => {
-                // With empty node_shape, can't resolve zeros — they stay as 0
-                assert_eq!(shape, vec![0, 0, 16, 128],
-                    "Empty node_shape should preserve raw shape (no resolution possible)");
-            }
-            _ => panic!("Expected Reshape compat"),
-        }
+        let result4 = mir_op_to_compat(&op4, node_shape4, &resolver);
+        assert!(result4.is_err(),
+            "Reshape with unresolvable zero dimensions must return an error, not emit zeros");
+        let err_msg = result4.unwrap_err().to_string();
+        assert!(err_msg.contains("unresolved zero dimensions"),
+            "Error message should mention unresolved zero dimensions, got: {err_msg}");
+        assert!(err_msg.contains("fallback"),
+            "Error message should mention the op name, got: {err_msg}");
     }
 }
 

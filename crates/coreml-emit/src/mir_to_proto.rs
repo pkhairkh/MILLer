@@ -224,6 +224,62 @@ pub fn convert_mir_to_proto_multifunction(
             }
         }
 
+        // Validation gate: reject ops with zero dimensions in shape vectors.
+        // (T-29 / I-08) Zero dimensions in reshape target shapes or fill shape
+        // vectors produce invalid Core ML models. Core ML treats 0 as a literal
+        // zero dimension, not "infer from input". While the mir_to_compat layer
+        // should catch these first (hard bail), this provides defense-in-depth
+        // in case zeros slip through via a different code path.
+        {
+            let mut zero_dim_ops: Vec<String> = Vec::new();
+            for op in &graph.ops {
+                match op {
+                    MirOpCompat::Reshape { name, shape, .. } => {
+                        if shape.iter().any(|&d| d == 0) {
+                            let zero_pos: Vec<usize> = shape.iter()
+                                .enumerate()
+                                .filter(|(_, &d)| d == 0)
+                                .map(|(i, _)| i)
+                                .collect();
+                            zero_dim_ops.push(format!(
+                                "  {name}: reshape target shape {:?} has zero dimension(s) at position(s) {:?}",
+                                shape, zero_pos
+                            ));
+                        }
+                    }
+                    MirOpCompat::Fill { name, shape, .. } => {
+                        if shape.iter().any(|&d| d == 0) {
+                            let zero_pos: Vec<usize> = shape.iter()
+                                .enumerate()
+                                .filter(|(_, &d)| d == 0)
+                                .map(|(i, _)| i)
+                                .collect();
+                            zero_dim_ops.push(format!(
+                                "  {name}: fill shape {:?} has zero dimension(s) at position(s) {:?}",
+                                shape, zero_pos
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if !zero_dim_ops.is_empty() {
+                anyhow::bail!(
+                    "Cannot emit Core ML package: {} operation(s) with zero dimensions in \
+                     shape vectors in function '{}'. Core ML treats 0 as a literal zero \
+                     dimension, producing invalid models. This indicates that shape inference \
+                     failed to resolve placeholder zeros before emission.\n\
+                     Zero-dimension ops:\n{}\n\
+                     Fix: ensure shape inference (infer_shape / resolve_reshape_zeros / \
+                     resolve_reshape_shape) resolves all zero placeholders before the compat \
+                     conversion step.",
+                    zero_dim_ops.len(),
+                    graph.function_name,
+                    zero_dim_ops.join("\n")
+                );
+            }
+        }
+
         // Extract weights from constants
         let mut graph_weights = Vec::new();
         let mut graph_inputs = Vec::new();
@@ -1015,6 +1071,227 @@ mod tests {
         assert!(
             err_msg.contains("decode_step"),
             "Error should mention the function name, got: {}", err_msg
+        );
+    }
+
+    // ─── Zero-dimension validation tests (T-29 / I-08) ──────────────────
+
+    #[test]
+    fn test_zero_dim_reshape_rejected() {
+        // A reshape with zero dimensions in its target shape must be
+        // rejected by the emission validation gate. Core ML treats 0
+        // as a literal zero dimension, not "infer from input".
+        let graph = MirGraphCompat {
+            ops: vec![
+                MirOpCompat::Reshape {
+                    name: "bad_reshape".to_string(),
+                    x: "input".to_string(),
+                    shape: vec![0, 0, 16, 128], // zeros at positions 0 and 1
+                },
+            ],
+            inputs: vec!["input".to_string()],
+            outputs: vec!["bad_reshape".to_string()],
+            opset_version: "iOS18".to_string(),
+            function_name: "main".to_string(),
+            input_descs: vec![],
+            output_descs: vec![],
+            node_shapes: std::collections::HashMap::new(),
+        };
+
+        let result = convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe);
+        assert!(result.is_err(), "Reshape with zero dimensions should be rejected");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("zero dimension"),
+            "Error should mention zero dimensions, got: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("bad_reshape"),
+            "Error should mention the op name, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_zero_dim_reshape_single_zero_rejected() {
+        // Even a single zero dimension should be caught.
+        let graph = MirGraphCompat {
+            ops: vec![
+                MirOpCompat::Reshape {
+                    name: "single_zero".to_string(),
+                    x: "input".to_string(),
+                    shape: vec![1, 0, 128], // zero at position 1
+                },
+            ],
+            inputs: vec!["input".to_string()],
+            outputs: vec!["single_zero".to_string()],
+            opset_version: "iOS18".to_string(),
+            function_name: "main".to_string(),
+            input_descs: vec![],
+            output_descs: vec![],
+            node_shapes: std::collections::HashMap::new(),
+        };
+
+        let result = convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe);
+        assert!(result.is_err(), "Reshape with even one zero dimension should be rejected");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("zero dimension"),
+            "Error should mention zero dimensions, got: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("position(s) [1]"),
+            "Error should mention position 1, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_zero_dim_fill_rejected_by_ane_illegal_gate() {
+        // A Fill op with zero dimensions in its shape vector is caught by
+        // the ANE-illegal gate (which rejects ALL Fill ops) BEFORE the
+        // zero-dim gate runs. This test verifies that Fill ops with zero
+        // dimensions are still rejected, albeit via the earlier gate.
+        let graph = MirGraphCompat {
+            ops: vec![
+                MirOpCompat::Fill {
+                    name: "bad_fill".to_string(),
+                    shape: vec![0, 512], // zero at position 0
+                    value: 1.0,
+                    dtype: MilDtypeCompat::Fp16,
+                },
+            ],
+            inputs: vec![],
+            outputs: vec!["bad_fill".to_string()],
+            opset_version: "iOS18".to_string(),
+            function_name: "main".to_string(),
+            input_descs: vec![],
+            output_descs: vec![],
+            node_shapes: std::collections::HashMap::new(),
+        };
+
+        let result = convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe);
+        assert!(result.is_err(), "Fill with zero dimensions should be rejected");
+        let err_msg = result.unwrap_err().to_string();
+        // Fill is caught by the ANE-illegal gate first (which rejects ALL Fill ops)
+        assert!(
+            err_msg.contains("ANE-illegal") || err_msg.contains("zero dimension"),
+            "Fill should be rejected by ANE-illegal or zero-dim gate, got: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("bad_fill"),
+            "Error should mention the op name, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_zero_dim_reshape_all_zeros_rejected() {
+        // An all-zero reshape shape is definitely invalid.
+        let graph = MirGraphCompat {
+            ops: vec![
+                MirOpCompat::Reshape {
+                    name: "all_zeros".to_string(),
+                    x: "input".to_string(),
+                    shape: vec![0, 0, 0, 0],
+                },
+            ],
+            inputs: vec!["input".to_string()],
+            outputs: vec!["all_zeros".to_string()],
+            opset_version: "iOS18".to_string(),
+            function_name: "main".to_string(),
+            input_descs: vec![],
+            output_descs: vec![],
+            node_shapes: std::collections::HashMap::new(),
+        };
+
+        let result = convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe);
+        assert!(result.is_err(), "All-zero reshape should be rejected");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("zero dimension"),
+            "Error should mention zero dimensions, got: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("position(s) [0, 1, 2, 3]"),
+            "Error should list all zero positions, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_concrete_reshape_passes_validation() {
+        // A reshape with no zero dimensions should pass the zero-dim gate
+        // (though it may fail other gates like impossible reshape if the
+        // element counts don't match).
+        let mut node_shapes = std::collections::HashMap::new();
+        node_shapes.insert("input".to_string(), vec![1, 512, 16, 128]);
+
+        let graph = MirGraphCompat {
+            ops: vec![
+                MirOpCompat::Reshape {
+                    name: "good_reshape".to_string(),
+                    x: "input".to_string(),
+                    shape: vec![1, 512, 2048], // no zeros, valid reshape
+                },
+            ],
+            inputs: vec!["input".to_string()],
+            outputs: vec!["good_reshape".to_string()],
+            opset_version: "iOS18".to_string(),
+            function_name: "main".to_string(),
+            input_descs: vec![],
+            output_descs: vec![],
+            node_shapes,
+        };
+
+        let result = convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe);
+        // Should NOT fail on zero-dim gate (may or may not succeed on
+        // other gates, but zero-dim should pass).
+        if let Err(e) = &result {
+            let err_msg = e.to_string();
+            assert!(
+                !err_msg.contains("zero dimension"),
+                "Concrete reshape should not trigger zero-dim rejection, got: {err_msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_multiple_zero_dim_ops_all_reported() {
+        // When multiple ops have zero dimensions, all of them should be
+        // reported in the error message (not just the first one).
+        let graph = MirGraphCompat {
+            ops: vec![
+                MirOpCompat::Reshape {
+                    name: "bad_reshape_1".to_string(),
+                    x: "input".to_string(),
+                    shape: vec![0, 128],
+                },
+                MirOpCompat::Reshape {
+                    name: "bad_reshape_2".to_string(),
+                    x: "input".to_string(),
+                    shape: vec![1, 0, 64],
+                },
+            ],
+            inputs: vec!["input".to_string()],
+            outputs: vec!["bad_reshape_2".to_string()],
+            opset_version: "iOS18".to_string(),
+            function_name: "main".to_string(),
+            input_descs: vec![],
+            output_descs: vec![],
+            node_shapes: std::collections::HashMap::new(),
+        };
+
+        let result = convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("bad_reshape_1"),
+            "Error should mention first bad reshape, got: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("bad_reshape_2"),
+            "Error should mention second bad reshape, got: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("2 operation(s)"),
+            "Error should report count of 2, got: {err_msg}"
         );
     }
 }

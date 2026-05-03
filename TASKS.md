@@ -68,13 +68,13 @@
 - **Effort**: S (0.5 day)
 - **Resolution**: Extracted reshape zero-resolution logic into `resolve_reshape_zeros(input_shape, target_shape) -> Result<Vec<usize>>` with safe zero-position collection (replaces `.unwrap()` on `.position()`/`.rposition()` that could panic). Changed `infer_shape` return type from `Vec<usize>` to `Result<Vec<usize>>` so reshape failures propagate as compilation errors via `?` instead of panicking. Added final validation that rejects shapes with unresolved zeros (produces `anyhow::bail!` with diagnostic context including both input and target shapes). Added 17 new unit tests covering: positional resolution, element-count fallback, single/dual/triple zero placeholders, incompatible element counts, zero input elements, flatten reshape, and error message content. All 780+ tests pass.
 
-### T-29 · Add Zero-Dimension Validation Before Emission
+### T-29 · Add Zero-Dimension Validation Before Emission ✅
 
 - **ISSUES ref**: I-08
 - **AUDIT ref**: §II-E, §IV (B-6)
-- **Severity**: HIGH
+- **Severity**: HIGH → RESOLVED
 - **Effort**: S (0.5 day)
-- **Description**: Placeholder zeros from Tile/attention reshape survive to Core ML emission when shape inference fails. Core ML treats 0 as a literal zero dimension, producing invalid models. Add a validation pass that rejects any MIR shape containing 0 dims before emission.
+- **Resolution**: Two-pronged approach: (1) Changed `eprintln!` warnings in `mir_to_compat.rs` to `anyhow::bail!()` hard gates — reshape ops with unresolved zero dimensions now produce compilation errors instead of silently emitting invalid shapes. Both `mir_op_to_compat_with_shapes()` and `mir_op_to_compat()` now reject zeros with diagnostic messages including zero positions, raw shape, node_shape, and input_shape. (2) Added defense-in-depth zero-dim validation gate in `mir_to_proto.rs` `convert_mir_to_proto_multifunction()` — scans all `MirOpCompat::Reshape` and `MirOpCompat::Fill` ops for zero dimensions in shape vectors, bailing with clear error messages. Fixed `test_reshape_zero_placeholders_resolved_from_node_shape` Case 4 to assert error instead of asserting zeros survive. Added 7 new emission-layer tests covering: multi-zero reshape rejection, single-zero reshape rejection, all-zero reshape rejection, Fill with zeros (caught by ANE-illegal gate), concrete reshape passing validation, and multiple zero-dim ops all reported. 785 total tests pass.
 
 ### T-30 · Fix `% 1 == 0` Logic Bug
 
@@ -221,7 +221,7 @@
 | T-26 | I-05 | HIGH | S | ✅ |
 | T-27 | I-06 | HIGH | M | ✅ |
 | T-28 | I-07 | HIGH | S | ✅ |
-| T-29 | I-08 | HIGH | S | ⬜ |
+| T-29 | I-08 | HIGH | S | ✅ |
 | T-30 | I-09 | HIGH | S | ⬜ |
 | T-31 | I-10 | HIGH | M | ⬜ |
 | T-32 | I-11 | MEDIUM | S | ⬜ |

@@ -91,16 +91,11 @@ ANE-legal ops that still lack MirOpCompat variants (BatchNorm, MaxPool, AvgPool,
 
 ### I-08 · Zero-Dimension Shapes Survive to Core ML Emission
 
-**Status:** ⬜ Open
-**Files:** `crates/passes/src/legality_rewrite.rs:464-465,2194,2282`, `crates/bridge/src/mir_to_compat.rs:2591-2599`
+**Status:** ✅ FIXED (T-29)
+**Files:** `crates/bridge/src/mir_to_compat.rs`, `crates/coreml-emit/src/mir_to_proto.rs`
 **AUDIT ref:** §II-E, §IV (B-6)
-**Severity:** HIGH — Produces invalid Core ML models with literal zero dimensions
-**Effort:** S (0.5 day)
-**Task:** T-29
-
-Tile decomposition and attention reshape use `0` placeholders for dimensions that should be inferred. When shape inference fails (e.g., no `DecompositionContext`), zeros propagate to emitted protobuf. Core ML treats 0 as a literal zero dimension, not "infer from input." A test in `mir_to_compat.rs` even asserts that zeros survive, codifying this bug.
-
-**Fix:** Add a validation pass before emission that rejects any MIR shape containing 0 dims. Replace the test assertion with a check that zero shapes are caught.
+**Severity:** HIGH → RESOLVED
+**Resolution:** Two-pronged fix: (1) Changed `eprintln!` warnings in `mir_op_to_compat_with_shapes()` and `mir_op_to_compat()` to `anyhow::bail!()` hard gates — reshape ops with unresolved zero dimensions now produce compilation errors with diagnostic context (zero positions, raw shape, node_shape, input_shape) instead of silently emitting zeros. (2) Added defense-in-depth zero-dim validation gate in `convert_mir_to_proto_multifunction()` that scans all `MirOpCompat::Reshape` and `MirOpCompat::Fill` ops for zero dimensions in shape vectors, bailing before emission. Fixed test that asserted zeros survive to expect an error instead. Added 7 new emission-layer tests.
 
 ---
 
@@ -328,9 +323,9 @@ The following issues from the previous tracker have been resolved and archived t
 | Priority | Total | Open | In Progress | Fixed |
 |----------|-------|------|-------------|-------|
 | P0 | 3 | 0 | 0 | 3 |
-| P1 | 8 | 4 | 0 | 4 |
+| P1 | 8 | 3 | 0 | 5 |
 | P2 | 8 | 8 | 0 | 0 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **13** | **0** | **7** |
+| **Total** | **20** | **12** | **0** | **8** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04, I-05, I-06, and I-07 resolved by T-25, T-26, T-27, and T-28.*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04, I-05, I-06, I-07, and I-08 resolved by T-25, T-26, T-27, T-28, and T-29.*
