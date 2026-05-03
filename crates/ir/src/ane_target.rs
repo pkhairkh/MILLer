@@ -128,7 +128,12 @@ impl AneRevision {
             AneRevision::V7 => AneFamily::A14,
             AneRevision::V8 => AneFamily::A15,
             AneRevision::V10 | AneRevision::V11 => AneFamily::A16,
-            AneRevision::V17 | AneRevision::V19 | AneRevision::V20 | AneRevision::V26 => {
+            // V17 is Apple M1 (Mac), which uses A14-class ANE.
+            // M1 has A14's constraint profile: no SDPA, no LayerNorm,
+            // A14Plus elementwise/reduction converters, full-dtype broadcast.
+            // Do NOT map V17 to A18 — M1 does not have A18's SDPA/LayerNorm.
+            AneRevision::V17 => AneFamily::A14,
+            AneRevision::V19 | AneRevision::V20 | AneRevision::V26 => {
                 AneFamily::A18
             }
         }
@@ -166,7 +171,9 @@ mod tests {
         assert_eq!(AneRevision::V7.family(), AneFamily::A14);
         assert_eq!(AneRevision::V8.family(), AneFamily::A15);
         assert_eq!(AneRevision::V10.family(), AneFamily::A16);
-        assert_eq!(AneRevision::V17.family(), AneFamily::A18);
+        // T-40: V17 (M1) is A14-class, NOT A18.
+        assert_eq!(AneRevision::V17.family(), AneFamily::A14);
+        assert_eq!(AneRevision::V19.family(), AneFamily::A18);
     }
 
     #[test]
@@ -226,5 +233,115 @@ mod tests {
         assert!(!AneFamily::A15.supports_e4m3());
         assert!(!AneFamily::A16.supports_e4m3());
         assert!(AneFamily::A18.supports_e4m3());
+    }
+
+    // ─── T-40: V17 (M1) → A14 Family Mapping Tests ────────────────
+
+    #[test]
+    fn test_m1_v17_is_a14_family() {
+        // T-40: V17 is M1 (Mac), which has A14-class ANE.
+        // Previously mapped to A18, which incorrectly gave M1
+        // A18's SDPA and LayerNorm support.
+        assert_eq!(AneRevision::V17.family(), AneFamily::A14);
+    }
+
+    #[test]
+    fn test_m1_no_sdpa() {
+        // M1 (V17, A14-class) does NOT support SDPA.
+        // A18 does — this was the key misclassification bug.
+        let m1_family = AneRevision::V17.family();
+        assert!(!m1_family.supports_sdpa(),
+            "M1 (V17) should NOT support SDPA — it has A14-class ANE");
+    }
+
+    #[test]
+    fn test_m1_no_layernorm() {
+        // M1 (V17, A14-class) does NOT support LayerNorm on ANE.
+        // A15+ supports LayerNorm; M1 is A14-class.
+        let m1_family = AneRevision::V17.family();
+        assert!(!m1_family.supports_layernorm(),
+            "M1 (V17) should NOT support LayerNorm — it has A14-class ANE");
+    }
+
+    #[test]
+    fn test_m1_full_dtype_broadcast() {
+        // M1 (V17, A14-class) supports full-dtype broadcast
+        // (unlike A11/A12 which are FP16-only).
+        let m1_family = AneRevision::V17.family();
+        assert!(!m1_family.broadcast_fp16_only(),
+            "M1 (V17) should support full-dtype broadcast — A14-class lifts this restriction");
+    }
+
+    #[test]
+    fn test_m1_a14plus_converters() {
+        // M1 (V17, A14-class) uses A14Plus elementwise/reduction converters
+        // (not A14Minus which is only A11/A12/A13).
+        let m1_family = AneRevision::V17.family();
+        assert!(!m1_family.uses_a14minus_converters(),
+            "M1 (V17) should use A14Plus converters — it is A14-class");
+    }
+
+    #[test]
+    fn test_m1_supports_argminmax() {
+        // M1 (V17, A14-class) DOES support ArgMinMax.
+        // Only A18 (LSE_7) lacks the ConvertReductionArg converter.
+        let m1_family = AneRevision::V17.family();
+        assert!(m1_family.supports_argminmax(),
+            "M1 (V17) should support ArgMinMax — A14 has LSE_3 converter");
+    }
+
+    #[test]
+    fn test_m1_no_e4m3() {
+        // M1 (V17, A14-class) does NOT support E4M3 (FP8).
+        // Only A18+ has limited E4M3 support.
+        let m1_family = AneRevision::V17.family();
+        assert!(!m1_family.supports_e4m3(),
+            "M1 (V17) should NOT support E4M3 — only A18+ has limited support");
+    }
+
+    #[test]
+    fn test_m1_reducemin_all_dtypes() {
+        // M1 (V17, A14-class) supports ReduceMin for all dtypes.
+        // A14+ lifts the FP-only ReduceMin restriction.
+        let m1_family = AneRevision::V17.family();
+        assert!(m1_family.supports_reducemin_all_dtypes(),
+            "M1 (V17) should support ReduceMin for all dtypes — A14+ feature");
+    }
+
+    #[test]
+    fn test_a18_v19_not_v17() {
+        // A18 family's canonical revision is V19 (iPhone 16), NOT V17 (M1).
+        // V17 is M1 which is A14-class.
+        assert_ne!(AneRevision::V17.family(), AneFamily::A18,
+            "V17 (M1) must NOT be in A18 family");
+        assert_eq!(AneRevision::V19.family(), AneFamily::A18,
+            "V19 is the correct A18 revision");
+    }
+
+    #[test]
+    fn test_v17_and_v7_same_family() {
+        // V7 (A14 Bionic) and V17 (M1) should be in the same family.
+        // Both are A14-class ANE with identical constraint profiles.
+        assert_eq!(AneRevision::V7.family(), AneRevision::V17.family(),
+            "V7 (A14) and V17 (M1) should share A14 family");
+    }
+
+    #[test]
+    fn test_a18_constraints_differ_from_m1() {
+        // A18 has capabilities that M1 (A14-class) does not:
+        // SDPA, LayerNorm, E4M3. These must NOT be available on M1.
+        let m1_family = AneRevision::V17.family();
+        let a18_family = AneRevision::V19.family();
+
+        assert!(a18_family.supports_sdpa());
+        assert!(!m1_family.supports_sdpa());
+        assert!(a18_family.supports_layernorm());
+        assert!(!m1_family.supports_layernorm());
+        assert!(a18_family.supports_e4m3());
+        assert!(!m1_family.supports_e4m3());
+
+        // But A18 drops ArgMinMax support (no LSE_7 converter)
+        assert!(!a18_family.supports_argminmax());
+        assert!(m1_family.supports_argminmax());
     }
 }

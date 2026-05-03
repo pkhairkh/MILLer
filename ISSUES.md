@@ -242,16 +242,16 @@ MirOp has 167 variants; MirOpCompat has ~50 + Unsupported. The conversion, renam
 
 ### I-19 · V17 (M1) Incorrectly Mapped to A18 Family
 
-**Status:** ⬜ Open
-**Files:** `crates/ir/src/ane_target.rs:71-73`
+**Status:** ✅ FIXED (T-40)
+**Files:** `crates/ir/src/ane_target.rs`, `crates/ir/src/ane_hw_limits.rs`, `crates/trace/src/versioned.rs`, `knowledge/ane_hw_limits_seed.json`
 **AUDIT ref:** §III (CQ-14), §IV (B-4)
-**Severity:** MEDIUM — M1 gets A18's SDPA/LayerNorm gates (wrong)
+**Severity:** MEDIUM → RESOLVED
 **Effort:** S (0.5 day)
 **Task:** T-40
 
-V17 is Apple M1, which uses A14-class ANE. The code maps V17 to A18 family, giving M1 hardware A18's SDPA and LayerNorm support (which it doesn't have).
+V17 is Apple M1, which uses A14-class ANE. The code mapped V17 to A18 family, giving M1 hardware A18's SDPA and LayerNorm support (which it doesn't have).
 
-**Fix:** Map V17→A14 family.
+**Resolution:** Mapped V17 → A14 family. M1 has A14-class constraint profile: no SDPA, no LayerNorm, A14Plus elementwise/reduction converters, full-dtype broadcast, ArgMinMax supported (LSE_3). Created dedicated `m1()` hardware limits function for Mac-specific NE count (6) and tensor width (262144). Fixed `a18()` to use `AneRevision::V19`. Changed `family_to_default_revision(A18)` from V17 to V19. Updated seed data. 15 new tests.
 
 ---
 
@@ -309,8 +309,8 @@ The following issues from the previous tracker have been resolved and archived t
 |----------|-------|------|-------------|-------|
 | P0 | 3 | 0 | 0 | 3 |
 | P1 | 8 | 0 | 0 | 8 |
-| P2 | 8 | 3 | 0 | 5 |
+| P2 | 8 | 2 | 0 | 6 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **4** | **0** | **16** |
+| **Total** | **20** | **3** | **0** | **17** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issues I-12, I-13, I-14, I-15, I-16 resolved by T-33, T-34, T-35, T-36, T-37.*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issues I-12, I-13, I-14, I-15, I-16, I-19 resolved by T-33, T-34, T-35, T-36, T-37, T-40.*

@@ -123,7 +123,7 @@
     },
     {
       "revision": "V17",
-      "family": "A18",
+      "family": "A14",
       "max_tensor_width": 262144,
       "max_tensor_height": 16384,
       "max_tensor_depth": 2048,

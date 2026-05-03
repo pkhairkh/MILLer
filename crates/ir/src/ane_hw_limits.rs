@@ -35,7 +35,9 @@ impl AneHwLimits {
             AneRevision::V8 => Self::a15(),
             AneRevision::V10 => Self::a16(),
             AneRevision::V11 => Self::a17(),
-            AneRevision::V17 => Self::a18(),
+            // T-40: V17 is M1 (Mac), not A18. M1 has A14-class ANE but
+            // Mac-specific hardware limits (more NEs, larger tensors).
+            AneRevision::V17 => Self::m1(),
             AneRevision::V19 => Self::a18_pro(),
             AneRevision::V20 => Self::a18_max(),
             AneRevision::V26 => Self::future(),
@@ -113,8 +115,22 @@ impl AneHwLimits {
         Self { revision: AneRevision::V11, num_nes: 4, ..Self::a16() }
     }
 
-    fn a18() -> Self {
+    /// M1 (Mac, ANE V17) hardware limits.
+    ///
+    /// M1 uses A14-class ANE (same constraint profile, converters, op support)
+    /// but has Mac-specific hardware limits: 6 NEs (vs A14 Bionic's 2),
+    /// 262144 max tensor width (vs A14's 65536). The family is A14 — M1
+    /// does NOT get A18's SDPA or LayerNorm support.
+    fn m1() -> Self {
         Self { revision: AneRevision::V17, max_tensor_width: 262144, num_nes: 6, ..Self::a17() }
+    }
+
+    /// A18 Bionic (iPhone 16, ANE V19) hardware limits.
+    ///
+    /// A18 uses A18-family ANE with SDPA, LayerNorm, and E4M3 support.
+    /// Has 6 NEs and 262144 max tensor width.
+    fn a18() -> Self {
+        Self { revision: AneRevision::V19, max_tensor_width: 262144, num_nes: 6, ..Self::a17() }
     }
 
     fn a18_pro() -> Self {
@@ -198,6 +214,7 @@ impl std::fmt::Display for HwLimitViolation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ane_target::AneFamily;
 
     #[test]
     fn test_a12_limits() {
@@ -206,11 +223,26 @@ mod tests {
         assert_eq!(limits.num_nes, 1);
     }
 
+    // T-40: M1 (V17) has A14-family constraints but Mac-specific hardware limits.
     #[test]
-    fn test_a18_limits() {
+    fn test_m1_limits() {
         let limits = AneHwLimits::for_revision(AneRevision::V17);
+        assert_eq!(limits.revision, AneRevision::V17);
         assert!(limits.max_tensor_width >= 262144);
         assert!(limits.num_nes >= 6);
+        // M1 is A14-class family — no SDPA, no LayerNorm
+        assert_eq!(AneRevision::V17.family(), AneFamily::A14);
+        assert!(!AneRevision::V17.family().supports_sdpa());
+        assert!(!AneRevision::V17.family().supports_layernorm());
+    }
+
+    #[test]
+    fn test_a18_limits() {
+        // T-40: V19 is the A18 revision (iPhone 16), not V17.
+        let limits = AneHwLimits::for_revision(AneRevision::V19);
+        assert_eq!(limits.revision, AneRevision::V19);
+        assert!(limits.max_tensor_width >= 262144);
+        assert!(limits.num_nes >= 8); // A18 Pro has 8 NEs
     }
 
     #[test]
@@ -235,7 +267,7 @@ mod tests {
     fn test_revision_ne_count_increases() {
         let a12 = AneHwLimits::for_revision(AneRevision::V5);
         let a14 = AneHwLimits::for_revision(AneRevision::V7);
-        let a18 = AneHwLimits::for_revision(AneRevision::V17);
+        let a18 = AneHwLimits::for_revision(AneRevision::V19);
         assert!(a18.num_nes > a14.num_nes);
         assert!(a14.num_nes > a12.num_nes);
     }

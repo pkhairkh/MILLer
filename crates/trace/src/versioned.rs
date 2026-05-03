@@ -843,7 +843,8 @@ fn family_to_default_revision(family: AneFamily) -> AneRevision {
         AneFamily::A14 => AneRevision::V7,
         AneFamily::A15 => AneRevision::V8,
         AneFamily::A16 => AneRevision::V10,
-        AneFamily::A18 => AneRevision::V17,
+        // T-40: V17 is M1 (A14-class), not A18. A18's default revision is V19.
+        AneFamily::A18 => AneRevision::V19,
     }
 }
 
@@ -1080,6 +1081,35 @@ mod tests {
             OpSupport::AneSupported(AneEngineSupport::PE) => {} // expected
             other => panic!("Expected AneSupported(PE) for ArgMax on A14, got {:?}", other),
         }
+    }
+
+    // ─── T-40: V17 (M1) → A14 Family Mapping Tests ────────────────
+
+    #[test]
+    fn test_a18_default_revision_is_v19() {
+        // T-40: A18 family's canonical revision is V19 (iPhone 16), not V17 (M1).
+        assert_eq!(family_to_default_revision(AneFamily::A18), AneRevision::V19);
+    }
+
+    #[test]
+    fn test_a14_default_revision_is_v7() {
+        assert_eq!(family_to_default_revision(AneFamily::A14), AneRevision::V7);
+    }
+
+    #[test]
+    fn test_m1_sdpa_not_supported_via_versioned_compiler() {
+        // M1 (A14-class) must NOT claim SDPA support through VersionedCompiler.
+        let compiler = VersionedCompiler::new(AneFamily::A14);
+        assert!(!compiler.target_family().supports_sdpa(),
+            "M1 (A14-class) must NOT support SDPA");
+    }
+
+    #[test]
+    fn test_m1_layernorm_not_supported_via_versioned_compiler() {
+        // M1 (A14-class) must NOT claim LayerNorm support through VersionedCompiler.
+        let compiler = VersionedCompiler::new(AneFamily::A14);
+        assert!(!compiler.target_family().supports_layernorm(),
+            "M1 (A14-class) must NOT support LayerNorm");
     }
 }
 

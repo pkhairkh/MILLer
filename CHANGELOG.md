@@ -2,6 +2,13 @@
 
 ## 2026-05-04
 
+### T-40 · Fix V17 (M1) → A18 Mapping ✅
+- **ISSUES ref**: I-19
+- **AUDIT ref**: §III (CQ-14), §IV (B-4)
+- **Severity**: MEDIUM → RESOLVED
+- **Effort**: S (0.5 day)
+- **Resolution**: Mapped V17 (M1) to A14 family instead of A18. M1 uses A14-class ANE with identical constraint profile: no SDPA, no LayerNorm, A14Plus elementwise/reduction converters, full-dtype broadcast, ArgMinMax supported (LSE_3 converter). Previously, V17 was grouped with V19/V20/V26 under A18 family, which incorrectly gave M1 hardware A18's SDPA and LayerNorm support — ops that the M1 ANE cannot actually execute. Changes: (1) `ane_target.rs`: Separated V17 from the A18 match arm into its own `AneRevision::V17 => AneFamily::A14` arm with detailed comment explaining why M1 is A14-class; (2) `ane_hw_limits.rs`: Created dedicated `m1()` hardware limits function (6 NEs, 262144 max tensor width — Mac-specific hardware but A14-class constraint profile), fixed `a18()` to use `AneRevision::V19` instead of `V17`, updated `for_revision(V17)` to call `Self::m1()`; (3) `versioned.rs`: Changed `family_to_default_revision(A18)` from `V17` to `V19`; (4) `ane_hw_limits_seed.json`: Updated V17's family from "A18" to "A14". Added 15 new tests: 11 in `ane_target.rs` (V17→A14, no SDPA, no LayerNorm, full-dtype broadcast, A14Plus converters, ArgMinMax supported, no E4M3, ReduceMin all dtypes, V19≠V17 for A18, V7=V17 same family, A18 vs M1 constraint diff) and 4 in `versioned.rs` (A18 default rev is V19, A14 default rev is V7, M1 no SDPA/LayerNorm via VersionedCompiler). All 1099 tests pass.
+
 ### T-37 · Add SIR→AIR Roundtrip Test ✅
 - **ISSUES ref**: I-16
 - **AUDIT ref**: §V
