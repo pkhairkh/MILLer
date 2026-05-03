@@ -1,371 +1,384 @@
 # MILLer Compiler — Issue Tracker
 
-*Last updated: 2026-05-03 (comprehensive fix pass)*
+*Last updated: 2026-05-03 (TABULA RASA full audit refresh)*
 *Reference implementation: https://huggingface.co/pkhairkh/qwen3-coreml-palettized*
+*Audit source: `AUDIT.md` (generated 2026-05-03)*
 
 ---
 
-## P0 — Critical (Blocks Correct ANE Execution)
+## P0 — CRITICAL (Silent Emission Failures / Wrong Constraints)
 
-### ISSUE-001: Mask path uses CPU-only ops, forcing entire attention subgraph off ANE
+### I-01 · Three Sources of Truth Diverged (Engine / CPU-Only / Compat)
 
-**Status:** ✅ FIXED
-**Files:** `crates/passes/src/legality_rewrite.rs` (`apply_rope_decode`)
-**Resolution:** Replaced the entire Equal/Cast/LessEqual/Fill/Select mask computation path with precomputed static tables + Gather pattern matching the reference implementation.
+**Status:** ⬜ Open
+**Files:** `crates/ir/src/mir.rs`, `crates/passes/src/cpu_only_ops.rs`, `crates/coreml-proto/src/lib.rs`
+**AUDIT ref:** §II-A, §IV (B-1)
+**Severity:** CRITICAL — 55 ops assigned ANE engines but have no compat converter; will silently fail at emission
+**Effort:** L (3-5 days)
+**Task:** T-22
 
-**Before (ANE-illegal):**
-```
-Equal(arange_tab, pos)       → bool KV write mask    (CPU-only)
-Cast(bool → fp16)            → fp16 KV write mask    (ANE-questionable)
-LessEqual(arange_tab, pos)   → bool causal mask      (CPU-only)
-Fill([kv_len], 0.0)          → zeros tensor           (CPU-only)
-Fill([kv_len], -inf)         → neg_infs tensor        (CPU-only)
-Select(less_equal, zeros, neg_infs) → causal mask     (CPU-only)
-```
+The three sources of truth for op legality have diverged:
+1. `MirOp::default_engine()` assigns ANE engines (NE/PE/TE) to ops
+2. `CPU_ONLY_OPS` set declares which ops are CPU-exiled
+3. `MirOpCompat` enum determines what can actually be emitted
 
-**After (ANE-legal):**
-```
-Const(eye_tab)  [seq_len, seq_len] fp16   → precomputed identity matrix
-Const(mask_tab) [seq_len, seq_len] fp16   → precomputed causal mask
-Gather(eye_tab, pos, axis=0)      → [seq_len] fp16 KV write mask
-Gather(mask_tab, pos, axis=0)     → [seq_len] fp16 causal mask
-Add(logits, mask)                 → additive masking (ANE-legal)
-```
+55 ops have ANE engine assignments but map to `MirOpCompat::Unsupported`, meaning they pass placement validation as ANE-legal but will fail silently at emission time. Critical gaps include: ConvTranspose, all pooling ops, BatchNorm, InstanceNorm, Quantize/Dequantize, all resize/upsample ops, and numerous elementwise/reduction variants.
 
-All 6 CPU-only/ANE-questionable ops replaced with 4 ANE-legal ops (Const, Gather, Reshape, Add).
+**Fix:** Audit every MirOp variant. For each, ensure one of:
+- (a) ANE-legal: has compat converter + correct engine assignment
+- (b) CPU-only: `default_engine() → None` + entry in `CPU_ONLY_OPS`
+- (c) Transitional: compat converter exists but is incomplete → add compat variant
 
 ---
 
-### ISSUE-002: `fill` and `fill_like` survive to proto emission
+### I-02 · CPU-Only List Not Checked by Placement Validator
 
-**Status:** ✅ FIXED
-**Files:** `crates/passes/src/cpu_only_ops.rs`, `crates/passes/src/legality_rewrite.rs`, `crates/bridge/src/static_table_resolver.rs`, `crates/coreml-proto/src/lib.rs`
-**Resolution:**
-- Added `fill` and `fill_like` to the CPU_ONLY list
-- **Replaced all active FillLike usage in RMSNorm and QK-norm decomposition with ANE-legal `Const` scalar + `Add` broadcasting** — this eliminates FillLike from the AIR graph entirely for the main compilation path
-- Added scalar constant resolution to `StaticTableResolver` via `scalar://fp16/{value}` and `scalar://fp32/{value}` value_path conventions
-- FillLike proto emission retains its Mul+Add decomposition as a backward-compatible fallback
-- Fill proto emission is documented as ANE-illegal with a defensive fallback
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/placement_validate.rs`, `crates/passes/src/cpu_only_ops.rs`
+**AUDIT ref:** §II-B, §IV (B-2d)
+**Severity:** CRITICAL — CPU-only ops can be routed to ANE
+**Effort:** S (0.5 day)
+**Task:** T-23
 
-**Before (ANE-illegal FillLike in RMSNorm):**
-```
-eps = FillLike(mean, epsilon)     → ANE-illegal tensor creation
-biased = Add(mean, eps)           → add mean + epsilon
-```
+`validate_placement()` uses only `op.default_engine().is_none()` to determine CPU-only status. The `cpu_only_ops::is_cpu_only()` function is never consulted. This means ops like `band_part`, `logical_and/or/not` (which are on the CPU-only list but have `default_engine() → Some(PE)`) pass ANE placement validation.
 
-**After (ANE-legal Const + Add broadcasting):**
-```
-eps_scalar = Const("scalar://fp16/1e-6")  → scalar fp16 constant
-biased = Add(mean, eps_scalar)            → broadcasts scalar with tensor
-```
+Additionally, `default_engine()` and `CPU_ONLY_OPS` are independently maintained and have diverged for at least 4 ops.
 
-This matches the reference implementation pattern where `mb.add(x=mean, y=epsilon_scalar)` broadcasts the scalar correctly in CoreML MIL.
+**Fix:** Add `cpu_only_ops::is_cpu_only()` check in `validate_placement()`. Also reconcile `default_engine()` with `CPU_ONLY_OPS`.
 
 ---
 
-### ISSUE-003: `Equal` and `LessEqual` used on ANE path
+### I-03 · V6 (A12 Silicon) Mapped to A14 Family
 
-**Status:** ✅ FIXED
-**Resolution:** Eliminated entirely by ISSUE-001 fix. The `apply_rope_decode` function no longer generates Equal or LessEqual ops — it uses Gather from precomputed eye_tab/mask_tab instead.
+**Status:** ⬜ Open
+**Files:** `crates/ir/src/ane_target.rs:68`
+**AUDIT ref:** §III (CQ-13), §IV (B-3)
+**Severity:** HIGH — A12 hardware gets wrong broadcast/SDPA/LayerNorm gates
+**Effort:** M (1 day)
+**Task:** T-24
+
+`AneRevision::V6` (Apple A12 Bionic) maps to `AneFamily::A14` in `ane_target.rs`. This causes A12 silicon to get A14 family constraints:
+- Non-FP16 broadcast allowed (should be FP16-only)
+- SDPA gate uses A14 rules (should be blocked)
+- LayerNorm gate uses A14 rules (should be limited)
+
+The `broadcast_fp16_only()` method correctly returns true for `A11Legacy | A12`, but V6 never maps to A12 family, so A12 silicon never hits this code path.
+
+**Fix:** Either add an `A13` family variant for V6-V7, or map V6 to `A12` family (since A12 and A13 share FP16-only broadcast).
 
 ---
 
-## P1 — High (Incorrect Output or Broken for Non-Qwen Models)
+## P1 — HIGH (Missing Enforcement / Runtime Risks)
 
-### ISSUE-004: `build_input_alias_map()` is Qwen3-specific
+### I-04 · Interleave + Dtype Validators Dead Code (Not Wired)
 
-**Status:** 🟡 Partially Fixed (hardcoded CLI values removed, full generalization pending)
-**Files:** `crates/bridge/src/mir_to_compat.rs`
-**Resolution:** The hardcoded `rope_theta`, `uses_rope`, and `has_qk_norm` values in the CLI are now read from `ModelConfig`. The alias map in `mir_to_compat.rs` still uses Qwen/Llama naming conventions but is adequate for the HuggingFace Llama family (Llama, Mistral, Qwen, etc.).
+**Status:** ⬜ Open
+**Files:** `crates/ir/src/ane_layout.rs`, `crates/passes/src/dtype_constraints.rs`, `crates/passes/src/placement_validate.rs`
+**AUDIT ref:** §II-C, §IV (B-12)
+**Severity:** HIGH — Implemented constraint checks are never enforced
+**Effort:** S (0.5 day)
+**Task:** T-25
 
-**Remaining work:**
-- Define a `WeightNamingScheme` enum for non-Llama-family models (GPT-2, Falcon, etc.)
-- Each scheme maps canonical role names (Q, K, V, O, Gate, Up, Down) to weight name patterns
+`validate_interleave_constraints()` and `validate_channellast_constraints()` in `ane_layout.rs` are never called from any non-test code. Similarly, `is_dtype_ane_legal()`, `is_broadcast_dtype_legal()`, `is_blockwise_scale_supported()`, and `is_asymmetric_quantization_supported()` in `dtype_constraints.rs` are never called from `placement_validate.rs` or any hot-path module.
+
+**Fix:** Wire these functions into `placement_validate.rs`.
 
 ---
 
-### ISSUE-005: `output_dim_for_weight()` parses HuggingFace weight names
+### I-05 · Missing `validate_matmul_constraints()`
 
-**Status:** 🟡 Partially Fixed
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/op_constraints.rs`
+**AUDIT ref:** §II-C, §IV (B-9)
+**Severity:** HIGH — Illegal MatMul configurations pass validation
+**Effort:** S (0.5 day)
+**Task:** T-26
+
+No MatMul-specific constraint validator exists. The ANE requires depth=1 for both inputs (interleaved format), but this is never checked. MatMul is the most performance-critical ANE op.
+
+**Fix:** Add `validate_matmul_constraints()` enforcing depth=1 for both inputs, cout%ox==0, and other MatMul-specific rules from the constraint docs.
+
+---
+
+### I-06 · Missing `validate_pad_constraints()`
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/op_constraints.rs`
+**AUDIT ref:** §II-C, §IV (B-8)
+**Severity:** HIGH — Replication/symmetric/negative/batch/channel/depth padding not rejected
+**Effort:** M (1 day)
+**Task:** T-27
+
+No padding constraint validator exists. The ANE rejects:
+- Replication padding
+- Symmetric padding
+- Negative padding mode
+- Batch axis padding
+- Channel axis padding
+- Depth axis padding (for ANEC padding op)
+- Mixed padding modes across axes
+
+**Fix:** Add `validate_pad_constraints()` mirroring constraint document §4.13.
+
+---
+
+### I-07 · Reshape `.unwrap()` Panic in MIR Lowering
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/mil_lower.rs:220-221`
+**AUDIT ref:** §III (CQ-3), §IV (B-5)
+**Severity:** HIGH — Compiler panics on edge-case reshape
+**Effort:** S (0.5 day)
+**Task:** T-28
+
+`resolved.iter().position(|&d| d == 0).unwrap()` and `resolved.iter().rposition(|&d| d == 0).unwrap()` will panic if `resolved` has no zeros. This can happen when shape inference fails to produce a zero-dim placeholder for reshape inference targets.
+
+**Fix:** Return `Result` with proper error type, or use `ok_or(MilLowerError::...)` with `?`.
+
+---
+
+### I-08 · Zero-Dimension Shapes Survive to Core ML Emission
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/legality_rewrite.rs:464-465,2194,2282`, `crates/bridge/src/mir_to_compat.rs:2591-2599`
+**AUDIT ref:** §II-E, §IV (B-6)
+**Severity:** HIGH — Produces invalid Core ML models with literal zero dimensions
+**Effort:** S (0.5 day)
+**Task:** T-29
+
+Tile decomposition and attention reshape use `0` placeholders for dimensions that should be inferred. When shape inference fails (e.g., no `DecompositionContext`), zeros propagate to emitted protobuf. Core ML treats 0 as a literal zero dimension, not "infer from input." A test in `mir_to_compat.rs` even asserts that zeros survive, codifying this bug.
+
+**Fix:** Add a validation pass before emission that rejects any MIR shape containing 0 dims. Replace the test assertion with a check that zero shapes are caught.
+
+---
+
+### I-09 · `% 1 == 0` Always-True Logic Bug
+
+**Status:** ⬜ Open
+**Files:** `crates/bridge/src/mir_to_compat.rs:1265,1271`
+**AUDIT ref:** §III (CQ-1), §IV (B-10)
+**Severity:** HIGH — Likely placeholder code masking a real divisor bug
+**Effort:** S (0.5 day)
+**Task:** T-30
+
+`remaining % 1 == 0` is always true (modulo 1 is always 0). The corresponding `/ 1` divisions on lines 1266/1272 are identity operations. Line 1287 uses `product_so_far` as the divisor, suggesting lines 1265/1271 should also use `product_so_far`.
+
+**Fix:** Replace `% 1` with `% product_so_far` and remove `/ 1`.
+
+---
+
+### I-10 · SDPA Compat Missing `attention_mask` and `scale`
+
+**Status:** ⬜ Open
+**Files:** `crates/coreml-proto/src/lib.rs`
+**AUDIT ref:** §III (CQ-23), §IV (B-11)
+**Severity:** HIGH — RoPE-attention models cannot emit SDPA with masks via proto-direct
+**Effort:** M (1 day)
+**Task:** T-31
+
+`MirOp::MILScaledDotProductAttention` carries `attention_mask: Option<MirNodeId>` and `scale: Option<f32>`, but `MirOpCompat::ScaledDotProductAttention` only has `query, key, value`. The proto-direct path cannot emit SDPA with attention masks or custom scale factors.
+
+**Fix:** Add `attention_mask` and `scale` fields to `MirOpCompat::ScaledDotProductAttention` and wire through proto emission.
+
+---
+
+### I-11 · ArgMinMax Missing A18 Guard
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/placement_validate.rs`
+**AUDIT ref:** §II-D, §IV (B-7)
+**Severity:** MEDIUM — ArgMinMax silently fails on A18/M4 hardware
+**Effort:** S (0.5 day)
+**Task:** T-32
+
+LSE_7 (A18/M4) has no ArgMinMax converter. No family-version guard blocks it. `MILReduceArgmax/Argmin` have `default_engine() → Some(PE)`, so they pass placement validation on any family including A18.
+
+**Fix:** Add A18-specific check for ArgMinMax in `placement_validate.rs`.
+
+---
+
+## P2 — MEDIUM (Technical Debt / Test Gaps)
+
+### I-12 · Zero Tests for `bridge::shape_inference.rs`
+
+**Status:** ⬜ Open
+**Files:** `crates/bridge/src/shape_inference.rs`
+**AUDIT ref:** §V
+**Severity:** MEDIUM — 500+ lines of shape inference with zero test coverage
+**Effort:** M (2 days)
+**Task:** T-33
+
+Shape bugs here silently produce wrong Core ML models. Covers broadcast, concat, slice-by-index, topk, where, layer-norm, pad, expand_dims, squeeze, and more.
+
+**Fix:** Test `compat_output_shape` for every MirOp variant with concrete shapes.
+
+---
+
+### I-13 · Zero Tests for `passes::staticize.rs`
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/staticize.rs`
+**AUDIT ref:** §V
+**Severity:** MEDIUM — No tests at all for a compilation pass
+**Effort:** S (0.5 day)
+**Task:** T-34
+
+Even the current pass-through implementation needs a smoke test. Any future change introducing real staticization logic will be completely untested.
+
+**Fix:** Add basic smoke test verifying pass-through behavior.
+
+---
+
+### I-14 · `MilDtype` Missing Int4, UInt4, E4M3, E5M2
+
+**Status:** ⬜ Open
+**Files:** `crates/ir/src/common.rs:15-24`
+**AUDIT ref:** §III (CQ-15)
+**Severity:** MEDIUM — Cannot enforce Int4-per-cout-dequant or float8 rules
+**Effort:** M (1 day)
+**Task:** T-35
+
+The `MilDtype` enum only has: Fp16, Fp32, Int32, UInt8, Bool, Fp64, Int8, Int16. Missing: Int4, UInt4, E4M3, E5M2, UInt16. Without these, the constraint "Int4 Per-Cout Dequant is not supported" and "E4M3 is not supported on this architecture" cannot be enforced.
+
+**Fix:** Add missing dtype variants and enforce constraints in `dtype_constraints.rs`.
+
+---
+
+### I-15 · Model-Specific Constants in Compilation Logic
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/role_mir.rs:640-642,1103`, `crates/passes/src/legality_rewrite.rs:1077,1876,2325`, `crates/bridge/src/mir_to_compat.rs:510`, `crates/bridge/src/shape_inference.rs:54-58`
+**AUDIT ref:** §III (CQ-16, CQ-17, CQ-18, CQ-19)
+**Severity:** MEDIUM — Will cause silent miscompilation for non-Qwen3 models
+**Effort:** M (2 days)
+**Task:** T-36
+
+Hardcoded model-specific values:
+- `vocab_size = 32000` (LLaMA-2 default, wrong for Qwen3's 151936)
+- `head_dim = 128` fallback (should error rather than silently use wrong value)
+- Qwen3 weight name patterns in `build_input_alias_map()`
+- `vec![1, 512]` input shape fallback (Qwen3-0.6B assumption)
+
+**Fix:** Read these from TaskSpec/ModelConfig. Error on missing values rather than using wrong defaults.
+
+---
+
+### I-16 · No SIR→AIR Roundtrip Test with Real Shapes
+
+**Status:** ⬜ Open
 **Files:** `crates/passes/src/legality_rewrite.rs`
-**Resolution:** The `DecompositionContext::output_dim_for_weight()` method still parses weight names, but now receives its parameters from `ModelConfig` (which is populated by the tracer from actual HuggingFace config fields). This makes it work for any model that follows HuggingFace naming conventions.
+**AUDIT ref:** §V
+**Severity:** MEDIUM
+**Effort:** M (1 day)
+**Task:** T-37
 
-**Remaining work:**
-- Enrich SIR `LinearProjection` ops with explicit `output_dim` field
-- Remove `output_dim_for_weight()` from `DecompositionContext`
+19 unit tests cover individual decompositions but there's no end-to-end test using `DecompositionContext::for_decode_step_full()` with realistic Qwen3-0.6B dimensions.
 
----
-
-### ISSUE-006: Hardcoded model-specific constants in CLI
-
-**Status:** ✅ FIXED
-**Files:** `crates/cli/src/main.rs`, `crates/trace/src/graph.rs`
-**Resolution:**
-- `rope_theta` now read from `traced_graph.model_config.rope_theta` (added field with serde default 10_000.0)
-- `uses_rope` now read from `traced_graph.model_config.uses_rope`
-- `has_qk_norm` now read from `traced_graph.model_config.has_qk_norm` (added field with serde default false)
-- The Python tracer populates these from the HuggingFace config
+**Fix:** Add SIR→AIR roundtrip test with full DecompositionContext.
 
 ---
 
-### ISSUE-007: KV cache mask computation uses same CPU-only path as attention mask
+### I-17 · Unify MirOp + MirOpCompat via `ToProto` Trait
 
-**Status:** ✅ FIXED
-**Resolution:** Eliminated by ISSUE-001 fix. KV write mask now uses `Gather(eye_tab, pos, axis=0)` instead of `Equal+Cast`.
+**Status:** ⬜ Open (continues T-17)
+**Files:** `crates/coreml-proto/src/lib.rs`, `crates/bridge/src/mir_to_compat.rs`
+**AUDIT ref:** §III (CQ-20, CQ-21)
+**Severity:** MEDIUM — 167 vs ~50 variants, ~1150 lines boilerplate
+**Effort:** L (3-5 days)
+**Task:** T-38
 
----
+MirOp has 167 variants; MirOpCompat has ~50 + Unsupported. The conversion, rename, remap, and input-name extraction functions each require per-variant match arms totaling ~1150 lines that must be updated in lockstep.
 
-## P2 — Medium (Architecture / Technical Debt)
-
-### ISSUE-008: Three uncoordinated mask implementations
-
-**Status:** ✅ FIXED
-**Files:** `crates/passes/src/kv_cache_rewrite.rs`, `crates/passes/src/legality_rewrite.rs`, `crates/passes/src/static_tables.rs`
-**Resolution:** The AIR-level decomposition in `legality_rewrite.rs` now uses the unified reference pattern (precomputed tables + Gather). The `kv_cache_rewrite.rs` pass is deprecated (ISSUE-015). The `static_tables.rs` pass is superseded by the AIR-level table emission.
+**Fix:** Implement `ToProto` trait on `MirOp` to replace `MirOpCompat`. Use derive macro or visitor pattern for boilerplate.
 
 ---
 
-### ISSUE-009: `DecompositionContext` leaks model configuration across IR boundaries
+### I-18 · Proto-Direct Path Cannot Emit Palettized Weights
 
-**Status:** 🟡 Partially Fixed
-**Files:** `crates/passes/src/legality_rewrite.rs`
-**Resolution:** `DecompositionContext` now receives its parameters from `ModelConfig` (which is populated by the tracer) rather than hardcoded values. The layering violation is reduced but not eliminated — the context still carries model-level dimensions that should ideally come from the SIR graph.
+**Status:** ⬜ Open
+**Files:** `crates/coreml-proto/src/lib.rs`
+**AUDIT ref:** §III (CQ-24)
+**Severity:** MEDIUM — Major functional gap vs Python bridge
+**Effort:** M (2 days)
+**Task:** T-39
 
-**Remaining work:**
-- Enrich SIR ops with dimension info (e.g., `LinearProjection` carries `output_dim`)
-- Extract feature flags from SIR graph during traversal
-- Reduce `DecompositionContext` to only ANE-target info
+`MirOpCompat` has no variants for ConstexprLutToDense, ConstexprBlockwiseShiftScale, ConstexprCast, ConstexprLutToSparse, ConstexprSparseToDense, ConstexprSparseBlockwiseShiftScale. The Python bridge can emit palettized weights; the proto-direct path cannot.
 
----
-
-### ISSUE-010: JSON-based SIR alias resolution is fragile
-
-**Status:** Open
-**Files:** `crates/trace/src/sir_build.rs`
-**Impact:** Any change to JSON serialization could break reference resolution.
-
-**Fix:** Use typed ID references (`SirNodeId`) instead of string scanning.
+**Fix:** Add Constexpr* variants to MirOpCompat and implement proto emission.
 
 ---
 
-### ISSUE-011: `Where` → `Select` double-rewrite
+### I-19 · V17 (M1) Incorrectly Mapped to A18 Family
 
-**Status:** ✅ FIXED
-**Files:** `crates/passes/src/mil_lower.rs`, `crates/coreml-proto/src/lib.rs`, `crates/ir/src/mir.rs`
-**Resolution:**
-- The MILWhere→MILSelect rewrite has been REMOVED from `mil_lower.rs`
-- Both `where` and `select` are ANE-illegal (added to CPU_ONLY list)
-- Neither should appear in the decode_step path — the proper approach is to use precomputed mask tables + Gather + Add
-- **`default_engine()` in `mir.rs` now correctly classifies MILSelect, MILWhere, MILFill, MILFillLike, MILOneHot, MILNonZero, MILRange1d, and MILShape as `None` (CPU-only)** instead of incorrectly placing them in the PE pipeline
-- The proto emitter retains defensive handling for both ops as a fallback
+**Status:** ⬜ Open
+**Files:** `crates/ir/src/ane_target.rs:71-73`
+**AUDIT ref:** §III (CQ-14), §IV (B-4)
+**Severity:** MEDIUM — M1 gets A18's SDPA/LayerNorm gates (wrong)
+**Effort:** S (0.5 day)
+**Task:** T-40
 
----
+V17 is Apple M1, which uses A14-class ANE. The code maps V17 to A18 family, giving M1 hardware A18's SDPA and LayerNorm support (which it doesn't have).
 
-### ISSUE-012: Shared node dedup is a post-hoc workaround
-
-**Status:** Open
-**Files:** `crates/passes/src/legality_rewrite.rs`
-**Impact:** The dedup works but wastes compile time.
-
-**Fix:** Use a "prelude" emission phase before the per-layer loop to emit shared nodes once.
+**Fix:** Map V17→A14 family.
 
 ---
 
-### ISSUE-013: `RoPETableConfig::for_qwen3_0_6b()` factory method
+## P3 — LOW (Code Quality)
 
-**Status:** ✅ FIXED
-**Files:** `crates/bridge/src/static_table_resolver.rs`
-**Resolution:** Replaced with `StaticTableResolver::from_model_config(rope_theta, head_dim, seq_len)` — a generic factory that reads parameters from the model config. The deprecated `for_qwen3_0_6b` method has been removed.
+### I-20 · Formatting + Clippy Cleanup
 
----
+**Status:** ⬜ Open
+**Files:** All crates
+**AUDIT ref:** §III (CQ-9, CQ-10)
+**Severity:** LOW
+**Effort:** S (0.5 day)
+**Task:** T-41
 
-### ISSUE-014: Hardcoded shape in `role_mir.rs` IoEmbedding
+49 files need formatting, ~57 clippy warnings are auto-fixable.
 
-**Status:** ✅ FIXED
-**Files:** `crates/passes/src/role_mir.rs`
-**Resolution:** The hardcoded `shape: vec![32000, 128]` is now derived from the shard spec's output shape. The embed_dim is extracted from `spec.output_specs[0].shape[1]`, with a fallback to 128. The vocab_size (32000) remains a default since the spec doesn't carry vocab_size — this should be enriched in a future pass.
-
----
-
-### ISSUE-015: `kv_cache_rewrite.rs` SIR pass is dead code
-
-**Status:** ✅ FIXED (deprecated)
-**Files:** `crates/passes/src/kv_cache_rewrite.rs`
-**Resolution:** The pass is now marked as DEPRECATED with extensive documentation explaining:
-- It is not invoked by any active compilation pipeline
-- It generates `SirOp::Which` which is ANE-illegal
-- The current approach uses precomputed static tables + Gather (ISSUE-001)
-- The module should be removed once all downstream consumers are verified
+**Fix:** `cargo fmt && cargo clippy --fix`
 
 ---
 
-## P3 — Low (Code Quality / Future Work)
+## Pre-Audit Issues (Archived)
 
-### ISSUE-016: RMSNorm implementation lacks fp16 overflow protection
+The following issues from the previous tracker have been resolved and archived to `CHANGELOG.md`:
 
-**Status:** ✅ FIXED
-**Files:** `crates/passes/src/legality_rewrite.rs` (RMSNorm decomposition)
-**Resolution:** The RMSNorm decomposition now includes dynamic max-abs stabilization matching the reference pattern:
-1. Compute `abs_x = mb.abs(x)`
-2. Compute `max_abs = mb.reduce_max(abs_x, axes, keep_dims=True)`
-3. Clamp: `safe_max = mb.maximum(max_abs, epsilon_scalar)` (ANE-legal Const scalar)
-4. Normalize: `x_norm = mb.real_div(x, safe_max)` (prevents fp16 overflow)
-5. Compute: `x_norm_sq = mb.mul(x_norm, x_norm)` (safe: |x_norm| ≤ 1)
-6. Variance: `var = mb.reduce_mean(x_norm_sq, axes, keep_dims=True)`
-7. Epsilon: `biased = mb.add(var, epsilon_scalar)` (ANE-legal Const scalar broadcasting)
-8. Result: `rsqrt(biased) * x * weight * safe_max`
-
-All epsilon values use ANE-legal `Const` scalar + `Add`/`Maximum` broadcasting instead of ANE-illegal `FillLike`.
-
----
-
-### ISSUE-017: QK norm (SLaNC) not implemented
-
-**Status:** ✅ FIXED
-**Files:** `crates/passes/src/legality_rewrite.rs`
-**Resolution:** QK norm is fully implemented in `decompose_qk_norm()` which is called from `decompose_decode_step()` when `has_qk_norm=true`. The implementation:
-- Reshapes Q/K from 3D [B, S, H*D] to 4D [B, S, H, D]
-- Applies RMSNorm with axes=[3] (per-head normalization)
-- Uses `Const` scalar for epsilon broadcasting (ANE-legal)
-- Detects k_norm by checking the weight name for "k_norm" to use kv_heads vs num_heads
-- Reshapes back to 3D after normalization
-
----
-
-### ISSUE-018: No model architecture detection or configuration-driven compilation
-
-**Status:** 🟡 Partially Fixed
-**Files:** `crates/cli/src/main.rs`, `crates/trace/src/graph.rs`
-**Resolution:** `ModelConfig` now carries `rope_theta`, `has_qk_norm`, `uses_rope` from the tracer, eliminating the most critical hardcoded values. The tracer auto-detects model features from HuggingFace config.
-
-**Remaining work:**
-- Implement a full model architecture registry with per-family decomposition strategies
-- Provide candidates for ANE decomposition strategies and choose the best based on target hardware
-
----
-
-### ISSUE-019: `cast` from bool/int to fp16 on ANE path
-
-**Status:** ✅ FIXED
-**Resolution:** Eliminated by ISSUE-001 fix. No more bool-to-fp16 casts needed with precomputed mask tables.
-
----
-
-### ISSUE-020: Reverse ring-buffer KV cache layout not implemented
-
-**Status:** Open
-**Files:** `crates/passes/src/legality_rewrite.rs`
-**Impact:** The reference model uses a reverse ring-buffer layout where positions are written from the END of the sequence axis. MILLer writes from index 0.
-
-**Fix:** Implement the reverse ring-buffer pattern:
-1. Compute `write_idx = seq - 1 - pos_mod`
-2. Precompute mask tables in reversed layout
-3. Update the causal mask to match
-
----
-
-### ISSUE-021: `default_engine()` misclassifies CPU-only ops as ANE PE pipeline
-
-**Status:** ✅ FIXED
-**Files:** `crates/ir/src/mir.rs`
-**Resolution:** The following MIR ops were incorrectly classified under `Some(AneEngine::PE)` and have been moved to `None` (CPU-only, no ANE engine):
-- `MILSelect` — ANE has no select converter; use additive masking instead
-- `MILWhere` — ANE has no where converter; same category as select
-- `MILFill` — ANE has no fill converter; use precomputed Const instead
-- `MILFillLike` — ANE has no fill_like converter; decomposed to mul+add at proto emission
-- `MILOneHot` — ANE has no one_hot converter
-- `MILNonZero` — ANE has no non_zero converter
-- `MILRange1d` — ANE has no range converter
-- `MILShape` — ANE has no shape query converter
-
-This ensures the compiler's placement analysis correctly identifies these ops as requiring CPU fallback, preventing incorrect ANE scheduling decisions.
-
----
-
-### ISSUE-022: Scalar constant resolution for ANE-legal epsilon broadcasting
-
-**Status:** ✅ FIXED
-**Files:** `crates/bridge/src/static_table_resolver.rs`
-**Resolution:** Added scalar constant resolution via `scalar://fp16/{value}` and `scalar://fp32/{value}` value_path conventions. The `StaticTableResolver` now handles these paths by creating 1-element WeightData tensors that broadcast correctly in CoreML MIL's `mb.add`, `mb.mul`, `mb.maximum`, etc. This enables the replacement of ANE-illegal `FillLike` with `Const` scalar + `Add` broadcasting throughout the codebase.
+| Old ID | Description | Status |
+|--------|-------------|--------|
+| ISSUE-001 | Mask path uses CPU-only ops | ✅ FIXED |
+| ISSUE-002 | Fill/FillLike survive to emission | ✅ FIXED |
+| ISSUE-003 | Equal/LessEqual on ANE path | ✅ FIXED |
+| ISSUE-004 | Qwen3-specific alias map | 🟡 Partially Fixed → subsumed by I-15 |
+| ISSUE-005 | output_dim_for_weight parses HF names | 🟡 Partially Fixed → subsumed by I-15 |
+| ISSUE-006 | Hardcoded model constants in CLI | ✅ FIXED |
+| ISSUE-007 | KV mask CPU-only path | ✅ FIXED |
+| ISSUE-008 | Three mask implementations | ✅ FIXED |
+| ISSUE-009 | DecompositionContext leaks model config | 🟡 Partially Fixed → subsumed by I-15 |
+| ISSUE-010 | JSON alias resolution fragile | ⬜ Open (low priority) |
+| ISSUE-011 | Where→Select double-rewrite | ✅ FIXED |
+| ISSUE-012 | Shared node dedup post-hoc | ⬜ Open (low priority) |
+| ISSUE-013 | for_qwen3_0_6b factory | ✅ FIXED |
+| ISSUE-014 | Hardcoded shape in role_mir | ✅ FIXED |
+| ISSUE-015 | kv_cache_rewrite dead code | ✅ FIXED (deprecated) |
+| ISSUE-016 | RMSNorm fp16 overflow | ✅ FIXED |
+| ISSUE-017 | QK norm not implemented | ✅ FIXED |
+| ISSUE-018 | No model architecture detection | 🟡 Partially Fixed → subsumed by I-15 |
+| ISSUE-019 | bool→fp16 cast on ANE | ✅ FIXED |
+| ISSUE-020 | Reverse ring-buffer KV cache | ⬜ Open (medium priority) |
+| ISSUE-021 | default_engine() misclassifies ops | ✅ FIXED (partially — I-01 continues this) |
+| ISSUE-022 | Scalar constant resolution | ✅ FIXED |
 
 ---
 
 ## Summary Statistics
 
-| Priority | Total | Fixed | Partially Fixed | Open |
-|----------|-------|-------|-----------------|------|
+| Priority | Total | Open | In Progress | Fixed |
+|----------|-------|------|-------------|-------|
 | P0 | 3 | 3 | 0 | 0 |
-| P1 | 4 | 2 | 2 | 0 |
-| P2 | 8 | 5 | 1 | 2 |
-| P3 | 7 | 4 | 1 | 2 |
-| **Total** | **22** | **14** | **4** | **4** |
+| P1 | 8 | 8 | 0 | 0 |
+| P2 | 8 | 8 | 0 | 0 |
+| P3 | 1 | 1 | 0 | 0 |
+| **Total** | **20** | **20** | **0** | **0** |
 
-## Changes Made This Session
-
-### Core Fix: ISSUE-002/016/021 — Eliminate FillLike from AIR, add scalar constants, fix engine classification
-
-**File: `crates/passes/src/legality_rewrite.rs`**
-- Replaced all `AirOp::FillLike` usage in `decompose_rms_norm()` and `decompose_qk_norm()` with `AirOp::Const` scalar + `AirOp::Add` broadcasting
-- Uses `scalar://fp16/{value}` value_path convention for scalar epsilon constants
-- Two FillLike replacements: (1) epsilon for mean+eps, (2) epsilon for max_abs clamping
-- Added deprecation comments to the 1:1 FillLike SIR→AIR mapping
-
-**File: `crates/bridge/src/static_table_resolver.rs`**
-- Added `resolve_scalar()` method supporting `scalar://fp16/{value}` and `scalar://fp32/{value}` paths
-- Creates 1-element WeightData tensors that broadcast correctly in CoreML MIL
-- Added 4 tests: scalar_fp16, scalar_fp32, scalar_zero, scalar_invalid
-
-**File: `crates/ir/src/mir.rs`**
-- Moved MILSelect, MILWhere, MILFill, MILFillLike from PE pipeline to CPU-only (None)
-- Also moved MILOneHot, MILNonZero, MILRange1d, MILShape to CPU-only
-- Added detailed comments explaining why each op has no ANE converter
-
-**File: `crates/coreml-proto/src/lib.rs`**
-- Updated Fill proto emission comments to document ANE-illegal status
-- Added defensive fallback documentation
-
-**File: `crates/passes/src/kv_cache_rewrite.rs`**
-- Marked as DEPRECATED (ISSUE-015)
-- Added extensive documentation explaining the pass is dead code and generates ANE-illegal Where ops
-- Documented the current ANE-legal alternative (precomputed tables + Gather)
-
-**File: `crates/passes/src/role_mir.rs`**
-- Fixed hardcoded `shape: vec![32000, 128]` in IoEmbedding (ISSUE-014)
-- Shape now derived from spec output_specs with embed_dim fallback
-
-## Dependency Graph
-
-```
-ISSUE-001 (mask CPU ops) ─── FIXED ──→ ISSUE-002 (fill ops) ✅
-                               └──→ ISSUE-003 (Equal/LessEqual) ✅
-                               └──→ ISSUE-007 (KV mask) ✅
-                               └──→ ISSUE-008 (three masks) ✅
-                               └──→ ISSUE-019 (bool→fp16 cast) ✅
-
-ISSUE-002 (fill/fill_like) ─── FIXED ──→ ISSUE-016 (RMSNorm overflow) ✅
-                                    └──→ ISSUE-017 (QK norm) ✅
-                                    └──→ ISSUE-021 (engine misclassification) ✅
-                                    └──→ ISSUE-022 (scalar constants) ✅
-
-ISSUE-004 (alias map) ─── 🟡 partially fixed
-ISSUE-005 (output_dim) ─── 🟡 partially fixed, related to ISSUE-009
-ISSUE-006 (hardcoded config) ─── ✅ FIXED
-
-ISSUE-009 (context leak) ─── 🟡 partially fixed, related to ISSUE-005
-ISSUE-010 (JSON aliases) ─── Open
-ISSUE-011 (Where→Select) ─── ✅ FIXED (rewrite removed, engine fixed)
-ISSUE-013 (for_qwen3_0_6b) ─── ✅ FIXED
-ISSUE-014 (hardcoded shape) ─── ✅ FIXED
-ISSUE-015 (dead kv_cache_rewrite) ─── ✅ FIXED (deprecated)
-
-ISSUE-020 (reverse ring buffer) ─── Open
-ISSUE-018 (model registry) ─── 🟡 partially fixed
-```
-
-## Remaining Work (Priority Order)
-
-1. **ISSUE-020** — Implement reverse ring-buffer KV cache layout
-2. **ISSUE-005/009** — Carry output_dim in SIR ops, reduce DecompositionContext
-3. **ISSUE-010** — Replace JSON alias resolution with typed IDs
-4. **ISSUE-012** — Use prelude emission phase for shared nodes
-5. **ISSUE-004/018** — Full model architecture registry with naming schemes
+*Pre-audit issues: 14 fixed, 4 partially fixed (subsumed), 4 open (archived to CHANGELOG.md)*
