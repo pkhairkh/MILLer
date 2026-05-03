@@ -180,19 +180,19 @@
 - **Effort**: S (0.5 day)
 - **Resolution**: Ran `cargo fmt --all` across the entire workspace, reformatting 52 files. Ran `cargo clippy --fix --allow-dirty --allow-staged` to address auto-fixable warnings. Remaining 11 clippy warnings are all `too_many_arguments` (8/7 through 16/7) which require manual refactoring and are tracked by T-44. All 1099 tests pass.
 
-### T-42 · Fix Chip Comment Errors
+### T-42 · Fix Chip Comment Errors ✅
 
 - **AUDIT ref**: §III (CQ-12)
-- **Severity**: LOW
+- **Severity**: LOW → RESOLVED
 - **Effort**: S (0.5 day)
-- **Description**: A11≠M1, A12≠M2, A14≠M3 in `ane_target.rs` comments.
+- **Resolution**: Chip comment errors (A11≠M1, A12≠M2, A14≠M3) were already corrected by T-24 (which added A13 variant and fixed Mac chip-to-family mapping) and T-40 (which fixed V17=M1 mapping from A18 to A14). All revision-to-chip comments in `ane_target.rs` are now accurate: V4=A11 (iPhone 8/X), V5=A12 (iPhone XS/XR), V6=A13 (iPhone 11), V7=A14 (iPhone 12), V8=A15 (iPhone 13), V10/V11=A16/A17 (iPhone 14 Pro/15 Pro), V17=M1 (Mac), V19=A18/A18 Pro (iPhone 16), V20=M4 (Mac). Family comment for A18 updated to include both iPhone 16 and M4. No additional changes needed.
 
-### T-43 · Convert Proto `panic!()` to Result
+### T-43 · Convert Proto `panic!()` to Result ✅
 
 - **AUDIT ref**: §III (CQ-5)
-- **Severity**: LOW
+- **Severity**: LOW → RESOLVED
 - **Effort**: S (0.5 day)
-- **Description**: 5 `panic!()` calls in `coreml-proto/src/lib.rs` should return `Result<(), ProtoValidationError>`.
+- **Resolution**: Replaced 5 `panic!()` calls in proto validation functions with `Result<(), ProtoValidationError>`. Added `ProtoValidationError` struct with `kind: ProtoValidationKind`, `message: String`, and `op_name: Option<String>` fields. Added `ProtoValidationKind` enum with 6 variants: `FillDtypeMismatch`, `FillFp16FloatsStorage`, `FillFp32BytesStorage`, `ElementwiseBroadcastShapeMismatch`, `MatMulInnerDimMismatch`, `MatMulOutputShapeMismatch`. Converted 3 validation functions (`validate_fill_dtype_consistency`, `validate_elementwise_broadcast_shapes`, `validate_matmul_shapes`) from `fn(...)` to `fn(...) -> Result<(), ProtoValidationError>`. Propagated `Result` up through `function_to_apple_proto` → `convert_to_apple_proto_model`. Updated caller in `mir_to_proto.rs` to map `ProtoValidationError` into `anyhow::Error`. `ProtoValidationError` implements `Display`, `Error`, and `Clone`. Added 14 new tests: error Display with/without op_name, kind Display for all 6 variants, std::error::Error trait, valid fill/add/matmul validation pass-through, non-matching ops trivially pass, empty operations, kind equality, Clone, end-to-end `convert_to_apple_proto_model` with valid model. Test-code `panic!()` calls (assertion-style) left unchanged. All 1113 tests pass.
 
 ### T-44 · Refactor `too_many_arguments` in legality_rewrite
 
@@ -201,12 +201,12 @@
 - **Effort**: M (1 day)
 - **Description**: 8 functions with 7+ args; worst is 16 at line 1373. Use builder pattern or config struct.
 
-### T-45 · Make Deprecated `kv_cache_rewrite` Non-Public
+### T-45 · Make Deprecated `kv_cache_rewrite` Non-Public ✅
 
 - **AUDIT ref**: §III (CQ-11)
-- **Severity**: LOW
+- **Severity**: LOW → RESOLVED
 - **Effort**: S (0.5 day)
-- **Description**: Change `pub mod kv_cache_rewrite` to `pub(crate)` or remove entirely.
+- **Resolution**: Changed `pub mod kv_cache_rewrite` to `pub(crate) mod kv_cache_rewrite` in `passes/src/lib.rs`. The module was already marked `#[deprecated]` and is not used anywhere outside the `ane-passes` crate. Making it `pub(crate)` prevents external consumers from accidentally depending on this deprecated, ANE-illegal code path while keeping it accessible within the crate for any internal cleanup needs.
 
 ---
 
@@ -234,10 +234,10 @@
 | T-39 | I-18 | MEDIUM | M | ✅ |
 | T-40 | I-19 | MEDIUM | S | ✅ |
 | T-41 | I-20 | LOW | S | ✅ |
-| T-42 | — | LOW | S | ⬜ |
-| T-43 | — | LOW | S | ⬜ |
+| T-42 | — | LOW | S | ✅ |
+| T-43 | — | LOW | S | ✅ |
 | T-44 | — | LOW | M | ⬜ |
-| T-45 | — | LOW | S | ⬜ |
+| T-45 | — | LOW | S | ✅ |
 
 ---
 

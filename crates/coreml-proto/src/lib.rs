@@ -5047,6 +5047,71 @@ fn mir_op_to_apple_ops(
     }
 }
 
+// ─── Proto Validation Error Type ──────────────────────────────────
+
+/// Error type for proto validation failures.
+///
+/// These represent user-facing errors where the generated proto would be
+/// rejected by Core ML's runtime — dtype mismatches, shape inconsistencies,
+/// incompatible dimensions, etc. Previously these were `panic!()` calls,
+/// which is inappropriate for user-facing errors that should be reported
+/// gracefully rather than crashing the compiler process.
+#[derive(Debug, Clone)]
+pub struct ProtoValidationError {
+    /// Which validation check failed.
+    pub kind: ProtoValidationKind,
+    /// Human-readable diagnostic message with remediation hints.
+    pub message: String,
+    /// Name of the operation that triggered the error (if available).
+    pub op_name: Option<String>,
+}
+
+/// Category of proto validation failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProtoValidationKind {
+    /// Fill/FillLike value dtype differs from output dtype.
+    FillDtypeMismatch,
+    /// FLOAT16 fill value stored via `floats` field instead of `bytes`.
+    FillFp16FloatsStorage,
+    /// FLOAT32 fill value stored via `bytes` field instead of `floats`.
+    FillFp32BytesStorage,
+    /// Elementwise binary op output shape doesn't match broadcast result.
+    ElementwiseBroadcastShapeMismatch,
+    /// MatMul inner dimensions don't match (lhs_cols != rhs_rows).
+    MatMulInnerDimMismatch,
+    /// MatMul output shape doesn't match inferred batched matmul result.
+    MatMulOutputShapeMismatch,
+}
+
+impl std::fmt::Display for ProtoValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(op) = &self.op_name {
+            write!(f, "[{}] {}: {}", self.kind, op, self.message)
+        } else {
+            write!(f, "[{}] {}", self.kind, self.message)
+        }
+    }
+}
+
+impl std::fmt::Display for ProtoValidationKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProtoValidationKind::FillDtypeMismatch => write!(f, "FillDtypeMismatch"),
+            ProtoValidationKind::FillFp16FloatsStorage => write!(f, "FillFp16FloatsStorage"),
+            ProtoValidationKind::FillFp32BytesStorage => write!(f, "FillFp32BytesStorage"),
+            ProtoValidationKind::ElementwiseBroadcastShapeMismatch => {
+                write!(f, "ElementwiseBroadcastShapeMismatch")
+            }
+            ProtoValidationKind::MatMulInnerDimMismatch => write!(f, "MatMulInnerDimMismatch"),
+            ProtoValidationKind::MatMulOutputShapeMismatch => {
+                write!(f, "MatMulOutputShapeMismatch")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ProtoValidationError {}
+
 /// Validate that every `fill` and `fill_like` operation has a value parameter whose
 /// declared dtype matches the output dtype.  Core ML's parser rejects the model
 /// otherwise with: "In 'fill' operations, tensors parameter value[0], and output at
@@ -5057,7 +5122,9 @@ fn mir_op_to_apple_ops(
 ///   ML Program parser rejects them with "Tensor storage and type have different
 ///   number of elements".
 /// - `FLOAT32` tensors must use `floats` storage.
-fn validate_fill_dtype_consistency(operations: &[apple_proto::mil_spec::Operation]) {
+fn validate_fill_dtype_consistency(
+    operations: &[apple_proto::mil_spec::Operation],
+) -> Result<(), ProtoValidationError> {
     let float16_dtype = apple_proto::mil_spec::DataType::Float16 as i32;
     let float32_dtype = apple_proto::mil_spec::DataType::Float32 as i32;
 
@@ -5142,17 +5209,21 @@ fn validate_fill_dtype_consistency(operations: &[apple_proto::mil_spec::Operatio
 
         match (value_dtype, output_dtype) {
             (Some(vd), Some(od)) if vd != od => {
-                panic!(
-                    "{}: fill value dtype ({}) != output dtype ({}) — \
-                     Core ML requires them to match. Value is likely encoded as \
-                     FLOAT32 but output is FLOAT16; use make_immediate_float_value() \
-                     with the output dtype instead of make_immediate_float32_value().",
-                    op_name, vd, od
-                );
+                return Err(ProtoValidationError {
+                    kind: ProtoValidationKind::FillDtypeMismatch,
+                    message: format!(
+                        "fill value dtype ({}) != output dtype ({}) — \
+                         Core ML requires them to match. Value is likely encoded as \
+                         FLOAT32 but output is FLOAT16; use make_immediate_float_value() \
+                         with the output dtype instead of make_immediate_float32_value().",
+                        vd, od
+                    ),
+                    op_name: Some(op_name),
+                });
             }
             (None, _) | (_, None) => {
                 // Could not extract dtype — this shouldn't happen in practice,
-                // but don't panic since it might be a valid edge case we haven't seen.
+                // but don't error since it might be a valid edge case we haven't seen.
             }
             _ => {} // dtypes match, all good
         }
@@ -5161,24 +5232,32 @@ fn validate_fill_dtype_consistency(operations: &[apple_proto::mil_spec::Operatio
         // Core ML rejects FLOAT16 immediates stored via the `floats` field.
         match (value_dtype, storage_kind) {
             (Some(dt), Some("floats")) if dt == float16_dtype => {
-                panic!(
-                    "{}: fill value is FLOAT16 but stored via `floats` field — \
-                     Core ML rejects this with 'Tensor storage and type have different \
-                     number of elements'. Use `bytes` storage with raw f16 bits instead \
-                     (see make_immediate_float_value).",
-                    op_name
-                );
+                return Err(ProtoValidationError {
+                    kind: ProtoValidationKind::FillFp16FloatsStorage,
+                    message: format!(
+                        "fill value is FLOAT16 but stored via `floats` field — \
+                         Core ML rejects this with 'Tensor storage and type have different \
+                         number of elements'. Use `bytes` storage with raw f16 bits instead \
+                         (see make_immediate_float_value)."
+                    ),
+                    op_name: Some(op_name),
+                });
             }
             (Some(dt), Some("bytes")) if dt == float32_dtype => {
-                panic!(
-                    "{}: fill value is FLOAT32 but stored via `bytes` field — \
-                     FLOAT32 scalars should use `floats` storage.",
-                    op_name
-                );
+                return Err(ProtoValidationError {
+                    kind: ProtoValidationKind::FillFp32BytesStorage,
+                    message: format!(
+                        "fill value is FLOAT32 but stored via `bytes` field — \
+                         FLOAT32 scalars should use `floats` storage."
+                    ),
+                    op_name: Some(op_name),
+                });
             }
             _ => {} // storage/dtype pair is valid
         }
     }
+
+    Ok(())
 }
 
 /// Validate that elementwise binary ops (mul, add, sub, etc.) declare an output
@@ -5189,7 +5268,9 @@ fn validate_fill_dtype_consistency(operations: &[apple_proto::mil_spec::Operatio
 /// Core ML rejects the model with:
 ///   "Output '0' has unexpected type 'ios19.mul'. Expected tensor<fp16, [...]>;
 ///    got tensor<fp16, [...]>."
-fn validate_elementwise_broadcast_shapes(operations: &[apple_proto::mil_spec::Operation]) {
+fn validate_elementwise_broadcast_shapes(
+    operations: &[apple_proto::mil_spec::Operation],
+) -> Result<(), ProtoValidationError> {
     let elementwise_types: &[&str] = &[
         "mul",
         "add",
@@ -5317,16 +5398,22 @@ fn validate_elementwise_broadcast_shapes(operations: &[apple_proto::mil_spec::Op
             }
 
             if compatible && expected != *os {
-                panic!(
-                    "{}: {} output shape is {:?} but broadcast of x={:?} and y={:?} \
-                     produces {:?} — Core ML will reject this. The elementwise \
-                     broadcast shape inference must compute the broadcast result, \
-                     not just propagate x's shape.",
-                    op_name, op.r#type, os, sx, sy, expected
-                );
+                return Err(ProtoValidationError {
+                    kind: ProtoValidationKind::ElementwiseBroadcastShapeMismatch,
+                    message: format!(
+                        "{} output shape is {:?} but broadcast of x={:?} and y={:?} \
+                         produces {:?} — Core ML will reject this. The elementwise \
+                         broadcast shape inference must compute the broadcast result, \
+                         not just propagate x's shape.",
+                        op.r#type, os, sx, sy, expected
+                    ),
+                    op_name: Some(op_name),
+                });
             }
         }
     }
+
+    Ok(())
 }
 
 /// Validate matmul output shapes against inferred batched matmul result.
@@ -5335,7 +5422,9 @@ fn validate_elementwise_broadcast_shapes(operations: &[apple_proto::mil_spec::Op
 /// batch dims. Core ML rejects matmul ops where the declared output shape
 /// doesn't match the inferred result, or where inner dimensions are
 /// incompatible (K must match).
-fn validate_matmul_shapes(operations: &[apple_proto::mil_spec::Operation]) {
+fn validate_matmul_shapes(
+    operations: &[apple_proto::mil_spec::Operation],
+) -> Result<(), ProtoValidationError> {
     for op in operations {
         if op.r#type != "matmul" {
             continue;
@@ -5439,11 +5528,15 @@ fn validate_matmul_shapes(operations: &[apple_proto::mil_spec::Operation]) {
 
                 // Validate inner dimensions
                 if lhs_cols != rhs_rows && lhs_cols > 0 && rhs_rows > 0 {
-                    panic!(
-                        "{}: matmul inner dims incompatible: x={:?} y={:?} — \
-                         lhs_cols ({}) != rhs_rows ({}). Core ML will reject this.",
-                        op_name, sx, sy, lhs_cols, rhs_rows
-                    );
+                    return Err(ProtoValidationError {
+                        kind: ProtoValidationKind::MatMulInnerDimMismatch,
+                        message: format!(
+                            "matmul inner dims incompatible: x={:?} y={:?} — \
+                             lhs_cols ({}) != rhs_rows ({}). Core ML will reject this.",
+                            sx, sy, lhs_cols, rhs_rows
+                        ),
+                        op_name: Some(op_name),
+                    });
                 }
 
                 // Compute expected output: broadcast(batch_x, batch_y) + [lhs_rows, rhs_cols]
@@ -5475,17 +5568,23 @@ fn validate_matmul_shapes(operations: &[apple_proto::mil_spec::Operation]) {
                     expected.push(rhs_cols);
 
                     if expected != *os {
-                        panic!(
-                            "{}: matmul output shape is {:?} but inferred from x={:?} y={:?} \
-                             is {:?} — Core ML will reject this. The matmul shape inference \
-                             must compute broadcast_batch + [lhs_rows, rhs_cols], not reuse x's shape.",
-                            op_name, os, sx, sy, expected
-                        );
+                        return Err(ProtoValidationError {
+                            kind: ProtoValidationKind::MatMulOutputShapeMismatch,
+                            message: format!(
+                                "matmul output shape is {:?} but inferred from x={:?} y={:?} \
+                                 is {:?} — Core ML will reject this. The matmul shape inference \
+                                 must compute broadcast_batch + [lhs_rows, rhs_cols], not reuse x's shape.",
+                                os, sx, sy, expected
+                            ),
+                            op_name: Some(op_name),
+                        });
                     }
                 }
             }
         }
     }
+
+    Ok(())
 }
 
 /// Sanitize SSA variable identifiers in a list of operations.
@@ -5599,7 +5698,7 @@ fn function_to_apple_proto(
     func: &CoreMlFunction,
     weight_entries: &[WeightEntry],
     opset: &str,
-) -> apple_proto::mil_spec::Function {
+) -> Result<apple_proto::mil_spec::Function, ProtoValidationError> {
     // Regular tensor inputs
     let mut fn_inputs: Vec<apple_proto::mil_spec::NamedValueType> = func
         .inputs
@@ -5638,17 +5737,17 @@ fn function_to_apple_proto(
 
     // Validate fill/fill_like dtype consistency before writing.
     // Core ML rejects fill ops where the value parameter dtype differs from the output dtype.
-    validate_fill_dtype_consistency(&operations);
+    validate_fill_dtype_consistency(&operations)?;
 
     // Validate elementwise broadcast output shapes before writing.
     // Core ML rejects mul/add/etc. ops where the declared output shape doesn't match
     // the broadcast result of the inputs.
-    validate_elementwise_broadcast_shapes(&operations);
+    validate_elementwise_broadcast_shapes(&operations)?;
 
     // Validate matmul output shapes before writing.
     // Core ML rejects matmul ops where the declared output shape doesn't match
     // the inferred batched matmul result, or where inner dimensions are incompatible.
-    validate_matmul_shapes(&operations);
+    validate_matmul_shapes(&operations)?;
 
     let block = apple_proto::mil_spec::Block {
         inputs: vec![],
@@ -5660,12 +5759,12 @@ fn function_to_apple_proto(
     let mut block_specializations = HashMap::new();
     block_specializations.insert(opset.to_string(), block);
 
-    apple_proto::mil_spec::Function {
+    Ok(apple_proto::mil_spec::Function {
         inputs: fn_inputs,
         opset: opset.to_string(),
         block_specializations,
         attributes: HashMap::new(),
-    }
+    })
 }
 
 /// Convert a `CoreMlModel` to an Apple-compatible `apple_proto::Model`.
@@ -5683,7 +5782,7 @@ fn function_to_apple_proto(
 pub fn convert_to_apple_proto_model(
     model: &CoreMlModel,
     weight_entries: &[WeightEntry],
-) -> apple_proto::Model {
+) -> Result<apple_proto::Model, ProtoValidationError> {
     // The MIL opset version is independent of the specification version.
     // Apple's reference models use opset "CoreML9" even with spec version 10.
     // The opset determines which MIL ops are available; spec version determines
@@ -5726,7 +5825,7 @@ pub fn convert_to_apple_proto_model(
     let mut program_functions = HashMap::new();
     for func in &model.functions {
         program_functions
-            .insert(func.name.clone(), function_to_apple_proto(func, weight_entries, &opset));
+            .insert(func.name.clone(), function_to_apple_proto(func, weight_entries, &opset)?);
     }
 
     let program = apple_proto::mil_spec::Program {
@@ -5817,7 +5916,7 @@ pub fn convert_to_apple_proto_model(
         )
     };
 
-    apple_proto::Model {
+    Ok(apple_proto::Model {
         specification_version: model.spec_version.proto_value(),
         description: Some(apple_proto::ModelDescription {
             functions: final_function_descriptions,
@@ -5832,7 +5931,7 @@ pub fn convert_to_apple_proto_model(
         }),
         is_updatable: false,
         r#type: Some(apple_proto::model::Type::MlProgram(final_program)),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -6609,5 +6708,238 @@ mod tests {
             "should NOT have attn_mask input when attention_mask is None"
         );
         assert!(!op.inputs.contains_key("scale"), "should NOT have scale input when scale is None");
+    }
+
+    // ─── T-43: ProtoValidationError Tests ───────────────────────────
+
+    #[test]
+    fn test_proto_validation_error_display_with_op_name() {
+        let err = ProtoValidationError {
+            kind: ProtoValidationKind::FillDtypeMismatch,
+            message: "dtype mismatch".to_string(),
+            op_name: Some("fill_out".to_string()),
+        };
+        let display = format!("{}", err);
+        assert!(display.contains("FillDtypeMismatch"), "display should contain kind");
+        assert!(display.contains("fill_out"), "display should contain op name");
+        assert!(display.contains("dtype mismatch"), "display should contain message");
+    }
+
+    #[test]
+    fn test_proto_validation_error_display_without_op_name() {
+        let err = ProtoValidationError {
+            kind: ProtoValidationKind::MatMulInnerDimMismatch,
+            message: "inner dims mismatch".to_string(),
+            op_name: None,
+        };
+        let display = format!("{}", err);
+        assert!(display.contains("MatMulInnerDimMismatch"), "display should contain kind");
+        assert!(display.contains("inner dims mismatch"), "display should contain message");
+        assert!(!display.contains("None"), "display should not contain 'None' for op_name");
+    }
+
+    #[test]
+    fn test_proto_validation_kind_display() {
+        assert_eq!(format!("{}", ProtoValidationKind::FillDtypeMismatch), "FillDtypeMismatch");
+        assert_eq!(
+            format!("{}", ProtoValidationKind::FillFp16FloatsStorage),
+            "FillFp16FloatsStorage"
+        );
+        assert_eq!(
+            format!("{}", ProtoValidationKind::FillFp32BytesStorage),
+            "FillFp32BytesStorage"
+        );
+        assert_eq!(
+            format!("{}", ProtoValidationKind::ElementwiseBroadcastShapeMismatch),
+            "ElementwiseBroadcastShapeMismatch"
+        );
+        assert_eq!(
+            format!("{}", ProtoValidationKind::MatMulInnerDimMismatch),
+            "MatMulInnerDimMismatch"
+        );
+        assert_eq!(
+            format!("{}", ProtoValidationKind::MatMulOutputShapeMismatch),
+            "MatMulOutputShapeMismatch"
+        );
+    }
+
+    #[test]
+    fn test_proto_validation_error_is_std_error() {
+        let err = ProtoValidationError {
+            kind: ProtoValidationKind::FillDtypeMismatch,
+            message: "test".to_string(),
+            op_name: None,
+        };
+        let _: &dyn std::error::Error = &err;
+    }
+
+    #[test]
+    fn test_validate_fill_dtype_consistency_ok() {
+        // A well-formed fill op with matching dtypes should pass validation
+        let fill_op = mir_compat::MirOpCompat::Fill {
+            name: "fill_out".to_string(),
+            value: 1.0,
+            shape: vec![1, 512],
+            dtype: mir_compat::MilDtypeCompat::Fp16,
+        };
+        let ops = mir_op_to_apple_ops(&fill_op, &[], &std::collections::HashMap::new());
+        let result = validate_fill_dtype_consistency(&ops);
+        assert!(result.is_ok(), "valid fill should pass validation");
+    }
+
+    #[test]
+    fn test_validate_elementwise_broadcast_shapes_ok() {
+        // A well-formed add op should pass validation
+        let add_op = mir_compat::MirOpCompat::Add {
+            name: "add_out".to_string(),
+            x: "a".to_string(),
+            y: "b".to_string(),
+        };
+        let ops = mir_op_to_apple_ops(&add_op, &[], &std::collections::HashMap::new());
+        let result = validate_elementwise_broadcast_shapes(&ops);
+        assert!(result.is_ok(), "valid add should pass validation");
+    }
+
+    #[test]
+    fn test_validate_matmul_shapes_ok() {
+        // A well-formed matmul op should pass validation
+        let matmul_op = mir_compat::MirOpCompat::MatMul {
+            name: "mm_out".to_string(),
+            x: "a".to_string(),
+            y: "b".to_string(),
+            transpose_y: false,
+        };
+        let shapes = std::collections::HashMap::from([
+            ("a".to_string(), vec![1usize, 128, 64]),
+            ("b".to_string(), vec![1usize, 64, 32]),
+            ("mm_out".to_string(), vec![1usize, 128, 32]),
+        ]);
+        let ops = mir_op_to_apple_ops(&matmul_op, &[], &shapes);
+        let result = validate_matmul_shapes(&ops);
+        assert!(result.is_ok(), "valid matmul should pass validation");
+    }
+
+    #[test]
+    fn test_validate_fill_dtype_consistency_no_fill_ops() {
+        // Non-fill ops should pass fill validation trivially
+        let add_op = mir_compat::MirOpCompat::Add {
+            name: "add_out".to_string(),
+            x: "a".to_string(),
+            y: "b".to_string(),
+        };
+        let ops = mir_op_to_apple_ops(&add_op, &[], &std::collections::HashMap::new());
+        let result = validate_fill_dtype_consistency(&ops);
+        assert!(result.is_ok(), "non-fill ops should pass fill validation");
+    }
+
+    #[test]
+    fn test_validate_elementwise_no_elementwise_ops() {
+        // Non-elementwise ops should pass elementwise validation trivially
+        let fill_op = mir_compat::MirOpCompat::Fill {
+            name: "fill_out".to_string(),
+            value: 1.0,
+            shape: vec![1, 512],
+            dtype: mir_compat::MilDtypeCompat::Fp16,
+        };
+        let ops = mir_op_to_apple_ops(&fill_op, &[], &std::collections::HashMap::new());
+        let result = validate_elementwise_broadcast_shapes(&ops);
+        assert!(result.is_ok(), "non-elementwise ops should pass elementwise validation");
+    }
+
+    #[test]
+    fn test_validate_matmul_no_matmul_ops() {
+        // Non-matmul ops should pass matmul validation trivially
+        let add_op = mir_compat::MirOpCompat::Add {
+            name: "add_out".to_string(),
+            x: "a".to_string(),
+            y: "b".to_string(),
+        };
+        let ops = mir_op_to_apple_ops(&add_op, &[], &std::collections::HashMap::new());
+        let result = validate_matmul_shapes(&ops);
+        assert!(result.is_ok(), "non-matmul ops should pass matmul validation");
+    }
+
+    #[test]
+    fn test_validate_empty_operations() {
+        // Empty operations list should pass all validations
+        let ops: Vec<apple_proto::mil_spec::Operation> = vec![];
+        assert!(validate_fill_dtype_consistency(&ops).is_ok());
+        assert!(validate_elementwise_broadcast_shapes(&ops).is_ok());
+        assert!(validate_matmul_shapes(&ops).is_ok());
+    }
+
+    #[test]
+    fn test_proto_validation_error_kind_equality() {
+        // ProtoValidationKind should support equality comparison
+        assert_eq!(ProtoValidationKind::FillDtypeMismatch, ProtoValidationKind::FillDtypeMismatch);
+        assert_ne!(
+            ProtoValidationKind::FillDtypeMismatch,
+            ProtoValidationKind::FillFp16FloatsStorage
+        );
+    }
+
+    #[test]
+    fn test_proto_validation_error_clone() {
+        let err = ProtoValidationError {
+            kind: ProtoValidationKind::MatMulOutputShapeMismatch,
+            message: "shape mismatch".to_string(),
+            op_name: Some("mm_out".to_string()),
+        };
+        let cloned = err.clone();
+        assert_eq!(cloned.kind, err.kind);
+        assert_eq!(cloned.message, err.message);
+        assert_eq!(cloned.op_name, err.op_name);
+    }
+
+    #[test]
+    fn test_convert_to_apple_proto_model_valid_model() {
+        // A minimal valid model should produce Ok
+        let model = CoreMlModel {
+            spec_version: crate::SpecVersion::V7,
+            description: crate::ModelDescriptionCompat {
+                inputs: vec![crate::TensorDesc {
+                    name: "x".to_string(),
+                    dtype: crate::CoreMlDataType::Float16,
+                    shape: vec![1, 128],
+                    is_state: false,
+                }],
+                outputs: vec![crate::TensorDesc {
+                    name: "y".to_string(),
+                    dtype: crate::CoreMlDataType::Float16,
+                    shape: vec![1, 128],
+                    is_state: false,
+                }],
+                states: vec![],
+            },
+            functions: vec![CoreMlFunction {
+                name: "main".to_string(),
+                inputs: vec![crate::TensorDesc {
+                    name: "x".to_string(),
+                    dtype: crate::CoreMlDataType::Float16,
+                    shape: vec![1, 128],
+                    is_state: false,
+                }],
+                outputs: vec![crate::TensorDesc {
+                    name: "y".to_string(),
+                    dtype: crate::CoreMlDataType::Float16,
+                    shape: vec![1, 128],
+                    is_state: false,
+                }],
+                states: vec![],
+                operations: vec![mir_compat::MirOpCompat::Identity {
+                    name: "y".to_string(),
+                    x: "x".to_string(),
+                    dtype: mir_compat::MilDtypeCompat::Fp16,
+                }],
+                node_shapes: std::collections::HashMap::new(),
+            }],
+            default_function_name: "main".to_string(),
+            weights: vec![],
+            shared_weights: vec![],
+            compute_unit: crate::CoreMlComputeUnit::CpuAndNe,
+            user_defined_metadata: HashMap::new(),
+        };
+        let result = convert_to_apple_proto_model(&model, &[]);
+        assert!(result.is_ok(), "valid model should produce Ok: {:?}", result.err());
     }
 }

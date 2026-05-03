@@ -131,13 +131,13 @@ These ops are listed in `cpu_only_ops.rs` but `default_engine()` returns a non-N
 | CQ-2 | `clippy::eq_op` (deny) | `passes/mil_lower.rs:3796` | Remove redundant `perm == &[0usize,2,1,3]` second operand | HIGH |
 | CQ-3 | `.unwrap()` on reshape zero-dim search | `passes/mil_lower.rs:220-221` | **FIXED T-28**: Extracted `resolve_reshape_zeros()` returning `Result`, changed `infer_shape` to `Result<Vec<usize>>` | ~~HIGH~~ |
 | CQ-4 | `.expect()` on PIR package lookup | `ir/linear_slice.rs:321,326` | Return `Result` — missing package is a user error, not a bug | MEDIUM |
-| CQ-5 | 5 `panic!()` in proto validation | `coreml-proto/src/lib.rs:4236,4255,4264,4375,4474` | Return `Result<(), ProtoValidationError>` — dtype/shape mismatches are user-facing errors | MEDIUM |
+| CQ-5 | 5 `panic!()` in proto validation | `coreml-proto/src/lib.rs:4236,4255,4264,4375,4474` | **FIXED T-43**: Replaced with `Result<(), ProtoValidationError>` — `ProtoValidationKind` enum, `Display`/`Error`/`Clone` impls | ~~MEDIUM~~ |
 | CQ-6 | `if_same_then_else` in shard_plan | `passes/shard_plan.rs:312-320` | Three if-branches produce identical results — confirm intentional or fix | MEDIUM |
 | CQ-7 | 8 `too_many_arguments` | `passes/legality_rewrite.rs:110,164,927,1373,2176,2311,2754,2867` | Refactor into builder pattern or config struct (worst: 16 args at line 1373) | LOW |
 | CQ-8 | 19 `unnecessary_cast` | `passes/legality_rewrite.rs` (12), `bridge/shape_inference.rs` (7) | Remove `as usize` on already-`usize` variables | LOW |
-| CQ-9 | 49 files unformatted | All crates except coreml-ffi | Run `cargo fmt` | LOW |
-| CQ-10 | 85 clippy warnings total | 6 crates | ~57 auto-fixable via `cargo clippy --fix` | LOW |
-| CQ-11 | Deprecated `kv_cache_rewrite` still `pub` | `passes/src/lib.rs:21` | Make `pub(crate)` or remove entirely | LOW |
+| CQ-9 | 49 files unformatted | All crates except coreml-ffi | **FIXED T-41**: `cargo fmt --all` applied to 52 files | ~~LOW~~ |
+| CQ-10 | 85 clippy warnings total | 6 crates | **FIXED T-41**: `cargo clippy --fix` applied; 11 `too_many_arguments` remain (T-44) | ~~LOW~~ |
+| CQ-11 | Deprecated `kv_cache_rewrite` still `pub` | `passes/src/lib.rs:21` | **FIXED T-45**: Changed to `pub(crate)` | ~~LOW~~ |
 | CQ-12 | Chip comments wrong | `ir/ane_target.rs:11-22` | **FIXED T-24**: Corrected A11≠M1, A12≠M2, A14≠M3 comments; added iPhone chip IDs | ~~LOW~~ |
 | CQ-13 | V6 (A12 silicon) mapped to A14 family | `ir/ane_target.rs:68` | **FIXED T-24**: Added `AneFamily::A13`, mapped V6→A13 | ~~HIGH~~ |
 | CQ-14 | V17 (M1) mapped to A18 family | `ir/ane_target.rs:71-73` | M1 is A14-class, gets A18's SDPA/LayerNorm gates | MEDIUM |

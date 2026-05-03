@@ -2,6 +2,24 @@
 
 ## 2026-05-04
 
+### T-45 · Make Deprecated `kv_cache_rewrite` Non-Public ✅
+- **AUDIT ref**: §III (CQ-11)
+- **Severity**: LOW → RESOLVED
+- **Effort**: S (0.5 day)
+- **Resolution**: Changed `pub mod kv_cache_rewrite` to `pub(crate) mod kv_cache_rewrite` in `passes/src/lib.rs`. The module was already `#[deprecated]` and not used outside the `ane-passes` crate. `pub(crate)` prevents external consumers from accidentally depending on this ANE-illegal code path.
+
+### T-42 · Fix Chip Comment Errors ✅
+- **AUDIT ref**: §III (CQ-12)
+- **Severity**: LOW → RESOLVED
+- **Effort**: S (0.5 day)
+- **Resolution**: Chip comment errors (A11≠M1, A12≠M2, A14≠M3) were already corrected by T-24 (added A13 variant, fixed Mac chip-to-family mapping) and T-40 (fixed V17=M1 mapping). All revision-to-chip comments now accurate.
+
+### T-43 · Convert Proto `panic!()` to Result ✅
+- **AUDIT ref**: §III (CQ-5)
+- **Severity**: LOW → RESOLVED
+- **Effort**: S (0.5 day)
+- **Resolution**: Replaced 5 `panic!()` calls in proto validation functions with structured `Result<(), ProtoValidationError>` return type. Added `ProtoValidationError` struct with `kind`, `message`, and `op_name` fields. Added `ProtoValidationKind` enum with 6 variants covering all validation failure categories (fill dtype mismatch, FP16 floats storage, FP32 bytes storage, elementwise broadcast shape mismatch, matmul inner dim mismatch, matmul output shape mismatch). Converted 3 validation functions (`validate_fill_dtype_consistency`, `validate_elementwise_broadcast_shapes`, `validate_matmul_shapes`) to return `Result`. Propagated `Result` through `function_to_apple_proto` → `convert_to_apple_proto_model`. Updated caller in `mir_to_proto.rs` to map `ProtoValidationError` into `anyhow::Error` with structured diagnostic. `ProtoValidationError` implements `Display`, `Error`, and `Clone`. Test-code `panic!()` calls (assertion-style) left unchanged as they are appropriate for test assertions. Added 14 new tests. All 1113 tests pass.
+
 ### T-41 · Run `cargo fmt` and `cargo clippy --fix` ✅
 - **ISSUES ref**: I-20
 - **AUDIT ref**: §III (CQ-9, CQ-10)

@@ -467,7 +467,10 @@ pub fn model_to_protobuf_bytes(
     model: &CoreMlModel,
     weight_entries: &[WeightEntry],
 ) -> Result<Vec<u8>> {
-    let apple_model = ane_coreml_proto::convert_to_apple_proto_model(model, weight_entries);
+    let apple_model = ane_coreml_proto::convert_to_apple_proto_model(model, weight_entries)
+        .map_err(|e| {
+            anyhow::anyhow!("Core ML proto validation failed: [{}] {}", e.kind, e.message)
+        })?;
     Ok(apple_model.encode_to_vec())
 }
 
