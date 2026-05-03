@@ -10,6 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::toproto::ToProto;
 use super::common::IrNodeId;
 pub use super::common::{ComputeUnitHint, MilDtype};
 
@@ -1481,6 +1482,602 @@ impl MirOp {
             MirOp::MILTopk { .. } => "topk",
             MirOp::MILClassify { .. } => "classify",
         }
+    }
+}
+
+// ─── ToProto trait implementation ──────────────────────────────
+// T-38 (I-17): Unified proto-emission interface for MirOp.
+// Replaces per-variant match-arm boilerplate across 5+ separate match expressions.
+
+impl ToProto for MirOp {
+    fn proto_op_type(&self) -> &'static str {
+        self.mil_op_name()
+    }
+
+    fn proto_output_name(&self) -> &str {
+        match self {
+            MirOp::MILConst { name, .. } => name,
+            MirOp::MILLinear { name, .. } => name,
+            MirOp::MILMatMul { name, .. } => name,
+            MirOp::MILEinsum { name, .. } => name,
+            MirOp::MILConv { name, .. } => name,
+            MirOp::MILConvTranspose { name, .. } => name,
+            MirOp::MILAdd { name, .. } => name,
+            MirOp::MILMul { name, .. } => name,
+            MirOp::MILSub { name, .. } => name,
+            MirOp::MILMaximum { name, .. } => name,
+            MirOp::MILMinimum { name, .. } => name,
+            MirOp::MILRealDiv { name, .. } => name,
+            MirOp::MILFloorDiv { name, .. } => name,
+            MirOp::MILMod { name, .. } => name,
+            MirOp::MILPow { name, .. } => name,
+            MirOp::MILEqual { name, .. } => name,
+            MirOp::MILNotEqual { name, .. } => name,
+            MirOp::MILGreater { name, .. } => name,
+            MirOp::MILGreaterEqual { name, .. } => name,
+            MirOp::MILLess { name, .. } => name,
+            MirOp::MILLessEqual { name, .. } => name,
+            MirOp::MILLogicalAnd { name, .. } => name,
+            MirOp::MILLogicalOr { name, .. } => name,
+            MirOp::MILLogicalXor { name, .. } => name,
+            MirOp::MILAbs { name, .. } => name,
+            MirOp::MILNeg { name, .. } => name,
+            MirOp::MILSigmoid { name, .. } => name,
+            MirOp::MILTanh { name, .. } => name,
+            MirOp::MILRelu { name, .. } => name,
+            MirOp::MILRelu6 { name, .. } => name,
+            MirOp::MILLeakyRelu { name, .. } => name,
+            MirOp::MILSigmoidHard { name, .. } => name,
+            MirOp::MILThresholdedRelu { name, .. } => name,
+            MirOp::MILClampedRelu { name, .. } => name,
+            MirOp::MILLinearActivation { name, .. } => name,
+            MirOp::MILPrelu { name, .. } => name,
+            MirOp::MILSoftsign { name, .. } => name,
+            MirOp::MILSilu { name, .. } => name,
+            MirOp::MILScaledTanh { name, .. } => name,
+            MirOp::MILElu { name, .. } => name,
+            MirOp::MILSoftplus { name, .. } => name,
+            MirOp::MILSoftplusParametric { name, .. } => name,
+            MirOp::MILGelu { name, .. } => name,
+            MirOp::MILClip { name, .. } => name,
+            MirOp::MILSquare { name, .. } => name,
+            MirOp::MILThreshold { name, .. } => name,
+            MirOp::MILSqrt { name, .. } => name,
+            MirOp::MILRsqrt { name, .. } => name,
+            MirOp::MILInverse { name, .. } => name,
+            MirOp::MILCeil { name, .. } => name,
+            MirOp::MILFloor { name, .. } => name,
+            MirOp::MILRound { name, .. } => name,
+            MirOp::MILExp { name, .. } => name,
+            MirOp::MILExp2 { name, .. } => name,
+            MirOp::MILLog { name, .. } => name,
+            MirOp::MILSign { name, .. } => name,
+            MirOp::MILCos { name, .. } => name,
+            MirOp::MILSin { name, .. } => name,
+            MirOp::MILTan { name, .. } => name,
+            MirOp::MILAcos { name, .. } => name,
+            MirOp::MILAsin { name, .. } => name,
+            MirOp::MILAtan { name, .. } => name,
+            MirOp::MILCosh { name, .. } => name,
+            MirOp::MILSinh { name, .. } => name,
+            MirOp::MILAtanh { name, .. } => name,
+            MirOp::MILErf { name, .. } => name,
+            MirOp::MILLogicalNot { name, .. } => name,
+            MirOp::MILCast { name, .. } => name,
+            MirOp::MILSelect { name, .. } => name,
+            MirOp::MILWhere { name, .. } => name,
+            MirOp::MILSoftmax { name, .. } => name,
+            MirOp::MILReduceSum { name, .. } => name,
+            MirOp::MILReduceMean { name, .. } => name,
+            MirOp::MILReduceMax { name, .. } => name,
+            MirOp::MILReduceMin { name, .. } => name,
+            MirOp::MILReduceProd { name, .. } => name,
+            MirOp::MILReduceSumSquare { name, .. } => name,
+            MirOp::MILReduceL2Norm { name, .. } => name,
+            MirOp::MILReduceL1Norm { name, .. } => name,
+            MirOp::MILReduceLogSumExp { name, .. } => name,
+            MirOp::MILReduceLogSum { name, .. } => name,
+            MirOp::MILReduceArgmax { name, .. } => name,
+            MirOp::MILReduceArgmin { name, .. } => name,
+            MirOp::MILBatchNorm { name, .. } => name,
+            MirOp::MILInstanceNorm { name, .. } => name,
+            MirOp::MILLayerNorm { name, .. } => name,
+            MirOp::MILL2Norm { name, .. } => name,
+            MirOp::MILLocalResponseNorm { name, .. } => name,
+            MirOp::MILMaxPool { name, .. } => name,
+            MirOp::MILAvgPool { name, .. } => name,
+            MirOp::MILL2Pool { name, .. } => name,
+            MirOp::MILResize { name, .. } => name,
+            MirOp::MILResizeNearestNeighbor { name, .. } => name,
+            MirOp::MILResizeBilinear { name, .. } => name,
+            MirOp::MILUpsampleNearestNeighbor { name, .. } => name,
+            MirOp::MILUpsampleBilinear { name, .. } => name,
+            MirOp::MILCropResize { name, .. } => name,
+            MirOp::MILAffine { name, .. } => name,
+            MirOp::MILResample { name, .. } => name,
+            MirOp::MILReshape { name, .. } => name,
+            MirOp::MILReshapeLike { name, .. } => name,
+            MirOp::MILTranspose { name, .. } => name,
+            MirOp::MILSplit { name, .. } => name,
+            MirOp::MILConcat { name, .. } => name,
+            MirOp::MILExpandDims { name, .. } => name,
+            MirOp::MILSqueeze { name, .. } => name,
+            MirOp::MILFlatten2d { name, .. } => name,
+            MirOp::MILReverse { name, .. } => name,
+            MirOp::MILReverseSequence { name, .. } => name,
+            MirOp::MILSliceByIndex { name, .. } => name,
+            MirOp::MILSliceBySize { name, .. } => name,
+            MirOp::MILSliceUpdate { name, .. } => name,
+            MirOp::MILSlidingWindows { name, .. } => name,
+            MirOp::MILDepthToSpace { name, .. } => name,
+            MirOp::MILSpaceToDepth { name, .. } => name,
+            MirOp::MILPixelShuffle { name, .. } => name,
+            MirOp::MILPixelUnshuffle { name, .. } => name,
+            MirOp::MILBatchToSpace { name, .. } => name,
+            MirOp::MILSpaceToBatch { name, .. } => name,
+            MirOp::MILPad { name, .. } => name,
+            MirOp::MILStack { name, .. } => name,
+            MirOp::MILTile { name, .. } => name,
+            MirOp::MILCumsum { name, .. } => name,
+            MirOp::MILFill { name, .. } => name,
+            MirOp::MILFillLike { name, .. } => name,
+            MirOp::MILIdentity { name, .. } => name,
+            MirOp::MILOneHot { name, .. } => name,
+            MirOp::MILNonZero { name, .. } => name,
+            MirOp::MILArgsort { name, .. } => name,
+            MirOp::MILBandPart { name, .. } => name,
+            MirOp::MILRange1d { name, .. } => name,
+            MirOp::MILShape { name, .. } => name,
+            MirOp::MILCrop { name, .. } => name,
+            MirOp::MILGather { name, .. } => name,
+            MirOp::MILGatherAlongAxis { name, .. } => name,
+            MirOp::MILGatherNd { name, .. } => name,
+            MirOp::MILScatter { name, .. } => name,
+            MirOp::MILScatterAlongAxis { name, .. } => name,
+            MirOp::MILScatterNd { name, .. } => name,
+            MirOp::MILNonMaximumSuppression { name, .. } => name,
+            MirOp::MILScaledDotProductAttention { name, .. } => name,
+            MirOp::MILQuantize { name, .. } => name,
+            MirOp::MILDequantize { name, .. } => name,
+            MirOp::MILConstexprAffineDequantize { name, .. } => name,
+            MirOp::MILConstexprBlockwiseShiftScale { name, .. } => name,
+            MirOp::MILConstexprLutToDense { name, .. } => name,
+            MirOp::MILConstexprSparseToDense { name, .. } => name,
+            MirOp::MILConstexprCast { name, .. } => name,
+            MirOp::MILConstexprLutToSparse { name, .. } => name,
+            MirOp::MILConstexprSparseBlockwiseShiftScale { name, .. } => name,
+            MirOp::MILRnn { name, .. } => name,
+            MirOp::MILGru { name, .. } => name,
+            MirOp::MILLstm { name, .. } => name,
+            MirOp::MILCond { name, .. } => name,
+            MirOp::MILWhileLoop { name, .. } => name,
+            MirOp::MILMakeList { name, .. } => name,
+            MirOp::MILListLength { name, .. } => name,
+            MirOp::MILListWrite { name, .. } => name,
+            MirOp::MILListRead { name, .. } => name,
+            MirOp::MILListGather { name, .. } => name,
+            MirOp::MILListScatter { name, .. } => name,
+            MirOp::MILRandomBernoulli { name, .. } => name,
+            MirOp::MILRandomNormal { name, .. } => name,
+            MirOp::MILRandomUniform { name, .. } => name,
+            MirOp::MILRandomCategorical { name, .. } => name,
+            MirOp::MILReadState { name, .. } => name,
+            MirOp::MILCoremlUpdateState { name, .. } => name,
+            MirOp::MILStateWrite { name, .. } => name,
+            MirOp::MILTopk { name, .. } => name,
+            MirOp::MILClassify { name, .. } => name,
+        }
+    }
+
+    fn proto_input_refs(&self) -> Vec<String> {
+        match self {
+            // ─── Constants ───────────────────────────────────────────
+            MirOp::MILConst { .. } => vec![],
+
+            // ─── Linear / FC ─────────────────────────────────────────
+            MirOp::MILLinear { x, weight, bias, .. } => {
+                let mut refs = vec![x.0.clone(), weight.clone()];
+                if let Some(b) = bias { refs.push(b.clone()); }
+                refs
+            }
+            MirOp::MILMatMul { x, y, .. } => vec![x.0.clone(), y.0.clone()],
+            MirOp::MILEinsum { inputs, .. } => {
+                inputs.iter().map(|id| id.0.clone()).collect()
+            }
+
+            // ─── Convolution ─────────────────────────────────────────
+            MirOp::MILConv { x, weight, .. } => vec![x.0.clone(), weight.0.clone()],
+            MirOp::MILConvTranspose { x, weight, .. } => vec![x.0.clone(), weight.0.clone()],
+
+            // ─── Elementwise Binary ──────────────────────────────────
+            MirOp::MILAdd { x, y, .. }
+            | MirOp::MILMul { x, y, .. }
+            | MirOp::MILSub { x, y, .. }
+            | MirOp::MILMaximum { x, y, .. }
+            | MirOp::MILMinimum { x, y, .. }
+            | MirOp::MILRealDiv { x, y, .. }
+            | MirOp::MILFloorDiv { x, y, .. }
+            | MirOp::MILMod { x, y, .. }
+            | MirOp::MILPow { x, y, .. }
+            | MirOp::MILEqual { x, y, .. }
+            | MirOp::MILNotEqual { x, y, .. }
+            | MirOp::MILGreater { x, y, .. }
+            | MirOp::MILGreaterEqual { x, y, .. }
+            | MirOp::MILLess { x, y, .. }
+            | MirOp::MILLessEqual { x, y, .. }
+            | MirOp::MILLogicalAnd { x, y, .. }
+            | MirOp::MILLogicalOr { x, y, .. }
+            | MirOp::MILLogicalXor { x, y, .. } => vec![x.0.clone(), y.0.clone()],
+
+            // ─── Elementwise Unary (simple) ──────────────────────────
+            MirOp::MILAbs { x, .. }
+            | MirOp::MILNeg { x, .. }
+            | MirOp::MILSigmoid { x, .. }
+            | MirOp::MILTanh { x, .. }
+            | MirOp::MILRelu { x, .. }
+            | MirOp::MILRelu6 { x, .. }
+            | MirOp::MILSoftsign { x, .. }
+            | MirOp::MILSilu { x, .. }
+            | MirOp::MILSoftplus { x, .. }
+            | MirOp::MILSquare { x, .. }
+            | MirOp::MILSqrt { x, .. }
+            | MirOp::MILRsqrt { x, .. }
+            | MirOp::MILCeil { x, .. }
+            | MirOp::MILFloor { x, .. }
+            | MirOp::MILRound { x, .. }
+            | MirOp::MILExp { x, .. }
+            | MirOp::MILExp2 { x, .. }
+            | MirOp::MILSign { x, .. }
+            | MirOp::MILCos { x, .. }
+            | MirOp::MILSin { x, .. }
+            | MirOp::MILTan { x, .. }
+            | MirOp::MILAcos { x, .. }
+            | MirOp::MILAsin { x, .. }
+            | MirOp::MILAtan { x, .. }
+            | MirOp::MILCosh { x, .. }
+            | MirOp::MILSinh { x, .. }
+            | MirOp::MILAtanh { x, .. }
+            | MirOp::MILErf { x, .. }
+            | MirOp::MILLogicalNot { x, .. }
+            | MirOp::MILIdentity { x, .. }
+            | MirOp::MILNonZero { x, .. }
+            | MirOp::MILShape { x, .. } => vec![x.0.clone()],
+
+            // ─── Elementwise Unary (with scalar params) ─────────────
+            MirOp::MILLeakyRelu { x, .. }
+            | MirOp::MILSigmoidHard { x, .. }
+            | MirOp::MILThresholdedRelu { x, .. }
+            | MirOp::MILClampedRelu { x, .. }
+            | MirOp::MILLinearActivation { x, .. }
+            | MirOp::MILScaledTanh { x, .. }
+            | MirOp::MILElu { x, .. }
+            | MirOp::MILClip { x, .. }
+            | MirOp::MILThreshold { x, .. }
+            | MirOp::MILInverse { x, .. }
+            | MirOp::MILLog { x, .. } => vec![x.0.clone()],
+
+            // ─── Elementwise Unary (with String weight refs) ─────────
+            MirOp::MILPrelu { x, alpha, .. } => {
+                vec![x.0.clone(), alpha.clone()]
+            }
+            MirOp::MILSoftplusParametric { x, alpha, beta, .. } => {
+                vec![x.0.clone(), alpha.clone(), beta.clone()]
+            }
+
+            // ─── Gelu (mode is an enum string, not a ref) ───────────
+            MirOp::MILGelu { x, .. } => vec![x.0.clone()],
+
+            // ─── Cast / Softmax / Select / Where ─────────────────────
+            MirOp::MILCast { x, .. } => vec![x.0.clone()],
+            MirOp::MILSoftmax { x, .. } => vec![x.0.clone()],
+            MirOp::MILSelect { condition, x, y, .. }
+            | MirOp::MILWhere { condition, x, y, .. } => {
+                vec![condition.0.clone(), x.0.clone(), y.0.clone()]
+            }
+
+            // ─── Reduction ───────────────────────────────────────────
+            MirOp::MILReduceSum { x, .. }
+            | MirOp::MILReduceMean { x, .. }
+            | MirOp::MILReduceMax { x, .. }
+            | MirOp::MILReduceMin { x, .. }
+            | MirOp::MILReduceProd { x, .. }
+            | MirOp::MILReduceSumSquare { x, .. }
+            | MirOp::MILReduceL2Norm { x, .. }
+            | MirOp::MILReduceL1Norm { x, .. }
+            | MirOp::MILReduceLogSumExp { x, .. }
+            | MirOp::MILReduceLogSum { x, .. } => vec![x.0.clone()],
+
+            MirOp::MILReduceArgmax { x, .. }
+            | MirOp::MILReduceArgmin { x, .. } => vec![x.0.clone()],
+
+            // ─── Normalization ───────────────────────────────────────
+            MirOp::MILBatchNorm { x, mean, variance, gamma, beta, .. } => {
+                let mut refs = vec![x.0.clone(), mean.clone(), variance.clone()];
+                if let Some(g) = gamma { refs.push(g.clone()); }
+                if let Some(b) = beta { refs.push(b.clone()); }
+                refs
+            }
+            MirOp::MILInstanceNorm { x, gamma, beta, .. } => {
+                let mut refs = vec![x.0.clone()];
+                if let Some(g) = gamma { refs.push(g.clone()); }
+                if let Some(b) = beta { refs.push(b.clone()); }
+                refs
+            }
+            MirOp::MILLayerNorm { x, weight, bias, .. } => {
+                let mut refs = vec![x.0.clone(), weight.clone()];
+                if let Some(b) = bias { refs.push(b.clone()); }
+                refs
+            }
+            MirOp::MILL2Norm { x, .. } => vec![x.0.clone()],
+            MirOp::MILLocalResponseNorm { x, .. } => vec![x.0.clone()],
+
+            // ─── Pooling ─────────────────────────────────────────────
+            MirOp::MILMaxPool { x, .. }
+            | MirOp::MILAvgPool { x, .. }
+            | MirOp::MILL2Pool { x, .. } => vec![x.0.clone()],
+
+            // ─── Image Resizing ──────────────────────────────────────
+            MirOp::MILResize { x, .. }
+            | MirOp::MILResizeNearestNeighbor { x, .. }
+            | MirOp::MILResizeBilinear { x, .. }
+            | MirOp::MILUpsampleNearestNeighbor { x, .. }
+            | MirOp::MILUpsampleBilinear { x, .. } => vec![x.0.clone()],
+
+            MirOp::MILCropResize { x, boxes, box_indices, .. } => {
+                vec![x.0.clone(), boxes.0.clone(), box_indices.0.clone()]
+            }
+            MirOp::MILAffine { x, transform, .. } => {
+                vec![x.0.clone(), transform.0.clone()]
+            }
+            MirOp::MILResample { x, coordinates, .. } => {
+                vec![x.0.clone(), coordinates.0.clone()]
+            }
+
+            // ─── Tensor Transform ────────────────────────────────────
+            MirOp::MILReshape { x, .. } => vec![x.0.clone()],
+            MirOp::MILReshapeLike { x, ref_tensor, .. } => {
+                vec![x.0.clone(), ref_tensor.0.clone()]
+            }
+            MirOp::MILTranspose { x, .. } => vec![x.0.clone()],
+            MirOp::MILSplit { x, .. } => vec![x.0.clone()],
+            MirOp::MILConcat { values, .. } => {
+                values.iter().map(|id| id.0.clone()).collect()
+            }
+            MirOp::MILExpandDims { x, .. }
+            | MirOp::MILSqueeze { x, .. }
+            | MirOp::MILFlatten2d { x, .. } => vec![x.0.clone()],
+
+            MirOp::MILReverse { x, .. } => vec![x.0.clone()],
+            MirOp::MILReverseSequence { x, lengths, .. } => {
+                vec![x.0.clone(), lengths.0.clone()]
+            }
+            MirOp::MILSliceByIndex { x, .. } => vec![x.0.clone()],
+            MirOp::MILSliceBySize { x, .. } => vec![x.0.clone()],
+            MirOp::MILSliceUpdate { x, update, .. } => {
+                vec![x.0.clone(), update.0.clone()]
+            }
+            MirOp::MILSlidingWindows { x, .. } => vec![x.0.clone()],
+
+            MirOp::MILDepthToSpace { x, .. }
+            | MirOp::MILSpaceToDepth { x, .. }
+            | MirOp::MILPixelShuffle { x, .. }
+            | MirOp::MILPixelUnshuffle { x, .. }
+            | MirOp::MILBatchToSpace { x, .. }
+            | MirOp::MILSpaceToBatch { x, .. } => vec![x.0.clone()],
+
+            MirOp::MILPad { x, .. } => vec![x.0.clone()],
+            MirOp::MILStack { values, .. } => {
+                values.iter().map(|id| id.0.clone()).collect()
+            }
+            MirOp::MILTile { x, .. } => vec![x.0.clone()],
+            MirOp::MILCumsum { x, .. } => vec![x.0.clone()],
+            MirOp::MILFill { .. } => vec![],
+            MirOp::MILFillLike { ref_tensor, .. } => vec![ref_tensor.0.clone()],
+            MirOp::MILOneHot { indices, .. } => vec![indices.0.clone()],
+            MirOp::MILArgsort { x, .. } => vec![x.0.clone()],
+            MirOp::MILBandPart { x, .. } => vec![x.0.clone()],
+            MirOp::MILRange1d { .. } => vec![],
+            MirOp::MILCrop { x, .. } => vec![x.0.clone()],
+
+            // ─── Scatter / Gather ────────────────────────────────────
+            MirOp::MILGather { x, indices, .. }
+            | MirOp::MILGatherAlongAxis { x, indices, .. }
+            | MirOp::MILGatherNd { x, indices, .. } => {
+                vec![x.0.clone(), indices.0.clone()]
+            }
+            MirOp::MILScatter { x, indices, updates, .. }
+            | MirOp::MILScatterAlongAxis { x, indices, updates, .. }
+            | MirOp::MILScatterNd { x, indices, updates, .. } => {
+                vec![x.0.clone(), indices.0.clone(), updates.0.clone()]
+            }
+            MirOp::MILNonMaximumSuppression { boxes, scores, .. } => {
+                vec![boxes.0.clone(), scores.0.clone()]
+            }
+
+            // ─── Attention ───────────────────────────────────────────
+            MirOp::MILScaledDotProductAttention { query, key, value, attention_mask, .. } => {
+                let mut refs = vec![query.0.clone(), key.0.clone(), value.0.clone()];
+                if let Some(m) = attention_mask { refs.push(m.0.clone()); }
+                refs
+            }
+
+            // ─── Quantization ────────────────────────────────────────
+            MirOp::MILQuantize { x, .. }
+            | MirOp::MILDequantize { x, .. } => vec![x.0.clone()],
+
+            // ─── Constexpr / Compression ─────────────────────────────
+            MirOp::MILConstexprAffineDequantize { quantized_data, .. } => {
+                vec![quantized_data.clone()]
+            }
+            MirOp::MILConstexprBlockwiseShiftScale { data, scale, offset, .. } => {
+                vec![data.clone(), scale.clone(), offset.clone()]
+            }
+            MirOp::MILConstexprLutToDense { indices, lut, .. } => {
+                vec![indices.clone(), lut.clone()]
+            }
+            MirOp::MILConstexprSparseToDense { nonzero_data, .. } => {
+                vec![nonzero_data.clone()]
+            }
+            MirOp::MILConstexprCast { data, .. } => {
+                vec![data.clone()]
+            }
+            MirOp::MILConstexprLutToSparse { data, .. } => {
+                vec![data.clone()]
+            }
+            MirOp::MILConstexprSparseBlockwiseShiftScale { data, scale, offset, .. } => {
+                vec![data.clone(), scale.clone(), offset.clone()]
+            }
+
+            // ─── Recurrent ───────────────────────────────────────────
+            MirOp::MILRnn { x, initial_h, weight_ih, weight_hh, bias, .. } => {
+                let mut refs = vec![x.0.clone(), initial_h.0.clone(), weight_ih.clone(), weight_hh.clone()];
+                if let Some(b) = bias { refs.push(b.clone()); }
+                refs
+            }
+            MirOp::MILGru { x, initial_h, weight_ih, weight_hh, bias, .. } => {
+                let mut refs = vec![x.0.clone(), initial_h.0.clone(), weight_ih.clone(), weight_hh.clone()];
+                if let Some(b) = bias { refs.push(b.clone()); }
+                refs
+            }
+            MirOp::MILLstm { x, initial_h, initial_c, weight_ih, weight_hh, bias, .. } => {
+                let mut refs = vec![x.0.clone(), initial_h.0.clone(), initial_c.0.clone(), weight_ih.clone(), weight_hh.clone()];
+                if let Some(b) = bias { refs.push(b.clone()); }
+                refs
+            }
+
+            // ─── Control Flow ────────────────────────────────────────
+            MirOp::MILCond { pred, .. } => vec![pred.0.clone()],
+            MirOp::MILWhileLoop { loop_vars, .. } => {
+                loop_vars.iter().map(|id| id.0.clone()).collect()
+            }
+            MirOp::MILMakeList { elems, .. } => {
+                elems.iter().map(|id| id.0.clone()).collect()
+            }
+            MirOp::MILListLength { ls, .. } => vec![ls.0.clone()],
+            MirOp::MILListWrite { ls, index, value, .. } => {
+                vec![ls.0.clone(), index.0.clone(), value.0.clone()]
+            }
+            MirOp::MILListRead { ls, index, .. } => {
+                vec![ls.0.clone(), index.0.clone()]
+            }
+            MirOp::MILListGather { ls, indices, .. } => {
+                vec![ls.0.clone(), indices.0.clone()]
+            }
+            MirOp::MILListScatter { ls, indices, values, .. } => {
+                vec![ls.0.clone(), indices.0.clone(), values.0.clone()]
+            }
+
+            // ─── Random ──────────────────────────────────────────────
+            MirOp::MILRandomBernoulli { .. }
+            | MirOp::MILRandomNormal { .. }
+            | MirOp::MILRandomUniform { .. } => vec![],
+            MirOp::MILRandomCategorical { logits, .. } => vec![logits.0.clone()],
+
+            // ─── State ───────────────────────────────────────────────
+            MirOp::MILReadState { .. } => vec![],
+            MirOp::MILCoremlUpdateState { value, .. } => vec![value.0.clone()],
+            MirOp::MILStateWrite { value, .. } => vec![value.0.clone()],
+
+            // ─── Metadata / Misc ─────────────────────────────────────
+            MirOp::MILTopk { x, .. } => vec![x.0.clone()],
+            MirOp::MILClassify { x, .. } => vec![x.0.clone()],
+        }
+    }
+
+    fn is_proto_supported(&self) -> bool {
+        matches!(
+            self,
+            // Constants
+            MirOp::MILConst { .. }
+            // Linear / FC
+            | MirOp::MILLinear { .. }
+            | MirOp::MILMatMul { .. }
+            // Convolution
+            | MirOp::MILConv { .. }
+            // Elementwise Binary
+            | MirOp::MILAdd { .. }
+            | MirOp::MILMul { .. }
+            | MirOp::MILSub { .. }
+            | MirOp::MILMaximum { .. }
+            | MirOp::MILMinimum { .. }
+            | MirOp::MILRealDiv { .. }
+            | MirOp::MILFloorDiv { .. }
+            | MirOp::MILMod { .. }
+            | MirOp::MILPow { .. }
+            | MirOp::MILEqual { .. }
+            | MirOp::MILNotEqual { .. }
+            | MirOp::MILGreater { .. }
+            | MirOp::MILGreaterEqual { .. }
+            | MirOp::MILLess { .. }
+            | MirOp::MILLessEqual { .. }
+            | MirOp::MILLogicalAnd { .. }
+            | MirOp::MILLogicalOr { .. }
+            | MirOp::MILLogicalNot { .. }
+            // Elementwise Unary
+            | MirOp::MILAbs { .. }
+            | MirOp::MILNeg { .. }
+            | MirOp::MILSigmoid { .. }
+            | MirOp::MILTanh { .. }
+            | MirOp::MILRelu { .. }
+            | MirOp::MILLeakyRelu { .. }
+            | MirOp::MILSilu { .. }
+            | MirOp::MILGelu { .. }
+            | MirOp::MILClip { .. }
+            | MirOp::MILSqrt { .. }
+            | MirOp::MILRsqrt { .. }
+            | MirOp::MILCeil { .. }
+            | MirOp::MILFloor { .. }
+            | MirOp::MILRound { .. }
+            | MirOp::MILExp { .. }
+            | MirOp::MILLog { .. }
+            | MirOp::MILSign { .. }
+            | MirOp::MILCos { .. }
+            | MirOp::MILSin { .. }
+            // Cast / Select / Where / Softmax
+            | MirOp::MILCast { .. }
+            | MirOp::MILSelect { .. }
+            | MirOp::MILWhere { .. }
+            | MirOp::MILSoftmax { .. }
+            // Reduction
+            | MirOp::MILReduceSum { .. }
+            | MirOp::MILReduceMean { .. }
+            | MirOp::MILReduceMax { .. }
+            | MirOp::MILReduceMin { .. }
+            | MirOp::MILReduceProd { .. }
+            // Normalization
+            | MirOp::MILLayerNorm { .. }
+            // Tensor Transform
+            | MirOp::MILReshape { .. }
+            | MirOp::MILTranspose { .. }
+            | MirOp::MILSplit { .. }
+            | MirOp::MILConcat { .. }
+            | MirOp::MILExpandDims { .. }
+            | MirOp::MILSqueeze { .. }
+            | MirOp::MILSliceByIndex { .. }
+            | MirOp::MILSliceUpdate { .. }
+            | MirOp::MILPad { .. }
+            | MirOp::MILTile { .. }
+            | MirOp::MILFill { .. }
+            | MirOp::MILFillLike { .. }
+            | MirOp::MILIdentity { .. }
+            // Scatter / Gather
+            | MirOp::MILGather { .. }
+            | MirOp::MILTopk { .. }
+            // Attention
+            | MirOp::MILScaledDotProductAttention { .. }
+            // State
+            | MirOp::MILReadState { .. }
+            | MirOp::MILCoremlUpdateState { .. }
+            | MirOp::MILStateWrite { .. }
+            // Constexpr / Compression
+            | MirOp::MILConstexprAffineDequantize { .. }
+            | MirOp::MILConstexprBlockwiseShiftScale { .. }
+            | MirOp::MILConstexprLutToDense { .. }
+            | MirOp::MILConstexprSparseToDense { .. }
+            | MirOp::MILConstexprCast { .. }
+            | MirOp::MILConstexprLutToSparse { .. }
+            | MirOp::MILConstexprSparseBlockwiseShiftScale { .. }
+        )
     }
 }
 

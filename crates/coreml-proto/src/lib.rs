@@ -938,6 +938,661 @@ pub mod mir_compat {
         },
     }
 
+    impl MirOpCompat {
+        /// Returns the SSA output name of this operation.
+        ///
+        /// Every variant has a `name: String` field. Uses a macro to avoid
+        /// listing all variants in a hand-written match.
+        pub fn output_name(&self) -> String {
+            macro_rules! name_from_variants {
+                ($($variant:ident),* $(,)?) => {
+                    match self {
+                        $(MirOpCompat::$variant { name, .. } => name.clone(),)*
+                    }
+                };
+            }
+            name_from_variants!(
+                Const, Linear, MatMul, Add, Mul, Sub, Abs, Maximum, Minimum,
+                Reshape, Transpose, SliceByIndex, SliceUpdate, Concat, Softmax, Gelu,
+                ScaledDotProductAttention, ReadState, CoremlUpdateState, Gather,
+                ReduceMean, ReduceSum, Conv, StateWrite, Rsqrt, RealDiv, LayerNorm,
+                Topk, Cos, Sin, Cast, Split, Exp, Sigmoid, Tanh, Relu, Where, Silu,
+                Identity, Placeholder, Tile, Fill, FillLike, Neg, ExpandDims, Squeeze,
+                Sqrt, Pow, Clip, Equal, NotEqual, Greater, GreaterEqual, Less, LessEqual,
+                LogicalNot, LogicalAnd, LogicalOr, Pad, ReduceMax, ReduceMin, ReduceProd,
+                Select, LeakyRelu, FloorDiv, Mod, Ceil, Floor, Round, Sign, Log,
+                ConstexprAffineDequantize, ConstexprBlockwiseShiftScale, ConstexprLutToDense,
+                ConstexprSparseToDense, ConstexprCast, ConstexprLutToSparse,
+                ConstexprSparseBlockwiseShiftScale, Unsupported,
+            )
+        }
+
+        /// Returns all SSA input reference names.
+        ///
+        /// Replaces the `compat_input_names()` free function in `mir_to_compat.rs`.
+        /// The match arms are copied exactly from that function.
+        pub fn input_names(&self) -> Vec<String> {
+            match self {
+                MirOpCompat::Const { .. } | MirOpCompat::Placeholder { .. } => vec![],
+                MirOpCompat::Linear { x, weight_name, bias_name, .. } => {
+                    let mut names = vec![x.clone(), weight_name.clone()];
+                    if let Some(bias) = bias_name {
+                        names.push(bias.clone());
+                    }
+                    names
+                }
+                MirOpCompat::MatMul { x, y, .. }
+                | MirOpCompat::Add { x, y, .. }
+                | MirOpCompat::Mul { x, y, .. }
+                | MirOpCompat::Sub { x, y, .. }
+                | MirOpCompat::Maximum { x, y, .. }
+                | MirOpCompat::Minimum { x, y, .. }
+                | MirOpCompat::RealDiv { x, y, .. } => vec![x.clone(), y.clone()],
+                MirOpCompat::Abs { x, .. }
+                | MirOpCompat::Reshape { x, .. }
+                | MirOpCompat::Transpose { x, .. }
+                | MirOpCompat::Softmax { x, .. }
+                | MirOpCompat::Gelu { x, .. }
+                | MirOpCompat::ReduceMean { x, .. }
+                | MirOpCompat::ReduceSum { x, .. }
+                | MirOpCompat::Rsqrt { x, .. }
+                | MirOpCompat::Topk { x, .. }
+                | MirOpCompat::Cos { x, .. }
+                | MirOpCompat::Sin { x, .. }
+                | MirOpCompat::Cast { x, .. }
+                | MirOpCompat::Split { x, .. }
+                | MirOpCompat::Exp { x, .. }
+                | MirOpCompat::Sigmoid { x, .. }
+                | MirOpCompat::Tanh { x, .. }
+                | MirOpCompat::Relu { x, .. }
+                | MirOpCompat::Silu { x, .. }
+                | MirOpCompat::Identity { x, .. }
+                | MirOpCompat::Tile { x, .. } => vec![x.clone()],
+                MirOpCompat::Fill { .. } => vec![],
+                MirOpCompat::FillLike { ref_tensor, .. } => vec![ref_tensor.clone()],
+                MirOpCompat::Neg { x, .. } => vec![x.clone()],
+                MirOpCompat::Gather { x, indices, .. } => vec![x.clone(), indices.clone()],
+                MirOpCompat::SliceByIndex { x, .. } => vec![x.clone()],
+                MirOpCompat::SliceUpdate { x, update, .. } => vec![x.clone(), update.clone()],
+                MirOpCompat::Concat { values, .. } => values.clone(),
+                MirOpCompat::ScaledDotProductAttention { query, key, value, attention_mask, .. } => {
+                    let mut names = vec![query.clone(), key.clone(), value.clone()];
+                    if let Some(mask) = attention_mask {
+                        names.push(mask.clone());
+                    }
+                    names
+                }
+                MirOpCompat::ReadState { state_id, .. } => vec![state_id.clone()],
+                MirOpCompat::CoremlUpdateState { state_id, value, .. } => {
+                    vec![state_id.clone(), value.clone()]
+                }
+                MirOpCompat::Conv { x, weight, .. } => vec![x.clone(), weight.clone()],
+                MirOpCompat::StateWrite { state_ref, value, .. } => vec![state_ref.clone(), value.clone()],
+                MirOpCompat::LayerNorm { x, weight_name, bias_name, .. } => {
+                    let mut names = vec![x.clone(), weight_name.clone()];
+                    if let Some(bias) = bias_name {
+                        names.push(bias.clone());
+                    }
+                    names
+                }
+                MirOpCompat::Where { condition, x, y, .. } => vec![condition.clone(), x.clone(), y.clone()],
+                // Unary ops
+                MirOpCompat::Sqrt { x, .. }
+                | MirOpCompat::LogicalNot { x, .. }
+                | MirOpCompat::Ceil { x, .. }
+                | MirOpCompat::Floor { x, .. }
+                | MirOpCompat::Round { x, .. }
+                | MirOpCompat::Sign { x, .. }
+                | MirOpCompat::Log { x, .. } => vec![x.clone()],
+                // Binary ops
+                MirOpCompat::Pow { x, y, .. }
+                | MirOpCompat::Equal { x, y, .. }
+                | MirOpCompat::NotEqual { x, y, .. }
+                | MirOpCompat::Greater { x, y, .. }
+                | MirOpCompat::GreaterEqual { x, y, .. }
+                | MirOpCompat::Less { x, y, .. }
+                | MirOpCompat::LessEqual { x, y, .. }
+                | MirOpCompat::LogicalAnd { x, y, .. }
+                | MirOpCompat::LogicalOr { x, y, .. }
+                | MirOpCompat::FloorDiv { x, y, .. }
+                | MirOpCompat::Mod { x, y, .. } => vec![x.clone(), y.clone()],
+                // Axis-based ops
+                MirOpCompat::ExpandDims { x, .. } | MirOpCompat::Squeeze { x, .. } => vec![x.clone()],
+                // Clip: unary with scalar params
+                MirOpCompat::Clip { x, .. } => vec![x.clone()],
+                // Pad: unary with scalar/vector params
+                MirOpCompat::Pad { x, .. } => vec![x.clone()],
+                // Reduce ops: unary with axes
+                MirOpCompat::ReduceMax { x, .. }
+                | MirOpCompat::ReduceMin { x, .. }
+                | MirOpCompat::ReduceProd { x, .. } => vec![x.clone()],
+                // Select: ternary (like Where)
+                MirOpCompat::Select { condition, x, y, .. } => {
+                    vec![condition.clone(), x.clone(), y.clone()]
+                }
+                // LeakyRelu: unary with alpha param
+                MirOpCompat::LeakyRelu { x, .. } => vec![x.clone()],
+                // T-39: Constexpr weight compression ops.
+                // These use weight-name references as inputs (resolved to MIL Const ops).
+                MirOpCompat::ConstexprAffineDequantize { quantized_data, .. } => {
+                    vec![quantized_data.clone()]
+                }
+                MirOpCompat::ConstexprBlockwiseShiftScale { data, scale, offset, .. } => {
+                    vec![data.clone(), scale.clone(), offset.clone()]
+                }
+                MirOpCompat::ConstexprLutToDense { indices, lut, .. } => vec![indices.clone(), lut.clone()],
+                MirOpCompat::ConstexprSparseToDense { nonzero_data, .. } => vec![nonzero_data.clone()],
+                MirOpCompat::ConstexprCast { data, .. } => vec![data.clone()],
+                MirOpCompat::ConstexprLutToSparse { data, .. } => vec![data.clone()],
+                MirOpCompat::ConstexprSparseBlockwiseShiftScale { data, scale, offset, .. } => {
+                    vec![data.clone(), scale.clone(), offset.clone()]
+                }
+                MirOpCompat::Unsupported { .. } => vec![],
+            }
+        }
+
+        /// Remaps all input references using the provided function, keeping
+        /// non-input fields unchanged.
+        ///
+        /// Replaces the `remap_compat_inputs()` free function in `mir_to_compat.rs`.
+        /// Instead of an alias map, takes a generic closure `f` that transforms
+        /// each input String field.
+        pub fn remap_inputs(self, f: impl Fn(String) -> String) -> MirOpCompat {
+            match self {
+                MirOpCompat::Linear { name, x, weight_name, bias_name } => MirOpCompat::Linear {
+                    name,
+                    x: f(x),
+                    weight_name: f(weight_name),
+                    bias_name: bias_name.map(&f),
+                },
+                MirOpCompat::MatMul { name, x, y, transpose_y } => MirOpCompat::MatMul {
+                    name,
+                    x: f(x),
+                    y: f(y),
+                    transpose_y,
+                },
+                MirOpCompat::Add { name, x, y } => {
+                    MirOpCompat::Add { name, x: f(x), y: f(y) }
+                }
+                MirOpCompat::Mul { name, x, y } => {
+                    MirOpCompat::Mul { name, x: f(x), y: f(y) }
+                }
+                MirOpCompat::Sub { name, x, y } => {
+                    MirOpCompat::Sub { name, x: f(x), y: f(y) }
+                }
+                MirOpCompat::Maximum { name, x, y } => {
+                    MirOpCompat::Maximum { name, x: f(x), y: f(y) }
+                }
+                MirOpCompat::Minimum { name, x, y } => {
+                    MirOpCompat::Minimum { name, x: f(x), y: f(y) }
+                }
+                MirOpCompat::RealDiv { name, x, y } => {
+                    MirOpCompat::RealDiv { name, x: f(x), y: f(y) }
+                }
+                MirOpCompat::Abs { name, x } => MirOpCompat::Abs { name, x: f(x) },
+                MirOpCompat::Reshape { name, x, shape } => {
+                    MirOpCompat::Reshape { name, x: f(x), shape }
+                }
+                MirOpCompat::Transpose { name, x, perm } => {
+                    MirOpCompat::Transpose { name, x: f(x), perm }
+                }
+                MirOpCompat::SliceByIndex {
+                    name, x, begin, end, stride, begin_mask, end_mask, squeeze_mask,
+                } => MirOpCompat::SliceByIndex {
+                    name,
+                    x: f(x),
+                    begin,
+                    end,
+                    stride,
+                    begin_mask,
+                    end_mask,
+                    squeeze_mask,
+                },
+                MirOpCompat::SliceUpdate { name, x, update, begin, end } => MirOpCompat::SliceUpdate {
+                    name,
+                    x: f(x),
+                    update: f(update),
+                    begin,
+                    end,
+                },
+                MirOpCompat::Concat { name, values, axis } => MirOpCompat::Concat {
+                    name,
+                    values: values.into_iter().map(&f).collect(),
+                    axis,
+                },
+                MirOpCompat::Softmax { name, x, axis } => {
+                    MirOpCompat::Softmax { name, x: f(x), axis }
+                },
+                MirOpCompat::Gelu { name, x, mode } => {
+                    MirOpCompat::Gelu { name, x: f(x), mode }
+                },
+                MirOpCompat::ScaledDotProductAttention {
+                    name, query, key, value, attention_mask, scale,
+                } => MirOpCompat::ScaledDotProductAttention {
+                    name,
+                    query: f(query),
+                    key: f(key),
+                    value: f(value),
+                    attention_mask: attention_mask.map(&f),
+                    scale,
+                },
+                MirOpCompat::CoremlUpdateState { name, state_id, value } => {
+                    MirOpCompat::CoremlUpdateState {
+                        name,
+                        state_id: f(state_id),
+                        value: f(value),
+                    }
+                },
+                MirOpCompat::Gather { name, x, indices, axis } => MirOpCompat::Gather {
+                    name,
+                    x: f(x),
+                    indices: f(indices),
+                    axis,
+                },
+                MirOpCompat::ReduceMean { name, x, axes, keep_dims } => {
+                    MirOpCompat::ReduceMean { name, x: f(x), axes, keep_dims }
+                },
+                MirOpCompat::ReduceSum { name, x, axes, keep_dims } => {
+                    MirOpCompat::ReduceSum { name, x: f(x), axes, keep_dims }
+                },
+                MirOpCompat::Conv { name, x, weight, pad_type, groups } => MirOpCompat::Conv {
+                    name,
+                    x: f(x),
+                    weight: f(weight),
+                    pad_type,
+                    groups,
+                },
+                MirOpCompat::StateWrite { name, state_ref, value } => MirOpCompat::StateWrite {
+                    name,
+                    state_ref: f(state_ref),
+                    value: f(value),
+                },
+                MirOpCompat::Rsqrt { name, x } => MirOpCompat::Rsqrt { name, x: f(x) },
+                MirOpCompat::LayerNorm { name, x, weight_name, bias_name, epsilon, axes } => {
+                    MirOpCompat::LayerNorm {
+                        name,
+                        x: f(x),
+                        weight_name: f(weight_name),
+                        bias_name: bias_name.map(&f),
+                        epsilon,
+                        axes,
+                    }
+                }
+                MirOpCompat::Topk { name, x, k, axis } => {
+                    MirOpCompat::Topk { name, x: f(x), k, axis }
+                }
+                MirOpCompat::Cos { name, x } => MirOpCompat::Cos { name, x: f(x) },
+                MirOpCompat::Sin { name, x } => MirOpCompat::Sin { name, x: f(x) },
+                MirOpCompat::Cast { name, x, dtype } => {
+                    MirOpCompat::Cast { name, x: f(x), dtype }
+                }
+                MirOpCompat::Split { name, x, axis, num_splits } => {
+                    MirOpCompat::Split { name, x: f(x), axis, num_splits }
+                }
+                MirOpCompat::Exp { name, x } => MirOpCompat::Exp { name, x: f(x) },
+                MirOpCompat::Sigmoid { name, x } => {
+                    MirOpCompat::Sigmoid { name, x: f(x) }
+                }
+                MirOpCompat::Tanh { name, x } => MirOpCompat::Tanh { name, x: f(x) },
+                MirOpCompat::Relu { name, x } => MirOpCompat::Relu { name, x: f(x) },
+                MirOpCompat::Where { name, condition, x, y } => MirOpCompat::Where {
+                    name,
+                    condition: f(condition),
+                    x: f(x),
+                    y: f(y),
+                },
+                MirOpCompat::Silu { name, x } => MirOpCompat::Silu { name, x: f(x) },
+                MirOpCompat::Identity { name, x, dtype } => {
+                    MirOpCompat::Identity { name, x: f(x), dtype }
+                }
+                MirOpCompat::Tile { name, x, reps } => {
+                    MirOpCompat::Tile { name, x: f(x), reps }
+                }
+                MirOpCompat::Fill { name, shape, value, dtype } => {
+                    // Fill has no tensor inputs — nothing to remap
+                    MirOpCompat::Fill { name, shape, value, dtype }
+                }
+                MirOpCompat::FillLike { name, ref_tensor, value, dtype } => MirOpCompat::FillLike {
+                    name,
+                    ref_tensor: f(ref_tensor),
+                    value,
+                    dtype,
+                },
+                MirOpCompat::Neg { name, x } => MirOpCompat::Neg { name, x: f(x) },
+                // Unary ops
+                MirOpCompat::Sqrt { name, x } => MirOpCompat::Sqrt { name, x: f(x) },
+                MirOpCompat::LogicalNot { name, x } => {
+                    MirOpCompat::LogicalNot { name, x: f(x) }
+                }
+                MirOpCompat::Ceil { name, x } => MirOpCompat::Ceil { name, x: f(x) },
+                MirOpCompat::Floor { name, x } => MirOpCompat::Floor { name, x: f(x) },
+                MirOpCompat::Round { name, x } => MirOpCompat::Round { name, x: f(x) },
+                MirOpCompat::Sign { name, x } => MirOpCompat::Sign { name, x: f(x) },
+                MirOpCompat::Log { name, x } => MirOpCompat::Log { name, x: f(x) },
+                // Binary ops
+                MirOpCompat::Pow { name, x, y } => {
+                    MirOpCompat::Pow { name, x: f(x), y: f(y) }
+                }
+                MirOpCompat::Equal { name, x, y } => {
+                    MirOpCompat::Equal { name, x: f(x), y: f(y) }
+                }
+                MirOpCompat::NotEqual { name, x, y } => {
+                    MirOpCompat::NotEqual { name, x: f(x), y: f(y) }
+                }
+                MirOpCompat::Greater { name, x, y } => {
+                    MirOpCompat::Greater { name, x: f(x), y: f(y) }
+                }
+                MirOpCompat::GreaterEqual { name, x, y } => {
+                    MirOpCompat::GreaterEqual { name, x: f(x), y: f(y) }
+                }
+                MirOpCompat::Less { name, x, y } => {
+                    MirOpCompat::Less { name, x: f(x), y: f(y) }
+                }
+                MirOpCompat::LessEqual { name, x, y } => {
+                    MirOpCompat::LessEqual { name, x: f(x), y: f(y) }
+                }
+                MirOpCompat::LogicalAnd { name, x, y } => {
+                    MirOpCompat::LogicalAnd { name, x: f(x), y: f(y) }
+                }
+                MirOpCompat::LogicalOr { name, x, y } => {
+                    MirOpCompat::LogicalOr { name, x: f(x), y: f(y) }
+                }
+                MirOpCompat::FloorDiv { name, x, y } => {
+                    MirOpCompat::FloorDiv { name, x: f(x), y: f(y) }
+                }
+                MirOpCompat::Mod { name, x, y } => {
+                    MirOpCompat::Mod { name, x: f(x), y: f(y) }
+                }
+                // Axis-based ops
+                MirOpCompat::ExpandDims { name, x, axis } => {
+                    MirOpCompat::ExpandDims { name, x: f(x), axis }
+                }
+                MirOpCompat::Squeeze { name, x, axis } => {
+                    MirOpCompat::Squeeze { name, x: f(x), axis }
+                }
+                // Clip
+                MirOpCompat::Clip { name, x, min_val, max_val } => {
+                    MirOpCompat::Clip { name, x: f(x), min_val, max_val }
+                }
+                // Pad
+                MirOpCompat::Pad { name, x, pad_amounts, mode, constant_value } => {
+                    MirOpCompat::Pad { name, x: f(x), pad_amounts, mode, constant_value }
+                }
+                // Reduce ops
+                MirOpCompat::ReduceMax { name, x, axes, keep_dims } => {
+                    MirOpCompat::ReduceMax { name, x: f(x), axes, keep_dims }
+                }
+                MirOpCompat::ReduceMin { name, x, axes, keep_dims } => {
+                    MirOpCompat::ReduceMin { name, x: f(x), axes, keep_dims }
+                }
+                MirOpCompat::ReduceProd { name, x, axes, keep_dims } => {
+                    MirOpCompat::ReduceProd { name, x: f(x), axes, keep_dims }
+                }
+                // Select
+                MirOpCompat::Select { name, condition, x, y } => MirOpCompat::Select {
+                    name,
+                    condition: f(condition),
+                    x: f(x),
+                    y: f(y),
+                },
+                // LeakyRelu
+                MirOpCompat::LeakyRelu { name, x, alpha } => {
+                    MirOpCompat::LeakyRelu { name, x: f(x), alpha }
+                }
+                // T-39: Constexpr weight compression ops — remap weight-name references.
+                MirOpCompat::ConstexprAffineDequantize {
+                    name, quantized_data, scale, zero_point, axis,
+                } => MirOpCompat::ConstexprAffineDequantize {
+                    name,
+                    quantized_data: f(quantized_data),
+                    scale,
+                    zero_point,
+                    axis,
+                },
+                MirOpCompat::ConstexprBlockwiseShiftScale { name, data, scale, offset, block_size } => {
+                    MirOpCompat::ConstexprBlockwiseShiftScale {
+                        name,
+                        data: f(data),
+                        scale: f(scale),
+                        offset: f(offset),
+                        block_size,
+                    }
+                }
+                MirOpCompat::ConstexprLutToDense { name, indices, lut, num_bits } => {
+                    MirOpCompat::ConstexprLutToDense {
+                        name,
+                        indices: f(indices),
+                        lut: f(lut),
+                        num_bits,
+                    }
+                }
+                MirOpCompat::ConstexprSparseToDense { name, nonzero_data, shape, default_value } => {
+                    MirOpCompat::ConstexprSparseToDense {
+                        name,
+                        nonzero_data: f(nonzero_data),
+                        shape,
+                        default_value,
+                    }
+                }
+                MirOpCompat::ConstexprCast { name, data, dtype } => {
+                    MirOpCompat::ConstexprCast { name, data: f(data), dtype }
+                }
+                MirOpCompat::ConstexprLutToSparse { name, data, num_bits } => {
+                    MirOpCompat::ConstexprLutToSparse { name, data: f(data), num_bits }
+                }
+                MirOpCompat::ConstexprSparseBlockwiseShiftScale {
+                    name, data, scale, offset, block_size, block_axis,
+                } => MirOpCompat::ConstexprSparseBlockwiseShiftScale {
+                    name,
+                    data: f(data),
+                    scale: f(scale),
+                    offset: f(offset),
+                    block_size,
+                    block_axis,
+                },
+                // Variants with no remappable inputs: pass through unchanged.
+                other => other,
+            }
+        }
+
+        /// Replaces the `name` field with `new_name`, keeping all other fields unchanged.
+        ///
+        /// Replaces the `rename_compat_output()` free function in `mir_to_compat.rs`.
+        /// The match arms are copied exactly from that function.
+        pub fn rename_output(self, new_name: String) -> MirOpCompat {
+            match self {
+                MirOpCompat::Const { name: _, data, dtype, shape } => {
+                    MirOpCompat::Const { name: new_name, data, dtype, shape }
+                }
+                MirOpCompat::Linear { name: _, x, weight_name, bias_name } => {
+                    MirOpCompat::Linear { name: new_name, x, weight_name, bias_name }
+                }
+                MirOpCompat::MatMul { name: _, x, y, transpose_y } => {
+                    MirOpCompat::MatMul { name: new_name, x, y, transpose_y }
+                }
+                MirOpCompat::Add { name: _, x, y } => MirOpCompat::Add { name: new_name, x, y },
+                MirOpCompat::Mul { name: _, x, y } => MirOpCompat::Mul { name: new_name, x, y },
+                MirOpCompat::Sub { name: _, x, y } => MirOpCompat::Sub { name: new_name, x, y },
+                MirOpCompat::Abs { name: _, x } => MirOpCompat::Abs { name: new_name, x },
+                MirOpCompat::Maximum { name: _, x, y } => MirOpCompat::Maximum { name: new_name, x, y },
+                MirOpCompat::Minimum { name: _, x, y } => MirOpCompat::Minimum { name: new_name, x, y },
+                MirOpCompat::Reshape { name: _, x, shape } => {
+                    MirOpCompat::Reshape { name: new_name, x, shape }
+                }
+                MirOpCompat::Transpose { name: _, x, perm } => {
+                    MirOpCompat::Transpose { name: new_name, x, perm }
+                }
+                MirOpCompat::SliceByIndex {
+                    name: _, x, begin, end, stride, begin_mask, end_mask, squeeze_mask,
+                } => MirOpCompat::SliceByIndex {
+                    name: new_name, x, begin, end, stride, begin_mask, end_mask, squeeze_mask,
+                },
+                MirOpCompat::SliceUpdate { name: _, x, update, begin, end } => {
+                    MirOpCompat::SliceUpdate { name: new_name, x, update, begin, end }
+                }
+                MirOpCompat::Concat { name: _, values, axis } => {
+                    MirOpCompat::Concat { name: new_name, values, axis }
+                }
+                MirOpCompat::Softmax { name: _, x, axis } => {
+                    MirOpCompat::Softmax { name: new_name, x, axis }
+                }
+                MirOpCompat::Gelu { name: _, x, mode } => MirOpCompat::Gelu { name: new_name, x, mode },
+                MirOpCompat::ScaledDotProductAttention {
+                    name: _, query, key, value, attention_mask, scale,
+                } => MirOpCompat::ScaledDotProductAttention {
+                    name: new_name, query, key, value, attention_mask, scale,
+                },
+                MirOpCompat::ReadState { name: _, state_id, shape, dtype } => {
+                    MirOpCompat::ReadState { name: new_name, state_id, shape, dtype }
+                }
+                MirOpCompat::CoremlUpdateState { name: _, state_id, value } => {
+                    MirOpCompat::CoremlUpdateState { name: new_name, state_id, value }
+                }
+                MirOpCompat::Gather { name: _, x, indices, axis } => {
+                    MirOpCompat::Gather { name: new_name, x, indices, axis }
+                }
+                MirOpCompat::ReduceMean { name: _, x, axes, keep_dims } => {
+                    MirOpCompat::ReduceMean { name: new_name, x, axes, keep_dims }
+                }
+                MirOpCompat::ReduceSum { name: _, x, axes, keep_dims } => {
+                    MirOpCompat::ReduceSum { name: new_name, x, axes, keep_dims }
+                }
+                MirOpCompat::Conv { name: _, x, weight, pad_type, groups } => {
+                    MirOpCompat::Conv { name: new_name, x, weight, pad_type, groups }
+                }
+                MirOpCompat::StateWrite { name: _, state_ref, value } => {
+                    MirOpCompat::StateWrite { name: new_name, state_ref, value }
+                }
+                MirOpCompat::Rsqrt { name: _, x } => MirOpCompat::Rsqrt { name: new_name, x },
+                MirOpCompat::RealDiv { name: _, x, y } => MirOpCompat::RealDiv { name: new_name, x, y },
+                MirOpCompat::LayerNorm { name: _, x, weight_name, bias_name, epsilon, axes } => {
+                    MirOpCompat::LayerNorm { name: new_name, x, weight_name, bias_name, epsilon, axes }
+                }
+                MirOpCompat::Topk { name: _, x, k, axis } => {
+                    MirOpCompat::Topk { name: new_name, x, k, axis }
+                }
+                MirOpCompat::Cos { name: _, x } => MirOpCompat::Cos { name: new_name, x },
+                MirOpCompat::Sin { name: _, x } => MirOpCompat::Sin { name: new_name, x },
+                MirOpCompat::Cast { name: _, x, dtype } => MirOpCompat::Cast { name: new_name, x, dtype },
+                MirOpCompat::Split { name: _, x, axis, num_splits } => {
+                    MirOpCompat::Split { name: new_name, x, axis, num_splits }
+                }
+                MirOpCompat::Exp { name: _, x } => MirOpCompat::Exp { name: new_name, x },
+                MirOpCompat::Sigmoid { name: _, x } => MirOpCompat::Sigmoid { name: new_name, x },
+                MirOpCompat::Tanh { name: _, x } => MirOpCompat::Tanh { name: new_name, x },
+                MirOpCompat::Relu { name: _, x } => MirOpCompat::Relu { name: new_name, x },
+                MirOpCompat::Where { name: _, condition, x, y } => {
+                    MirOpCompat::Where { name: new_name, condition, x, y }
+                }
+                MirOpCompat::Silu { name: _, x } => MirOpCompat::Silu { name: new_name, x },
+                MirOpCompat::Identity { name: _, x, dtype } => {
+                    MirOpCompat::Identity { name: new_name, x, dtype }
+                }
+                MirOpCompat::Placeholder { name: _, dtype } => {
+                    MirOpCompat::Placeholder { name: new_name, dtype }
+                }
+                MirOpCompat::Tile { name: _, x, reps } => MirOpCompat::Tile { name: new_name, x, reps },
+                MirOpCompat::Fill { name: _, shape, value, dtype } => {
+                    MirOpCompat::Fill { name: new_name, shape, value, dtype }
+                }
+                MirOpCompat::FillLike { name: _, ref_tensor, value, dtype } => {
+                    MirOpCompat::FillLike { name: new_name, ref_tensor, value, dtype }
+                }
+                MirOpCompat::Neg { name: _, x } => MirOpCompat::Neg { name: new_name, x },
+                // Unary ops
+                MirOpCompat::Sqrt { name: _, x } => MirOpCompat::Sqrt { name: new_name, x },
+                MirOpCompat::LogicalNot { name: _, x } => MirOpCompat::LogicalNot { name: new_name, x },
+                MirOpCompat::Ceil { name: _, x } => MirOpCompat::Ceil { name: new_name, x },
+                MirOpCompat::Floor { name: _, x } => MirOpCompat::Floor { name: new_name, x },
+                MirOpCompat::Round { name: _, x } => MirOpCompat::Round { name: new_name, x },
+                MirOpCompat::Sign { name: _, x } => MirOpCompat::Sign { name: new_name, x },
+                MirOpCompat::Log { name: _, x } => MirOpCompat::Log { name: new_name, x },
+                // Binary ops
+                MirOpCompat::Pow { name: _, x, y } => MirOpCompat::Pow { name: new_name, x, y },
+                MirOpCompat::Equal { name: _, x, y } => MirOpCompat::Equal { name: new_name, x, y },
+                MirOpCompat::NotEqual { name: _, x, y } => MirOpCompat::NotEqual { name: new_name, x, y },
+                MirOpCompat::Greater { name: _, x, y } => MirOpCompat::Greater { name: new_name, x, y },
+                MirOpCompat::GreaterEqual { name: _, x, y } => {
+                    MirOpCompat::GreaterEqual { name: new_name, x, y }
+                }
+                MirOpCompat::Less { name: _, x, y } => MirOpCompat::Less { name: new_name, x, y },
+                MirOpCompat::LessEqual { name: _, x, y } => MirOpCompat::LessEqual { name: new_name, x, y },
+                MirOpCompat::LogicalAnd { name: _, x, y } => {
+                    MirOpCompat::LogicalAnd { name: new_name, x, y }
+                }
+                MirOpCompat::LogicalOr { name: _, x, y } => MirOpCompat::LogicalOr { name: new_name, x, y },
+                MirOpCompat::FloorDiv { name: _, x, y } => MirOpCompat::FloorDiv { name: new_name, x, y },
+                MirOpCompat::Mod { name: _, x, y } => MirOpCompat::Mod { name: new_name, x, y },
+                // Axis-based ops
+                MirOpCompat::ExpandDims { name: _, x, axis } => {
+                    MirOpCompat::ExpandDims { name: new_name, x, axis }
+                }
+                MirOpCompat::Squeeze { name: _, x, axis } => {
+                    MirOpCompat::Squeeze { name: new_name, x, axis }
+                }
+                // Clip
+                MirOpCompat::Clip { name: _, x, min_val, max_val } => {
+                    MirOpCompat::Clip { name: new_name, x, min_val, max_val }
+                }
+                // Pad
+                MirOpCompat::Pad { name: _, x, pad_amounts, mode, constant_value } => {
+                    MirOpCompat::Pad { name: new_name, x, pad_amounts, mode, constant_value }
+                }
+                // Reduce ops
+                MirOpCompat::ReduceMax { name: _, x, axes, keep_dims } => {
+                    MirOpCompat::ReduceMax { name: new_name, x, axes, keep_dims }
+                }
+                MirOpCompat::ReduceMin { name: _, x, axes, keep_dims } => {
+                    MirOpCompat::ReduceMin { name: new_name, x, axes, keep_dims }
+                }
+                MirOpCompat::ReduceProd { name: _, x, axes, keep_dims } => {
+                    MirOpCompat::ReduceProd { name: new_name, x, axes, keep_dims }
+                }
+                // Select
+                MirOpCompat::Select { name: _, condition, x, y } => {
+                    MirOpCompat::Select { name: new_name, condition, x, y }
+                }
+                // LeakyRelu
+                MirOpCompat::LeakyRelu { name: _, x, alpha } => {
+                    MirOpCompat::LeakyRelu { name: new_name, x, alpha }
+                }
+                // T-39: Constexpr weight compression ops — rename output name.
+                MirOpCompat::ConstexprAffineDequantize {
+                    name: _, quantized_data, scale, zero_point, axis,
+                } => MirOpCompat::ConstexprAffineDequantize {
+                    name: new_name, quantized_data, scale, zero_point, axis,
+                },
+                MirOpCompat::ConstexprBlockwiseShiftScale { name: _, data, scale, offset, block_size } => {
+                    MirOpCompat::ConstexprBlockwiseShiftScale {
+                        name: new_name, data, scale, offset, block_size,
+                    }
+                }
+                MirOpCompat::ConstexprLutToDense { name: _, indices, lut, num_bits } => {
+                    MirOpCompat::ConstexprLutToDense { name: new_name, indices, lut, num_bits }
+                }
+                MirOpCompat::ConstexprSparseToDense { name: _, nonzero_data, shape, default_value } => {
+                    MirOpCompat::ConstexprSparseToDense {
+                        name: new_name, nonzero_data, shape, default_value,
+                    }
+                }
+                MirOpCompat::ConstexprCast { name: _, data, dtype } => {
+                    MirOpCompat::ConstexprCast { name: new_name, data, dtype }
+                }
+                MirOpCompat::ConstexprLutToSparse { name: _, data, num_bits } => {
+                    MirOpCompat::ConstexprLutToSparse { name: new_name, data, num_bits }
+                }
+                MirOpCompat::ConstexprSparseBlockwiseShiftScale {
+                    name: _, data, scale, offset, block_size, block_axis,
+                } => MirOpCompat::ConstexprSparseBlockwiseShiftScale {
+                    name: new_name, data, scale, offset, block_size, block_axis,
+                },
+                MirOpCompat::Unsupported { op_kind, name: _, params_json } => {
+                    MirOpCompat::Unsupported { op_kind, name: new_name, params_json }
+                }
+            }
+        }
+    }
+
     /// A named tensor descriptor for graph I/O.
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct TensorDescCompat {

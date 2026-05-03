@@ -144,13 +144,13 @@
 - **Effort**: M (1 day)
 - **Resolution**: Added 14 comprehensive SIR→AIR roundtrip tests using `DecompositionContext::for_decode_step_full()` with realistic Qwen3-0.6B dimensions (embed_dim=1024, num_heads=16, head_dim=128, kv_heads=8, intermediate_size=2048, vocab_size=151936). Tests cover: (1) Full DecodeStep roundtrip with RoPE+QK-norm+GQA, verifying Conv1x1AsLinear output_dim for Q/K/O projections (2048/1024/1024), per-head MatMul (NOT SDPA), StateReadFixed/StateWriteFixed for KV cache, SliceByIndex for head extraction, and no Tile/Split ops; (2) AttentionBlock roundtrip with for_attention_full(), verifying GQA reshape shapes (Q=[1,512,16,128], K/V=[1,512,8,128], attn_flat=[1,512,2048]); (3) Multi-layer decode roundtrip verifying shared node deduplication (shared_attn_scale appears exactly once across layers); (4) Full transformer layer roundtrip (LinearProjection→RMSNorm(axes=3)→AttentionBlock→Reshape→Add) verifying 4D reshape shapes for QK-norm; (5) Non-GQA model roundtrip (kv_heads==num_heads, LLaMA-2-like); (6) output_dim_for_weight validation for all Qwen3-0.6B projection types (Q/K/V/O, gate/up/down, lm_head, embed_tokens); (7) Conv1x1AsLinear output_dim consistency check across 7 linear projections; (8) Metadata propagation (TaskOrigin::RealModel, precision_override) through SIR→AIR; (9) Tile decomposition SSA validity; (10) Select/Where decomposition SSA validity; (11) Empty graph roundtrip; (12) Passthrough ops roundtrip; (13) RMSNorm+RoPE+DecodeStep combined roundtrip; (14) GQA fan_out computation. Added `collect_air_op_refs()` and `validate_air_graph_structural_invariants()` helpers for deep structural invariant validation (no duplicate AirNodeIds, reference integrity, output reachability). All 1083 tests pass.
 
-### T-38 · Implement `ToProto` Trait (Unify MirOp + MirOpCompat)
+### T-38 · Implement `ToProto` Trait (Unify MirOp + MirOpCompat) ✅
 
 - **ISSUES ref**: I-17 (continues T-17)
-- **AUDIT ref**: §III (CQ-20)
-- **Severity**: MEDIUM
+- **AUDIT ref**: §III (CQ-20, CQ-21)
+- **Severity**: MEDIUM → RESOLVED
 - **Effort**: L (3-5 days)
-- **Description**: Replace MirOpCompat dual definition with `ToProto` trait. Eliminate ~1150 lines of per-variant match-arm boilerplate.
+- **Resolution**: Defined `ToProto` trait in `ane-ir/src/toproto.rs` with four methods that consolidate the variant-to-proto mapping into a single source of truth, replacing the previous 5+ separate per-variant match expressions that had to be updated in lockstep. Added `impl ToProto for MirOp` covering all 167 variants with: (1) `proto_op_type()` → Core ML MIL op type string (delegates to `mil_op_name()`); (2) `proto_output_name()` → SSA output value name; (3) `proto_input_refs()` → all SSA input references as Strings (MirNodeId→String, Option<MirNodeId> flattened, Vec<MirNodeId> extended, String weight-name fields included, non-reference fields excluded); (4) `is_proto_supported()` → whether the variant has a specialized MirOpCompat mapping (78 supported, 89 unsupported). Added four methods to `MirOpCompat` in `coreml-proto/src/lib.rs`: (1) `output_name()` → SSA output name (uses macro to avoid listing 78 variants); (2) `input_names()` → input reference names (replaces `compat_input_names()` free function); (3) `remap_inputs(f)` → remap all input references via closure (replaces `remap_compat_inputs()`); (4) `rename_output(new_name)` → replace output name (replaces `rename_compat_output()`). Refactored `mir_to_compat.rs` to make `compat_input_names()`, `remap_compat_inputs()`, and `rename_compat_output()` thin wrappers delegating to the new methods, eliminating ~750 lines of duplicate per-variant match arms. Refactored `mir_to_proto.rs` to make `op_output_names()` a single-line delegation to `MirOpCompat::output_name()`, replacing the 90-line macro. Net boilerplate reduction: ~750 lines eliminated. Adding a new MirOp variant now requires updating 4 places (enum + ToProto + default_engine + mil_op_name) instead of the previous 7+. Added 46 new tests covering all four trait methods, cross-consistency checks, and edge cases (Option fields, Vec fields, state references, no-input ops). All 1159 tests pass.
 
 ### T-39 · Add ConstexprLutToDense to MirOpCompat ✅
 
@@ -230,7 +230,7 @@
 | T-35 | I-14 | MEDIUM | M | ✅ |
 | T-36 | I-15 | MEDIUM | M | ✅ |
 | T-37 | I-16 | MEDIUM | M | ✅ |
-| T-38 | I-17 | MEDIUM | L | ⬜ |
+| T-38 | I-17 | MEDIUM | L | ✅ |
 | T-39 | I-18 | MEDIUM | M | ✅ |
 | T-40 | I-19 | MEDIUM | S | ✅ |
 | T-41 | I-20 | LOW | S | ✅ |

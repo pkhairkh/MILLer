@@ -33,6 +33,7 @@ pub mod shard_desc;
 pub mod sir;
 pub mod strategy;
 pub mod task_spec;
+pub mod toproto;
 
 #[cfg(test)]
 mod mir_engine_test;

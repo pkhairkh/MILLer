@@ -626,97 +626,10 @@ pub fn build_multifunction_shared_weights_mir(
 /// Every `MirOpCompat` variant defines one output value in the MIL block.
 /// The `name` field serves as the SSA value name that other ops reference.
 /// For duplicate detection, we return a single-element Vec with the name.
+///
+// TODO(T-38): Remove this wrapper once all callers use MirOpCompat::output_name() directly
 fn op_output_names(op: &MirOpCompat) -> Vec<String> {
-    // Every variant has a `name` field (except Unsupported which has `name` too).
-    // Use a macro to avoid repeating the same pattern for every variant.
-    macro_rules! name_vec {
-        ($($variant:ident),* $(,)?) => {
-            match op {
-                $(MirOpCompat::$variant { name, .. } => vec![name.clone()],)*
-                MirOpCompat::Unsupported { name, .. } => vec![name.clone()],
-            }
-        };
-    }
-    name_vec!(
-        Const,
-        Linear,
-        MatMul,
-        Add,
-        Mul,
-        Sub,
-        Abs,
-        Maximum,
-        Minimum,
-        Reshape,
-        Transpose,
-        SliceByIndex,
-        SliceUpdate,
-        Concat,
-        Softmax,
-        Gelu,
-        ScaledDotProductAttention,
-        ReadState,
-        CoremlUpdateState,
-        Gather,
-        ReduceMean,
-        ReduceSum,
-        Conv,
-        StateWrite,
-        Rsqrt,
-        RealDiv,
-        LayerNorm,
-        Topk,
-        Cos,
-        Sin,
-        Cast,
-        Split,
-        Exp,
-        Sigmoid,
-        Tanh,
-        Relu,
-        Where,
-        Silu,
-        Identity,
-        Placeholder,
-        Tile,
-        Fill,
-        FillLike,
-        Neg,
-        ExpandDims,
-        Squeeze,
-        Sqrt,
-        Pow,
-        Clip,
-        Equal,
-        NotEqual,
-        Greater,
-        GreaterEqual,
-        Less,
-        LessEqual,
-        LogicalNot,
-        LogicalAnd,
-        LogicalOr,
-        Pad,
-        ReduceMax,
-        ReduceMin,
-        ReduceProd,
-        Select,
-        LeakyRelu,
-        FloorDiv,
-        Mod,
-        Ceil,
-        Floor,
-        Round,
-        Sign,
-        Log,
-        ConstexprAffineDequantize,
-        ConstexprBlockwiseShiftScale,
-        ConstexprLutToDense,
-        ConstexprSparseToDense,
-        ConstexprCast,
-        ConstexprLutToSparse,
-        ConstexprSparseBlockwiseShiftScale,
-    )
+    vec![op.output_name()]
 }
 
 /// Generate deterministic data for weight tensors.

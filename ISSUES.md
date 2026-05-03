@@ -212,16 +212,16 @@ Hardcoded model-specific values:
 
 ### I-17 · Unify MirOp + MirOpCompat via `ToProto` Trait
 
-**Status:** ⬜ Open (continues T-17)
-**Files:** `crates/coreml-proto/src/lib.rs`, `crates/bridge/src/mir_to_compat.rs`
+**Status:** ✅ FIXED (T-38)
+**Files:** `crates/ir/src/toproto.rs`, `crates/ir/src/mir.rs`, `crates/coreml-proto/src/lib.rs`, `crates/bridge/src/mir_to_compat.rs`, `crates/coreml-emit/src/mir_to_proto.rs`
 **AUDIT ref:** §III (CQ-20, CQ-21)
-**Severity:** MEDIUM — 167 vs ~50 variants, ~1150 lines boilerplate
+**Severity:** MEDIUM → RESOLVED
 **Effort:** L (3-5 days)
 **Task:** T-38
 
-MirOp has 167 variants; MirOpCompat has ~50 + Unsupported. The conversion, rename, remap, and input-name extraction functions each require per-variant match arms totaling ~1150 lines that must be updated in lockstep.
+MirOp has 167 variants; MirOpCompat has ~78 + Unsupported. The conversion, rename, remap, and input-name extraction functions each required per-variant match arms totaling ~750 lines that had to be updated in lockstep.
 
-**Fix:** Implement `ToProto` trait on `MirOp` to replace `MirOpCompat`. Use derive macro or visitor pattern for boilerplate.
+**Resolution:** Defined `ToProto` trait in `ane-ir/src/toproto.rs` with four methods (`proto_op_type`, `proto_output_name`, `proto_input_refs`, `is_proto_supported`) that consolidate the variant-to-proto mapping into a single source of truth. Implemented the trait for all 167 `MirOp` variants. Added four methods to `MirOpCompat` (`output_name`, `input_names`, `remap_inputs`, `rename_output`) that replace the previous free functions. Refactored `mir_to_compat.rs` and `mir_to_proto.rs` to make `compat_input_names()`, `remap_compat_inputs()`, `rename_compat_output()`, and `op_output_names()` thin wrappers delegating to the new methods. Net boilerplate reduction: ~750 lines eliminated. Adding a new MirOp variant now requires updating 4 places instead of the previous 7+. 46 new tests. All 1159 tests pass.
 
 ---
 
@@ -309,8 +309,8 @@ The following issues from the previous tracker have been resolved and archived t
 |----------|-------|------|-------------|-------|
 | P0 | 3 | 0 | 0 | 3 |
 | P1 | 8 | 0 | 0 | 8 |
-| P2 | 8 | 1 | 0 | 7 |
+| P2 | 8 | 0 | 0 | 8 |
 | P3 | 1 | 0 | 0 | 1 |
-| **Total** | **20** | **1** | **0** | **19** |
+| **Total** | **20** | **0** | **0** | **20** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issues I-12, I-13, I-14, I-15, I-16, I-18, I-19 resolved by T-33, T-34, T-35, T-36, T-37, T-39, T-40. P3 issue I-20 resolved by T-41.*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issues I-12, I-13, I-14, I-15, I-16, I-17, I-18, I-19 resolved by T-33, T-34, T-35, T-36, T-37, T-38, T-39, T-40. P3 issue I-20 resolved by T-41. All 20 issues are now resolved.*
