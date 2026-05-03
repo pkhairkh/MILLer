@@ -20,6 +20,7 @@ pub mod knowledge_query;
 #[deprecated(
     note = "Generates ANE-illegal Where ops. KV masking is now handled by arithmetic masks in legality_rewrite."
 )]
+#[allow(dead_code)]
 pub(crate) mod kv_cache_rewrite;
 pub mod legality_rewrite;
 pub mod mil_lower;

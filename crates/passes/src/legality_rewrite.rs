@@ -107,6 +107,7 @@ impl DecompositionContext {
     }
 
     /// Construct a context from an Attention task spec with full dimensions.
+    #[allow(clippy::too_many_arguments)]
     pub fn for_attention_full(
         batch_size: usize,
         embed_dim: usize,
@@ -161,6 +162,7 @@ impl DecompositionContext {
     /// can resolve MLP gate/up/down projections and lm_head correctly.
     /// Without these, the Conv1x1AsLinear output_dim for lm_head would be 0,
     /// causing shape inference to produce wrong dimensions for the decode_step.
+    #[allow(clippy::too_many_arguments)]
     pub fn for_decode_step_full(
         batch_size: usize,
         embed_dim: usize,
@@ -235,6 +237,73 @@ impl DecompositionContext {
             0
         }
     }
+
+    /// Construct a context from a ModelArchConfig plus runtime dimensions.
+    ///
+    /// This is the preferred factory when a `ModelArchConfig` is available
+    /// (e.g., from the task spec), avoiding field-by-field unpacking.
+    pub fn from_model_arch(
+        config: &ane_ir::common::ModelArchConfig,
+        batch_size: usize,
+        seq_len: usize,
+        uses_rope: bool,
+        has_qk_norm: bool,
+    ) -> Self {
+        Self {
+            batch_size,
+            embed_dim: config.embed_dim,
+            num_heads: config.num_heads,
+            head_dim: config.head_dim,
+            seq_len,
+            kv_heads: config.kv_heads,
+            intermediate_size: config.intermediate_size,
+            vocab_size: config.vocab_size,
+            uses_rope,
+            has_qk_norm,
+            uses_gqa: config.kv_heads > 0 && config.kv_heads < config.num_heads,
+        }
+    }
+}
+
+/// Shared pass infrastructure passed through all SIR→AIR decomposition functions.
+///
+/// This struct bundles the references that appear in almost every decomposition
+/// function signature: the SIR→AIR node mapping, the knowledge query interface,
+/// the original SIR node, and the base name for AIR node IDs.
+/// Grouping these eliminates the `too_many_arguments` clippy warning across 7+ functions.
+pub struct DecompositionEnv<'a> {
+    /// SIR→AIR node ID mapping (already-emitted nodes).
+    pub sir_to_air: &'a std::collections::HashMap<ane_ir::sir::SirNodeId, AirNodeId>,
+    /// Knowledge query for ANE legality rules.
+    pub kq: &'a dyn PassKnowledgeQuery,
+    /// Original SIR node being decomposed (for ID prefix + metadata).
+    pub sir_node: &'a ane_ir::sir::SirNode,
+    /// Base name prefix for generated AIR node IDs.
+    pub base: &'a str,
+}
+
+/// Weight references for the decode step decomposition.
+///
+/// Groups the 8 optional weight-name strings that resolve to Conv1x1AsLinear
+/// weight paths. All are `Option<&str>` because some models don't use all features
+/// (e.g., QK-norm, RoPE, attention masking).
+pub struct DecodeWeights<'a> {
+    /// Weight name for Q projection.
+    pub q_weight: Option<&'a str>,
+    /// Weight name for K projection.
+    pub k_weight: Option<&'a str>,
+    /// Weight name for V projection.
+    pub v_weight: Option<&'a str>,
+    /// Weight name for output (O) projection.
+    pub out_weight: Option<&'a str>,
+    /// Weight name for precomputed RoPE cos/sin tables.
+    pub rope_tables: Option<&'a str>,
+    /// Weight name for Q-norm (Qwen3-style per-head RMSNorm).
+    pub q_norm_weight: Option<&'a str>,
+    /// Weight name for K-norm.
+    pub k_norm_weight: Option<&'a str>,
+    /// Weight name for the causal attention mask.
+    pub mask_ref: Option<&'a str>,
 }
 
 /// Legality Rewrite pass implementation.
@@ -319,16 +388,15 @@ impl LegalityRewritePass {
                             None
                         }
                     });
-                    let (final_id, nodes) = Self::decompose_attention_block(
+                    let base_str = &sir_node.id.0;
+                    let env = DecompositionEnv {
+                        sir_to_air: &sir_to_air,
+                        kq: knowledge_query,
                         sir_node,
-                        q,
-                        k,
-                        v,
-                        mask,
-                        &sir_to_air,
-                        knowledge_query,
-                        attn_ctx.as_ref(),
-                    );
+                        base: base_str,
+                    };
+                    let (final_id, nodes) =
+                        Self::decompose_attention_block(q, k, v, mask, &env, attn_ctx.as_ref());
                     (final_id, nodes, "mb.scaled_dot_product_attention")
                 }
                 SirOp::DecodeStep {
@@ -348,48 +416,55 @@ impl LegalityRewritePass {
                 } => {
                     let ds_ctx =
                         ctx.and_then(|c| if c.embed_dim > 0 { Some(c.clone()) } else { None });
-                    let (final_id, nodes) = Self::decompose_decode_step(
+                    let base_str = &sir_node.id.0;
+                    let env = DecompositionEnv {
+                        sir_to_air: &sir_to_air,
+                        kq: knowledge_query,
                         sir_node,
+                        base: base_str,
+                    };
+                    let weights = DecodeWeights {
+                        q_weight: q_weight.as_deref(),
+                        k_weight: k_weight.as_deref(),
+                        v_weight: v_weight.as_deref(),
+                        out_weight: out_weight.as_deref(),
+                        rope_tables: rope_tables.as_deref(),
+                        q_norm_weight: q_norm_weight.as_deref(),
+                        k_norm_weight: k_norm_weight.as_deref(),
+                        mask_ref: mask_ref.as_deref(),
+                    };
+                    let (final_id, nodes) = Self::decompose_decode_step(
                         token,
                         state_map,
-                        q_weight.as_deref(),
-                        k_weight.as_deref(),
-                        v_weight.as_deref(),
-                        out_weight.as_deref(),
-                        rope_tables.as_deref(),
                         position,
-                        q_norm_weight.as_deref(),
-                        k_norm_weight.as_deref(),
+                        &weights,
                         *norm_epsilon,
-                        mask_ref.as_deref(),
-                        &sir_to_air,
-                        knowledge_query,
+                        &env,
                         ds_ctx.as_ref(),
                     );
                     (final_id, nodes, "mb.scaled_dot_product_attention")
                 }
                 SirOp::RMSNorm { input, weight, epsilon, axes } => {
-                    let (final_id, nodes) = Self::decompose_rms_norm(
+                    let base_str = &sir_node.id.0;
+                    let env = DecompositionEnv {
+                        sir_to_air: &sir_to_air,
+                        kq: knowledge_query,
                         sir_node,
-                        input,
-                        weight,
-                        *epsilon,
-                        axes,
-                        &sir_to_air,
-                        knowledge_query,
-                        ctx,
-                    );
+                        base: base_str,
+                    };
+                    let (final_id, nodes) =
+                        Self::decompose_rms_norm(input, weight, *epsilon, axes, &env, ctx);
                     (final_id, nodes, "mb.layer_norm")
                 }
                 SirOp::RoPETransform { input, tables } => {
-                    let (final_id, nodes) = Self::decompose_rope(
+                    let base_str = &sir_node.id.0;
+                    let env = DecompositionEnv {
+                        sir_to_air: &sir_to_air,
+                        kq: knowledge_query,
                         sir_node,
-                        input,
-                        tables,
-                        &sir_to_air,
-                        knowledge_query,
-                        ctx,
-                    );
+                        base: base_str,
+                    };
+                    let (final_id, nodes) = Self::decompose_rope(input, tables, &env, ctx);
                     (final_id, nodes, "mb.mul")
                 }
                 SirOp::Sampler { logits, temperature: _, top_p: _, rep_penalty: _, .. } => {
@@ -969,16 +1044,17 @@ impl LegalityRewritePass {
     /// are populated with real dimensions from the task spec (Sprint 56).
     /// When `ctx` is `None`, placeholder zeros are used (pre-Sprint-56 behavior).
     fn decompose_attention_block(
-        sir_node: &ane_ir::sir::SirNode,
         q_sir: &ane_ir::sir::SirNodeId,
         k_sir: &ane_ir::sir::SirNodeId,
         v_sir: &ane_ir::sir::SirNodeId,
         mask_sir: &Option<ane_ir::sir::SirNodeId>,
-        sir_to_air: &std::collections::HashMap<ane_ir::sir::SirNodeId, AirNodeId>,
-        kq: &dyn PassKnowledgeQuery,
+        env: &DecompositionEnv,
         ctx: Option<&DecompositionContext>,
     ) -> (AirNodeId, Vec<AirNode>) {
-        let base = &sir_node.id.0;
+        let sir_node = env.sir_node;
+        let base = env.base;
+        let sir_to_air = env.sir_to_air;
+        let kq = env.kq;
         let q_air = sir_to_air.get(q_sir).cloned().unwrap_or_else(|| AirNodeId(q_sir.0.clone()));
         let k_air = sir_to_air.get(k_sir).cloned().unwrap_or_else(|| AirNodeId(k_sir.0.clone()));
         let v_air = sir_to_air.get(v_sir).cloned().unwrap_or_else(|| AirNodeId(v_sir.0.clone()));
@@ -1451,24 +1527,26 @@ impl LegalityRewritePass {
     /// When optional parameters are `None`, the corresponding steps are
     /// skipped — this keeps the decomposition generic and not model-specific.
     fn decompose_decode_step(
-        sir_node: &ane_ir::sir::SirNode,
         token_sir: &ane_ir::sir::SirNodeId,
         state_map: &[String],
-        q_weight: Option<&str>,
-        k_weight: Option<&str>,
-        v_weight: Option<&str>,
-        out_weight: Option<&str>,
-        rope_tables: Option<&str>,
         position: &Option<ane_ir::sir::SirNodeId>,
-        q_norm_weight: Option<&str>,
-        k_norm_weight: Option<&str>,
+        weights: &DecodeWeights,
         norm_epsilon: f32,
-        mask_ref: Option<&str>,
-        sir_to_air: &std::collections::HashMap<ane_ir::sir::SirNodeId, AirNodeId>,
-        kq: &dyn PassKnowledgeQuery,
+        env: &DecompositionEnv,
         ctx: Option<&DecompositionContext>,
     ) -> (AirNodeId, Vec<AirNode>) {
-        let base = &sir_node.id.0;
+        let sir_node = env.sir_node;
+        let base = env.base;
+        let sir_to_air = env.sir_to_air;
+        let kq = env.kq;
+        let q_weight = weights.q_weight;
+        let k_weight = weights.k_weight;
+        let v_weight = weights.v_weight;
+        let out_weight = weights.out_weight;
+        let rope_tables = weights.rope_tables;
+        let q_norm_weight = weights.q_norm_weight;
+        let k_norm_weight = weights.k_norm_weight;
+        let mask_ref = weights.mask_ref;
         let token_air =
             sir_to_air.get(token_sir).cloned().unwrap_or_else(|| AirNodeId(token_sir.0.clone()));
 
@@ -1624,18 +1702,7 @@ impl LegalityRewritePass {
         // to apply axes=[3] correctly.
 
         let q_after_norm = if let Some(qnw) = q_norm_weight {
-            Self::apply_qk_norm_decode(
-                &q_id,
-                qnw,
-                norm_epsilon,
-                heads as usize,
-                head_dim as usize,
-                base,
-                "_q_norm",
-                sir_node,
-                kq,
-                &mut nodes,
-            )
+            Self::apply_qk_norm_decode(&q_id, qnw, norm_epsilon, "_q_norm", env, ctx, &mut nodes)
         } else {
             q_id.clone()
         };
@@ -1645,12 +1712,9 @@ impl LegalityRewritePass {
                 &k_new_id,
                 knw,
                 norm_epsilon,
-                kv_heads,
-                head_dim as usize,
-                base,
                 "_k_norm",
-                sir_node,
-                kq,
+                env,
+                ctx,
                 &mut nodes,
             )
         } else {
@@ -1815,10 +1879,7 @@ impl LegalityRewritePass {
                         &k_new_4d_id,
                         tables_ref,
                         position,
-                        sir_to_air,
-                        base,
-                        sir_node,
-                        kq,
+                        env,
                         ctx,
                         &mut nodes,
                     );
@@ -2321,14 +2382,21 @@ impl LegalityRewritePass {
         input_id: &AirNodeId,
         norm_weight: &str,
         epsilon: f32,
-        heads: usize,
-        head_dim: usize,
-        base: &str,
         suffix: &str,
-        sir_node: &ane_ir::sir::SirNode,
-        kq: &dyn PassKnowledgeQuery,
+        env: &DecompositionEnv,
+        ctx: Option<&DecompositionContext>,
         nodes: &mut Vec<AirNode>,
     ) -> AirNodeId {
+        let sir_node = env.sir_node;
+        let base = env.base;
+        let kq = env.kq;
+        // Derive head count from context: kv_heads for k_norm, num_heads otherwise.
+        let heads = if suffix.contains("_k_norm") {
+            ctx.map(|c| if c.kv_heads > 0 { c.kv_heads } else { c.num_heads }).unwrap_or(0)
+        } else {
+            ctx.map(|c| c.num_heads).unwrap_or(0)
+        };
+        let head_dim = ctx.map(|c| c.head_dim).unwrap_or(0);
         // Reshape flat [B, heads*head_dim] → [B, 1, heads, head_dim]
         let reshape_4d_id = AirNodeId(format!("{base}{suffix}_reshape_4d"));
         nodes.push(Self::make_air_node(
@@ -2457,10 +2525,7 @@ impl LegalityRewritePass {
         k_new_4d_id: &AirNodeId, // new K token to apply RoPE to
         tables_ref: &str,
         position: &Option<ane_ir::sir::SirNodeId>,
-        sir_to_air: &std::collections::HashMap<ane_ir::sir::SirNodeId, AirNodeId>,
-        base: &str,
-        sir_node: &ane_ir::sir::SirNode,
-        kq: &dyn PassKnowledgeQuery,
+        env: &DecompositionEnv,
         ctx: Option<&DecompositionContext>,
         nodes: &mut Vec<AirNode>,
     ) -> (
@@ -2471,6 +2536,10 @@ impl LegalityRewritePass {
         Option<AirNodeId>,
         Option<AirNodeId>,
     ) {
+        let sir_node = env.sir_node;
+        let base = env.base;
+        let sir_to_air = env.sir_to_air;
+        let kq = env.kq;
         let head_dim = ctx.map(|c| c.head_dim).unwrap_or(0);
         let head_dim = if head_dim > 0 {
             head_dim
@@ -2932,9 +3001,8 @@ impl LegalityRewritePass {
         // Apply RoPE to Q: output = q * cos + rotate_half(q) * sin
         // Q has shape [B, H, 1, D] and cos/sin are [1, 1, 1, D] (gathered)
         // or [1, 1, seq_len, D] (full broadcast for prefill).
-        let q_rope = Self::apply_rotary_half(
-            q_4d_id, &cos_for_q, &sin_for_q, half, base, "_q_rope", sir_node, kq, nodes,
-        );
+        let q_rope =
+            Self::apply_rotary_half(q_4d_id, &cos_for_q, &sin_for_q, half, "_q_rope", env, nodes);
 
         // Apply RoPE to the NEW K token: output = k_new * cos + rotate_half(k_new) * sin
         // K new has shape [1, hk, 1, hd] and cos/sin are [1, 1, 1, hd] (gathered).
@@ -2946,10 +3014,8 @@ impl LegalityRewritePass {
             &cos_for_q,
             &sin_for_q,
             half,
-            base,
             "_k_new_rope",
-            sir_node,
-            kq,
+            env,
             nodes,
         );
 
@@ -2970,12 +3036,13 @@ impl LegalityRewritePass {
         cos_id: &AirNodeId,
         sin_id: &AirNodeId,
         half: usize,
-        base: &str,
         suffix: &str,
-        sir_node: &ane_ir::sir::SirNode,
-        kq: &dyn PassKnowledgeQuery,
+        env: &DecompositionEnv,
         nodes: &mut Vec<AirNode>,
     ) -> AirNodeId {
+        let sir_node = env.sir_node;
+        let base = env.base;
+        let kq = env.kq;
         // Slice first half: x1 = x[..., :half]
         let x1_id = AirNodeId(format!("{base}{suffix}_x1"));
         nodes.push(Self::make_air_node(
@@ -3076,16 +3143,17 @@ impl LegalityRewritePass {
     ///   normed:  ElementWise::Mul(x, rsqrt)
     ///   output:  ElementWise::Mul(normed, weight)
     fn decompose_rms_norm(
-        sir_node: &ane_ir::sir::SirNode,
         input_sir: &ane_ir::sir::SirNodeId,
         weight: &str,
         epsilon: f32,
         axes: &[usize],
-        sir_to_air: &std::collections::HashMap<ane_ir::sir::SirNodeId, AirNodeId>,
-        kq: &dyn PassKnowledgeQuery,
+        env: &DecompositionEnv,
         ctx: Option<&DecompositionContext>,
     ) -> (AirNodeId, Vec<AirNode>) {
-        let base = &sir_node.id.0;
+        let sir_node = env.sir_node;
+        let base = env.base;
+        let sir_to_air = env.sir_to_air;
+        let kq = env.kq;
         let mut input_air =
             sir_to_air.get(input_sir).cloned().unwrap_or_else(|| AirNodeId(input_sir.0.clone()));
 
@@ -3411,14 +3479,15 @@ impl LegalityRewritePass {
     ///   8. rotated_sin: Mul(rotated, sin_vals)
     ///   9. output: Add(x_cos, rotated_sin)
     fn decompose_rope(
-        sir_node: &ane_ir::sir::SirNode,
         input_sir: &ane_ir::sir::SirNodeId,
         tables: &str,
-        sir_to_air: &std::collections::HashMap<ane_ir::sir::SirNodeId, AirNodeId>,
-        kq: &dyn PassKnowledgeQuery,
+        env: &DecompositionEnv,
         ctx: Option<&DecompositionContext>,
     ) -> (AirNodeId, Vec<AirNode>) {
-        let base = &sir_node.id.0;
+        let sir_node = env.sir_node;
+        let base = env.base;
+        let sir_to_air = env.sir_to_air;
+        let kq = env.kq;
         let input_air =
             sir_to_air.get(input_sir).cloned().unwrap_or_else(|| AirNodeId(input_sir.0.clone()));
 

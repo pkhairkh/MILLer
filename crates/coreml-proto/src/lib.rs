@@ -5234,22 +5234,20 @@ fn validate_fill_dtype_consistency(
             (Some(dt), Some("floats")) if dt == float16_dtype => {
                 return Err(ProtoValidationError {
                     kind: ProtoValidationKind::FillFp16FloatsStorage,
-                    message: format!(
-                        "fill value is FLOAT16 but stored via `floats` field — \
+                    message: "fill value is FLOAT16 but stored via `floats` field — \
                          Core ML rejects this with 'Tensor storage and type have different \
                          number of elements'. Use `bytes` storage with raw f16 bits instead \
                          (see make_immediate_float_value)."
-                    ),
+                        .to_string(),
                     op_name: Some(op_name),
                 });
             }
             (Some(dt), Some("bytes")) if dt == float32_dtype => {
                 return Err(ProtoValidationError {
                     kind: ProtoValidationKind::FillFp32BytesStorage,
-                    message: format!(
-                        "fill value is FLOAT32 but stored via `bytes` field — \
+                    message: "fill value is FLOAT32 but stored via `bytes` field — \
                          FLOAT32 scalars should use `floats` storage."
-                    ),
+                        .to_string(),
                     op_name: Some(op_name),
                 });
             }

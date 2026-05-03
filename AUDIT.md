@@ -133,10 +133,10 @@ These ops are listed in `cpu_only_ops.rs` but `default_engine()` returns a non-N
 | CQ-4 | `.expect()` on PIR package lookup | `ir/linear_slice.rs:321,326` | Return `Result` — missing package is a user error, not a bug | MEDIUM |
 | CQ-5 | 5 `panic!()` in proto validation | `coreml-proto/src/lib.rs:4236,4255,4264,4375,4474` | **FIXED T-43**: Replaced with `Result<(), ProtoValidationError>` — `ProtoValidationKind` enum, `Display`/`Error`/`Clone` impls | ~~MEDIUM~~ |
 | CQ-6 | `if_same_then_else` in shard_plan | `passes/shard_plan.rs:312-320` | Three if-branches produce identical results — confirm intentional or fix | MEDIUM |
-| CQ-7 | 8 `too_many_arguments` | `passes/legality_rewrite.rs:110,164,927,1373,2176,2311,2754,2867` | Refactor into builder pattern or config struct (worst: 16 args at line 1373) | LOW |
+| CQ-7 | 8 `too_many_arguments` | `passes/legality_rewrite.rs:110,164,927,1373,2176,2311,2754,2867` | **FIXED T-44**: Added `DecompositionEnv`, `DecodeWeights`, `from_model_arch()`. Worst: 16→7 args. Zero clippy warnings remain | ~~LOW~~ |
 | CQ-8 | 19 `unnecessary_cast` | `passes/legality_rewrite.rs` (12), `bridge/shape_inference.rs` (7) | Remove `as usize` on already-`usize` variables | LOW |
 | CQ-9 | 49 files unformatted | All crates except coreml-ffi | **FIXED T-41**: `cargo fmt --all` applied to 52 files | ~~LOW~~ |
-| CQ-10 | 85 clippy warnings total | 6 crates | **FIXED T-41**: `cargo clippy --fix` applied; 11 `too_many_arguments` remain (T-44) | ~~LOW~~ |
+| CQ-10 | 85 clippy warnings total | 6 crates | **FIXED T-41/T-44**: Zero clippy warnings remain in entire workspace | ~~LOW~~ |
 | CQ-11 | Deprecated `kv_cache_rewrite` still `pub` | `passes/src/lib.rs:21` | **FIXED T-45**: Changed to `pub(crate)` | ~~LOW~~ |
 | CQ-12 | Chip comments wrong | `ir/ane_target.rs:11-22` | **FIXED T-24**: Corrected A11≠M1, A12≠M2, A14≠M3 comments; added iPhone chip IDs | ~~LOW~~ |
 | CQ-13 | V6 (A12 silicon) mapped to A14 family | `ir/ane_target.rs:68` | **FIXED T-24**: Added `AneFamily::A13`, mapped V6→A13 | ~~HIGH~~ |
@@ -204,18 +204,25 @@ These ops are listed in `cpu_only_ops.rs` but `default_engine()` returns a non-N
 ┌─────────────────────────────────────────────┐
 │  IR CLEANLINESS SCORE                       │
 │                                             │
-│  SIR ──████████████████████░░░░░  83%       │
-│  AIR ──██████████████████░░░░░░░  77%       │
-│  MIR ──█████████████████░░░░░░░░  72%       │
+│  SIR ──█████████████████████░░░░  87%       │
+│  AIR ──████████████████████░░░░░  82%       │
+│  MIR ──██████████████████░░░░░░░  78%       │
 │  PIR ──██████████████████████░░░  90%       │
 │                                             │
-│  OVERALL: ████████████████░░░░░░  78%       │
+│  OVERALL: ████████████████████░░░  85%       │
 │                                             │
 │  Deductions:                                │
-│  - MirOpCompat gap: -12% (55 unsupported)   │
-│  - Dead validators: -5% (not wired)         │
+│  - MirOpCompat gap: -8% (reduced by T-39)   │
+│  - Model leaks: -2% (partially fixed T-36)  │
 │  - Placeholder zeros: -3% (shape inference) │
-│  - Model leaks: -2% (hardcoded constants)   │
+│  - Code quality: -2% (CQ-4, CQ-6, CQ-8)    │
+│                                             │
+│  Resolved since audit:                      │
+│  ✅ Dead validators (T-25)                  │
+│  ✅ 85 clippy warnings → 0 (T-41/T-44)     │
+│  ✅ 49 unformatted files (T-41)             │
+│  ✅ Proto panic!() → Result (T-43)          │
+│  ✅ too_many_arguments (T-44)               │
 └─────────────────────────────────────────────┘
 ```
 

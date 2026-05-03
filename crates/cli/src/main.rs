@@ -3928,6 +3928,7 @@ fn run_verify(
 /// 5. MilLower (AIR→MIR)
 /// 6. Proto-direct emission (MIR→.mlpackage)
 /// 7. Write all artifacts (SIR, AIR, MIR, faithfulness report, traced graph, .mlpackage)
+#[allow(clippy::too_many_arguments)]
 fn run_trace_compile(
     model: &str,
     output: &str,
@@ -4431,16 +4432,7 @@ fn run_trace_compile(
         // seq_len here would cap the KV cache to only 32 positions,
         // making autoregressive generation impossible beyond that.
         // Note: actual_max_seq_len was computed earlier for the resolvers.
-        let decode_step_sir = build_decode_step_sir(
-            &traced_graph,
-            num_layers,
-            num_heads,
-            num_kv_heads,
-            head_dim_val,
-            hidden_size,
-            actual_max_seq_len,
-            batch_size,
-        );
+        let decode_step_sir = build_decode_step_sir(&traced_graph, num_layers);
 
         // Create a separate DecompositionContext for decode_step with the
         // correct max_seq_len as kv_len, plus all dimensions needed for
@@ -4743,12 +4735,6 @@ fn run_trace_compile(
 fn build_decode_step_sir(
     traced_graph: &ane_trace::graph::TracedGraph,
     num_layers: usize,
-    _num_heads: usize,
-    _num_kv_heads: usize,
-    _head_dim: usize,
-    _hidden_size: usize,
-    _max_seq_len: usize,
-    _batch_size: usize,
 ) -> ane_ir::sir::SirGraph {
     use ane_ir::sir::{
         QualityContract, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin,

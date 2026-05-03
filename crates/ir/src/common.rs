@@ -263,6 +263,7 @@ impl ModelArchConfig {
     ///
     /// This is the primary factory method used by the CLI to build
     /// a compilation-ready config from the traced model's metadata.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_model_config(
         hidden_size: usize,
         num_attention_heads: usize,

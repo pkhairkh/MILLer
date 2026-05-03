@@ -194,12 +194,12 @@
 - **Effort**: S (0.5 day)
 - **Resolution**: Replaced 5 `panic!()` calls in proto validation functions with `Result<(), ProtoValidationError>`. Added `ProtoValidationError` struct with `kind: ProtoValidationKind`, `message: String`, and `op_name: Option<String>` fields. Added `ProtoValidationKind` enum with 6 variants: `FillDtypeMismatch`, `FillFp16FloatsStorage`, `FillFp32BytesStorage`, `ElementwiseBroadcastShapeMismatch`, `MatMulInnerDimMismatch`, `MatMulOutputShapeMismatch`. Converted 3 validation functions (`validate_fill_dtype_consistency`, `validate_elementwise_broadcast_shapes`, `validate_matmul_shapes`) from `fn(...)` to `fn(...) -> Result<(), ProtoValidationError>`. Propagated `Result` up through `function_to_apple_proto` → `convert_to_apple_proto_model`. Updated caller in `mir_to_proto.rs` to map `ProtoValidationError` into `anyhow::Error`. `ProtoValidationError` implements `Display`, `Error`, and `Clone`. Added 14 new tests: error Display with/without op_name, kind Display for all 6 variants, std::error::Error trait, valid fill/add/matmul validation pass-through, non-matching ops trivially pass, empty operations, kind equality, Clone, end-to-end `convert_to_apple_proto_model` with valid model. Test-code `panic!()` calls (assertion-style) left unchanged. All 1113 tests pass.
 
-### T-44 · Refactor `too_many_arguments` in legality_rewrite
+### T-44 · Refactor `too_many_arguments` in legality_rewrite ✅
 
 - **AUDIT ref**: §III (CQ-7)
-- **Severity**: LOW
+- **Severity**: LOW → RESOLVED
 - **Effort**: M (1 day)
-- **Description**: 8 functions with 7+ args; worst is 16 at line 1373. Use builder pattern or config struct.
+- **Resolution**: Refactored 8 functions with too many arguments (7+), eliminating all 11 `too_many_arguments` clippy warnings. Added three new structs: (1) `DecompositionEnv<'a>` — bundles the 4 references shared by all decomposition functions (`sir_to_air`, `kq`, `sir_node`, `base`); (2) `DecodeWeights<'a>` — groups 8 optional weight-name strings for the decode step; (3) `DecompositionContext::from_model_arch()` — factory method to construct from a `ModelArchConfig` without field-by-field unpacking. Key refactorings: `decompose_decode_step` from 16→7 args, `build_decode_step_sir` from 8→2 args (removed 6 unused `_`-prefixed params), `decompose_attention_block` from 8→6, `apply_qk_norm_decode` from 10→7, `apply_rope_decode` from 10→7, `apply_rotary_half` from 9→7, `decompose_rms_norm` from 8→6. Added `#[allow(clippy::too_many_arguments)]` to 3 factory functions where many args are intentional (named-parameter constructors: `from_model_config`, `for_attention_full`, `for_decode_step_full`) and 1 CLI wiring function (`run_trace_compile`). Also fixed 2 `useless_format` clippy warnings in `coreml-proto` and added `#[allow(dead_code)]` to deprecated `kv_cache_rewrite` module. All 1113 tests pass. **Zero clippy warnings remain in the entire workspace.**
 
 ### T-45 · Make Deprecated `kv_cache_rewrite` Non-Public ✅
 
@@ -236,7 +236,7 @@
 | T-41 | I-20 | LOW | S | ✅ |
 | T-42 | — | LOW | S | ✅ |
 | T-43 | — | LOW | S | ✅ |
-| T-44 | — | LOW | M | ⬜ |
+| T-44 | — | LOW | M | ✅ |
 | T-45 | — | LOW | S | ✅ |
 
 ---
