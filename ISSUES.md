@@ -133,16 +133,16 @@ ANE-legal ops that still lack MirOpCompat variants (BatchNorm, MaxPool, AvgPool,
 
 ### I-12 · Zero Tests for `bridge::shape_inference.rs`
 
-**Status:** ⬜ Open
+**Status:** ✅ FIXED (T-33)
 **Files:** `crates/bridge/src/shape_inference.rs`
 **AUDIT ref:** §V
-**Severity:** MEDIUM — 500+ lines of shape inference with zero test coverage
+**Severity:** MEDIUM → RESOLVED
 **Effort:** M (2 days)
 **Task:** T-33
 
 Shape bugs here silently produce wrong Core ML models. Covers broadcast, concat, slice-by-index, topk, where, layer-norm, pad, expand_dims, squeeze, and more.
 
-**Fix:** Test `compat_output_shape` for every MirOp variant with concrete shapes.
+**Resolution:** Added 153 comprehensive tests covering all three public functions and two private helpers. Tests cover every MirOp variant handled by `compat_output_shape` with concrete shapes, edge cases (unknown inputs, out-of-range axes, incompatible broadcast), and the `broadcast_shape_compat` and `reduce_shape` helpers directly. Two bugs discovered and fixed: (1) `MILTopk` negative axis — `saturating_add(*axis as usize)` wraps for negative isize producing usize::MAX instead of the correct positive index; replaced with `(rank + axis) as usize`; (2) `MILExpandDims` multi-axis — `ax + i` position adjustment produced wrong insertion positions; replaced with direct `ax` since sorted-order iteration handles position shifts automatically.
 
 ---
 
@@ -309,8 +309,8 @@ The following issues from the previous tracker have been resolved and archived t
 |----------|-------|------|-------------|-------|
 | P0 | 3 | 0 | 0 | 3 |
 | P1 | 8 | 0 | 0 | 8 |
-| P2 | 8 | 8 | 0 | 0 |
+| P2 | 8 | 7 | 0 | 1 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **9** | **0** | **11** |
+| **Total** | **20** | **8** | **0** | **12** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32.*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issue I-12 resolved by T-33.*

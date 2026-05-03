@@ -104,13 +104,13 @@
 
 ## 🟡 MEDIUM — Do These Soon
 
-### T-33 · Add Tests for `bridge::shape_inference.rs`
+### T-33 · Add Tests for `bridge::shape_inference.rs` ✅
 
 - **ISSUES ref**: I-12
 - **AUDIT ref**: §V
-- **Severity**: MEDIUM
+- **Severity**: MEDIUM → RESOLVED
 - **Effort**: M (2 days)
-- **Description**: 500+ lines of shape inference with zero tests. Test `compat_output_shape` for every MirOp variant with concrete shapes.
+- **Resolution**: Added 153 comprehensive tests covering all three public functions (`compat_input_dtype`, `compat_input_shape`, `compat_output_shape`) and two private helpers (`broadcast_shape_compat`, `reduce_shape`). Tests cover: 22 unary ops, 17 binary ops with broadcast, Softmax, Linear, MatMul (2D/batched/broadcast), Reshape, Transpose, Tile, Fill, FillLike, Gather (embedding/axis-last/fallback), ReduceMean/Max/Min/Prod (keep_dims/no-keep/multiple axes), ExpandDims (single/multi axis), Squeeze, Pad, Concat, Where, LayerNorm, Topk (positive/negative axis), SDPA, ReadState, CoremlUpdateState, StateWrite, Conv, Select, Split, SliceByIndex (masks/squeeze/negative end), Identity, Stack, Const (lookup/scalar://), and catch-all. Also fixed two bugs discovered by tests: (1) `MILTopk` negative axis — `saturating_add(*axis as usize)` wraps for negative isize; replaced with `(rank + axis) as usize`; (2) `MILExpandDims` multi-axis — `ax + i` position adjustment was wrong; replaced with direct `ax`. All 974 tests pass.
 
 ### T-34 · Add Tests for `passes::staticize.rs`
 
@@ -225,7 +225,7 @@
 | T-30 | I-09 | HIGH | S | ✅ |
 | T-31 | I-10 | HIGH | M | ✅ |
 | T-32 | I-11 | MEDIUM | S | ✅ |
-| T-33 | I-12 | MEDIUM | M | ⬜ |
+| T-33 | I-12 | MEDIUM | M | ✅ |
 | T-34 | I-13 | MEDIUM | S | ⬜ |
 | T-35 | I-14 | MEDIUM | M | ⬜ |
 | T-36 | I-15 | MEDIUM | M | ⬜ |

@@ -230,8 +230,10 @@ pub fn compat_output_shape(
                 let mut out = input_shape.clone();
                 let mut sorted_axes: Vec<usize> = axis.iter().map(|&a| a as usize).collect();
                 sorted_axes.sort_unstable();
-                for (i, &ax) in sorted_axes.iter().enumerate() {
-                    let insert_pos = if ax >= out.len() { out.len() } else { ax + i };
+                for &ax in &sorted_axes {
+                    // Insert at the output position; since we iterate in sorted order,
+                    // each insertion shifts subsequent positions automatically.
+                    let insert_pos = if ax >= out.len() { out.len() } else { ax };
                     out.insert(insert_pos, 1);
                 }
                 out
@@ -325,7 +327,8 @@ pub fn compat_output_shape(
         MirOp::MILTopk { x, k, axis, .. } => {
             if let Some(input_shape) = node_shapes.get(&x.0) {
                 let mut out = input_shape.clone();
-                let ax = if *axis >= 0 { *axis as usize } else { out.len().saturating_add(*axis as usize) };
+                let rank = out.len() as isize;
+                let ax = if *axis >= 0 { *axis as usize } else { (rank + axis) as usize };
                 if ax < out.len() {
                     out[ax] = *k;
                 }
@@ -488,5 +491,1317 @@ fn reduce_shape(
         out
     } else {
         vec![]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ane_ir::mir::{MilDtype, MirNodeId, MirOp};
+    use std::collections::HashMap;
+
+    // ─── Helper constructors ───────────────────────────────────────────────
+
+    fn nid(s: &str) -> MirNodeId {
+        MirNodeId(s.to_string())
+    }
+
+    fn shapes() -> HashMap<String, Vec<usize>> {
+        HashMap::new()
+    }
+
+    fn shapes_with(entries: Vec<(&str, Vec<usize>)>) -> HashMap<String, Vec<usize>> {
+        entries.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
+    }
+
+    // ─── compat_input_dtype ───────────────────────────────────────────────
+
+    #[test]
+    fn test_compat_input_dtype_input_ids_returns_int32() {
+        let result = compat_input_dtype("input_ids", &MilDtype::Fp16);
+        assert_eq!(result, MilDtypeCompat::Int32);
+    }
+
+    #[test]
+    fn test_compat_input_dtype_input_ids_prefix_returns_int32() {
+        let result = compat_input_dtype("model_input_ids_seq", &MilDtype::Fp16);
+        assert_eq!(result, MilDtypeCompat::Int32);
+    }
+
+    #[test]
+    fn test_compat_input_dtype_non_input_ids_returns_compat_dtype() {
+        let result = compat_input_dtype("attention_mask", &MilDtype::Fp16);
+        assert_eq!(result, MilDtypeCompat::Fp16);
+    }
+
+    #[test]
+    fn test_compat_input_dtype_fp32_passthrough() {
+        let result = compat_input_dtype("weights", &MilDtype::Fp32);
+        assert_eq!(result, MilDtypeCompat::Fp32);
+    }
+
+    // ─── compat_input_shape ───────────────────────────────────────────────
+
+    #[test]
+    fn test_compat_input_shape_non_empty_returns_as_is() {
+        assert_eq!(compat_input_shape("x", &[2, 3, 4]), vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn test_compat_input_shape_empty_input_ids_fallback() {
+        assert_eq!(compat_input_shape("input_ids", &[]), vec![1, 512]);
+    }
+
+    #[test]
+    fn test_compat_input_shape_empty_generic_fallback() {
+        assert_eq!(compat_input_shape("attention_mask", &[]), vec![1]);
+    }
+
+    #[test]
+    fn test_compat_input_shape_non_empty_overrides_input_ids_name() {
+        // When shape is known, the name heuristic is irrelevant
+        assert_eq!(compat_input_shape("input_ids", &[1, 128]), vec![1, 128]);
+    }
+
+    // ─── compat_output_shape: early-return paths ──────────────────────────
+
+    #[test]
+    fn test_compat_output_shape_non_empty_shape_returns_immediately() {
+        let op = MirOp::MILRelu { name: "r".into(), x: nid("x") };
+        let ns = shapes();
+        // Even though x has no shape in node_shapes, non-empty shape is returned
+        assert_eq!(compat_output_shape("node", &op, &[3, 4], &ns), vec![3, 4]);
+    }
+
+    #[test]
+    fn test_compat_output_shape_input_ids_name_returns_default() {
+        let op = MirOp::MILRelu { name: "r".into(), x: nid("x") };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("input_ids_node", &op, &[], &ns), vec![1, 512]);
+    }
+
+    // ─── compat_output_shape: unary shape-propagating ops ─────────────────
+
+    #[test]
+    fn test_unary_silu_propagates_shape() {
+        let op = MirOp::MILSilu { name: "s".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![1, 512, 1024])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 512, 1024]);
+    }
+
+    #[test]
+    fn test_unary_abs_propagates_shape() {
+        let op = MirOp::MILAbs { name: "a".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![4, 5])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![4, 5]);
+    }
+
+    #[test]
+    fn test_unary_relu_propagates_shape() {
+        let op = MirOp::MILRelu { name: "r".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![2, 3])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 3]);
+    }
+
+    #[test]
+    fn test_unary_sigmoid_propagates_shape() {
+        let op = MirOp::MILSigmoid { name: "s".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![8])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![8]);
+    }
+
+    #[test]
+    fn test_unary_tanh_propagates_shape() {
+        let op = MirOp::MILTanh { name: "t".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![1, 64])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 64]);
+    }
+
+    #[test]
+    fn test_unary_gelu_propagates_shape() {
+        let op = MirOp::MILGelu { name: "g".into(), x: nid("x"), mode: "exact".into() };
+        let ns = shapes_with(vec![("x", vec![2, 4, 6])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 4, 6]);
+    }
+
+    #[test]
+    fn test_unary_exp_propagates_shape() {
+        let op = MirOp::MILExp { name: "e".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![3, 3])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![3, 3]);
+    }
+
+    #[test]
+    fn test_unary_cos_propagates_shape() {
+        let op = MirOp::MILCos { name: "c".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![7])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![7]);
+    }
+
+    #[test]
+    fn test_unary_sin_propagates_shape() {
+        let op = MirOp::MILSin { name: "s".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![7])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![7]);
+    }
+
+    #[test]
+    fn test_unary_cast_propagates_shape() {
+        let op = MirOp::MILCast { name: "c".into(), x: nid("x"), dtype: MilDtype::Fp32 };
+        let ns = shapes_with(vec![("x", vec![1, 128])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 128]);
+    }
+
+    #[test]
+    fn test_unary_rsqrt_propagates_shape() {
+        let op = MirOp::MILRsqrt { name: "r".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![4, 8])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![4, 8]);
+    }
+
+    #[test]
+    fn test_unary_neg_propagates_shape() {
+        let op = MirOp::MILNeg { name: "n".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![2, 3])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 3]);
+    }
+
+    #[test]
+    fn test_unary_sqrt_propagates_shape() {
+        let op = MirOp::MILSqrt { name: "s".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![5, 6])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![5, 6]);
+    }
+
+    #[test]
+    fn test_unary_logical_not_propagates_shape() {
+        let op = MirOp::MILLogicalNot { name: "ln".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![1, 10])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 10]);
+    }
+
+    #[test]
+    fn test_unary_ceil_propagates_shape() {
+        let op = MirOp::MILCeil { name: "c".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![3])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![3]);
+    }
+
+    #[test]
+    fn test_unary_floor_propagates_shape() {
+        let op = MirOp::MILFloor { name: "f".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![3])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![3]);
+    }
+
+    #[test]
+    fn test_unary_round_propagates_shape() {
+        let op = MirOp::MILRound { name: "r".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![3])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![3]);
+    }
+
+    #[test]
+    fn test_unary_sign_propagates_shape() {
+        let op = MirOp::MILSign { name: "s".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![3])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![3]);
+    }
+
+    #[test]
+    fn test_unary_log_propagates_shape() {
+        let op = MirOp::MILLog { name: "l".into(), x: nid("x"), epsilon: 1e-7 };
+        let ns = shapes_with(vec![("x", vec![2, 4])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 4]);
+    }
+
+    #[test]
+    fn test_unary_leaky_relu_propagates_shape() {
+        let op = MirOp::MILLeakyRelu { name: "lr".into(), x: nid("x"), alpha: 0.01 };
+        let ns = shapes_with(vec![("x", vec![1, 32])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 32]);
+    }
+
+    #[test]
+    fn test_unary_clip_propagates_shape() {
+        let op = MirOp::MILClip { name: "c".into(), x: nid("x"), min_val: 0.0, max_val: 6.0 };
+        let ns = shapes_with(vec![("x", vec![1, 32])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 32]);
+    }
+
+    #[test]
+    fn test_unary_unknown_input_returns_empty() {
+        let op = MirOp::MILRelu { name: "r".into(), x: nid("unknown") };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: binary ops with broadcast ───────────────────
+
+    #[test]
+    fn test_binary_add_same_shape() {
+        let op = MirOp::MILAdd { name: "a".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![2, 3]), ("b", vec![2, 3])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 3]);
+    }
+
+    #[test]
+    fn test_binary_mul_broadcast_different_rank() {
+        let op = MirOp::MILMul { name: "m".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![1, 512, 64]), ("b", vec![64])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 512, 64]);
+    }
+
+    #[test]
+    fn test_binary_sub_broadcast_scalar() {
+        let op = MirOp::MILSub { name: "s".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![1, 512]), ("b", vec![1])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 512]);
+    }
+
+    #[test]
+    fn test_binary_maximum_broadcast() {
+        let op = MirOp::MILMaximum { name: "mx".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![4, 1, 8]), ("b", vec![1, 6, 8])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![4, 6, 8]);
+    }
+
+    #[test]
+    fn test_binary_minimum_same_shape() {
+        let op = MirOp::MILMinimum { name: "mn".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![5, 5]), ("b", vec![5, 5])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![5, 5]);
+    }
+
+    #[test]
+    fn test_binary_realdiv_broadcast() {
+        let op = MirOp::MILRealDiv { name: "d".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![2, 3, 4]), ("b", vec![4])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn test_binary_pow_broadcast() {
+        let op = MirOp::MILPow { name: "p".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![3, 4]), ("b", vec![1])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![3, 4]);
+    }
+
+    #[test]
+    fn test_binary_floordiv_same_shape() {
+        let op = MirOp::MILFloorDiv { name: "fd".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![8, 8]), ("b", vec![8, 8])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![8, 8]);
+    }
+
+    #[test]
+    fn test_binary_mod_broadcast() {
+        let op = MirOp::MILMod { name: "md".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![1, 10]), ("b", vec![10])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 10]);
+    }
+
+    #[test]
+    fn test_binary_equal_broadcast() {
+        let op = MirOp::MILEqual { name: "eq".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![1, 64]), ("b", vec![64])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 64]);
+    }
+
+    #[test]
+    fn test_binary_not_equal_same_shape() {
+        let op = MirOp::MILNotEqual { name: "ne".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![3, 3]), ("b", vec![3, 3])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![3, 3]);
+    }
+
+    #[test]
+    fn test_binary_greater_broadcast() {
+        let op = MirOp::MILGreater { name: "gt".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![4, 1]), ("b", vec![1, 5])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![4, 5]);
+    }
+
+    #[test]
+    fn test_binary_greater_equal_broadcast() {
+        let op = MirOp::MILGreaterEqual { name: "ge".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![2, 3]), ("b", vec![3])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 3]);
+    }
+
+    #[test]
+    fn test_binary_less_same_shape() {
+        let op = MirOp::MILLess { name: "lt".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![2, 2]), ("b", vec![2, 2])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 2]);
+    }
+
+    #[test]
+    fn test_binary_less_equal_broadcast() {
+        let op = MirOp::MILLessEqual { name: "le".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![1, 8]), ("b", vec![8])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 8]);
+    }
+
+    #[test]
+    fn test_binary_logical_and_broadcast() {
+        let op = MirOp::MILLogicalAnd { name: "la".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![1, 16]), ("b", vec![16])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 16]);
+    }
+
+    #[test]
+    fn test_binary_logical_or_broadcast() {
+        let op = MirOp::MILLogicalOr { name: "lo".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![1, 16]), ("b", vec![16])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 16]);
+    }
+
+    #[test]
+    fn test_binary_only_x_known_returns_x() {
+        let op = MirOp::MILAdd { name: "a".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![2, 3])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 3]);
+    }
+
+    #[test]
+    fn test_binary_only_y_known_returns_y() {
+        let op = MirOp::MILAdd { name: "a".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("b", vec![2, 3])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 3]);
+    }
+
+    #[test]
+    fn test_binary_both_unknown_returns_empty() {
+        let op = MirOp::MILAdd { name: "a".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_binary_incompatible_broadcast_returns_x_fallback() {
+        // [3, 4] and [5, 6] are not broadcast-compatible → falls back to shape_a
+        let op = MirOp::MILAdd { name: "a".into(), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![3, 4]), ("b", vec![5, 6])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![3, 4]);
+    }
+
+    // ─── compat_output_shape: softmax ─────────────────────────────────────
+
+    #[test]
+    fn test_softmax_propagates_shape() {
+        let op = MirOp::MILSoftmax { name: "sm".into(), x: nid("x"), axis: -1 };
+        let ns = shapes_with(vec![("x", vec![1, 12, 64, 64])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 12, 64, 64]);
+    }
+
+    // ─── compat_output_shape: linear ──────────────────────────────────────
+
+    #[test]
+    fn test_linear_propagates_input_shape() {
+        let op = MirOp::MILLinear {
+            name: "lin".into(),
+            x: nid("x"),
+            weight: "w.bin".into(),
+            bias: None,
+        };
+        let ns = shapes_with(vec![("x", vec![1, 512])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 512]);
+    }
+
+    #[test]
+    fn test_linear_unknown_input_returns_empty() {
+        let op = MirOp::MILLinear {
+            name: "lin".into(),
+            x: nid("x"),
+            weight: "w.bin".into(),
+            bias: None,
+        };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: matmul ──────────────────────────────────────
+
+    #[test]
+    fn test_matmul_2d() {
+        let op = MirOp::MILMatMul {
+            name: "mm".into(),
+            x: nid("a"),
+            y: nid("b"),
+            transpose_y: false,
+        };
+        let ns = shapes_with(vec![("a", vec![4, 8]), ("b", vec![8, 16])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![4, 16]);
+    }
+
+    #[test]
+    fn test_matmul_batched() {
+        let op = MirOp::MILMatMul {
+            name: "mm".into(),
+            x: nid("a"),
+            y: nid("b"),
+            transpose_y: false,
+        };
+        // [2, 3, 4] × [2, 4, 5] → [2, 3, 5]
+        let ns = shapes_with(vec![("a", vec![2, 3, 4]), ("b", vec![2, 4, 5])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 3, 5]);
+    }
+
+    #[test]
+    fn test_matmul_batched_broadcast() {
+        let op = MirOp::MILMatMul {
+            name: "mm".into(),
+            x: nid("a"),
+            y: nid("b"),
+            transpose_y: false,
+        };
+        // [2, 1, 3, 4] × [1, 6, 4, 5] → [2, 6, 3, 5]
+        let ns = shapes_with(vec![("a", vec![2, 1, 3, 4]), ("b", vec![1, 6, 4, 5])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 6, 3, 5]);
+    }
+
+    #[test]
+    fn test_matmul_only_x_known() {
+        let op = MirOp::MILMatMul {
+            name: "mm".into(),
+            x: nid("a"),
+            y: nid("b"),
+            transpose_y: false,
+        };
+        let ns = shapes_with(vec![("a", vec![4, 8])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![4, 8]);
+    }
+
+    #[test]
+    fn test_matmul_both_unknown() {
+        let op = MirOp::MILMatMul {
+            name: "mm".into(),
+            x: nid("a"),
+            y: nid("b"),
+            transpose_y: false,
+        };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_matmul_degenerate_1d_fallback() {
+        // 1D × 2D falls back to x shape
+        let op = MirOp::MILMatMul {
+            name: "mm".into(),
+            x: nid("a"),
+            y: nid("b"),
+            transpose_y: false,
+        };
+        let ns = shapes_with(vec![("a", vec![8]), ("b", vec![8, 16])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![8]);
+    }
+
+    // ─── compat_output_shape: reshape ─────────────────────────────────────
+
+    #[test]
+    fn test_reshape_returns_target_shape() {
+        let op = MirOp::MILReshape { name: "r".into(), x: nid("x"), shape: vec![2, 3, 4] };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn test_reshape_flatten() {
+        let op = MirOp::MILReshape { name: "r".into(), x: nid("x"), shape: vec![1, 24] };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 24]);
+    }
+
+    // ─── compat_output_shape: transpose ───────────────────────────────────
+
+    #[test]
+    fn test_transpose_2d() {
+        let op = MirOp::MILTranspose { name: "t".into(), x: nid("x"), perm: vec![1, 0] };
+        let ns = shapes_with(vec![("x", vec![3, 5])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![5, 3]);
+    }
+
+    #[test]
+    fn test_transpose_4d_nchw_to_nhwc() {
+        let op = MirOp::MILTranspose { name: "t".into(), x: nid("x"), perm: vec![0, 2, 3, 1] };
+        let ns = shapes_with(vec![("x", vec![1, 64, 8, 8])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 8, 8, 64]);
+    }
+
+    #[test]
+    fn test_transpose_unknown_input_returns_empty() {
+        let op = MirOp::MILTranspose { name: "t".into(), x: nid("x"), perm: vec![1, 0] };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: tile ────────────────────────────────────────
+
+    #[test]
+    fn test_tile_propagates_input_shape() {
+        let op = MirOp::MILTile { name: "t".into(), x: nid("x"), reps: vec![2, 3] };
+        let ns = shapes_with(vec![("x", vec![1, 64])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 64]);
+    }
+
+    // ─── compat_output_shape: fill / fill_like ────────────────────────────
+
+    #[test]
+    fn test_fill_returns_shape_param() {
+        let op = MirOp::MILFill { name: "f".into(), shape: vec![2, 3, 4], value: 0.0, dtype: MilDtype::Fp16 };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn test_fill_like_propagates_ref_shape() {
+        let op = MirOp::MILFillLike { name: "fl".into(), ref_tensor: nid("x"), value: 1.0, dtype: MilDtype::Fp16 };
+        let ns = shapes_with(vec![("x", vec![1, 128])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 128]);
+    }
+
+    #[test]
+    fn test_fill_like_unknown_ref_returns_empty() {
+        let op = MirOp::MILFillLike { name: "fl".into(), ref_tensor: nid("x"), value: 1.0, dtype: MilDtype::Fp16 };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: gather (embedding) ──────────────────────────
+
+    #[test]
+    fn test_gather_embedding_2d() {
+        // x=[151936, 1024], indices=[1, 512], axis=0 → [1, 512, 1024]
+        let op = MirOp::MILGather { name: "g".into(), x: nid("x"), indices: nid("idx"), axis: 0 };
+        let ns = shapes_with(vec![("x", vec![151936, 1024]), ("idx", vec![1, 512])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 512, 1024]);
+    }
+
+    #[test]
+    fn test_gather_axis_last() {
+        // x=[1, 512, 1024], indices=[1, 512, 10], axis=2 → [1, 512, 1, 512, 10]
+        let op = MirOp::MILGather { name: "g".into(), x: nid("x"), indices: nid("idx"), axis: 2 };
+        let ns = shapes_with(vec![("x", vec![1, 512, 1024]), ("idx", vec![1, 512, 10])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 512, 1, 512, 10]);
+    }
+
+    #[test]
+    fn test_gather_no_indices_shape_falls_back_to_input() {
+        let op = MirOp::MILGather { name: "g".into(), x: nid("x"), indices: nid("idx"), axis: 0 };
+        let ns = shapes_with(vec![("x", vec![100, 50])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![100, 50]);
+    }
+
+    #[test]
+    fn test_gather_both_unknown_returns_empty() {
+        let op = MirOp::MILGather { name: "g".into(), x: nid("x"), indices: nid("idx"), axis: 0 };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: reduce_mean / reduce_max / reduce_min / reduce_prod ───
+
+    #[test]
+    fn test_reduce_mean_keep_dims() {
+        let op = MirOp::MILReduceMean { name: "rm".into(), x: nid("x"), axes: vec![2], keep_dims: true };
+        let ns = shapes_with(vec![("x", vec![1, 12, 64, 64])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 12, 1, 64]);
+    }
+
+    #[test]
+    fn test_reduce_mean_no_keep_dims() {
+        let op = MirOp::MILReduceMean { name: "rm".into(), x: nid("x"), axes: vec![2], keep_dims: false };
+        let ns = shapes_with(vec![("x", vec![1, 12, 64, 64])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 12, 64]);
+    }
+
+    #[test]
+    fn test_reduce_mean_multiple_axes_no_keep() {
+        let op = MirOp::MILReduceMean { name: "rm".into(), x: nid("x"), axes: vec![1, 2], keep_dims: false };
+        let ns = shapes_with(vec![("x", vec![1, 12, 64, 64])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 64]);
+    }
+
+    #[test]
+    fn test_reduce_max_keep_dims() {
+        let op = MirOp::MILReduceMax { name: "rx".into(), x: nid("x"), axes: vec![1], keep_dims: true };
+        let ns = shapes_with(vec![("x", vec![2, 3, 4])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 1, 4]);
+    }
+
+    #[test]
+    fn test_reduce_min_no_keep_dims() {
+        let op = MirOp::MILReduceMin { name: "rn".into(), x: nid("x"), axes: vec![0], keep_dims: false };
+        let ns = shapes_with(vec![("x", vec![5, 6, 7])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![6, 7]);
+    }
+
+    #[test]
+    fn test_reduce_prod_keep_dims_all_axes() {
+        let op = MirOp::MILReduceProd { name: "rp".into(), x: nid("x"), axes: vec![0, 1, 2], keep_dims: true };
+        let ns = shapes_with(vec![("x", vec![3, 4, 5])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 1, 1]);
+    }
+
+    #[test]
+    fn test_reduce_unknown_input_returns_empty() {
+        let op = MirOp::MILReduceMean { name: "rm".into(), x: nid("x"), axes: vec![1], keep_dims: false };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: expand_dims ─────────────────────────────────
+
+    #[test]
+    fn test_expand_dims_single_axis() {
+        let op = MirOp::MILExpandDims { name: "ed".into(), x: nid("x"), axis: vec![1] };
+        let ns = shapes_with(vec![("x", vec![3, 4])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![3, 1, 4]);
+    }
+
+    #[test]
+    fn test_expand_dims_multiple_axes() {
+        let op = MirOp::MILExpandDims { name: "ed".into(), x: nid("x"), axis: vec![0, 2] };
+        let ns = shapes_with(vec![("x", vec![3, 4])]);
+        // Insert 1 at pos 0 → [1, 3, 4], then at pos 2 → [1, 3, 1, 4]
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 3, 1, 4]);
+    }
+
+    #[test]
+    fn test_expand_dims_axis_at_end() {
+        let op = MirOp::MILExpandDims { name: "ed".into(), x: nid("x"), axis: vec![2] };
+        let ns = shapes_with(vec![("x", vec![3, 4])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![3, 4, 1]);
+    }
+
+    #[test]
+    fn test_expand_dims_unknown_input_returns_empty() {
+        let op = MirOp::MILExpandDims { name: "ed".into(), x: nid("x"), axis: vec![0] };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: squeeze ─────────────────────────────────────
+
+    #[test]
+    fn test_squeeze_single_axis() {
+        let op = MirOp::MILSqueeze { name: "sq".into(), x: nid("x"), axis: vec![1] };
+        let ns = shapes_with(vec![("x", vec![3, 1, 4])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![3, 4]);
+    }
+
+    #[test]
+    fn test_squeeze_multiple_axes() {
+        let op = MirOp::MILSqueeze { name: "sq".into(), x: nid("x"), axis: vec![1, 3] };
+        let ns = shapes_with(vec![("x", vec![1, 1, 4, 1])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 4]);
+    }
+
+    #[test]
+    fn test_squeeze_axis_out_of_range_is_noop() {
+        // Axis 5 is out of range for a 3D tensor; the removal is skipped
+        let op = MirOp::MILSqueeze { name: "sq".into(), x: nid("x"), axis: vec![5] };
+        let ns = shapes_with(vec![("x", vec![2, 3, 4])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn test_squeeze_unknown_input_returns_empty() {
+        let op = MirOp::MILSqueeze { name: "sq".into(), x: nid("x"), axis: vec![1] };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: pad ─────────────────────────────────────────
+
+    #[test]
+    fn test_pad_symmetric_padding() {
+        // Pad [1, 64, 8, 8] with [0,0,1,1,0,0,1,1] → [1, 64, 10, 10]
+        let op = MirOp::MILPad {
+            name: "p".into(),
+            x: nid("x"),
+            pad_amounts: vec![0, 0, 1, 1, 0, 0, 1, 1],
+            mode: "constant".into(),
+            constant_value: 0.0,
+        };
+        let ns = shapes_with(vec![("x", vec![1, 64, 8, 8])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 64, 10, 10]);
+    }
+
+    #[test]
+    fn test_pad_uneven_padding() {
+        // Pad [3, 4] with [2, 0, 0, 3] → [5, 7]
+        let op = MirOp::MILPad {
+            name: "p".into(),
+            x: nid("x"),
+            pad_amounts: vec![2, 0, 0, 3],
+            mode: "constant".into(),
+            constant_value: 0.0,
+        };
+        let ns = shapes_with(vec![("x", vec![3, 4])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![5, 7]);
+    }
+
+    #[test]
+    fn test_pad_no_padding_returns_same_shape() {
+        let op = MirOp::MILPad {
+            name: "p".into(),
+            x: nid("x"),
+            pad_amounts: vec![0, 0, 0, 0],
+            mode: "constant".into(),
+            constant_value: 0.0,
+        };
+        let ns = shapes_with(vec![("x", vec![2, 3])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 3]);
+    }
+
+    #[test]
+    fn test_pad_unknown_input_returns_empty() {
+        let op = MirOp::MILPad {
+            name: "p".into(),
+            x: nid("x"),
+            pad_amounts: vec![0, 0],
+            mode: "constant".into(),
+            constant_value: 0.0,
+        };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: concat ──────────────────────────────────────
+
+    #[test]
+    fn test_concat_along_axis() {
+        let op = MirOp::MILConcat { name: "c".into(), values: vec![nid("a"), nid("b"), nid("c")], axis: 2 };
+        let ns = shapes_with(vec![
+            ("a", vec![1, 12, 64, 64]),
+            ("b", vec![1, 12, 32, 64]),
+            ("c", vec![1, 12, 16, 64]),
+        ]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 12, 112, 64]);
+    }
+
+    #[test]
+    fn test_concat_single_input() {
+        let op = MirOp::MILConcat { name: "c".into(), values: vec![nid("a")], axis: 1 };
+        let ns = shapes_with(vec![("a", vec![1, 64])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 64]);
+    }
+
+    #[test]
+    fn test_concat_unknown_first_input_returns_empty() {
+        let op = MirOp::MILConcat { name: "c".into(), values: vec![nid("a"), nid("b")], axis: 1 };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_concat_axis_out_of_range_only_first_shape_used() {
+        let op = MirOp::MILConcat { name: "c".into(), values: vec![nid("a"), nid("b")], axis: 5 };
+        let ns = shapes_with(vec![("a", vec![1, 2, 3]), ("b", vec![1, 2, 3])]);
+        // axis 5 is out of range for 3D tensor, so out[5] is never written
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 2, 3]);
+    }
+
+    // ─── compat_output_shape: where ───────────────────────────────────────
+
+    #[test]
+    fn test_where_all_same_shape() {
+        let op = MirOp::MILWhere { name: "w".into(), condition: nid("c"), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("c", vec![2, 3]), ("a", vec![2, 3]), ("b", vec![2, 3])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 3]);
+    }
+
+    #[test]
+    fn test_where_broadcast_condition_scalar() {
+        let op = MirOp::MILWhere { name: "w".into(), condition: nid("c"), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("c", vec![1]), ("a", vec![1, 64]), ("b", vec![1, 64])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 64]);
+    }
+
+    #[test]
+    fn test_where_only_x_known_returns_x() {
+        let op = MirOp::MILWhere { name: "w".into(), condition: nid("c"), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![3, 4])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![3, 4]);
+    }
+
+    #[test]
+    fn test_where_only_condition_known_returns_condition() {
+        let op = MirOp::MILWhere { name: "w".into(), condition: nid("c"), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("c", vec![3, 4])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![3, 4]);
+    }
+
+    #[test]
+    fn test_where_all_unknown_returns_empty() {
+        let op = MirOp::MILWhere { name: "w".into(), condition: nid("c"), x: nid("a"), y: nid("b") };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: layer_norm ──────────────────────────────────
+
+    #[test]
+    fn test_layer_norm_propagates_shape() {
+        let op = MirOp::MILLayerNorm {
+            name: "ln".into(),
+            x: nid("x"),
+            weight: "w.bin".into(),
+            bias: Some("b.bin".into()),
+            epsilon: 1e-5,
+            axes: vec![2],
+        };
+        let ns = shapes_with(vec![("x", vec![1, 12, 64])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 12, 64]);
+    }
+
+    // ─── compat_output_shape: topk ────────────────────────────────────────
+
+    #[test]
+    fn test_topk_positive_axis() {
+        let op = MirOp::MILTopk { name: "tk".into(), x: nid("x"), k: 10, axis: 2 };
+        let ns = shapes_with(vec![("x", vec![1, 12, 64])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 12, 10]);
+    }
+
+    #[test]
+    fn test_topk_negative_axis() {
+        let op = MirOp::MILTopk { name: "tk".into(), x: nid("x"), k: 5, axis: -1 };
+        let ns = shapes_with(vec![("x", vec![1, 12, 64])]);
+        // axis=-1 → axis = 3 - 1 = 2
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 12, 5]);
+    }
+
+    #[test]
+    fn test_topk_unknown_input_returns_empty() {
+        let op = MirOp::MILTopk { name: "tk".into(), x: nid("x"), k: 10, axis: 1 };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: scaled_dot_product_attention ────────────────
+
+    #[test]
+    fn test_sdpa_propagates_query_shape() {
+        let op = MirOp::MILScaledDotProductAttention {
+            name: "sdpa".into(),
+            query: nid("q"),
+            key: nid("k"),
+            value: nid("v"),
+            attention_mask: None,
+            scale: Some(0.125),
+        };
+        let ns = shapes_with(vec![("q", vec![1, 12, 64, 64])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 12, 64, 64]);
+    }
+
+    #[test]
+    fn test_sdpa_unknown_query_returns_empty() {
+        let op = MirOp::MILScaledDotProductAttention {
+            name: "sdpa".into(),
+            query: nid("q"),
+            key: nid("k"),
+            value: nid("v"),
+            attention_mask: None,
+            scale: None,
+        };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: read_state ──────────────────────────────────
+
+    #[test]
+    fn test_read_state_returns_explicit_shape() {
+        let op = MirOp::MILReadState {
+            name: "rs".into(),
+            state_id: "kv_cache".into(),
+            shape: vec![1, 2, 128, 64],
+            dtype: MilDtype::Fp16,
+        };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 2, 128, 64]);
+    }
+
+    // ─── compat_output_shape: coreml_update_state / state_write ───────────
+
+    #[test]
+    fn test_coreml_update_state_propagates_value_shape() {
+        let op = MirOp::MILCoremlUpdateState {
+            name: "us".into(),
+            state_id: "kv".into(),
+            value: nid("v"),
+        };
+        let ns = shapes_with(vec![("v", vec![1, 2, 128, 64])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 2, 128, 64]);
+    }
+
+    #[test]
+    fn test_state_write_propagates_value_shape() {
+        let op = MirOp::MILStateWrite {
+            name: "sw".into(),
+            state_ref: "kv".into(),
+            value: nid("v"),
+        };
+        let ns = shapes_with(vec![("v", vec![2, 4])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 4]);
+    }
+
+    // ─── compat_output_shape: conv ────────────────────────────────────────
+
+    #[test]
+    fn test_conv_propagates_input_shape() {
+        let op = MirOp::MILConv {
+            name: "conv".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1, 1],
+            pad_amounts: vec![0, 0, 0, 0],
+            dilations: vec![1, 1],
+        };
+        let ns = shapes_with(vec![("x", vec![1, 3, 32, 32])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 3, 32, 32]);
+    }
+
+    // ─── compat_output_shape: select ──────────────────────────────────────
+
+    #[test]
+    fn test_select_propagates_x_shape() {
+        let op = MirOp::MILSelect { name: "sel".into(), condition: nid("c"), x: nid("a"), y: nid("b") };
+        let ns = shapes_with(vec![("a", vec![1, 128])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 128]);
+    }
+
+    // ─── compat_output_shape: split ───────────────────────────────────────
+
+    #[test]
+    fn test_split_evenly() {
+        let op = MirOp::MILSplit { name: "sp".into(), x: nid("x"), axis: 1, num_splits: 4 };
+        let ns = shapes_with(vec![("x", vec![1, 64, 8])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 16, 8]);
+    }
+
+    #[test]
+    fn test_split_axis_0() {
+        let op = MirOp::MILSplit { name: "sp".into(), x: nid("x"), axis: 0, num_splits: 2 };
+        let ns = shapes_with(vec![("x", vec![4, 8])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 8]);
+    }
+
+    #[test]
+    fn test_split_unknown_input_returns_empty() {
+        let op = MirOp::MILSplit { name: "sp".into(), x: nid("x"), axis: 1, num_splits: 2 };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: slice_by_index ──────────────────────────────
+
+    #[test]
+    fn test_slice_by_index_simple() {
+        let op = MirOp::MILSliceByIndex {
+            name: "sli".into(),
+            x: nid("x"),
+            begin: vec![0, 0, 0],
+            end: vec![1, 6, 32],
+            stride: vec![1, 1, 1],
+            begin_mask: vec![true, false, false],
+            end_mask: vec![true, false, false],
+            squeeze_mask: vec![],
+        };
+        let ns = shapes_with(vec![("x", vec![1, 12, 64])]);
+        // axis 0: begin_mask=true → b=0, end_mask=true → e=1 → 1-0=1
+        // axis 1: begin=0, end=6 → 6-0=6
+        // axis 2: begin=0, end=32 → 32-0=32
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 6, 32]);
+    }
+
+    #[test]
+    fn test_slice_by_index_with_begin_end_masks() {
+        let op = MirOp::MILSliceByIndex {
+            name: "sli".into(),
+            x: nid("x"),
+            begin: vec![0, 2, 0],
+            end: vec![0, 5, 0],
+            stride: vec![1, 1, 1],
+            begin_mask: vec![true, false, true],
+            end_mask: vec![true, false, true],
+            squeeze_mask: vec![],
+        };
+        let ns = shapes_with(vec![("x", vec![1, 10, 64])]);
+        // axis 0: begin_mask → b=0, end_mask → e=1 → 1
+        // axis 1: begin=2, end=5 → 3
+        // axis 2: begin_mask → b=0, end_mask → e=64 → 64
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 3, 64]);
+    }
+
+    #[test]
+    fn test_slice_by_index_with_squeeze_mask() {
+        let op = MirOp::MILSliceByIndex {
+            name: "sli".into(),
+            x: nid("x"),
+            begin: vec![0, 0, 0],
+            end: vec![1, 10, 64],
+            stride: vec![1, 1, 1],
+            begin_mask: vec![false, false, false],
+            end_mask: vec![false, false, false],
+            squeeze_mask: vec![true, false, false],
+        };
+        let ns = shapes_with(vec![("x", vec![1, 10, 64])]);
+        // Before squeeze: [1, 10, 64]; squeeze axis 0 → [10, 64]
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![10, 64]);
+    }
+
+    #[test]
+    fn test_slice_by_index_negative_end() {
+        let op = MirOp::MILSliceByIndex {
+            name: "sli".into(),
+            x: nid("x"),
+            begin: vec![0, 0],
+            end: vec![0, -1],
+            stride: vec![1, 1],
+            begin_mask: vec![true, false],
+            end_mask: vec![true, false],
+            squeeze_mask: vec![],
+        };
+        let ns = shapes_with(vec![("x", vec![1, 10])]);
+        // axis 0: begin_mask → 1; axis 1: begin=0, end=-1 → 10+(-1)=9, 9-0=9
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 9]);
+    }
+
+    #[test]
+    fn test_slice_by_index_unknown_input_returns_empty() {
+        let op = MirOp::MILSliceByIndex {
+            name: "sli".into(),
+            x: nid("x"),
+            begin: vec![0, 0],
+            end: vec![1, 5],
+            stride: vec![1, 1],
+            begin_mask: vec![],
+            end_mask: vec![],
+            squeeze_mask: vec![],
+        };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: identity ────────────────────────────────────
+
+    #[test]
+    fn test_identity_propagates_input_shape() {
+        let op = MirOp::MILIdentity { name: "id".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![2, 4])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![2, 4]);
+    }
+
+    #[test]
+    fn test_identity_placeholder_returns_default() {
+        let op = MirOp::MILIdentity { name: "id".into(), x: nid("__placeholder__") };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 512]);
+    }
+
+    #[test]
+    fn test_identity_unknown_input_returns_empty() {
+        let op = MirOp::MILIdentity { name: "id".into(), x: nid("x") };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: stack ───────────────────────────────────────
+
+    #[test]
+    fn test_stack_axis_0() {
+        let op = MirOp::MILStack { name: "st".into(), values: vec![nid("a"), nid("b"), nid("c")], axis: 0 };
+        let ns = shapes_with(vec![("a", vec![3, 4]), ("b", vec![3, 4]), ("c", vec![3, 4])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![3, 3, 4]);
+    }
+
+    #[test]
+    fn test_stack_axis_2() {
+        let op = MirOp::MILStack { name: "st".into(), values: vec![nid("a"), nid("b")], axis: 2 };
+        let ns = shapes_with(vec![("a", vec![1, 64]), ("b", vec![1, 64])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), vec![1, 64, 2]);
+    }
+
+    #[test]
+    fn test_stack_unknown_first_input_returns_empty() {
+        let op = MirOp::MILStack { name: "st".into(), values: vec![nid("a"), nid("b")], axis: 0 };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: const ───────────────────────────────────────
+
+    #[test]
+    fn test_const_from_node_shapes_lookup() {
+        let op = MirOp::MILConst { name: "c".into(), value_path: "weights/w.bin".into(), dtype: MilDtype::Fp16 };
+        let ns = shapes_with(vec![("const_node", vec![64, 64])]);
+        assert_eq!(compat_output_shape("const_node", &op, &[], &ns), vec![64, 64]);
+    }
+
+    #[test]
+    fn test_const_scalar_pattern() {
+        let op = MirOp::MILConst { name: "c".into(), value_path: "scalar://fp16/0.5".into(), dtype: MilDtype::Fp16 };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("const_node", &op, &[], &ns), vec![1]);
+    }
+
+    #[test]
+    fn test_const_scalar_fp32_pattern() {
+        let op = MirOp::MILConst { name: "c".into(), value_path: "scalar://fp32/1.0".into(), dtype: MilDtype::Fp32 };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("const_node", &op, &[], &ns), vec![1]);
+    }
+
+    #[test]
+    fn test_const_node_shapes_takes_priority_over_scalar() {
+        // When the node name exists in node_shapes, it takes priority even for scalar:// paths
+        let op = MirOp::MILConst { name: "c".into(), value_path: "scalar://fp16/0.5".into(), dtype: MilDtype::Fp16 };
+        let ns = shapes_with(vec![("const_node", vec![4])]);
+        assert_eq!(compat_output_shape("const_node", &op, &[], &ns), vec![4]);
+    }
+
+    #[test]
+    fn test_const_unknown_returns_empty() {
+        let op = MirOp::MILConst { name: "c".into(), value_path: "weights/w.bin".into(), dtype: MilDtype::Fp16 };
+        let ns = shapes();
+        assert_eq!(compat_output_shape("const_node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── compat_output_shape: catch-all unknown op ────────────────────────
+
+    #[test]
+    fn test_unknown_op_returns_empty_shape() {
+        // Use an op variant that doesn't have a specific case in compat_output_shape.
+        // MILReverse is not handled (falls through to `_ => vec![]`)
+        let op = MirOp::MILReverse { name: "rev".into(), x: nid("x"), axes: vec![0] };
+        let ns = shapes_with(vec![("x", vec![3, 4])]);
+        assert_eq!(compat_output_shape("node", &op, &[], &ns), Vec::<usize>::new());
+    }
+
+    // ─── broadcast_shape_compat ───────────────────────────────────────────
+
+    #[test]
+    fn test_broadcast_same_shape() {
+        assert_eq!(broadcast_shape_compat(&[3, 4], &[3, 4]), Some(vec![3, 4]));
+    }
+
+    #[test]
+    fn test_broadcast_different_rank() {
+        assert_eq!(broadcast_shape_compat(&[1, 512, 64], &[64]), Some(vec![1, 512, 64]));
+    }
+
+    #[test]
+    fn test_broadcast_scalar_like() {
+        assert_eq!(broadcast_shape_compat(&[1], &[3, 4]), Some(vec![3, 4]));
+    }
+
+    #[test]
+    fn test_broadcast_mixed_ones() {
+        assert_eq!(broadcast_shape_compat(&[4, 1, 8], &[1, 6, 8]), Some(vec![4, 6, 8]));
+    }
+
+    #[test]
+    fn test_broadcast_incompatible_returns_none() {
+        assert_eq!(broadcast_shape_compat(&[3, 4], &[5, 6]), None);
+    }
+
+    #[test]
+    fn test_broadcast_both_scalars() {
+        assert_eq!(broadcast_shape_compat(&[1], &[1]), Some(vec![1]));
+    }
+
+    #[test]
+    fn test_broadcast_empty_left() {
+        // Empty shape treated as scalar
+        assert_eq!(broadcast_shape_compat(&[], &[3, 4]), Some(vec![3, 4]));
+    }
+
+    #[test]
+    fn test_broadcast_empty_right() {
+        assert_eq!(broadcast_shape_compat(&[3, 4], &[]), Some(vec![3, 4]));
+    }
+
+    #[test]
+    fn test_broadcast_both_empty() {
+        assert_eq!(broadcast_shape_compat(&[], &[]), Some(vec![]));
+    }
+
+    #[test]
+    fn test_broadcast_3d_with_1d() {
+        assert_eq!(broadcast_shape_compat(&[2, 3, 4], &[4]), Some(vec![2, 3, 4]));
+    }
+
+    // ─── reduce_shape ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_reduce_shape_keep_dims_single_axis() {
+        let x = nid("x");
+        let ns = shapes_with(vec![("x", vec![2, 3, 4, 5])]);
+        assert_eq!(reduce_shape(&x, &[2], true, &ns), vec![2, 3, 1, 5]);
+    }
+
+    #[test]
+    fn test_reduce_shape_no_keep_dims_single_axis() {
+        let x = nid("x");
+        let ns = shapes_with(vec![("x", vec![2, 3, 4, 5])]);
+        assert_eq!(reduce_shape(&x, &[2], false, &ns), vec![2, 3, 5]);
+    }
+
+    #[test]
+    fn test_reduce_shape_no_keep_dims_multiple_axes() {
+        let x = nid("x");
+        let ns = shapes_with(vec![("x", vec![2, 3, 4, 5])]);
+        // Axes [1, 3] — removed in reverse order (3 then 1) to preserve indices
+        assert_eq!(reduce_shape(&x, &[1, 3], false, &ns), vec![2, 4]);
+    }
+
+    #[test]
+    fn test_reduce_shape_keep_dims_multiple_axes() {
+        let x = nid("x");
+        let ns = shapes_with(vec![("x", vec![2, 3, 4, 5])]);
+        assert_eq!(reduce_shape(&x, &[0, 2], true, &ns), vec![1, 3, 1, 5]);
+    }
+
+    #[test]
+    fn test_reduce_shape_all_axes_no_keep() {
+        let x = nid("x");
+        let ns = shapes_with(vec![("x", vec![2, 3])]);
+        assert_eq!(reduce_shape(&x, &[0, 1], false, &ns), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_reduce_shape_all_axes_keep() {
+        let x = nid("x");
+        let ns = shapes_with(vec![("x", vec![2, 3])]);
+        assert_eq!(reduce_shape(&x, &[0, 1], true, &ns), vec![1, 1]);
+    }
+
+    #[test]
+    fn test_reduce_shape_unknown_input_returns_empty() {
+        let x = nid("x");
+        let ns = shapes();
+        assert_eq!(reduce_shape(&x, &[0], false, &ns), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_reduce_shape_axis_out_of_range_no_keep_is_noop() {
+        let x = nid("x");
+        let ns = shapes_with(vec![("x", vec![2, 3])]);
+        // axis 5 is out of range; removal is skipped
+        assert_eq!(reduce_shape(&x, &[5], false, &ns), vec![2, 3]);
+    }
+
+    #[test]
+    fn test_reduce_shape_axis_out_of_range_keep_is_noop() {
+        let x = nid("x");
+        let ns = shapes_with(vec![("x", vec![2, 3])]);
+        assert_eq!(reduce_shape(&x, &[5], true, &ns), vec![2, 3]);
     }
 }
