@@ -25,6 +25,14 @@
 //!   are hard-rejected.
 //! - **`is_asymmetric_quantization_supported()`** — always false on ANE.
 //!   Quantize ops with asymmetric mode are hard-rejected.
+//!
+//! ## T-32: ArgMinMax A18 Guard
+//!
+//! ArgMinMax (`MILReduceArgmax`/`MILReduceArgmin`) has no ANEC converter
+//! on A18 (LSE_7). The `ConvertReductionArg` converter exists for LSE_0
+//! through LSE_6 (A11Legacy through A16) but there is NO LSE_7 variant.
+//! The dedicated match arm hard-rejects ArgMinMax on A18 with a clear
+//! diagnostic message.
 
 use ane_ir::ane_layout::{AneInterleave, AneLayout};
 use ane_ir::ane_target::AneFamily;
@@ -342,6 +350,23 @@ pub fn validate_placement_with_context(
         MirOp::MILLayerNorm { .. } => {
             if !target_family.supports_layernorm() {
                 return PlacementDecision::AneConditional(AneFamily::A15);
+            }
+            PlacementDecision::AneAllowed
+        }
+
+        // T-32: ArgMinMax — no LSE_7 (A18) converter.
+        // The ANEC has ConvertReductionArg converters for LSE_0 through LSE_6
+        // (all families up to A16), but there is NO LSE_7 converter for A18/M4.
+        // Without this guard, ArgMinMax ops silently pass placement validation on
+        // A18 and then fail at emission time because no ANEC converter exists.
+        MirOp::MILReduceArgmax { .. }
+        | MirOp::MILReduceArgmin { .. } => {
+            if !target_family.supports_argminmax() {
+                return PlacementDecision::CpuOnly(format!(
+                    "{}: ArgMinMax has no ANEC converter on A18 (LSE_7); \
+                     supported on A11Legacy through A16 only",
+                    op_name(op)
+                ));
             }
             PlacementDecision::AneAllowed
         }
@@ -1417,5 +1442,142 @@ mod tests {
         let shapes = vec![vec![1, 3, 224, 224]]; // rank 4
         let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
         assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    // ─── T-32: ArgMinMax A18 guard tests ─────────────────────────
+
+    fn make_reduce_argmax() -> MirOp {
+        MirOp::MILReduceArgmax {
+            name: "argmax".into(),
+            x: MirNodeId("a".into()),
+            axis: 1,
+            keep_dims: false,
+        }
+    }
+
+    fn make_reduce_argmin() -> MirOp {
+        MirOp::MILReduceArgmin {
+            name: "argmin".into(),
+            x: MirNodeId("a".into()),
+            axis: 1,
+            keep_dims: false,
+        }
+    }
+
+    #[test]
+    fn test_argmax_rejected_on_a18() {
+        // T-32: ArgMinMax has no ANEC converter on A18 (LSE_7).
+        // This should be a hard CpuOnly rejection, not a soft warning.
+        let op = make_reduce_argmax();
+        let shapes = vec![vec![1, 128]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A18, false);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("LSE_7")),
+            "Expected CpuOnly with LSE_7 reason, got {:?}",
+            decision
+        );
+    }
+
+    #[test]
+    fn test_argmin_rejected_on_a18() {
+        // Same as argmax — no LSE_7 converter for argmin either.
+        let op = make_reduce_argmin();
+        let shapes = vec![vec![1, 128]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A18, false);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("LSE_7")),
+            "Expected CpuOnly with LSE_7 reason, got {:?}",
+            decision
+        );
+    }
+
+    #[test]
+    fn test_argmax_allowed_on_a16() {
+        // A16 (LSE_5/6) has ConvertReductionArg converter.
+        let op = make_reduce_argmax();
+        let shapes = vec![vec![1, 128]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_argmin_allowed_on_a16() {
+        let op = make_reduce_argmin();
+        let shapes = vec![vec![1, 128]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_argmax_allowed_on_a14() {
+        // A14 (LSE_3) has ConvertReductionArg converter.
+        let op = make_reduce_argmax();
+        let shapes = vec![vec![1, 128]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A14, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_argmax_allowed_on_a11_legacy() {
+        // Even A11Legacy (LSE_0) has ConvertReductionArg converter.
+        let op = make_reduce_argmax();
+        let shapes = vec![vec![1, 128]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A11Legacy, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_argmin_allowed_on_a12() {
+        // A12 (LSE_1) has ConvertReductionArg converter.
+        let op = make_reduce_argmin();
+        let shapes = vec![vec![1, 128]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A12, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_argmax_a18_rejection_message_content() {
+        // Verify the error message includes the key diagnostic information.
+        let op = make_reduce_argmax();
+        let shapes = vec![vec![1, 128]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A18, false);
+        if let PlacementDecision::CpuOnly(reason) = decision {
+            assert!(reason.contains("MILReduceArgmax"), "Message should mention the op: {}", reason);
+            assert!(reason.contains("A18"), "Message should mention A18: {}", reason);
+            assert!(reason.contains("LSE_7"), "Message should mention LSE_7: {}", reason);
+            assert!(reason.contains("ANEC converter"), "Message should mention ANEC converter: {}", reason);
+        } else {
+            panic!("Expected CpuOnly, got {:?}", decision);
+        }
+    }
+
+    #[test]
+    fn test_argmax_with_context_dtype_still_rejected_on_a18() {
+        // The A18 guard should fire even when dtype context is provided.
+        // Dtype check (Fp16 is fine) should pass, but the family gate should reject.
+        let op = make_reduce_argmax();
+        let shapes = vec![vec![1, 128]];
+        let ctx = PlacementContext::with_dtype(MilDtype::Fp16);
+        let decision = validate_placement_with_context(&op, &shapes, AneFamily::A18, false, &ctx);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("LSE_7")),
+            "Expected CpuOnly with LSE_7 reason, got {:?}",
+            decision
+        );
+    }
+
+    #[test]
+    fn test_argmax_with_int32_dtype_rejected_before_a18_guard() {
+        // If dtype is Int32 (illegal on any family), the dtype gate should
+        // fire first before the A18 family gate.
+        let op = make_reduce_argmax();
+        let shapes = vec![vec![1, 128]];
+        let ctx = PlacementContext::with_dtype(MilDtype::Int32);
+        let decision = validate_placement_with_context(&op, &shapes, AneFamily::A18, false, &ctx);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("dtype constraint")),
+            "Expected CpuOnly with dtype constraint reason, got {:?}",
+            decision
+        );
     }
 }

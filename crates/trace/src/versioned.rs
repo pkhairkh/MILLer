@@ -177,6 +177,9 @@ impl VersionedCompiler {
                     "A18: Full SDPA, LayerNorm, and E4M3 support. Most capable ANE generation."
                         .to_string(),
                 );
+                report.warnings.push(
+                    "A18: ArgMinMax (reduce_argmax/argmin) has no ANEC converter on LSE_7; falls back to CPU.".to_string(),
+                );
             }
         }
     }
@@ -468,12 +471,27 @@ impl OpSupportMatrix {
             SirOp::ReduceLogSum { .. } => OpSupport::CpuOnly(
                 "ReduceLogSum has no direct ANEC converter; decompose to ReduceSum+Log".to_string(),
             ),
-            SirOp::ReduceArgmax { .. } => OpSupport::CpuOnly(
-                "ReduceArgmax has no ANEC converter; arg reduction is CPU-only".to_string(),
-            ),
-            SirOp::ReduceArgmin { .. } => OpSupport::CpuOnly(
-                "ReduceArgmin has no ANEC converter; arg reduction is CPU-only".to_string(),
-            ),
+            SirOp::ReduceArgmax { .. } => {
+                // T-32: ArgMinMax has ConvertReductionArg converters for LSE_0-6
+                // (A11Legacy through A16) but NO LSE_7 converter for A18/M4.
+                if self.family.supports_argminmax() {
+                    OpSupport::AneSupported(AneEngineSupport::PE)
+                } else {
+                    OpSupport::CpuOnly(
+                        "ReduceArgmax has no ANEC converter on A18 (LSE_7); supported on A11Legacy through A16 only".to_string(),
+                    )
+                }
+            }
+            SirOp::ReduceArgmin { .. } => {
+                // T-32: Same as ReduceArgmax — no LSE_7 converter on A18.
+                if self.family.supports_argminmax() {
+                    OpSupport::AneSupported(AneEngineSupport::PE)
+                } else {
+                    OpSupport::CpuOnly(
+                        "ReduceArgmin has no ANEC converter on A18 (LSE_7); supported on A11Legacy through A16 only".to_string(),
+                    )
+                }
+            }
 
             // ─── Normalization: family-gated ───────────────────────
             SirOp::Softmax { .. } => OpSupport::AneSupported(AneEngineSupport::NE),
@@ -968,6 +986,99 @@ mod tests {
         match matrix.check_op(&scatter) {
             OpSupport::CpuOnly(_) => {} // expected
             other => panic!("Expected CpuOnly, got {:?}", other),
+        }
+    }
+
+    // ─── T-32: ArgMinMax A18 guard tests (SIR-level) ──────────────
+
+    #[test]
+    fn test_argmax_supported_on_a16() {
+        let matrix = OpSupportMatrix::for_family(AneFamily::A16);
+        let argmax = SirOp::ReduceArgmax {
+            input: SirNodeId("x".into()),
+            axis: 1,
+            keep_dims: false,
+        };
+        match matrix.check_op(&argmax) {
+            OpSupport::AneSupported(AneEngineSupport::PE) => {} // expected
+            other => panic!("Expected AneSupported(PE) for ArgMax on A16, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_argmin_supported_on_a16() {
+        let matrix = OpSupportMatrix::for_family(AneFamily::A16);
+        let argmin = SirOp::ReduceArgmin {
+            input: SirNodeId("x".into()),
+            axis: 1,
+            keep_dims: false,
+        };
+        match matrix.check_op(&argmin) {
+            OpSupport::AneSupported(AneEngineSupport::PE) => {} // expected
+            other => panic!("Expected AneSupported(PE) for ArgMin on A16, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_argmax_cpu_only_on_a18() {
+        // T-32: A18 (LSE_7) has no ConvertReductionArg converter.
+        let matrix = OpSupportMatrix::for_family(AneFamily::A18);
+        let argmax = SirOp::ReduceArgmax {
+            input: SirNodeId("x".into()),
+            axis: 1,
+            keep_dims: false,
+        };
+        match matrix.check_op(&argmax) {
+            OpSupport::CpuOnly(reason) => {
+                assert!(reason.contains("LSE_7"), "Expected LSE_7 in reason: {}", reason);
+                assert!(reason.contains("A18"), "Expected A18 in reason: {}", reason);
+            }
+            other => panic!("Expected CpuOnly for ArgMax on A18, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_argmin_cpu_only_on_a18() {
+        let matrix = OpSupportMatrix::for_family(AneFamily::A18);
+        let argmin = SirOp::ReduceArgmin {
+            input: SirNodeId("x".into()),
+            axis: 1,
+            keep_dims: false,
+        };
+        match matrix.check_op(&argmin) {
+            OpSupport::CpuOnly(reason) => {
+                assert!(reason.contains("LSE_7"), "Expected LSE_7 in reason: {}", reason);
+            }
+            other => panic!("Expected CpuOnly for ArgMin on A18, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_argmax_supported_on_a11_legacy() {
+        // Even the oldest family (A11Legacy, LSE_0) has a converter.
+        let matrix = OpSupportMatrix::for_family(AneFamily::A11Legacy);
+        let argmax = SirOp::ReduceArgmax {
+            input: SirNodeId("x".into()),
+            axis: 1,
+            keep_dims: false,
+        };
+        match matrix.check_op(&argmax) {
+            OpSupport::AneSupported(AneEngineSupport::PE) => {} // expected
+            other => panic!("Expected AneSupported(PE) for ArgMax on A11Legacy, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_argmax_supported_on_a14() {
+        let matrix = OpSupportMatrix::for_family(AneFamily::A14);
+        let argmax = SirOp::ReduceArgmax {
+            input: SirNodeId("x".into()),
+            axis: 1,
+            keep_dims: false,
+        };
+        match matrix.check_op(&argmax) {
+            OpSupport::AneSupported(AneEngineSupport::PE) => {} // expected
+            other => panic!("Expected AneSupported(PE) for ArgMax on A14, got {:?}", other),
         }
     }
 }

@@ -10,15 +10,15 @@ use serde::{Deserialize, Serialize};
 /// Each family represents a distinct constraint profile for the ANE.
 /// Families are ordered by capability level (see `family_level()`).
 ///
-/// | Family  | Broadcast     | SDPA   | LayerNorm | Elementwise | ReduceMin |
-/// |---------|---------------|--------|-----------|-------------|-----------|
-/// | A11Legacy | FP16-only   | No     | No        | A14Minus    | FP only   |
-/// | A12     | FP16-only     | No     | No        | A14Minus    | FP only   |
-/// | A13     | Full dtype    | No     | No        | A14Minus    | FP only   |
-/// | A14     | Full dtype    | No     | No        | A14Plus     | All types |
-/// | A15     | Full dtype    | No     | Yes       | A14Plus     | All types |
-/// | A16     | Full dtype    | Yes    | Yes       | A14Plus     | All types |
-/// | A18     | Full dtype    | Yes    | Yes       | A14Plus     | All types |
+/// | Family  | Broadcast     | SDPA   | LayerNorm | Elementwise | ReduceMin | ArgMinMax |
+/// |---------|---------------|--------|-----------|-------------|-----------|-----------|
+/// | A11Legacy | FP16-only   | No     | No        | A14Minus    | FP only   | Yes       |
+/// | A12     | FP16-only     | No     | No        | A14Minus    | FP only   | Yes       |
+/// | A13     | Full dtype    | No     | No        | A14Minus    | FP only   | Yes       |
+/// | A14     | Full dtype    | No     | No        | A14Plus     | All types | Yes       |
+/// | A15     | Full dtype    | No     | Yes       | A14Plus     | All types | Yes       |
+/// | A16     | Full dtype    | Yes    | Yes       | A14Plus     | All types | Yes       |
+/// | A18     | Full dtype    | Yes    | Yes       | A14Plus     | All types | **No**    |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AneFamily {
     /// A11 Bionic — legacy ANE, V4 hardware revision.
@@ -68,6 +68,15 @@ impl AneFamily {
     /// A11/A12/A13 only support FP ReduceMin; A14+ supports all types.
     pub fn supports_reducemin_all_dtypes(&self) -> bool {
         matches!(self, AneFamily::A14 | AneFamily::A15 | AneFamily::A16 | AneFamily::A18)
+    }
+
+    /// Whether this family supports ArgMin/ArgMax (reduce_argmax, reduce_argmin).
+    /// The ANEC has `ConvertReductionArg` converters for LSE_0 through LSE_6
+    /// (A11Legacy through A16), but there is **no LSE_7 converter** for A18/M4.
+    /// ArgMinMax ops that pass placement validation on A18 will silently fail
+    /// at emission time because no ANEC converter exists.
+    pub fn supports_argminmax(&self) -> bool {
+        !matches!(self, AneFamily::A18)
     }
 }
 
@@ -180,5 +189,19 @@ mod tests {
         assert!(!AneFamily::A13.supports_reducemin_all_dtypes());
         assert!(AneFamily::A14.supports_reducemin_all_dtypes());
         assert!(AneFamily::A18.supports_reducemin_all_dtypes());
+    }
+
+    #[test]
+    fn test_supports_argminmax() {
+        // ArgMinMax has ANEC converters for LSE_0-6 (all families through A16).
+        // A18 (LSE_7) has no converter — this is the unique case where a newer
+        // family drops support for an op that older families have.
+        assert!(AneFamily::A11Legacy.supports_argminmax());
+        assert!(AneFamily::A12.supports_argminmax());
+        assert!(AneFamily::A13.supports_argminmax());
+        assert!(AneFamily::A14.supports_argminmax());
+        assert!(AneFamily::A15.supports_argminmax());
+        assert!(AneFamily::A16.supports_argminmax());
+        assert!(!AneFamily::A18.supports_argminmax());
     }
 }

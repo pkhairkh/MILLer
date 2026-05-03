@@ -121,16 +121,11 @@ ANE-legal ops that still lack MirOpCompat variants (BatchNorm, MaxPool, AvgPool,
 
 ### I-11 · ArgMinMax Missing A18 Guard
 
-**Status:** ⬜ Open
-**Files:** `crates/passes/src/placement_validate.rs`
+**Status:** ✅ FIXED (T-32)
+**Files:** `crates/ir/src/ane_target.rs`, `crates/passes/src/placement_validate.rs`, `crates/trace/src/versioned.rs`
 **AUDIT ref:** §II-D, §IV (B-7)
-**Severity:** MEDIUM — ArgMinMax silently fails on A18/M4 hardware
-**Effort:** S (0.5 day)
-**Task:** T-32
-
-LSE_7 (A18/M4) has no ArgMinMax converter. No family-version guard blocks it. `MILReduceArgmax/Argmin` have `default_engine() → Some(PE)`, so they pass placement validation on any family including A18.
-
-**Fix:** Add A18-specific check for ArgMinMax in `placement_validate.rs`.
+**Severity:** MEDIUM → RESOLVED
+**Resolution:** Added `supports_argminmax()` method to `AneFamily` — returns `true` for all families except A18 (which has no LSE_7 converter for `ConvertReductionArg`). Added dedicated match arm in `placement_validate.rs` that hard-rejects `MILReduceArgmax/Argmin` on A18 with diagnostic message. Fixed SIR-level classification in `versioned.rs` — changed from unconditional `CpuOnly` to family-gated support (A11Legacy through A16 supported on PE, A18 rejected). Added A18 warning about ArgMinMax CPU fallback. 17 new tests.
 
 ---
 
@@ -313,9 +308,9 @@ The following issues from the previous tracker have been resolved and archived t
 | Priority | Total | Open | In Progress | Fixed |
 |----------|-------|------|-------------|-------|
 | P0 | 3 | 0 | 0 | 3 |
-| P1 | 8 | 1 | 0 | 7 |
+| P1 | 8 | 0 | 0 | 8 |
 | P2 | 8 | 8 | 0 | 0 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **10** | **0** | **10** |
+| **Total** | **20** | **9** | **0** | **11** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04, I-05, I-06, I-07, I-08, I-09, and I-10 resolved by T-25 through T-31.*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32.*

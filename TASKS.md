@@ -92,13 +92,13 @@
 - **Effort**: M (1 day)
 - **Resolution**: Added `attention_mask: Option<String>` and `scale: Option<f32>` fields to `MirOpCompat::ScaledDotProductAttention`. Previously these fields existed in `MirOp::MILScaledDotProductAttention` (and SIR/AIR) but were silently discarded during MirOp→MirOpCompat conversion. Wired all seven code locations: enum definition, From impl, mir_op_to_compat, compat_input_names, remap_compat_inputs, rename_compat_output, and both proto emission paths (MIL proto + Apple proto). Added `float scale = 7` field to `MilScaledDotProductAttentionOp` proto message. Apple-proto emits `attn_mask` as name-arg input and `scale` as immediate float32. 14 new tests. 804 total tests pass.
 
-### T-32 · Add A18 Guard for ArgMinMax
+### T-32 · Add A18 Guard for ArgMinMax ✅
 
 - **ISSUES ref**: I-11
 - **AUDIT ref**: §II-D, §IV (B-7)
-- **Severity**: MEDIUM
+- **Severity**: MEDIUM → RESOLVED
 - **Effort**: S (0.5 day)
-- **Description**: LSE_7 (A18) has no ArgMinMax converter, but no family-version guard blocks it. Add a check in `placement_validate.rs`.
+- **Resolution**: Added `supports_argminmax()` method to `AneFamily` — returns `true` for all families except A18 (which has no LSE_7 converter for `ConvertReductionArg`). Added dedicated match arm in `placement_validate.rs` that hard-rejects `MILReduceArgmax/Argmin` on A18 with diagnostic message citing the missing LSE_7 converter. Fixed SIR-level classification in `versioned.rs` — changed `ReduceArgmax/Argmin` from unconditional `CpuOnly` to family-gated: `AneSupported(PE)` on families that support argminmax (A11Legacy through A16), `CpuOnly` on A18. Added A18 warning about ArgMinMax CPU fallback. Updated family capability table in `ane_target.rs` header to include ArgMinMax column. Added 17 new tests (11 placement validator + 6 SIR-level versioned). All 821 tests pass.
 
 ---
 
@@ -224,7 +224,7 @@
 | T-29 | I-08 | HIGH | S | ✅ |
 | T-30 | I-09 | HIGH | S | ✅ |
 | T-31 | I-10 | HIGH | M | ✅ |
-| T-32 | I-11 | MEDIUM | S | ⬜ |
+| T-32 | I-11 | MEDIUM | S | ✅ |
 | T-33 | I-12 | MEDIUM | M | ⬜ |
 | T-34 | I-13 | MEDIUM | S | ⬜ |
 | T-35 | I-14 | MEDIUM | M | ⬜ |
