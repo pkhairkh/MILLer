@@ -388,6 +388,25 @@ pub fn validate_placement_with_context(
             PlacementDecision::AneAllowed
         }
 
+        // T-27: Pad — enforce ANE-specific padding constraints.
+        // The ANE rejects replication, symmetric, negative, batch-axis,
+        // channel-axis, and depth-axis padding.
+        MirOp::MILPad { mode, pad_amounts, .. } => {
+            if let Some(shape) = input_shapes.first() {
+                if let Err(violation) = crate::op_constraints::validate_pad_constraints(
+                    mode,
+                    pad_amounts,
+                    shape.len(),
+                ) {
+                    return PlacementDecision::CpuOnly(format!(
+                        "MILPad: constraint '{}' — {}",
+                        violation.constraint, violation.message
+                    ));
+                }
+            }
+            PlacementDecision::AneAllowed
+        }
+
         // ConvTranspose: always NE
         MirOp::MILConvTranspose { .. } => PlacementDecision::AneAllowed,
 
@@ -708,6 +727,16 @@ mod tests {
             x: MirNodeId("a".into()),
             y: MirNodeId("b".into()),
             transpose_y,
+        }
+    }
+
+    fn make_pad(mode: &str, pad_amounts: Vec<i64>, constant_value: f32) -> MirOp {
+        MirOp::MILPad {
+            name: "pad".into(),
+            x: MirNodeId("a".into()),
+            pad_amounts,
+            mode: mode.into(),
+            constant_value,
         }
     }
 
@@ -1282,6 +1311,110 @@ mod tests {
         // Typical LLM: [1, 512, 64] × [64, 512] → M=512 even, K=64 match
         let op = make_matmul(false);
         let shapes = vec![vec![1, 512, 64], vec![64, 512]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    // ─── T-27: Pad constraint integration tests ───────────────────
+
+    #[test]
+    fn test_pad_constant_spatial_allowed() {
+        // Constant padding on spatial axes only — legal on ANE
+        let op = make_pad("constant", vec![0, 0, 0, 0, 1, 1, 1, 1], 0.0);
+        let shapes = vec![vec![1, 64, 28, 28]]; // rank 4
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_pad_reflection_spatial_allowed() {
+        // Reflection padding on spatial axes only — legal on ANE
+        let op = make_pad("reflection", vec![0, 0, 0, 0, 2, 2], 0.0);
+        let shapes = vec![vec![1, 64, 28]]; // rank 3
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_pad_replication_mode_rejected() {
+        // Replication padding is not supported on ANE
+        let op = make_pad("replicate", vec![0, 0, 0, 0, 1, 1, 1, 1], 0.0);
+        let shapes = vec![vec![1, 64, 28, 28]]; // rank 4
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("mode_not_replication"))
+        );
+    }
+
+    #[test]
+    fn test_pad_symmetric_mode_rejected() {
+        // Symmetric padding is not supported on ANE
+        let op = make_pad("symmetric", vec![0, 0, 0, 0, 1, 1], 0.0);
+        let shapes = vec![vec![1, 64, 28]]; // rank 3
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("mode_not_symmetric"))
+        );
+    }
+
+    #[test]
+    fn test_pad_negative_amount_rejected() {
+        // Negative padding amounts are not supported
+        let op = make_pad("constant", vec![0, 0, 0, 0, -1, 1], 0.0);
+        let shapes = vec![vec![1, 64, 28]]; // rank 3
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("no_negative_padding"))
+        );
+    }
+
+    #[test]
+    fn test_pad_batch_padding_rejected() {
+        // Padding on batch dimension is not supported
+        let op = make_pad("constant", vec![1, 0, 0, 0, 0, 0, 0, 0], 0.0);
+        let shapes = vec![vec![1, 64, 28, 28]]; // rank 4
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("no_batch_padding"))
+        );
+    }
+
+    #[test]
+    fn test_pad_channel_padding_rejected() {
+        // Padding on channel dimension is not supported
+        let op = make_pad("constant", vec![0, 0, 2, 0, 0, 0, 0, 0], 0.0);
+        let shapes = vec![vec![1, 64, 28, 28]]; // rank 4
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("no_channel_padding"))
+        );
+    }
+
+    #[test]
+    fn test_pad_depth_padding_5d_rejected() {
+        // Padding on depth dimension for rank-5 tensors is not supported
+        let op = make_pad("constant", vec![0, 0, 0, 0, 1, 1, 0, 0, 0, 0], 0.0);
+        let shapes = vec![vec![1, 64, 3, 28, 28]]; // rank 5
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("no_depth_padding"))
+        );
+    }
+
+    #[test]
+    fn test_pad_no_shapes_gracefully_allows() {
+        // When no input shapes are provided, the validator skips the check
+        let op = make_pad("replicate", vec![0, 0, 0, 0], 0.0);
+        let shapes: Vec<Vec<usize>> = vec![];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_pad_typical_conv_padding() {
+        // Typical conv padding: 1 pixel on H and W, zero on batch/channel
+        let op = make_pad("constant", vec![0, 0, 0, 0, 1, 1, 1, 1], 0.0);
+        let shapes = vec![vec![1, 3, 224, 224]]; // rank 4
         let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
         assert_eq!(decision, PlacementDecision::AneAllowed);
     }

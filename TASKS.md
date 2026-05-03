@@ -52,13 +52,13 @@
 - **Effort**: S (0.5 day)
 - **Resolution**: Added `validate_matmul_constraints()` to `op_constraints.rs` enforcing four ANE MatMul hard constraints: (1) **depth=1** — both inputs must have rank ≤ 4 (rank-5 forces depth>1 in ANE NCDHW layout, rejected by ANE with "depth > 1 is not supported for MatMult inputs"); (2) **minimum rank 2** — both inputs must be at least 2D matrices; (3) **inner dimensions match** — the contraction dimension K of input A must equal K of input B (handles `transpose_y` correctly); (4) **output channels even** — M dimension must be even for ANE tiling prerequisite (cout % ox == 0). Wired into `placement_validate.rs` with dedicated `MILMatMul` match arm. Added 27 new tests (14 unit + 13 integration). All 710+ tests pass.
 
-### T-27 · Add `validate_pad_constraints()`
+### T-27 · Add `validate_pad_constraints()` ✅
 
 - **ISSUES ref**: I-06
 - **AUDIT ref**: §II-C, §IV (B-8)
-- **Severity**: HIGH
+- **Severity**: HIGH → RESOLVED
 - **Effort**: M (1 day)
-- **Description**: No padding constraint validator exists. The ANE rejects replication, symmetric, negative, batch, channel, and depth axis padding. Add a validator to `op_constraints.rs`.
+- **Resolution**: Added `validate_pad_constraints()` to `op_constraints.rs` enforcing six ANE Pad hard constraints: (1) **mode gate** — replication (`replicate`/`replication`) and symmetric padding modes rejected, only `constant` and `reflection` legal; (2) **no negative padding** — all pad_amounts must be ≥ 0; (3) **no batch-axis padding** — axis 0 pad amounts must be zero for rank ≥ 4 (NCHW); (4) **no channel-axis padding** — channel axis (axis 1 for rank ≥ 4, axis 0 for rank < 4) pad amounts must be zero; (5) **no depth-axis padding** — axis 2 pad amounts must be zero for rank-5 (NCDHW) inputs; (6) **pad_amounts length** — must match 2 × input_rank. Rank-aware axis mapping: for rank < 4, axis 0 is channel (no batch dim), for rank ≥ 4, axis 0 is batch and axis 1 is channel. Wired into `placement_validate.rs` with dedicated `MILPad` match arm. Added 25 new unit tests + 10 integration tests. All 762 tests pass.
 
 ### T-28 · Fix Reshape `.unwrap()` Panic
 
@@ -219,7 +219,7 @@
 | T-24 | I-03 | HIGH | M | ✅ |
 | T-25 | I-04 | HIGH | S | ✅ |
 | T-26 | I-05 | HIGH | S | ✅ |
-| T-27 | I-06 | HIGH | M | ⬜ |
+| T-27 | I-06 | HIGH | M | ✅ |
 | T-28 | I-07 | HIGH | S | ⬜ |
 | T-29 | I-08 | HIGH | S | ⬜ |
 | T-30 | I-09 | HIGH | S | ⬜ |

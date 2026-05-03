@@ -292,6 +292,156 @@ pub fn validate_matmul_constraints(
     Ok(())
 }
 
+/// Validate padding constraints.
+/// Source: ane-constraints-docs Section 4.13 (Pad/Resize/Crop Constraints)
+///
+/// The ANE has several hard constraints on the Pad operation that, if
+/// violated, cause the ANE compiler to reject the op at runtime with
+/// opaque error messages. This validator catches them at compile time:
+///
+/// 1. **Mode gate**: Replication (`"replicate"` / `"replication"`) and
+///    symmetric (`"symmetric"`) padding modes are not supported on ANE.
+///    Only `"constant"` and `"reflection"` are legal.
+///
+/// 2. **No negative padding**: All `pad_amounts` values must be >= 0.
+///    The ANE rejects negative padding amounts entirely.
+///
+/// 3. **No batch-axis padding**: The pad amounts for axis 0 (batch
+///    dimension in NCHW layout) must both be zero. The ANE does not
+///    support padding on the batch dimension.
+///
+/// 4. **No channel-axis padding**: The pad amounts for axis 1 (channel
+///    dimension in NCHW layout) must both be zero. The ANE does not
+///    support padding on the channel dimension.
+///
+/// 5. **Depth-axis padding** (5D tensors only): For rank-5 inputs where
+///    the depth axis is axis 2 (NCDHW layout), the pad amounts for axis 2
+///    must both be zero. The ANECPad converter does not support depth-axis
+///    padding.
+///
+/// The `pad_amounts` vector follows the Core ML convention: pairs of
+/// `(before, after)` per axis, i.e., for a rank-N input there are
+/// `2 * N` entries: `[b0, a0, b1, a1, ..., bN-1, aN-1]`.
+pub fn validate_pad_constraints(
+    mode: &str,
+    pad_amounts: &[i64],
+    input_rank: usize,
+) -> Result<(), OpConstraintViolation> {
+    // ─── Mode gate: reject replication and symmetric modes ─────────
+    let mode_lower = mode.to_lowercase();
+    if mode_lower == "replicate" || mode_lower == "replication" {
+        return Err(OpConstraintViolation {
+            op_name: "pad".into(),
+            constraint: "mode_not_replication".into(),
+            message: "Replication padding mode is not supported on ANE".into(),
+        });
+    }
+    if mode_lower == "symmetric" {
+        return Err(OpConstraintViolation {
+            op_name: "pad".into(),
+            constraint: "mode_not_symmetric".into(),
+            message: "Symmetric padding mode is not supported on ANE".into(),
+        });
+    }
+
+    // ─── Validate pad_amounts length ───────────────────────────────
+    // Core ML uses 2*N entries (before/after pair per axis).
+    let expected_len = 2 * input_rank;
+    if pad_amounts.len() != expected_len {
+        // If pad_amounts is shorter than expected, we can still check
+        // what's there. If longer, extra entries are ignored by the op
+        // but may indicate a bug. We warn by rejecting the op.
+        if pad_amounts.len() < expected_len {
+            return Err(OpConstraintViolation {
+                op_name: "pad".into(),
+                constraint: "pad_amounts_length".into(),
+                message: format!(
+                    "Pad amounts length {} does not match input rank {} (expected {} entries)",
+                    pad_amounts.len(),
+                    input_rank,
+                    expected_len
+                ),
+            });
+        }
+        // If longer, we just check the first expected_len entries — the
+        // extra entries are for axes beyond the input rank and are
+        // typically zero. This is not an error condition per se.
+    }
+
+    // ─── No negative padding ───────────────────────────────────────
+    for (i, &amount) in pad_amounts.iter().enumerate() {
+        if amount < 0 {
+            return Err(OpConstraintViolation {
+                op_name: "pad".into(),
+                constraint: "no_negative_padding".into(),
+                message: format!(
+                    "Negative padding amount {} at index {} is not supported on ANE",
+                    amount, i
+                ),
+            });
+        }
+    }
+
+    // ─── No batch-axis padding (axis 0) ────────────────────────────
+    // In NCHW layout (rank ≥ 4), axis 0 is the batch dimension.
+    // For rank < 4, there is no batch dimension, so this check is
+    // skipped — axis 0 is the channel dimension instead.
+    if input_rank >= 4 && pad_amounts.len() >= 2 {
+        let before_batch = pad_amounts[0];
+        let after_batch = pad_amounts[1];
+        if before_batch != 0 || after_batch != 0 {
+            return Err(OpConstraintViolation {
+                op_name: "pad".into(),
+                constraint: "no_batch_padding".into(),
+                message: format!(
+                    "Padding on the batch dimension is not supported on ANE (axis 0: before={}, after={})",
+                    before_batch, after_batch
+                ),
+            });
+        }
+    }
+
+    // ─── No channel-axis padding ───────────────────────────────────
+    // In NCHW layout (rank ≥ 4), axis 1 is the channel dimension.
+    // For rank < 4 (no batch dim), axis 0 is the channel dimension.
+    let channel_axis = if input_rank >= 4 { 1 } else { 0 };
+    let channel_start = 2 * channel_axis;
+    if pad_amounts.len() >= channel_start + 2 {
+        let before_channel = pad_amounts[channel_start];
+        let after_channel = pad_amounts[channel_start + 1];
+        if before_channel != 0 || after_channel != 0 {
+            return Err(OpConstraintViolation {
+                op_name: "pad".into(),
+                constraint: "no_channel_padding".into(),
+                message: format!(
+                    "Padding on the channel dimension is not supported on ANE (axis {}: before={}, after={})",
+                    channel_axis, before_channel, after_channel
+                ),
+            });
+        }
+    }
+
+    // ─── No depth-axis padding (axis 2, only for rank-5 / 5D) ──────
+    // In NCDHW layout (rank-5 tensors), axis 2 is the depth dimension.
+    // The ANECPad converter rejects depth-axis padding.
+    if input_rank >= 5 && pad_amounts.len() >= 6 {
+        let before_depth = pad_amounts[4];
+        let after_depth = pad_amounts[5];
+        if before_depth != 0 || after_depth != 0 {
+            return Err(OpConstraintViolation {
+                op_name: "pad".into(),
+                constraint: "no_depth_padding".into(),
+                message: format!(
+                    "Padding on the depth dimension is not supported on ANE (axis 2: before={}, after={})",
+                    before_depth, after_depth
+                ),
+            });
+        }
+    }
+
+    Ok(())
+}
+
 /// Validate tensor rank constraint (universal ANE constraint).
 pub fn validate_tensor_rank(rank: usize) -> Result<(), OpConstraintViolation> {
     if rank > 5 {
@@ -494,5 +644,220 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(err.constraint, "depth_must_be_1");
         assert!(err.message.contains("rank 5"));
+    }
+
+    // ─── T-27: Pad constraint tests ────────────────────────────────
+
+    #[test]
+    fn test_pad_constant_mode_ok() {
+        // Constant padding with no batch/channel padding is legal
+        // [0,0, 0,0, 2,2, 3,3] — rank 4, padding only on spatial axes 2,3
+        assert!(validate_pad_constraints("constant", &[0, 0, 0, 0, 2, 2, 3, 3], 4).is_ok());
+    }
+
+    #[test]
+    fn test_pad_reflection_mode_ok() {
+        // Reflection padding with no batch/channel padding is legal
+        assert!(validate_pad_constraints("reflection", &[0, 0, 0, 0, 1, 1, 2, 2], 4).is_ok());
+    }
+
+    #[test]
+    fn test_pad_replication_mode_rejected() {
+        // Replication padding is never supported on ANE
+        let result = validate_pad_constraints("replicate", &[0, 0, 0, 0, 1, 1], 3);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "mode_not_replication");
+    }
+
+    #[test]
+    fn test_pad_replication_alt_spelling_rejected() {
+        // Alternative spelling "replication" should also be rejected
+        let result = validate_pad_constraints("replication", &[0, 0, 0, 0, 1, 1], 3);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "mode_not_replication");
+    }
+
+    #[test]
+    fn test_pad_symmetric_mode_rejected() {
+        // Symmetric padding is never supported on ANE
+        let result = validate_pad_constraints("symmetric", &[0, 0, 0, 0, 1, 1], 3);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "mode_not_symmetric");
+    }
+
+    #[test]
+    fn test_pad_mode_case_insensitive() {
+        // Mode check should be case-insensitive
+        assert!(validate_pad_constraints("Replicate", &[0, 0, 0, 0, 0, 0, 0, 0], 4).is_err());
+        assert!(validate_pad_constraints("SYMMETRIC", &[0, 0, 0, 0, 0, 0, 0, 0], 4).is_err());
+        assert!(validate_pad_constraints("REPLICATION", &[0, 0, 0, 0, 0, 0, 0, 0], 4).is_err());
+    }
+
+    #[test]
+    fn test_pad_negative_amount_rejected() {
+        // Negative padding amounts are not supported
+        let result = validate_pad_constraints("constant", &[0, 0, 0, 0, -1, 1], 3);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "no_negative_padding");
+    }
+
+    #[test]
+    fn test_pad_negative_in_batch_rejected() {
+        // Negative padding on batch axis should be caught by negative check first
+        let result = validate_pad_constraints("constant", &[-1, 0, 0, 0, 0, 0, 0, 0], 4);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "no_negative_padding");
+    }
+
+    #[test]
+    fn test_pad_batch_padding_rejected() {
+        // Padding on batch axis (axis 0) is not supported — only for rank ≥ 4
+        let result = validate_pad_constraints("constant", &[1, 0, 0, 0, 0, 0, 0, 0], 4);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "no_batch_padding");
+    }
+
+    #[test]
+    fn test_pad_batch_after_padding_rejected() {
+        // Padding on batch axis after side is also not supported — only for rank ≥ 4
+        let result = validate_pad_constraints("constant", &[0, 2, 0, 0, 0, 0, 0, 0], 4);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "no_batch_padding");
+    }
+
+    #[test]
+    fn test_pad_channel_padding_rejected() {
+        // Padding on channel axis (axis 1 for rank ≥ 4) is not supported
+        let result = validate_pad_constraints("constant", &[0, 0, 3, 0, 0, 0, 0, 0], 4);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "no_channel_padding");
+    }
+
+    #[test]
+    fn test_pad_channel_after_padding_rejected() {
+        // Padding on channel axis after side is also not supported
+        let result = validate_pad_constraints("constant", &[0, 0, 0, 4, 0, 0, 0, 0], 4);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "no_channel_padding");
+    }
+
+    #[test]
+    fn test_pad_spatial_padding_ok() {
+        // Padding on spatial axes (axes 2+) is legal
+        // rank 4: [batch, channel, height, width]
+        // pad: [0,0, 0,0, 2,2, 3,3] — padding only on height and width
+        assert!(validate_pad_constraints("constant", &[0, 0, 0, 0, 2, 2, 3, 3], 4).is_ok());
+    }
+
+    #[test]
+    fn test_pad_rank3_spatial_padding_ok() {
+        // rank 3: [channel, height, width] (no batch dim)
+        // pad: [0,0, 2,2, 3,3] — padding on height and width
+        assert!(validate_pad_constraints("constant", &[0, 0, 2, 2, 3, 3], 3).is_ok());
+    }
+
+    #[test]
+    fn test_pad_depth_padding_rejected_for_5d() {
+        // For rank-5 (NCDHW), padding on depth axis (axis 2) is not supported
+        // pad: [0,0, 0,0, 1,1, 2,2, 3,3] — depth axis has before=1, after=1
+        let result = validate_pad_constraints("constant", &[0, 0, 0, 0, 1, 1, 2, 2, 3, 3], 5);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "no_depth_padding");
+    }
+
+    #[test]
+    fn test_pad_5d_no_depth_padding_ok() {
+        // For rank-5 (NCDHW), no depth padding is legal
+        // pad: [0,0, 0,0, 0,0, 2,2, 3,3] — depth axis has 0 padding
+        assert!(validate_pad_constraints("constant", &[0, 0, 0, 0, 0, 0, 2, 2, 3, 3], 5).is_ok());
+    }
+
+    #[test]
+    fn test_pad_4d_no_depth_check() {
+        // For rank-4, there is no depth axis so no depth constraint applies
+        // Even with values at indices [4,5], since rank < 5, depth check is skipped
+        assert!(validate_pad_constraints("constant", &[0, 0, 0, 0, 2, 2, 3, 3], 4).is_ok());
+    }
+
+    #[test]
+    fn test_pad_zero_padding_ok() {
+        // All-zero padding is legal (effectively a no-op)
+        assert!(validate_pad_constraints("constant", &[0, 0, 0, 0, 0, 0, 0, 0], 4).is_ok());
+    }
+
+    #[test]
+    fn test_pad_amounts_length_mismatch_rejected() {
+        // pad_amounts shorter than 2 * rank is rejected
+        let result = validate_pad_constraints("constant", &[0, 0, 0, 0], 3);
+        // Expected 6 entries for rank 3, got 4
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "pad_amounts_length");
+    }
+
+    #[test]
+    fn test_pad_amounts_longer_than_expected_ok() {
+        // pad_amounts longer than 2 * rank — we check first expected_len entries
+        // Extra entries beyond expected_len are tolerated (they're typically zero)
+        // [0,0, 0,0, 2,2, 0,0] — rank 3 expects 6, got 8, but first 6 are valid
+        assert!(validate_pad_constraints("constant", &[0, 0, 0, 0, 2, 2, 0, 0], 3).is_ok());
+    }
+
+    #[test]
+    fn test_pad_batch_and_channel_both_nonzero_rejected() {
+        // Both batch and channel padding present — batch check fires first (rank ≥ 4)
+        let result = validate_pad_constraints("constant", &[1, 0, 2, 0, 0, 0, 0, 0], 4);
+        assert!(result.is_err());
+        // Batch check fires before channel check
+        assert_eq!(result.unwrap_err().constraint, "no_batch_padding");
+    }
+
+    #[test]
+    fn test_pad_reflection_with_spatial_padding_ok() {
+        // Reflection mode with spatial padding is a common ANE use case
+        assert!(validate_pad_constraints("reflection", &[0, 0, 0, 0, 1, 1], 3).is_ok());
+    }
+
+    #[test]
+    fn test_pad_constant_value_irrelevant() {
+        // The constant_value field is not checked by this validator;
+        // it's part of the MILPad op but doesn't affect ANE legality.
+        // We don't pass it to the function at all.
+        assert!(validate_pad_constraints("constant", &[0, 0, 0, 0, 2, 2], 3).is_ok());
+    }
+
+    #[test]
+    fn test_pad_rank2_channel_is_axis0() {
+        // For rank 2 (no batch dim), axis 0 = channel
+        // Padding on axis 0 (channel) should be rejected
+        let result = validate_pad_constraints("constant", &[1, 0, 0, 0], 2);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "no_channel_padding");
+    }
+
+    #[test]
+    fn test_pad_rank2_spatial_only_ok() {
+        // For rank 2, axis 0 = channel, axis 1 = spatial
+        // No padding on channel — OK (though rank-2 pad is unusual)
+        assert!(validate_pad_constraints("constant", &[0, 0, 0, 0], 2).is_ok());
+    }
+
+    #[test]
+    fn test_pad_rank2_spatial_padding_ok() {
+        // For rank 2, axis 1 is spatial — padding is legal
+        assert!(validate_pad_constraints("constant", &[0, 0, 2, 3], 2).is_ok());
+    }
+
+    #[test]
+    fn test_pad_typical_conv_scenario() {
+        // Typical convolution padding: rank 4, 1 pixel on H and W
+        // [0,0, 0,0, 1,1, 1,1] — spatial padding only
+        assert!(validate_pad_constraints("constant", &[0, 0, 0, 0, 1, 1, 1, 1], 4).is_ok());
+    }
+
+    #[test]
+    fn test_pad_asymmetric_spatial_ok() {
+        // Asymmetric spatial padding (different before/after on spatial axes) is legal
+        // [0,0, 0,0, 1,2, 0,3] — different padding amounts on spatial axes
+        assert!(validate_pad_constraints("constant", &[0, 0, 0, 0, 1, 2, 0, 3], 4).is_ok());
     }
 }

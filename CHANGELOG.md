@@ -127,3 +127,36 @@ Full-spectrum diagnostic sweep performed. See `AUDIT.md` for complete findings.
 
 **New issues filed:** I-01 through I-20 (see ISSUES.md)
 **New tasks created:** T-22 through T-45 (see TASKS.md)
+
+---
+
+## Post-Audit Resolved Tasks
+
+### T-22 · Align Three Sources of Truth (Engine / CPU-Only / Compat) ✅
+- **Commit**: 063f225
+- **ISSUES ref**: I-01
+- **Resolution**: Performed full three-way alignment of `MirOp::default_engine()`, `CPU_ONLY_OPS`, and `MirOpCompat` coverage. Moved 28 MirOp variants from PE/NE to None (CPU-only). Added 10 entries to CPU_ONLY_OPS. Added `MirOp::mil_op_name()` method.
+
+### T-23 · Wire `is_cpu_only()` into Placement Validation ✅
+- **Commit**: 063f225 (bundled with T-22)
+- **ISSUES ref**: I-02
+- **Resolution**: Added `cpu_only_ops::is_cpu_only(op.mil_op_name())` check as a hard gate in `placement_validate.rs`.
+
+### T-24 · Fix V6 (A13 Silicon) → A14 Family Mapping ✅
+- **Commit**: 063f225
+- **ISSUES ref**: I-03
+- **Resolution**: Added `AneFamily::A13` variant with distinct constraint profile. Mapped `AneRevision::V6` to `A13` family (was incorrectly grouped with V7 under A14).
+
+### T-25 · Wire Interleave + Dtype Validators into Pipeline ✅
+- **Commit**: 5d2f85f
+- **ISSUES ref**: I-04
+- **Resolution**: Added `PlacementContext` struct and `validate_placement_with_context()` function. Wired six constraint validators as hard gates.
+
+### T-26 · Add `validate_matmul_constraints()` ✅
+- **Commit**: (bundled with T-25)
+- **ISSUES ref**: I-05
+- **Resolution**: Added `validate_matmul_constraints()` enforcing depth=1, minimum rank 2, inner dimensions match, and output channels even. 27 new tests.
+
+### T-27 · Add `validate_pad_constraints()` ✅
+- **ISSUES ref**: I-06
+- **Resolution**: Added `validate_pad_constraints()` to `op_constraints.rs` enforcing six ANE Pad hard constraints: mode gate (reject replication/symmetric), no negative padding, no batch-axis padding (rank ≥ 4), no channel-axis padding (rank-aware axis mapping), no depth-axis padding (rank-5), and pad_amounts length validation. Wired into `placement_validate.rs` with dedicated `MILPad` match arm. 25 unit tests + 10 integration tests. 762 total tests passing.

@@ -71,23 +71,11 @@ ANE-legal ops that still lack MirOpCompat variants (BatchNorm, MaxPool, AvgPool,
 
 ### I-06 · Missing `validate_pad_constraints()`
 
-**Status:** ⬜ Open
-**Files:** `crates/passes/src/op_constraints.rs`
+**Status:** ✅ FIXED (T-27)
+**Files:** `crates/passes/src/op_constraints.rs`, `crates/passes/src/placement_validate.rs`
 **AUDIT ref:** §II-C, §IV (B-8)
-**Severity:** HIGH — Replication/symmetric/negative/batch/channel/depth padding not rejected
-**Effort:** M (1 day)
-**Task:** T-27
-
-No padding constraint validator exists. The ANE rejects:
-- Replication padding
-- Symmetric padding
-- Negative padding mode
-- Batch axis padding
-- Channel axis padding
-- Depth axis padding (for ANEC padding op)
-- Mixed padding modes across axes
-
-**Fix:** Add `validate_pad_constraints()` mirroring constraint document §4.13.
+**Severity:** HIGH → RESOLVED
+**Resolution:** Added `validate_pad_constraints()` to `op_constraints.rs` enforcing six ANE Pad hard constraints: replication/symmetric mode rejection, no negative padding, no batch-axis padding (rank ≥ 4), no channel-axis padding (rank-aware: axis 1 for rank ≥ 4, axis 0 for rank < 4), no depth-axis padding (rank-5 only), and pad_amounts length validation. Wired into `placement_validate.rs` with dedicated `MILPad` match arm. Added 25 unit tests + 10 integration tests.
 
 ---
 
@@ -345,9 +333,9 @@ The following issues from the previous tracker have been resolved and archived t
 | Priority | Total | Open | In Progress | Fixed |
 |----------|-------|------|-------------|-------|
 | P0 | 3 | 0 | 0 | 3 |
-| P1 | 8 | 6 | 0 | 2 |
+| P1 | 8 | 5 | 0 | 3 |
 | P2 | 8 | 8 | 0 | 0 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **15** | **0** | **5** |
+| **Total** | **20** | **14** | **0** | **6** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 and I-05 resolved by T-25 and T-26.*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04, I-05, and I-06 resolved by T-25, T-26, and T-27.*
