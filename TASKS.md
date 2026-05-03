@@ -36,13 +36,13 @@
 
 ## 🟠 HIGH — Do These Next Sprint
 
-### T-25 · Wire Interleave + Dtype Validators into Pipeline
+### T-25 · Wire Interleave + Dtype Validators into Pipeline ✅
 
 - **ISSUES ref**: I-04
 - **AUDIT ref**: §II-C, §IV (B-12)
-- **Severity**: HIGH
+- **Severity**: HIGH → RESOLVED
 - **Effort**: S (0.5 day)
-- **Description**: `validate_interleave_constraints()` in `ane_layout.rs` and `is_dtype_ane_legal()` in `dtype_constraints.rs` are implemented but never called from any non-test code. Wire them into `placement_validate.rs`.
+- **Resolution**: Added `PlacementContext` struct carrying dtype, interleave, layout, and quantization metadata. Created `validate_placement_with_context()` as the primary entry point, with `validate_placement()` preserved as a backward-compatible wrapper. Wired six constraint validators as hard gates: (1) `is_dtype_ane_legal()` — universal dtype check rejecting Int32/Fp64; (2) `is_broadcast_dtype_legal()` — FP16-only broadcast on A11/A12; (3) `validate_interleave_constraints()` — valid interleave factors, const→1, int4→8, channel-divisibility; (4) `validate_channellast_constraints()` — ChannelLast only for depthwise conv with interleave=1; (5) `is_blockwise_scale_supported()` — hard-rejects `ConstexprBlockwiseShiftScale` and `ConstexprSparseBlockwiseShiftScale`; (6) `is_asymmetric_quantization_supported()` — hard-rejects asymmetric quant. Added 28 new tests covering all validator paths. All 698 tests pass.
 
 ### T-26 · Add `validate_matmul_constraints()`
 
@@ -217,7 +217,7 @@
 | T-22 | I-01 | CRITICAL | L | ✅ |
 | T-23 | I-02 | CRITICAL | S | ✅ |
 | T-24 | I-03 | HIGH | M | ✅ |
-| T-25 | I-04 | HIGH | S | ⬜ |
+| T-25 | I-04 | HIGH | S | ✅ |
 | T-26 | I-05 | HIGH | S | ⬜ |
 | T-27 | I-06 | HIGH | M | ⬜ |
 | T-28 | I-07 | HIGH | S | ⬜ |

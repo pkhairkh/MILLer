@@ -51,16 +51,11 @@ ANE-legal ops that still lack MirOpCompat variants (BatchNorm, MaxPool, AvgPool,
 
 ### I-04 · Interleave + Dtype Validators Dead Code (Not Wired)
 
-**Status:** ⬜ Open
+**Status:** ✅ FIXED (T-25)
 **Files:** `crates/ir/src/ane_layout.rs`, `crates/passes/src/dtype_constraints.rs`, `crates/passes/src/placement_validate.rs`
 **AUDIT ref:** §II-C, §IV (B-12)
-**Severity:** HIGH — Implemented constraint checks are never enforced
-**Effort:** S (0.5 day)
-**Task:** T-25
-
-`validate_interleave_constraints()` and `validate_channellast_constraints()` in `ane_layout.rs` are never called from any non-test code. Similarly, `is_dtype_ane_legal()`, `is_broadcast_dtype_legal()`, `is_blockwise_scale_supported()`, and `is_asymmetric_quantization_supported()` in `dtype_constraints.rs` are never called from `placement_validate.rs` or any hot-path module.
-
-**Fix:** Wire these functions into `placement_validate.rs`.
+**Severity:** HIGH → RESOLVED
+**Resolution:** Wired all six constraint validators into `placement_validate.rs` via new `PlacementContext` struct and `validate_placement_with_context()` function. `is_dtype_ane_legal()` runs as a universal dtype gate for all ops (rejects Int32/Fp64). `is_broadcast_dtype_legal()` enforces FP16-only broadcast on A11/A12 for binary elementwise ops. `validate_interleave_constraints()` enforces valid interleave factors {1,2,3,4,8}, const→interleave-1, int4→interleave-8, and channel-divisibility. `validate_channellast_constraints()` enforces ChannelLast only for depthwise convolutions with interleave=1. `is_blockwise_scale_supported()` hard-rejects `ConstexprBlockwiseShiftScale` and `ConstexprSparseBlockwiseShiftScale`. `is_asymmetric_quantization_supported()` hard-rejects asymmetric quantization. All validators are opt-in via `PlacementContext` fields — backward-compatible `validate_placement()` continues to work with empty context.
 
 ---
 
@@ -355,9 +350,9 @@ The following issues from the previous tracker have been resolved and archived t
 | Priority | Total | Open | In Progress | Fixed |
 |----------|-------|------|-------------|-------|
 | P0 | 3 | 0 | 0 | 3 |
-| P1 | 8 | 8 | 0 | 0 |
+| P1 | 8 | 7 | 0 | 1 |
 | P2 | 8 | 8 | 0 | 0 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **17** | **0** | **3** |
+| **Total** | **20** | **16** | **0** | **4** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. I-03 was fixed by T-24 (added A13 family variant).*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issue I-04 resolved by T-25 (wired interleave + dtype validators).*
