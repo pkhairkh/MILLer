@@ -173,7 +173,30 @@ fn test_mir_op_to_compat_exhaustive_coverage() {
         attention_mask: None,
         scale: Some(0.125),
     };
-    assert!(matches!(MirOpCompat::from(op), MirOpCompat::ScaledDotProductAttention { .. }));
+    let compat = MirOpCompat::from(op);
+    if let MirOpCompat::ScaledDotProductAttention { scale, attention_mask, .. } = compat {
+        assert_eq!(scale, Some(0.125), "scale should be preserved through MirOp → MirOpCompat conversion");
+        assert!(attention_mask.is_none(), "attention_mask should be None when source is None");
+    } else {
+        panic!("Expected MirOpCompat::ScaledDotProductAttention");
+    }
+
+    // Test with attention_mask present
+    let op_with_mask = MirOp::MILScaledDotProductAttention {
+        name: "attn_masked".into(),
+        query: nid("q"),
+        key: nid("k"),
+        value: nid("v"),
+        attention_mask: Some(nid("mask")),
+        scale: Some(0.0625),
+    };
+    let compat_masked = MirOpCompat::from(op_with_mask);
+    if let MirOpCompat::ScaledDotProductAttention { attention_mask, scale, .. } = compat_masked {
+        assert_eq!(attention_mask, Some("mask".to_string()), "attention_mask should be preserved through conversion");
+        assert_eq!(scale, Some(0.0625), "scale should be preserved through conversion");
+    } else {
+        panic!("Expected MirOpCompat::ScaledDotProductAttention");
+    }
 
     // ─── Normalization ───────────────────────────────────────────
     let op = MirOp::MILLayerNorm {

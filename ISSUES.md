@@ -111,16 +111,11 @@ ANE-legal ops that still lack MirOpCompat variants (BatchNorm, MaxPool, AvgPool,
 
 ### I-10 · SDPA Compat Missing `attention_mask` and `scale`
 
-**Status:** ⬜ Open
-**Files:** `crates/coreml-proto/src/lib.rs`
+**Status:** ✅ FIXED (T-31)
+**Files:** `crates/coreml-proto/src/lib.rs`, `crates/bridge/src/mir_to_compat.rs`, `crates/coreml-proto/proto/coreml/MIL.proto`
 **AUDIT ref:** §III (CQ-23), §IV (B-11)
-**Severity:** HIGH — RoPE-attention models cannot emit SDPA with masks via proto-direct
-**Effort:** M (1 day)
-**Task:** T-31
-
-`MirOp::MILScaledDotProductAttention` carries `attention_mask: Option<MirNodeId>` and `scale: Option<f32>`, but `MirOpCompat::ScaledDotProductAttention` only has `query, key, value`. The proto-direct path cannot emit SDPA with attention masks or custom scale factors.
-
-**Fix:** Add `attention_mask` and `scale` fields to `MirOpCompat::ScaledDotProductAttention` and wire through proto emission.
+**Severity:** HIGH → RESOLVED
+**Resolution:** Added `attention_mask: Option<String>` and `scale: Option<f32>` to `MirOpCompat::ScaledDotProductAttention`. Wired through all conversion paths (From impl, mir_op_to_compat, compat_input_names, remap_compat_inputs, rename_compat_output) and both proto emission paths (MIL proto with `attn_mask`/`has_attn_mask`/`scale` fields, Apple proto with `attn_mask` name-arg input and `scale` immediate float32 input). Added `float scale = 7` field to proto definition. 14 new tests.
 
 ---
 
@@ -318,9 +313,9 @@ The following issues from the previous tracker have been resolved and archived t
 | Priority | Total | Open | In Progress | Fixed |
 |----------|-------|------|-------------|-------|
 | P0 | 3 | 0 | 0 | 3 |
-| P1 | 8 | 2 | 0 | 6 |
+| P1 | 8 | 1 | 0 | 7 |
 | P2 | 8 | 8 | 0 | 0 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **11** | **0** | **9** |
+| **Total** | **20** | **10** | **0** | **10** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04, I-05, I-06, I-07, I-08, and I-09 resolved by T-25, T-26, T-27, T-28, T-29, and T-30.*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04, I-05, I-06, I-07, I-08, I-09, and I-10 resolved by T-25 through T-31.*

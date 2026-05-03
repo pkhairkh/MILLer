@@ -443,6 +443,8 @@ pub mod mir_compat {
             query: String,
             key: String,
             value: String,
+            attention_mask: Option<String>,
+            scale: Option<f32>,
         },
         ReadState {
             name: String,
@@ -1091,8 +1093,15 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             MirOp::MILNonMaximumSuppression { name, .. } => unsupported("non_maximum_suppression", &name, &op_json),
 
             // ─── Attention ───────────────────────────────────────────
-            MirOp::MILScaledDotProductAttention { name, query, key, value, .. } => {
-                mir_compat::MirOpCompat::ScaledDotProductAttention { name, query: nid(query), key: nid(key), value: nid(value) }
+            MirOp::MILScaledDotProductAttention { name, query, key, value, attention_mask, scale } => {
+                mir_compat::MirOpCompat::ScaledDotProductAttention {
+                    name,
+                    query: nid(query),
+                    key: nid(key),
+                    value: nid(value),
+                    attention_mask: attention_mask.map(|id| nid(id)),
+                    scale,
+                }
             }
 
             // ─── Quantization ────────────────────────────────────────
@@ -1497,16 +1506,17 @@ pub fn mir_op_to_proto_op(
                 mode: mode.clone(),
             }),
         ),
-        mir_compat::MirOpCompat::ScaledDotProductAttention { name, query, key, value } => (
+        mir_compat::MirOpCompat::ScaledDotProductAttention { name, query, key, value, attention_mask, scale } => (
             name.clone(),
             proto::mil_operation::Operation::ScaledDotProductAttentionOp(
                 proto::MilScaledDotProductAttentionOp {
                     query: Some(proto::OperandRef { name: query.clone() }),
                     key: Some(proto::OperandRef { name: key.clone() }),
                     value: Some(proto::OperandRef { name: value.clone() }),
-                    attn_mask: None,
-                    has_attn_mask: false,
+                    attn_mask: attention_mask.as_ref().map(|m| proto::OperandRef { name: m.clone() }),
+                    has_attn_mask: attention_mask.is_some(),
                     causal: false,
+                    scale: scale.unwrap_or(0.0),
                 },
             ),
         ),
@@ -2933,11 +2943,17 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
-        mir_compat::MirOpCompat::ScaledDotProductAttention { name, query, key, value } => {
+        mir_compat::MirOpCompat::ScaledDotProductAttention { name, query, key, value, attention_mask, scale } => {
             let mut inputs = HashMap::new();
             inputs.insert("query".to_string(), make_name_arg(query));
             inputs.insert("key".to_string(), make_name_arg(key));
             inputs.insert("value".to_string(), make_name_arg(value));
+            if let Some(mask) = attention_mask {
+                inputs.insert("attn_mask".to_string(), make_name_arg(mask));
+            }
+            if let Some(s) = scale {
+                inputs.insert("scale".to_string(), make_value_arg(make_immediate_float32_value(*s)));
+            }
 
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
@@ -5122,6 +5138,8 @@ mod tests {
                 query: "q".to_string(),
                 key: "k".to_string(),
                 value: "v".to_string(),
+                attention_mask: None,
+                scale: None,
             },
             mir_compat::MirOpCompat::ReadState {
                 name: "rs".to_string(),
@@ -5446,5 +5464,158 @@ mod tests {
                 panic!("transpose.perm unexpected variant: {:?}", other);
             }
         }
+    }
+
+    // ─── SDPA attention_mask + scale proto emission tests (T-31) ────
+
+    #[test]
+    fn test_sdpa_proto_emission_with_mask_and_scale() {
+        // SDPA with both attention_mask and scale should emit attn_mask and scale in proto
+        let compat = mir_compat::MirOpCompat::ScaledDotProductAttention {
+            name: "sdpa_test".to_string(),
+            query: "q".to_string(),
+            key: "k".to_string(),
+            value: "v".to_string(),
+            attention_mask: Some("causal_mask".to_string()),
+            scale: Some(0.125),
+        };
+        let proto_op = mir_op_to_proto_op(&compat, &[]);
+        assert_eq!(proto_op.name, "sdpa_test");
+        match &proto_op.operation {
+            Some(proto::mil_operation::Operation::ScaledDotProductAttentionOp(sdpa_op)) => {
+                assert_eq!(sdpa_op.query.as_ref().unwrap().name, "q");
+                assert_eq!(sdpa_op.key.as_ref().unwrap().name, "k");
+                assert_eq!(sdpa_op.value.as_ref().unwrap().name, "v");
+                assert_eq!(sdpa_op.attn_mask.as_ref().unwrap().name, "causal_mask",
+                    "attn_mask should be set in proto when attention_mask is Some");
+                assert!(sdpa_op.has_attn_mask,
+                    "has_attn_mask should be true when attention_mask is Some");
+                assert!(!sdpa_op.causal, "causal should remain false by default");
+                assert!((sdpa_op.scale - 0.125).abs() < f32::EPSILON,
+                    "scale should be 0.125 in proto");
+            }
+            other => panic!("Expected ScaledDotProductAttentionOp, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_sdpa_proto_emission_without_mask_and_scale() {
+        // SDPA without mask or scale should emit attn_mask=None, has_attn_mask=false, scale=0.0
+        let compat = mir_compat::MirOpCompat::ScaledDotProductAttention {
+            name: "sdpa_plain".to_string(),
+            query: "q".to_string(),
+            key: "k".to_string(),
+            value: "v".to_string(),
+            attention_mask: None,
+            scale: None,
+        };
+        let proto_op = mir_op_to_proto_op(&compat, &[]);
+        assert_eq!(proto_op.name, "sdpa_plain");
+        match &proto_op.operation {
+            Some(proto::mil_operation::Operation::ScaledDotProductAttentionOp(sdpa_op)) => {
+                assert!(sdpa_op.attn_mask.is_none(),
+                    "attn_mask should be None in proto when attention_mask is None");
+                assert!(!sdpa_op.has_attn_mask,
+                    "has_attn_mask should be false when attention_mask is None");
+                assert_eq!(sdpa_op.scale, 0.0,
+                    "scale should be 0.0 in proto when scale is None");
+            }
+            other => panic!("Expected ScaledDotProductAttentionOp, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_sdpa_proto_emission_mask_only() {
+        // SDPA with mask but no scale
+        let compat = mir_compat::MirOpCompat::ScaledDotProductAttention {
+            name: "sdpa_masked".to_string(),
+            query: "q".to_string(),
+            key: "k".to_string(),
+            value: "v".to_string(),
+            attention_mask: Some("mask".to_string()),
+            scale: None,
+        };
+        let proto_op = mir_op_to_proto_op(&compat, &[]);
+        match &proto_op.operation {
+            Some(proto::mil_operation::Operation::ScaledDotProductAttentionOp(sdpa_op)) => {
+                assert_eq!(sdpa_op.attn_mask.as_ref().unwrap().name, "mask");
+                assert!(sdpa_op.has_attn_mask);
+                assert_eq!(sdpa_op.scale, 0.0, "scale should default to 0.0");
+            }
+            other => panic!("Expected ScaledDotProductAttentionOp, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_sdpa_proto_emission_scale_only() {
+        // SDPA with scale but no mask
+        let compat = mir_compat::MirOpCompat::ScaledDotProductAttention {
+            name: "sdpa_scaled".to_string(),
+            query: "q".to_string(),
+            key: "k".to_string(),
+            value: "v".to_string(),
+            attention_mask: None,
+            scale: Some(0.0625),
+        };
+        let proto_op = mir_op_to_proto_op(&compat, &[]);
+        match &proto_op.operation {
+            Some(proto::mil_operation::Operation::ScaledDotProductAttentionOp(sdpa_op)) => {
+                assert!(sdpa_op.attn_mask.is_none());
+                assert!(!sdpa_op.has_attn_mask);
+                assert!((sdpa_op.scale - 0.0625).abs() < f32::EPSILON,
+                    "scale should be 0.0625 in proto");
+            }
+            other => panic!("Expected ScaledDotProductAttentionOp, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_sdpa_apple_proto_emission_with_mask_and_scale() {
+        // Apple-proto emission should include attn_mask input and scale input
+        let compat = mir_compat::MirOpCompat::ScaledDotProductAttention {
+            name: "sdpa_apple".to_string(),
+            query: "q".to_string(),
+            key: "k".to_string(),
+            value: "v".to_string(),
+            attention_mask: Some("mask".to_string()),
+            scale: Some(0.125),
+        };
+        let shapes = std::collections::HashMap::from([("sdpa_apple".to_string(), vec![1usize, 8, 64, 64])]);
+        let ops = mir_op_to_apple_ops(&compat, &[], &shapes);
+        assert_eq!(ops.len(), 1);
+        let op = &ops[0];
+        assert_eq!(op.r#type, "scaled_dot_product_attention");
+        // Should have 5 inputs: query, key, value, attn_mask, scale
+        assert!(op.inputs.contains_key("query"), "should have query input");
+        assert!(op.inputs.contains_key("key"), "should have key input");
+        assert!(op.inputs.contains_key("value"), "should have value input");
+        assert!(op.inputs.contains_key("attn_mask"),
+            "should have attn_mask input when attention_mask is Some");
+        assert!(op.inputs.contains_key("scale"),
+            "should have scale input when scale is Some");
+    }
+
+    #[test]
+    fn test_sdpa_apple_proto_emission_without_mask_and_scale() {
+        // Apple-proto emission without mask/scale should only have q, k, v inputs
+        let compat = mir_compat::MirOpCompat::ScaledDotProductAttention {
+            name: "sdpa_plain".to_string(),
+            query: "q".to_string(),
+            key: "k".to_string(),
+            value: "v".to_string(),
+            attention_mask: None,
+            scale: None,
+        };
+        let shapes = std::collections::HashMap::from([("sdpa_plain".to_string(), vec![1usize, 8, 64, 64])]);
+        let ops = mir_op_to_apple_ops(&compat, &[], &shapes);
+        assert_eq!(ops.len(), 1);
+        let op = &ops[0];
+        assert!(op.inputs.contains_key("query"));
+        assert!(op.inputs.contains_key("key"));
+        assert!(op.inputs.contains_key("value"));
+        assert!(!op.inputs.contains_key("attn_mask"),
+            "should NOT have attn_mask input when attention_mask is None");
+        assert!(!op.inputs.contains_key("scale"),
+            "should NOT have scale input when scale is None");
     }
 }

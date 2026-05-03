@@ -84,13 +84,13 @@
 - **Effort**: S (0.5 day)
 - **Resolution**: Fixed the `% 1 == 0` always-true logic bug in `mir_to_compat.rs` `resolve_reshape_shape()`. The 2-zero case used `remaining % 1 == 0` which is trivially always true (modulo 1 is always 0), making the else branch dead code. The corresponding `/ 1` divisions were identity operations. Unified the 2-zero and 3+-zero cases into a single `2 | _` arm using `product_so_far` consistently: all zeros except the last are set to 1, the last zero is set to `remaining / product_so_far`. Fixed `product_so_far *= 1` to `product_so_far *= resolved[pos]` for self-documenting correctness. Also fixed a latent bug where failed positional resolution (target rank > input rank) left the `resolved` array partially modified, corrupting the subsequent `non_zero_product` calculation — now resets to `target_shape` on positional failure. Added 6 new tests covering 2-zero, 3+-zero, single-zero, zero-input, and incompatible-count scenarios. All 790 tests pass.
 
-### T-31 · Add `attention_mask` and `scale` to SDPA Compat
+### T-31 · Add `attention_mask` and `scale` to SDPA Compat ✅
 
 - **ISSUES ref**: I-10
 - **AUDIT ref**: §III (CQ-23), §IV (B-11)
-- **Severity**: HIGH
+- **Severity**: HIGH → RESOLVED
 - **Effort**: M (1 day)
-- **Description**: `MirOpCompat::ScaledDotProductAttention` is missing `attention_mask` and `scale` fields that `MirOp::MILScaledDotProductAttention` carries. RoPE-attention models need mask support. Add the fields and wire through proto emission.
+- **Resolution**: Added `attention_mask: Option<String>` and `scale: Option<f32>` fields to `MirOpCompat::ScaledDotProductAttention`. Previously these fields existed in `MirOp::MILScaledDotProductAttention` (and SIR/AIR) but were silently discarded during MirOp→MirOpCompat conversion. Wired all seven code locations: enum definition, From impl, mir_op_to_compat, compat_input_names, remap_compat_inputs, rename_compat_output, and both proto emission paths (MIL proto + Apple proto). Added `float scale = 7` field to `MilScaledDotProductAttentionOp` proto message. Apple-proto emits `attn_mask` as name-arg input and `scale` as immediate float32. 14 new tests. 804 total tests pass.
 
 ### T-32 · Add A18 Guard for ArgMinMax
 
@@ -223,7 +223,7 @@
 | T-28 | I-07 | HIGH | S | ✅ |
 | T-29 | I-08 | HIGH | S | ✅ |
 | T-30 | I-09 | HIGH | S | ✅ |
-| T-31 | I-10 | HIGH | M | ⬜ |
+| T-31 | I-10 | HIGH | M | ✅ |
 | T-32 | I-11 | MEDIUM | S | ⬜ |
 | T-33 | I-12 | MEDIUM | M | ⬜ |
 | T-34 | I-13 | MEDIUM | S | ⬜ |

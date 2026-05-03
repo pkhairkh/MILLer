@@ -221,6 +221,7 @@ message MilScaledDotProductAttentionOp {
     OperandRef attn_mask = 4;   // Optional
     bool has_attn_mask = 5;
     bool causal = 6;            // If true, generates causal mask internally
+    float scale = 7;            // Optional scale factor (0.0 = not set / use default 1/sqrt(d))
 }
 
 // ─── Reduction ──────────────────────────────────────────────────────────────

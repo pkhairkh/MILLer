@@ -444,8 +444,12 @@ fn compat_input_names(op: &MirOpCompat) -> Vec<String> {
         MirOpCompat::SliceByIndex { x, .. } => vec![x.clone()],
         MirOpCompat::SliceUpdate { x, update, .. } => vec![x.clone(), update.clone()],
         MirOpCompat::Concat { values, .. } => values.clone(),
-        MirOpCompat::ScaledDotProductAttention { query, key, value, .. } => {
-            vec![query.clone(), key.clone(), value.clone()]
+        MirOpCompat::ScaledDotProductAttention { query, key, value, attention_mask, .. } => {
+            let mut names = vec![query.clone(), key.clone(), value.clone()];
+            if let Some(mask) = attention_mask {
+                names.push(mask.clone());
+            }
+            names
         }
         MirOpCompat::ReadState { state_id, .. } => vec![state_id.clone()],
         MirOpCompat::CoremlUpdateState { state_id, value, .. } => {
@@ -659,12 +663,14 @@ fn remap_compat_inputs(
         MirOpCompat::Gelu { name, x, mode } => {
             MirOpCompat::Gelu { name, x: remap_name(x, aliases), mode }
         }
-        MirOpCompat::ScaledDotProductAttention { name, query, key, value } => {
+        MirOpCompat::ScaledDotProductAttention { name, query, key, value, attention_mask, scale } => {
             MirOpCompat::ScaledDotProductAttention {
                 name,
                 query: remap_name(query, aliases),
                 key: remap_name(key, aliases),
                 value: remap_name(value, aliases),
+                attention_mask: attention_mask.map(|m| remap_name(m, aliases)),
+                scale,
             }
         }
         MirOpCompat::CoremlUpdateState { name, state_id, value } => {
@@ -893,8 +899,8 @@ fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
             MirOpCompat::Softmax { name: new_name, x, axis }
         }
         MirOpCompat::Gelu { name: _, x, mode } => MirOpCompat::Gelu { name: new_name, x, mode },
-        MirOpCompat::ScaledDotProductAttention { name: _, query, key, value } => {
-            MirOpCompat::ScaledDotProductAttention { name: new_name, query, key, value }
+        MirOpCompat::ScaledDotProductAttention { name: _, query, key, value, attention_mask, scale } => {
+            MirOpCompat::ScaledDotProductAttention { name: new_name, query, key, value, attention_mask, scale }
         }
         MirOpCompat::ReadState { name: _, state_id, shape, dtype } => {
             MirOpCompat::ReadState { name: new_name, state_id, shape, dtype }
@@ -1478,13 +1484,15 @@ pub fn mir_op_to_compat(
             query,
             key,
             value,
-            attention_mask: _,
-            scale: _,
+            attention_mask,
+            scale,
         } => Ok(MirOpCompat::ScaledDotProductAttention {
             name: name.clone(),
             query: query.0.clone(),
             key: key.0.clone(),
             value: value.0.clone(),
+            attention_mask: attention_mask.as_ref().map(|id| id.0.clone()),
+            scale: *scale,
         }),
 
         MirOp::MILReadState { name, state_id, shape, dtype } => {
@@ -1972,7 +1980,7 @@ fn compat_dtype_element_size(dtype: &MilDtypeCompat) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ane_ir::mir::MirNodeId;
+    use ane_ir::mir::{MirNodeId, MirOp};
 
     fn make_test_graph() -> MirGraph {
         use ane_ir::mir::{MirNode, MirOp};
@@ -2734,4 +2742,208 @@ mod tests {
         let result = resolve_reshape_shape(&[0, 4], &[2, 3], "test");
         assert_eq!(result, vec![0, 4],
             "Incompatible element count should return target unchanged");
+    }
+
+    // ─── SDPA attention_mask + scale tests (T-31) ───────────────────
+
+    /// Helper to create MirNodeId from &str in tests.
+    fn mk_nid(s: &str) -> ane_ir::mir::MirNodeId {
+        ane_ir::mir::MirNodeId(s.to_string())
+    }
+
+    /// Dummy weight resolver for SDPA conversion tests.
+    struct DummyResolver;
+    impl WeightResolver for DummyResolver {
+        fn resolve(&self, _path: &str) -> Option<WeightData> { None }
+    }
+
+    #[test]
+    fn test_sdpa_compat_preserves_attention_mask() {
+        // attention_mask should be preserved through MirOp → MirOpCompat conversion
+        let op = MirOp::MILScaledDotProductAttention {
+            name: "sdpa_masked".into(),
+            query: mk_nid("q"),
+            key: mk_nid("k"),
+            value: mk_nid("v"),
+            attention_mask: Some(mk_nid("causal_mask")),
+            scale: None,
+        };
+        let resolver = DummyResolver;
+        let compat = mir_op_to_compat(&op, &[], &resolver).expect("SDPA conversion should succeed");
+        match compat {
+            MirOpCompat::ScaledDotProductAttention { attention_mask, scale, .. } => {
+                assert_eq!(attention_mask, Some("causal_mask".to_string()),
+                    "attention_mask should be preserved through MirOp → MirOpCompat conversion");
+                assert_eq!(scale, None,
+                    "scale should be None when source is None");
+            }
+            _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
+        }
+    }
+
+    #[test]
+    fn test_sdpa_compat_preserves_scale() {
+        // scale should be preserved through MirOp → MirOpCompat conversion
+        let op = MirOp::MILScaledDotProductAttention {
+            name: "sdpa_scaled".into(),
+            query: mk_nid("q"),
+            key: mk_nid("k"),
+            value: mk_nid("v"),
+            attention_mask: None,
+            scale: Some(0.125),
+        };
+        let resolver = DummyResolver;
+        let compat = mir_op_to_compat(&op, &[], &resolver).expect("SDPA conversion should succeed");
+        match compat {
+            MirOpCompat::ScaledDotProductAttention { attention_mask, scale, .. } => {
+                assert!(attention_mask.is_none(),
+                    "attention_mask should be None when source is None");
+                assert_eq!(scale, Some(0.125),
+                    "scale should be preserved through MirOp → MirOpCompat conversion");
+            }
+            _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
+        }
+    }
+
+    #[test]
+    fn test_sdpa_compat_preserves_both_mask_and_scale() {
+        // Both attention_mask and scale should be preserved together
+        let op = MirOp::MILScaledDotProductAttention {
+            name: "sdpa_full".into(),
+            query: mk_nid("q"),
+            key: mk_nid("k"),
+            value: mk_nid("v"),
+            attention_mask: Some(mk_nid("attn_mask")),
+            scale: Some(0.0625),
+        };
+        let resolver = DummyResolver;
+        let compat = mir_op_to_compat(&op, &[], &resolver).expect("SDPA conversion should succeed");
+        match compat {
+            MirOpCompat::ScaledDotProductAttention { name, query, key, value, attention_mask, scale } => {
+                assert_eq!(name, "sdpa_full");
+                assert_eq!(query, "q");
+                assert_eq!(key, "k");
+                assert_eq!(value, "v");
+                assert_eq!(attention_mask, Some("attn_mask".to_string()),
+                    "attention_mask should be preserved");
+                assert_eq!(scale, Some(0.0625),
+                    "scale should be preserved");
+            }
+            _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
+        }
+    }
+
+    #[test]
+    fn test_sdpa_compat_no_mask_no_scale() {
+        // SDPA without mask or scale should convert cleanly
+        let op = MirOp::MILScaledDotProductAttention {
+            name: "sdpa_plain".into(),
+            query: mk_nid("q"),
+            key: mk_nid("k"),
+            value: mk_nid("v"),
+            attention_mask: None,
+            scale: None,
+        };
+        let resolver = DummyResolver;
+        let compat = mir_op_to_compat(&op, &[], &resolver).expect("SDPA conversion should succeed");
+        match compat {
+            MirOpCompat::ScaledDotProductAttention { attention_mask, scale, .. } => {
+                assert!(attention_mask.is_none());
+                assert!(scale.is_none());
+            }
+            _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
+        }
+    }
+
+    #[test]
+    fn test_sdpa_input_names_includes_mask() {
+        // compat_input_names() should include attention_mask when present
+        let compat = MirOpCompat::ScaledDotProductAttention {
+            name: "sdpa".into(),
+            query: "q".into(),
+            key: "k".into(),
+            value: "v".into(),
+            attention_mask: Some("mask".into()),
+            scale: None,
+        };
+        let names = compat_input_names(&compat);
+        assert!(names.contains(&"mask".to_string()),
+            "compat_input_names should include attention_mask name when present");
+        assert_eq!(names.len(), 4, "should have 4 inputs: q, k, v, mask");
+    }
+
+    #[test]
+    fn test_sdpa_input_names_without_mask() {
+        // compat_input_names() should NOT include mask when absent
+        let compat = MirOpCompat::ScaledDotProductAttention {
+            name: "sdpa".into(),
+            query: "q".into(),
+            key: "k".into(),
+            value: "v".into(),
+            attention_mask: None,
+            scale: None,
+        };
+        let names = compat_input_names(&compat);
+        assert_eq!(names.len(), 3, "should have 3 inputs: q, k, v");
+        assert!(!names.iter().any(|n| n == "mask"),
+            "compat_input_names should not include mask when absent");
+    }
+
+    #[test]
+    fn test_sdpa_remap_input_names_preserves_mask() {
+        // remap_compat_inputs should remap the attention_mask name
+        let compat = MirOpCompat::ScaledDotProductAttention {
+            name: "sdpa".into(),
+            query: "q".into(),
+            key: "k".into(),
+            value: "v".into(),
+            attention_mask: Some("mask".into()),
+            scale: Some(0.5),
+        };
+        let aliases = HashMap::from([
+            ("q".to_string(), "q_alias".to_string()),
+            ("k".to_string(), "k_alias".to_string()),
+            ("v".to_string(), "v_alias".to_string()),
+            ("mask".to_string(), "mask_alias".to_string()),
+        ]);
+        let remapped = remap_compat_inputs(compat, &aliases);
+        match remapped {
+            MirOpCompat::ScaledDotProductAttention { query, key, value, attention_mask, scale, .. } => {
+                assert_eq!(query, "q_alias");
+                assert_eq!(key, "k_alias");
+                assert_eq!(value, "v_alias");
+                assert_eq!(attention_mask, Some("mask_alias".to_string()),
+                    "attention_mask should be remapped via aliases");
+                assert_eq!(scale, Some(0.5),
+                    "scale should pass through remap unchanged");
+            }
+            _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
+        }
+    }
+
+    #[test]
+    fn test_sdpa_rename_preserves_mask_and_scale() {
+        // rename_compat_output should update the name but preserve attention_mask and scale
+        let compat = MirOpCompat::ScaledDotProductAttention {
+            name: "old_name".into(),
+            query: "q".into(),
+            key: "k".into(),
+            value: "v".into(),
+            attention_mask: Some("mask".into()),
+            scale: Some(0.125),
+        };
+        let renamed = rename_compat_output(compat, "new_name".to_string());
+        match renamed {
+            MirOpCompat::ScaledDotProductAttention { name, query, key, value, attention_mask, scale } => {
+                assert_eq!(name, "new_name", "name should be renamed");
+                assert_eq!(query, "q", "query should be preserved");
+                assert_eq!(key, "k", "key should be preserved");
+                assert_eq!(value, "v", "value should be preserved");
+                assert_eq!(attention_mask, Some("mask".to_string()),
+                    "attention_mask should survive rename");
+                assert_eq!(scale, Some(0.125),
+                    "scale should survive rename");
+            }
+            _ => panic!("Expected MirOpCompat::ScaledDotProductAttention"),
+        }
     }
