@@ -37,13 +37,13 @@
 
 ## 🟠 HIGH — Do These Next Sprint
 
-### T-50 · Fix Broadcast FP16-Only to Include A13
+### ~~T-50 · Fix Broadcast FP16-Only to Include A13~~ — **RETRACTED**
 
-- **ISSUES ref**: I-24
-- **AUDIT ref**: §II-C, §IV (B-6)
-- **Severity**: HIGH
-- **Effort**: S (0.5 day)
-- **Detail**: `broadcast_fp16_only()` currently matches `A11Legacy | A12` but the ANE constraint canon says A13 also requires FP16-only broadcast (A13 uses A14Minus elementwise converters). Change to `matches!(self, A11Legacy | A12 | A13)`. Update test `test_broadcast_fp32_allowed_on_a13` to expect rejection.
+- **ISSUES ref**: ~~I-24~~
+- **AUDIT ref**: §II-C, §IV (~~B-6~~)
+- **Severity**: ~~HIGH~~ **RETRACTED**
+- **Effort**: —
+- **Detail**: **RETRACTED during audit verification.** The per-family support matrix clearly shows A13 broadcast = ✅ (no FP16 restriction). The Apple ANE error message specifically says "Only fp16 is supported for A11/A12 Broadcasts" — not A13. The constraint-doc A13 section text erroneously claims "Same broadcast and ReduceMin constraints as A11/A12" which is incorrect for broadcast (correct for ReduceMin). The current implementation is **correct** to exclude A13.
 
 ### T-51 · Add ReduceMin Non-FP Dtype Guard
 
@@ -186,7 +186,7 @@
 | T-47 | I-21 | CRITICAL | S | ⬜ |
 | T-48 | I-22 | CRITICAL | M | ⬜ |
 | T-49 | I-23 | HIGH | S | ⬜ |
-| T-50 | I-24 | HIGH | S | ⬜ |
+| T-50 | ~~I-24~~ | ~~HIGH~~ RETRACTED | — | ~~⬜~~ RETRACTED |
 | T-51 | I-25 | HIGH | S | ⬜ |
 | T-52 | I-26 | HIGH | M | ⬜ |
 | T-53 | I-27 | HIGH | S | ⬜ |

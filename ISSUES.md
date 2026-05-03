@@ -55,18 +55,16 @@ The `CPU_ONLY_OPS` HashSet is missing entries from the canonical ANE CPU-only li
 
 ---
 
-### I-24 · Broadcast FP16-Only Should Include A13
+### ~~I-24 · Broadcast FP16-Only Should Include A13~~ — **RETRACTED**
 
-**Status:** ⬜ Open
-**Files:** `crates/ir/src/ane_target.rs:43-45`, `crates/passes/src/dtype_constraints.rs:259`
-**AUDIT ref:** §II-C, §IV (B-6)
-**Severity:** HIGH
-**Effort:** S (0.5 day)
-**Task:** T-50
+**Status:** ~~⬜ Open~~ **RETRACTED**
+**Files:** ~~`crates/ir/src/ane_target.rs:43-45`, `crates/passes/src/dtype_constraints.rs:259`~~
+**AUDIT ref:** ~~§II-C, §IV (B-6)~~
+**Severity:** ~~HIGH~~ **RETRACTED**
+**Effort:** —
+**Task:** ~~T-50~~
 
-`broadcast_fp16_only()` returns `false` for A13 (matches only A11Legacy | A12). The ANE constraint canon states A13 also requires FP16-only broadcast (A13 uses A14Minus elementwise converters which may not support non-FP16 broadcast correctly). The test `test_broadcast_fp32_allowed_on_a13` explicitly allows FP32 broadcast on A13, contradicting the canon.
-
-**Fix:** Change `broadcast_fp16_only()` to `matches!(self, A11Legacy | A12 | A13)`. Update the A13 test to expect rejection.
+**RETRACTED during audit verification.** The per-family support matrix (`per-op-per-family-support-matrix.md` line 432) clearly shows A13 broadcast = ✅ (no FP16 restriction). The Apple ANE error message specifically says "Only fp16 is supported for A11/A12 Broadcasts" — not A13. The constraint-doc A13 section text (`per-op-per-family-support-matrix.md` line 464) erroneously claims "Same broadcast and ReduceMin constraints as A11/A12" which is incorrect for broadcast (correct for ReduceMin). The current `broadcast_fp16_only()` implementation is **correct** to exclude A13. The code comment at `ane_target.rs:119-122` explicitly documents this: "A13 lifts the FP16-only broadcast restriction (unlike A12)."
 
 ---
 
@@ -323,10 +321,10 @@ Ops with real ANEC converters that still map to `MirOpCompat::Unsupported`: Batc
 
 ## Summary Statistics
 
-| Priority | Total | Open | Fixed |
-|----------|-------|------|-------|
-| P0 | 2 | 2 | 0 |
-| P1 | 11 | 11 | 0 |
-| P2 | 7 | 7 | 0 |
-| Resolved (v1) | 20 | 0 | 20 |
-| **Total** | **40** | **20** | **20** |
+| Priority | Total | Open | Fixed | Retracted |
+|----------|-------|------|-------|-----------|
+| P0 | 2 | 2 | 0 | 0 |
+| P1 | 11 | 10 | 0 | 1 |
+| P2 | 7 | 7 | 0 | 0 |
+| Resolved (v1) | 20 | 0 | 20 | 0 |
+| **Total** | **40** | **19** | **20** | **1** |

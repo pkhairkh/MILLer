@@ -4,6 +4,7 @@
 **Scope:** Full repository sweep — 12 crates, ~566 tests, 9 constraint documents
 **Method:** Automated lint + deep source walk + canon cross-reference + drift analysis
 **Prior audit:** 2026-05-03 (all 20 issues I-01 through I-20 resolved)
+**Verification:** Source-code spot-check of all CRITICAL/HIGH findings; I-24 retracted as false positive after cross-referencing per-family support matrix and Apple error messages
 
 ---
 
@@ -48,7 +49,7 @@ The `CPU_ONLY_OPS` HashSet in `cpu_only_ops.rs` is missing entries from the cano
 
 | Guard | Canon Requirement | Current Implementation | File | Severity |
 |---|---|---|---|---|
-| Broadcast FP16-only | A11/A12/**A13** | A11/A12 only (A13 excluded) | `ane_target.rs:43-45` | **HIGH** |
+| ~~Broadcast FP16-only for A13~~ | ~~A13 also FP16-only~~ | **VERIFIED CORRECT** — A13 excluded from FP16-only (per-family matrix ✅; Apple error msg says "A11/A12" only; constraint-doc §3.2 A13 text has internal error) | `ane_target.rs:43-45` | ~~HIGH~~ **RETRACTED** |
 | ReduceMin non-FP | A14+ only | `supports_reducemin_all_dtypes()` exists but NOT enforced in placement validator for MILReduceMin | `placement_validate.rs` | **HIGH** |
 | E4M3 | A17+ (LSE_6) | A18 only — V11 (A17 Pro) maps to A16 family, denied E4M3 | `ane_target.rs:89-91` | **HIGH** |
 | Square converter | A13Minus vs A14Plus | No per-family dtype validation | `placement_validate.rs` | MEDIUM |
@@ -102,7 +103,7 @@ The `CPU_ONLY_OPS` HashSet in `cpu_only_ops.rs` is missing entries from the cano
 | B-3 | `MILSlidingWindows` silently fails at emission | Any model using sliding_windows op | Move to `None` in `default_engine()`; add to `CPU_ONLY_OPS` | **CRITICAL** |
 | B-4 | `MILArgsort` silently fails at emission | Any model using argsort (sort on ANE) | Move to `None` in `default_engine()`; add to `CPU_ONLY_OPS` | **CRITICAL** |
 | B-5 | Palettization decisions silently ignored | Any model with LUT/palettized weights | Wire `bits` into weight annotation; add bit-width validation | **CRITICAL** |
-| B-6 | FP32 broadcast allowed on A13 | A13 hardware with non-FP16 broadcast inputs | Add A13 to `broadcast_fp16_only()` | **HIGH** |
+| ~~B-6~~ | ~~FP32 broadcast allowed on A13~~ | ~~A13 hardware with non-FP16 broadcast inputs~~ | **RETRACTED** — Per-family support matrix shows A13 broadcast = ✅; Apple error message specifically says "A11/A12"; constraint-doc A13 section text erroneously claims "same broadcast constraints" — code is correct | ~~HIGH~~ **RETRACTED** |
 | B-7 | ReduceMin Int8 allowed on A11-A13 | Non-FP ReduceMin on pre-A14 hardware | Add MILReduceMin guard in placement validator | **HIGH** |
 | B-8 | E4M3 denied on A17 Pro hardware | V11→A16 family doesn't support E4M3 | Add A17 family or revision-level override | **HIGH** |
 | B-9 | Tile reshape zeros resolved incorrectly | Tile with multiple zero placeholders and ctx=None | Use ctx dimensions when available; require ctx for Tile | **HIGH** |
@@ -161,17 +162,17 @@ The `CPU_ONLY_OPS` HashSet in `cpu_only_ops.rs` is missing entries from the cano
 │  MIR ──████████████████████░░░░░  84%       │
 │  PIR ──██████████████████████░░░  92%       │
 │                                             │
-│  OVERALL: █████████████████████░░  88%       │
+│  OVERALL: ██████████████████████░░  89%       │
 │                                             │
 │  Deductions from 100%:                      │
 │  - 4 ops with PE engine but no ANEC: -4%    │
 │  - Palettize pass is no-op: -3%             │
 │  - 30 missing CPU_ONLY_OPS entries: -2%     │
-│  - Qwen3 Default impl leakage: -1%          │
 │  - panic!/unwrap in production paths: -2%   │
 │                                             │
 │  Improvements since v1 audit:               │
 │  + 20 issues resolved (I-01 through I-20)   │
+│  + 1 false positive retracted (I-24)        │
 │  + ToProto trait unified mapping             │
 │  + Constexpr* compat variants added          │
 │  + 6-gate placement validation chain         │
@@ -190,7 +191,7 @@ Sorted by **impact x urgency** (highest first):
 | 1 | **Fix 4 ops with PE engine but no ANEC converter**: Move MILSliceUpdate, MILReverse, MILSlidingWindows, MILArgsort to `None` in `default_engine()` and add to `CPU_ONLY_OPS` | CRITICAL | NOW | S (0.5d) | I-21 |
 | 2 | **Fix palettize_weights no-op**: Wire `bits` value into weight annotation; add {1,2,3,4,6,8} bit-width validation | CRITICAL | NOW | M (1d) | I-22 |
 | 3 | **Add ~30 missing ops to CPU_ONLY_OPS**: `for`, `call`, `condition`, `yield`, `return`, `shape`, `rank`, `size`, `dimension_size`, `is_finite`, `is_infinite`, `is_nan`, `negative`, `reciprocal`, `reverse_square_root`, `rint`, `signbit`, `strided_slice_update`, `one_hot`, etc. | HIGH | NOW | S (0.5d) | I-23 |
-| 4 | **Fix broadcast FP16-only to include A13**: Change `broadcast_fp16_only()` to match A11Legacy \| A12 \| A13 per canon | HIGH | NOW | S (0.5d) | I-24 |
+| ~~4~~ | ~~**Fix broadcast FP16-only to include A13**~~ | ~~HIGH~~ | **RETRACTED** | — | ~~I-24~~ |
 | 5 | **Add ReduceMin non-FP dtype guard in placement validator**: Check `target_family.supports_reducemin_all_dtypes()` when dtype is non-FP | HIGH | NEXT | S (0.5d) | I-25 |
 | 6 | **Fix E4M3 support for A17 Pro (V11)**: Add A17 family or revision-level override so V11 gets E4M3 capability | HIGH | NEXT | M (1d) | I-26 |
 | 7 | **Wire `validate_tensor_dims()` into placement pipeline**: Call `AneHwLimits::for_revision().validate_tensor_dims()` from `validate_placement_with_context()` | HIGH | NEXT | S (0.5d) | I-27 |
