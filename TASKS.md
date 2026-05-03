@@ -112,13 +112,13 @@
 - **Effort**: M (2 days)
 - **Resolution**: Added 153 comprehensive tests covering all three public functions (`compat_input_dtype`, `compat_input_shape`, `compat_output_shape`) and two private helpers (`broadcast_shape_compat`, `reduce_shape`). Tests cover: 22 unary ops, 17 binary ops with broadcast, Softmax, Linear, MatMul (2D/batched/broadcast), Reshape, Transpose, Tile, Fill, FillLike, Gather (embedding/axis-last/fallback), ReduceMean/Max/Min/Prod (keep_dims/no-keep/multiple axes), ExpandDims (single/multi axis), Squeeze, Pad, Concat, Where, LayerNorm, Topk (positive/negative axis), SDPA, ReadState, CoremlUpdateState, StateWrite, Conv, Select, Split, SliceByIndex (masks/squeeze/negative end), Identity, Stack, Const (lookup/scalar://), and catch-all. Also fixed two bugs discovered by tests: (1) `MILTopk` negative axis — `saturating_add(*axis as usize)` wraps for negative isize; replaced with `(rank + axis) as usize`; (2) `MILExpandDims` multi-axis — `ax + i` position adjustment was wrong; replaced with direct `ax`. All 974 tests pass.
 
-### T-34 · Add Tests for `passes::staticize.rs`
+### T-34 · Add Tests for `passes::staticize.rs` ✅
 
 - **ISSUES ref**: I-13
 - **AUDIT ref**: §V
-- **Severity**: MEDIUM
+- **Severity**: MEDIUM → RESOLVED
 - **Effort**: S (0.5 day)
-- **Description**: Zero tests for a compilation pass. Even current pass-through behavior needs a smoke test.
+- **Resolution**: Added 62 comprehensive tests for the `StaticizePass` module, which previously had zero test coverage. Tests cover: (1) empty/minimal graphs (empty graph, default/new equivalence); (2) single-node graphs (Const, Fill, Identity placeholder); (3) LinearProjection (core vertical slice, with bias); (4) RMSNorm, RoPETransform; (5) DecodeStep (minimal, with QK-norm); (6) SDPA (without mask, with mask+scale) and AttentionBlock; (7) StateRead/StateWrite (KV cache operations); (8) 20 unary elementwise ops; (9) 13 binary elementwise ops; (10) 7 reduction ops; (11) tensor transform ops (Reshape, Transpose, Concat, Split, ExpandDims, Squeeze, Tile, Pad); (12) Gather; (13) MatMul; (14) Cast, Select, Where; (15) Softmax; (16) Conv; (17) SliceByIndex; (18) Quantize/Dequantize and Constexpr ops (AffineDequantize, LutToDense, SparseToDense, ConstexprCast, ConstexprBlockwiseShiftScale); (19) Sampler; (20) LayerNorm, BatchNorm; (21) realistic multi-node decode pipeline; (22) metadata preservation (all fields, all TaskOrigin variants); (23) graph I/O preservation (multiple inputs, multiple outputs, empty inputs); (24) Result type consistency (always Ok, unwraps cleanly); (25) idempotency (single pass, multi-node triple pass); (26) 50-node stress test; (27) Topk; (28) pooling ops (MaxPool, AvgPool); (29) recurrent ops (RNN, GRU, LSTM); (30) control flow (Cond, WhileLoop); (31) random ops; (32) ConvTranspose; (33) ReshapeLike, Flatten2d, Reverse; (34) DepthToSpace/SpaceToDepth/PixelShuffle/PixelUnshuffle; (35) Cumsum, FillLike, OneHot, Range1d; (36) parametric activations (LeakyRelu, ScaledTanh, ThresholdedRelu); (37) Einsum. All 1036 tests pass.
 
 ### T-35 · Expand `MilDtype` with Int4, UInt4, E4M3, E5M2
 
@@ -226,7 +226,7 @@
 | T-31 | I-10 | HIGH | M | ✅ |
 | T-32 | I-11 | MEDIUM | S | ✅ |
 | T-33 | I-12 | MEDIUM | M | ✅ |
-| T-34 | I-13 | MEDIUM | S | ⬜ |
+| T-34 | I-13 | MEDIUM | S | ✅ |
 | T-35 | I-14 | MEDIUM | M | ⬜ |
 | T-36 | I-15 | MEDIUM | M | ⬜ |
 | T-37 | I-16 | MEDIUM | M | ⬜ |

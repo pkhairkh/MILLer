@@ -148,16 +148,16 @@ Shape bugs here silently produce wrong Core ML models. Covers broadcast, concat,
 
 ### I-13 · Zero Tests for `passes::staticize.rs`
 
-**Status:** ⬜ Open
+**Status:** ✅ FIXED (T-34)
 **Files:** `crates/passes/src/staticize.rs`
 **AUDIT ref:** §V
-**Severity:** MEDIUM — No tests at all for a compilation pass
+**Severity:** MEDIUM → RESOLVED
 **Effort:** S (0.5 day)
 **Task:** T-34
 
 Even the current pass-through implementation needs a smoke test. Any future change introducing real staticization logic will be completely untested.
 
-**Fix:** Add basic smoke test verifying pass-through behavior.
+**Resolution:** Added 62 comprehensive tests covering the full SirOp variant surface and key invariants: empty graphs, single-node graphs, all composite ops (LinearProjection, RMSNorm, RoPETransform, DecodeStep, SDPA, AttentionBlock, Sampler), state ops (StateRead, StateWrite), 20 unary elementwise ops, 13 binary elementwise ops, 7 reduction ops, tensor transforms (Reshape, Transpose, Concat, Split, ExpandDims, Squeeze, Tile, Pad), Gather, MatMul, Cast, Select, Where, Softmax, Conv, SliceByIndex, Quantize/Dequantize, all Constexpr variants, normalization ops (LayerNorm, BatchNorm), a realistic multi-node decode pipeline, metadata preservation (all TaskOrigin variants, QualityContract, precision_override), graph I/O preservation, Result type consistency, idempotency (single and triple pass), a 50-node stress test, pooling ops, recurrent ops (RNN, GRU, LSTM), control flow (Cond, WhileLoop), random ops, ConvTranspose, space/depth rearrangement ops, parametric activations, and Einsum. Uses `assert_graphs_identical()` helper for deep structural comparison since `SirOp` does not derive `PartialEq`.
 
 ---
 
@@ -309,8 +309,8 @@ The following issues from the previous tracker have been resolved and archived t
 |----------|-------|------|-------------|-------|
 | P0 | 3 | 0 | 0 | 3 |
 | P1 | 8 | 0 | 0 | 8 |
-| P2 | 8 | 7 | 0 | 1 |
+| P2 | 8 | 6 | 0 | 2 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **8** | **0** | **12** |
+| **Total** | **20** | **7** | **0** | **13** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issue I-12 resolved by T-33.*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issues I-12, I-13 resolved by T-33, T-34.*
