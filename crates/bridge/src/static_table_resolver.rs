@@ -173,18 +173,45 @@ impl StaticTableResolver {
             }
         }
 
-        // Step 3: eye_tab and mask_tab REMOVED.
+        // Step 3: Compute eye_tab and mask_tab (only for small seq_len).
         //
-        // The decode_step path now uses pure-arithmetic mask computation
-        // (Sub+Abs+Minimum+Maximum+Mul) instead of Gather(eye_tab/mask_tab).
-        // This eliminates:
-        //   - Quadratic-memory [seq,seq] tables (3.2 GB each for seq=40960)
-        //   - ANE-illegal Gather ops (plannability ~0.26)
-        //   - The scalar-serialization bug when seq_len > 8192
+        // The decode_step path uses pure-arithmetic mask computation
+        // (Sub+Abs+Minimum+Maximum+Mul) and does NOT need these tables.
+        // However, the embedding/prefill path (sir_build.rs) still references
+        // mask_tab as a direct constant (the full [seq, seq] mask is loaded
+        // and reshaped to [1, 1, seq, seq] for additive masking in attention).
         //
-        // The arithmetic mask path uses only arange_fp16_tab (linear memory)
-        // and produces identical one-hot KV write masks and causal attention
-        // masks using fully ANE-legal ops.
+        // For seq_len > 8192, these tables would be > 128 MB each, so we skip
+        // them. The embedding function uses small seq_len (typically 512), so
+        // this guard only affects impractically large configurations.
+        let compute_quadratic_tables = seq <= 8192;
+
+        let mut eye_bytes = Vec::new();
+        let mut mask_bytes = Vec::new();
+        if compute_quadratic_tables {
+            // Identity matrix [seq, seq] fp16 — used for KV write masking in
+            // the embedding path. The decode_step uses arithmetic instead.
+            eye_bytes = Vec::with_capacity(seq * seq * 2);
+            for row in 0..seq {
+                for col in 0..seq {
+                    let val = half::f16::from_f64(if row == col { 1.0 } else { 0.0 });
+                    eye_bytes.extend_from_slice(&val.to_bits().to_le_bytes());
+                }
+            }
+
+            // Causal mask [seq, seq] fp16 — used directly by the embedding path.
+            // Upper-triangular with -inf in masked positions, 0.0 in unmasked.
+            let neg_inf_f16 = half::f16::from_f64(f64::NEG_INFINITY);
+            let zero_f16 = half::f16::from_f64(0.0);
+            mask_bytes = Vec::with_capacity(seq * seq * 2);
+            for idx in 0..seq {
+                let unmask_start = seq - (idx + 1);
+                for col in 0..seq {
+                    let val = if col >= unmask_start { zero_f16 } else { neg_inf_f16 };
+                    mask_bytes.extend_from_slice(&val.to_bits().to_le_bytes());
+                }
+            }
+        }
 
         // Step 4: Compute arange table (arange_tab) — [seq_len] int32
         // Used for computing one-hot KV write masks and causal masks at runtime
@@ -216,9 +243,19 @@ impl StaticTableResolver {
             format!("static_tables/{}/cos_tab", tables_ref),
             WeightData { data: cos_bytes, shape: vec![1, 1, seq, hd] },
         );
-        // NOTE: eye_tab and mask_tab are NOT cached — they are no longer used.
-        // The arithmetic mask path (arange_fp16 + Sub/Abs/Minimum/Maximum)
-        // replaces Gather(eye_tab/mask_tab) entirely.
+        // NOTE: eye_tab and mask_tab are only cached for small seq_len.
+        // The decode_step uses arithmetic masks instead; the embedding path
+        // uses mask_tab directly as a [seq, seq] constant.
+        if compute_quadratic_tables {
+            self.cache.insert(
+                format!("static_tables/{}/eye_tab", tables_ref),
+                WeightData { data: eye_bytes, shape: vec![seq, seq] },
+            );
+            self.cache.insert(
+                format!("static_tables/{}/mask_tab", tables_ref),
+                WeightData { data: mask_bytes, shape: vec![seq, seq] },
+            );
+        }
         // arange shape: [seq_len] int32 — position indices for mask computation
         self.cache.insert(
             format!("static_tables/{}/arange_tab", tables_ref),
@@ -348,10 +385,15 @@ mod tests {
         assert_eq!(cos_data.shape, vec![1, 1, 8, 128]);
         assert_eq!(cos_data.data.len(), 1 * 1 * 8 * 128 * 2);
 
-        // eye_tab and mask_tab are no longer computed (removed in favor of
-        // arithmetic mask path). Verify they return None.
-        assert!(resolver.resolve("static_tables/rope_tables_0/eye_tab").is_none());
-        assert!(resolver.resolve("static_tables/rope_tables_0/mask_tab").is_none());
+        // eye_tab and mask_tab are computed for small seq_len (≤ 8192).
+        // Verify they exist for seq_len=8.
+        let eye_data = resolver.resolve("static_tables/rope_tables_0/eye_tab").unwrap();
+        assert_eq!(eye_data.shape, vec![8, 8]);
+        assert_eq!(eye_data.data.len(), 8 * 8 * 2);
+
+        let mask_data = resolver.resolve("static_tables/rope_tables_0/mask_tab").unwrap();
+        assert_eq!(mask_data.shape, vec![8, 8]);
+        assert_eq!(mask_data.data.len(), 8 * 8 * 2);
 
         // Check arange_tab
         let arange_data = resolver.resolve("static_tables/rope_tables_0/arange_tab").unwrap();

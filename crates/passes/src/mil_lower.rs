@@ -460,8 +460,20 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Vec<
         // ─── Const: look up shape from value_path in node_shapes ───
         // Const nodes for static tables have value_paths like "static_tables/rope_tables/cos_tab"
         // which are seeded into node_shapes from weight_shapes during lowering.
+        // Scalar constants have value_paths like "scalar://fp16/1.0" — these are
+        // always 1-element tensors regardless of the specific value.
         AirOp::Const { value_path, .. } => {
-            node_shapes.get(&AirNodeId(value_path.clone())).cloned().unwrap_or_default()
+            if let Some(shape) = node_shapes.get(&AirNodeId(value_path.clone())) {
+                shape.clone()
+            } else if value_path.starts_with("scalar://") {
+                // All scalar constants (scalar://fp16/*, scalar://fp32/*) are
+                // 1-element tensors. This prevents the entire mask computation
+                // chain from collapsing to unknown shapes when weight_shapes
+                // doesn't include every scalar:// entry.
+                vec![1]
+            } else {
+                vec![]
+            }
         }
         // ─── ExpandDims: insert 1-sized dims at specified axes ───
         AirOp::ExpandDims { input, axis } => {

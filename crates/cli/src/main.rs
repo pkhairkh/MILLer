@@ -4250,6 +4250,8 @@ fn run_trace_compile(
     }
     // Add static table shapes for embedding shape inference
     // cos/sin shape: [1, 1, seq_len, head_dim] — broadcasts with Q/K [B, H, S, D]
+    // NOTE: eye_tab and mask_tab removed — replaced by arithmetic mask path.
+    // arange_fp16_tab added — used by the arithmetic mask computation.
     for rope_ref in &unique_rope_refs {
         weight_shapes.insert(
             format!("static_tables/{}/sin_tab", rope_ref),
@@ -4260,18 +4262,30 @@ fn run_trace_compile(
             vec![1, 1, seq_len, head_dim],
         );
         weight_shapes.insert(
-            format!("static_tables/{}/eye_tab", rope_ref),
-            vec![seq_len, seq_len],
-        );
-        weight_shapes.insert(
-            format!("static_tables/{}/mask_tab", rope_ref),
-            vec![seq_len, seq_len],
-        );
-        weight_shapes.insert(
             format!("static_tables/{}/arange_tab", rope_ref),
             vec![seq_len],
         );
+        weight_shapes.insert(
+            format!("static_tables/{}/arange_fp16_tab", rope_ref),
+            vec![seq_len],
+        );
     }
+    // Scalar constants used by arithmetic mask computation and other ops.
+    // All scalar://fp16/* and scalar://fp32/* paths produce 1-element tensors.
+    // Without these entries, infer_shape in mil_lower.rs returns empty shapes
+    // for Const nodes, causing the entire downstream shape chain to collapse
+    // to [1] instead of [seq_len].
+    weight_shapes.insert("scalar://fp16/1.0".to_string(), vec![1]);
+    weight_shapes.insert("scalar://fp16/0.0".to_string(), vec![1]);
+    weight_shapes.insert("scalar://fp16/-65504.0".to_string(), vec![1]);
+    weight_shapes.insert("scalar://fp16/0.5".to_string(), vec![1]);
+    weight_shapes.insert("scalar://fp16/0.000001".to_string(), vec![1]);
+    // Dynamic scalar constants (vary with model config) — seed with [1] shape.
+    // The actual value_path is formatted at compile time (e.g., "scalar://fp16/40959").
+    // We seed common patterns; any missing ones default to [1] via infer_shape fallback.
+    // Layer norm epsilon, seq_len-1, and scale values are all 1-element tensors.
+    // Rather than trying to enumerate every possible value, we add a generic
+    // prefix matcher below.
 
     // Build separate weight_shapes for decode_step with actual_max_seq_len dimensions.
     // The decode_step uses actual_max_seq_len for the KV cache dimension, so its
@@ -4293,6 +4307,9 @@ fn run_trace_compile(
     }
     // Add static table shapes for decode_step shape inference
     // cos/sin shape: [1, 1, actual_max_seq_len, head_dim]
+    // arange_fp16_tab: [actual_max_seq_len] — critical for arithmetic mask
+    // computation. Without this, shape inference collapses the entire
+    // mask chain to [1], causing impossible reshapes downstream.
     for rope_ref in &unique_rope_refs {
         decode_weight_shapes.insert(
             format!("static_tables/{}/sin_tab", rope_ref),
@@ -4306,10 +4323,18 @@ fn run_trace_compile(
             format!("static_tables/{}/arange_tab", rope_ref),
             vec![actual_max_seq_len],
         );
-        // Note: eye_tab and mask_tab are NOT included for decode_step because
-        // the decode_step uses computed masks (arange_tab + Equal/LessEqual)
-        // instead of the large [seq, seq] static tables.
+        decode_weight_shapes.insert(
+            format!("static_tables/{}/arange_fp16_tab", rope_ref),
+            vec![actual_max_seq_len],
+        );
     }
+    // Scalar constants for decode_step arithmetic mask computation.
+    // Same set as embedding — all scalar:// paths produce [1]-element tensors.
+    decode_weight_shapes.insert("scalar://fp16/1.0".to_string(), vec![1]);
+    decode_weight_shapes.insert("scalar://fp16/0.0".to_string(), vec![1]);
+    decode_weight_shapes.insert("scalar://fp16/-65504.0".to_string(), vec![1]);
+    decode_weight_shapes.insert("scalar://fp16/0.5".to_string(), vec![1]);
+    decode_weight_shapes.insert("scalar://fp16/0.000001".to_string(), vec![1]);
 
     let mirs = mil_lower
         .run_with_weight_shapes(&air, &shard_plan, &input_shapes, &weight_shapes)

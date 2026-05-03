@@ -278,7 +278,8 @@ fn test_pe_pipeline_ops_map_to_pe() {
         MirOp::MILLayerNorm { name: "ln".into(), x: nid("x"), weight: "w".into(), bias: None, epsilon: 1e-5, axes: vec![2] },
         MirOp::MILReshape { name: "rsh".into(), x: nid("x"), shape: vec![1, 2, 3] },
         MirOp::MILSoftmax { name: "sm".into(), x: nid("x"), axis: -1 },
-        MirOp::MILGather { name: "g".into(), x: nid("x"), indices: nid("i"), axis: 0 },
+        // NOTE: MILGather moved to CPU-only (ANE plannability ~0.26, causes
+        // sync stalls). Only embedding uses Gather, which runs on CPU anyway.
     ];
 
     for op in &pe_ops {
@@ -303,6 +304,9 @@ fn test_cpu_only_ops_return_none() {
         MirOp::MILReadState { name: "rs".into(), state_id: "s".into(), shape: vec![10], dtype: MilDtype::Fp16 },
         MirOp::MILClassify { name: "cls".into(), x: nid("x") },
         MirOp::MILCumsum { name: "cs".into(), x: nid("x"), axis: 1, exclusive: false, reverse: false },
+        MirOp::MILGather { name: "g".into(), x: nid("x"), indices: nid("i"), axis: 0 },
+        MirOp::MILGatherAlongAxis { name: "gaa".into(), x: nid("x"), indices: nid("i"), axis: 0 },
+        MirOp::MILGatherNd { name: "gnd".into(), x: nid("x"), indices: nid("i") },
     ];
 
     for op in &cpu_ops {

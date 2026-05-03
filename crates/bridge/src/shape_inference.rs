@@ -415,6 +415,24 @@ pub fn compat_output_shape(
                 vec![]
             }
         }
+        // ─── MILConst: look up shape from node_shapes ───
+        // Const nodes are seeded into node_shapes by the resolver during the
+        // forward pass in mir_graph_to_compat (keyed by MIR node ID, not value_path).
+        // The value_path is used to check for scalar:// patterns which are always [1].
+        MirOp::MILConst { value_path, .. } => {
+            // Check node ID first (seeded by resolver in mir_to_compat forward pass)
+            if let Some(shape) = node_shapes.get(name) {
+                shape.clone()
+            } else if value_path.starts_with("scalar://") {
+                // All scalar constants (scalar://fp16/*, scalar://fp32/*) are
+                // 1-element tensors. This is critical for mask computation:
+                // without it, Sub(arange_fp16[40960], scalar[UNKNOWN]) produces
+                // a wrong broadcast result because the scalar shape is unknown.
+                vec![1]
+            } else {
+                vec![]
+            }
+        }
         // Catch-all: return empty shape rather than a wrong hardcoded value.
         // An empty shape means "unknown" which Core ML will try to infer from
         // the graph — better than a wrong shape that causes type inference failure.

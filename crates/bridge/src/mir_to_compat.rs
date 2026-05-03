@@ -310,9 +310,37 @@ pub fn mir_graph_to_compat(
         }
     }
 
+    // Seed MILConst shapes from the resolver.
+    //
+    // MILConst nodes store a value_path (e.g., "static_tables/rope_tables_0/arange_fp16_tab")
+    // that references weight data. The resolver knows the shape of each weight.
+    // Without seeding, the forward pass can't determine Const shapes, causing the
+    // entire downstream shape chain to collapse (e.g., arange_fp16 [40960] becomes
+    // unknown → Sub(arange_fp16, pos_fp16) inherits pos_fp16's shape [1] → all
+    // mask ops produce [1] instead of [40960] → impossible reshapes).
+    //
+    // We also seed both the MIR node ID and the value_path as keys, because:
+    // - Downstream ops reference the MIR node ID (e.g., "shared_rope_rope_tables_0_arange_fp16_tab")
+    // - compat_output_shape for MILConst looks up value_path in node_shapes
+    for node in &graph.nodes {
+        if let MirOp::MILConst { value_path, .. } = &node.op {
+            if node.shape.is_empty() {
+                // MIR node shape not populated — try resolver
+                if let Some(wd) = resolver.resolve(value_path) {
+                    if !wd.shape.is_empty() {
+                        node_shapes.insert(node.id.0.clone(), wd.shape.clone());
+                    }
+                } else if value_path.starts_with("scalar://") {
+                    // All scalar constants are 1-element tensors
+                    node_shapes.insert(node.id.0.clone(), vec![1]);
+                }
+            }
+        }
+    }
+
     // Forward pass: compute each node's output shape
     for node in &graph.nodes {
-        // Skip if already known (e.g., from graph input seeding)
+        // Skip if already known (e.g., from graph input seeding or Const resolver seeding)
         if node_shapes.contains_key(&node.id.0) {
             continue;
         }
