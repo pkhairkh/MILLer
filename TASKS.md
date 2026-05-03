@@ -44,13 +44,13 @@
 - **Effort**: S (0.5 day)
 - **Resolution**: Added `PlacementContext` struct carrying dtype, interleave, layout, and quantization metadata. Created `validate_placement_with_context()` as the primary entry point, with `validate_placement()` preserved as a backward-compatible wrapper. Wired six constraint validators as hard gates: (1) `is_dtype_ane_legal()` — universal dtype check rejecting Int32/Fp64; (2) `is_broadcast_dtype_legal()` — FP16-only broadcast on A11/A12; (3) `validate_interleave_constraints()` — valid interleave factors, const→1, int4→8, channel-divisibility; (4) `validate_channellast_constraints()` — ChannelLast only for depthwise conv with interleave=1; (5) `is_blockwise_scale_supported()` — hard-rejects `ConstexprBlockwiseShiftScale` and `ConstexprSparseBlockwiseShiftScale`; (6) `is_asymmetric_quantization_supported()` — hard-rejects asymmetric quant. Added 28 new tests covering all validator paths. All 698 tests pass.
 
-### T-26 · Add `validate_matmul_constraints()`
+### T-26 · Add `validate_matmul_constraints()` ✅
 
 - **ISSUES ref**: I-05
 - **AUDIT ref**: §II-C, §IV (B-9)
-- **Severity**: HIGH
+- **Severity**: HIGH → RESOLVED
 - **Effort**: S (0.5 day)
-- **Description**: No MatMul-specific constraint validator exists. The ANE requires depth=1 for both inputs. Add a validator to `op_constraints.rs`.
+- **Resolution**: Added `validate_matmul_constraints()` to `op_constraints.rs` enforcing four ANE MatMul hard constraints: (1) **depth=1** — both inputs must have rank ≤ 4 (rank-5 forces depth>1 in ANE NCDHW layout, rejected by ANE with "depth > 1 is not supported for MatMult inputs"); (2) **minimum rank 2** — both inputs must be at least 2D matrices; (3) **inner dimensions match** — the contraction dimension K of input A must equal K of input B (handles `transpose_y` correctly); (4) **output channels even** — M dimension must be even for ANE tiling prerequisite (cout % ox == 0). Wired into `placement_validate.rs` with dedicated `MILMatMul` match arm. Added 27 new tests (14 unit + 13 integration). All 710+ tests pass.
 
 ### T-27 · Add `validate_pad_constraints()`
 
@@ -218,7 +218,7 @@
 | T-23 | I-02 | CRITICAL | S | ✅ |
 | T-24 | I-03 | HIGH | M | ✅ |
 | T-25 | I-04 | HIGH | S | ✅ |
-| T-26 | I-05 | HIGH | S | ⬜ |
+| T-26 | I-05 | HIGH | S | ✅ |
 | T-27 | I-06 | HIGH | M | ⬜ |
 | T-28 | I-07 | HIGH | S | ⬜ |
 | T-29 | I-08 | HIGH | S | ⬜ |

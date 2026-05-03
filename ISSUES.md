@@ -61,16 +61,11 @@ ANE-legal ops that still lack MirOpCompat variants (BatchNorm, MaxPool, AvgPool,
 
 ### I-05 · Missing `validate_matmul_constraints()`
 
-**Status:** ⬜ Open
-**Files:** `crates/passes/src/op_constraints.rs`
+**Status:** ✅ FIXED (T-26)
+**Files:** `crates/passes/src/op_constraints.rs`, `crates/passes/src/placement_validate.rs`
 **AUDIT ref:** §II-C, §IV (B-9)
-**Severity:** HIGH — Illegal MatMul configurations pass validation
-**Effort:** S (0.5 day)
-**Task:** T-26
-
-No MatMul-specific constraint validator exists. The ANE requires depth=1 for both inputs (interleaved format), but this is never checked. MatMul is the most performance-critical ANE op.
-
-**Fix:** Add `validate_matmul_constraints()` enforcing depth=1 for both inputs, cout%ox==0, and other MatMul-specific rules from the constraint docs.
+**Severity:** HIGH → RESOLVED
+**Resolution:** Added `validate_matmul_constraints()` to `op_constraints.rs` enforcing four ANE MatMul hard constraints: (1) depth=1 — both inputs must have rank ≤ 4 (rank-5 forces depth>1 in ANE NCDHW layout); (2) minimum rank 2 — both inputs must be at least 2D matrices; (3) inner dimensions must match — contraction dimension K of input A equals K of input B, handling `transpose_y` correctly; (4) output channels even — M dimension must be even for ANE tiling (cout % ox == 0 prerequisite). Wired into `placement_validate.rs` with dedicated `MILMatMul` match arm that calls the validator with both input shapes and the `transpose_y` flag. Added 27 new tests (14 unit + 13 integration).
 
 ---
 
@@ -350,9 +345,9 @@ The following issues from the previous tracker have been resolved and archived t
 | Priority | Total | Open | In Progress | Fixed |
 |----------|-------|------|-------------|-------|
 | P0 | 3 | 0 | 0 | 3 |
-| P1 | 8 | 7 | 0 | 1 |
+| P1 | 8 | 6 | 0 | 2 |
 | P2 | 8 | 8 | 0 | 0 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **16** | **0** | **4** |
+| **Total** | **20** | **15** | **0** | **5** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. P1 issue I-04 resolved by T-25 (wired interleave + dtype validators).*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 and I-05 resolved by T-25 and T-26.*

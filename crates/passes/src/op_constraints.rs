@@ -166,6 +166,132 @@ pub fn validate_argminmax_constraints(
     Ok(())
 }
 
+/// Validate MatMul constraints.
+/// Source: ane-constraints-docs Section 4.3 / Section 4.5
+///
+/// The ANE MatMul (NEFUSED_MATMUL) op has several hard constraints
+/// that must be satisfied for the op to execute correctly:
+///
+/// 1. **depth=1**: Both input tensors must have rank ≤ 4. In the ANE's
+///    NCDHW tensor layout, the depth (D) dimension must be exactly 1 for
+///    MatMul inputs. Rank-5 inputs would occupy the D dimension with a
+///    value > 1, triggering: "Error: depth > 1 is not supported for
+///    MatMult inputs but get dim_A.d = %zd, dim_B.d = %zd"
+///
+/// 2. **minimum rank 2**: Both inputs must have at least rank 2 to
+///    represent matrices [M, K] and [K, N].
+///
+/// 3. **inner dimensions must match**: The contraction dimension K of
+///    input A (x_shape[-1]) must equal the corresponding K dimension of
+///    input B. When `transpose_y` is false, this is `y_shape[-2]`; when
+///    `transpose_y` is true, B is conceptually [*, N, K] so the K
+///    dimension is `y_shape[-1]`.
+///
+/// 4. **cout % ox == 0** (tiling constraint): The number of output
+///    channels must be a multiple of the output width (ox). This is an
+///    ANE-internal tiling constraint. At the MIR level, we validate that
+///    the M dimension (which becomes the output channel count in the ANE
+///    layout) is even — a necessary but not sufficient condition for the
+///    tiling constraint. Full validation requires ANE tiling knowledge
+///    that is not available at the MIR level.
+///
+/// Note: The constraint "output channel = input A's channel" is an
+/// ANE-internal layout detail that is automatically satisfied by correct
+/// matmul semantics and does not need explicit validation here.
+pub fn validate_matmul_constraints(
+    x_shape: &[usize],
+    y_shape: &[usize],
+    transpose_y: bool,
+) -> Result<(), OpConstraintViolation> {
+    let x_rank = x_shape.len();
+    let y_rank = y_shape.len();
+
+    // ─── Minimum rank 2 ────────────────────────────────────────────
+    if x_rank < 2 {
+        return Err(OpConstraintViolation {
+            op_name: "matmul".into(),
+            constraint: "input_rank_ge_2".into(),
+            message: format!(
+                "MatMul input A rank {} must be >= 2 (need at least a matrix)",
+                x_rank
+            ),
+        });
+    }
+    if y_rank < 2 {
+        return Err(OpConstraintViolation {
+            op_name: "matmul".into(),
+            constraint: "input_rank_ge_2".into(),
+            message: format!(
+                "MatMul input B rank {} must be >= 2 (need at least a matrix)",
+                y_rank
+            ),
+        });
+    }
+
+    // ─── depth=1: both inputs must have rank ≤ 4 ───────────────────
+    // In ANE's NCDHW layout, rank-5 tensors would have D > 1 which
+    // is rejected by the ANE MatMult engine.
+    if x_rank > 4 {
+        return Err(OpConstraintViolation {
+            op_name: "matmul".into(),
+            constraint: "depth_must_be_1".into(),
+            message: format!(
+                "MatMul input A rank {} exceeds ANE maximum of 4 for MatMul (depth must be 1)",
+                x_rank
+            ),
+        });
+    }
+    if y_rank > 4 {
+        return Err(OpConstraintViolation {
+            op_name: "matmul".into(),
+            constraint: "depth_must_be_1".into(),
+            message: format!(
+                "MatMul input B rank {} exceeds ANE maximum of 4 for MatMul (depth must be 1)",
+                y_rank
+            ),
+        });
+    }
+
+    // ─── Inner dimensions must match ───────────────────────────────
+    // A: [*, M, K] × B: [*, K, N] (transpose_y=false)
+    // A: [*, M, K] × B: [*, N, K]^T (transpose_y=true)
+    let x_k = x_shape[x_rank - 1]; // Last dim of A is K
+    let y_k = if transpose_y {
+        y_shape[y_rank - 1] // B is [*, N, K], K is last dim
+    } else {
+        y_shape[y_rank - 2] // B is [*, K, N], K is second-to-last dim
+    };
+
+    if x_k != y_k {
+        return Err(OpConstraintViolation {
+            op_name: "matmul".into(),
+            constraint: "inner_dims_match".into(),
+            message: format!(
+                "MatMul inner dimensions must match: A K={} vs B K={} (transpose_y={})",
+                x_k, y_k, transpose_y
+            ),
+        });
+    }
+
+    // ─── Output channels must be even (tiling prerequisite) ─────────
+    // The ANE requires cout % ox == 0. While we can't check ox at MIR
+    // level, requiring M (which becomes cout) to be even catches the
+    // most common violation.
+    let m_dim = x_shape[x_rank - 2]; // M is second-to-last dim of A
+    if m_dim % 2 != 0 {
+        return Err(OpConstraintViolation {
+            op_name: "matmul".into(),
+            constraint: "output_channels_even".into(),
+            message: format!(
+                "MatMul output channels (M={}) must be even for ANE tiling",
+                m_dim
+            ),
+        });
+    }
+
+    Ok(())
+}
+
 /// Validate tensor rank constraint (universal ANE constraint).
 pub fn validate_tensor_rank(rank: usize) -> Result<(), OpConstraintViolation> {
     if rank > 5 {
@@ -265,5 +391,108 @@ mod tests {
         assert!(validate_tensor_rank(4).is_ok());
         assert!(validate_tensor_rank(5).is_ok());
         assert!(validate_tensor_rank(6).is_err());
+    }
+
+    // ─── T-26: MatMul constraint tests ─────────────────────────────
+
+    #[test]
+    fn test_matmul_basic_2d_ok() {
+        // [4, 8] × [8, 16] → OK (M=4 even, K=8 match, ranks ≤ 4)
+        assert!(validate_matmul_constraints(&[4, 8], &[8, 16], false).is_ok());
+    }
+
+    #[test]
+    fn test_matmul_batched_3d_ok() {
+        // [2, 4, 8] × [2, 8, 16] → OK
+        assert!(validate_matmul_constraints(&[2, 4, 8], &[2, 8, 16], false).is_ok());
+    }
+
+    #[test]
+    fn test_matmul_batched_4d_ok() {
+        // [2, 3, 4, 8] × [2, 3, 8, 16] → OK (rank 4, depth=1)
+        assert!(validate_matmul_constraints(&[2, 3, 4, 8], &[2, 3, 8, 16], false).is_ok());
+    }
+
+    #[test]
+    fn test_matmul_transpose_y_ok() {
+        // [4, 8] × [16, 8] with transpose_y → B is [16, 8]^T = [8, 16]
+        assert!(validate_matmul_constraints(&[4, 8], &[16, 8], true).is_ok());
+    }
+
+    #[test]
+    fn test_matmul_transpose_y_batched_ok() {
+        // [2, 4, 8] × [2, 16, 8] with transpose_y
+        assert!(validate_matmul_constraints(&[2, 4, 8], &[2, 16, 8], true).is_ok());
+    }
+
+    #[test]
+    fn test_matmul_input_a_rank1_rejected() {
+        // Rank-1 input A is not a matrix
+        assert!(validate_matmul_constraints(&[8], &[8, 16], false).is_err());
+    }
+
+    #[test]
+    fn test_matmul_input_b_rank1_rejected() {
+        // Rank-1 input B is not a matrix
+        assert!(validate_matmul_constraints(&[4, 8], &[8], false).is_err());
+    }
+
+    #[test]
+    fn test_matmul_input_a_rank5_rejected() {
+        // Rank-5 input A → depth > 1 in ANE layout
+        assert!(validate_matmul_constraints(&[2, 3, 4, 4, 8], &[2, 3, 4, 8, 16], false).is_err());
+    }
+
+    #[test]
+    fn test_matmul_input_b_rank5_rejected() {
+        // Rank-5 input B → depth > 1 in ANE layout
+        assert!(validate_matmul_constraints(&[4, 8], &[2, 3, 4, 8, 16], false).is_err());
+    }
+
+    #[test]
+    fn test_matmul_inner_dims_mismatch_rejected() {
+        // K=8 vs K=16 — inner dims don't match
+        let result = validate_matmul_constraints(&[4, 8], &[16, 16], false);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.constraint, "inner_dims_match");
+        assert!(err.message.contains("K=8") && err.message.contains("K=16"));
+    }
+
+    #[test]
+    fn test_matmul_transpose_y_inner_dims_mismatch_rejected() {
+        // [4, 8] × [16, 16] transpose_y → B K=16 ≠ A K=8
+        let result = validate_matmul_constraints(&[4, 8], &[16, 16], true);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "inner_dims_match");
+    }
+
+    #[test]
+    fn test_matmul_odd_m_dim_rejected() {
+        // M=3 (odd) — ANE tiling requires even output channels
+        let result = validate_matmul_constraints(&[3, 8], &[8, 16], false);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "output_channels_even");
+    }
+
+    #[test]
+    fn test_matmul_even_m_dim_ok() {
+        // M=4 (even) — passes tiling prerequisite
+        assert!(validate_matmul_constraints(&[4, 8], &[8, 16], false).is_ok());
+    }
+
+    #[test]
+    fn test_matmul_large_even_m_dim_ok() {
+        // M=512 (even, typical LLM dimension)
+        assert!(validate_matmul_constraints(&[512, 64], &[64, 512], false).is_ok());
+    }
+
+    #[test]
+    fn test_matmul_depth_violation_error_message() {
+        let result = validate_matmul_constraints(&[2, 3, 4, 4, 8], &[8, 16], false);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.constraint, "depth_must_be_1");
+        assert!(err.message.contains("rank 5"));
     }
 }

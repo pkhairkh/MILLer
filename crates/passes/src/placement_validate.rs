@@ -367,6 +367,27 @@ pub fn validate_placement_with_context(
             PlacementDecision::AneAllowed
         }
 
+        // T-26: MatMul — enforce ANE-specific MatMul constraints
+        // The ANE requires depth=1 for both inputs (rank ≤ 4), inner
+        // dimensions to match, and output channels to be even (tiling).
+        MirOp::MILMatMul { transpose_y, .. } => {
+            if let (Some(x_shape), Some(y_shape)) =
+                (input_shapes.first(), input_shapes.get(1))
+            {
+                if let Err(violation) = crate::op_constraints::validate_matmul_constraints(
+                    x_shape,
+                    y_shape,
+                    *transpose_y,
+                ) {
+                    return PlacementDecision::CpuOnly(format!(
+                        "MILMatMul: constraint '{}' — {}",
+                        violation.constraint, violation.message
+                    ));
+                }
+            }
+            PlacementDecision::AneAllowed
+        }
+
         // ConvTranspose: always NE
         MirOp::MILConvTranspose { .. } => PlacementDecision::AneAllowed,
 
@@ -678,6 +699,15 @@ mod tests {
             zero_point: 0,
             axis: 0,
             output_dtype: MilDtype::Int8,
+        }
+    }
+
+    fn make_matmul(transpose_y: bool) -> MirOp {
+        MirOp::MILMatMul {
+            name: "matmul".into(),
+            x: MirNodeId("a".into()),
+            y: MirNodeId("b".into()),
+            transpose_y,
         }
     }
 
@@ -1149,5 +1179,110 @@ mod tests {
             &op, &shapes, AneFamily::A16, false, &PlacementContext::empty(),
         );
         assert_eq!(decision1, decision2);
+    }
+
+    // ─── T-26: MatMul placement validation tests ──────────────────
+
+    #[test]
+    fn test_matmul_basic_2d_allowed() {
+        let op = make_matmul(false);
+        let shapes = vec![vec![4, 8], vec![8, 16]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_matmul_batched_3d_allowed() {
+        let op = make_matmul(false);
+        let shapes = vec![vec![2, 4, 8], vec![2, 8, 16]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A18, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_matmul_batched_4d_allowed() {
+        let op = make_matmul(false);
+        let shapes = vec![vec![2, 3, 4, 8], vec![2, 3, 8, 16]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A14, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_matmul_transpose_y_allowed() {
+        let op = make_matmul(true);
+        let shapes = vec![vec![4, 8], vec![16, 8]]; // B=[16,8], K=8 (last dim)
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_matmul_rank5_input_rejected() {
+        // Rank-5 input → depth > 1 in ANE NCDHW layout
+        let op = make_matmul(false);
+        let shapes = vec![vec![2, 3, 4, 4, 8], vec![2, 3, 4, 8, 16]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("depth_must_be_1"))
+        );
+    }
+
+    #[test]
+    fn test_matmul_inner_dims_mismatch_rejected() {
+        // K=8 vs K=16
+        let op = make_matmul(false);
+        let shapes = vec![vec![4, 8], vec![16, 16]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("inner_dims_match"))
+        );
+    }
+
+    #[test]
+    fn test_matmul_transpose_y_inner_dims_mismatch_rejected() {
+        // transpose_y=true, B=[16, 16] → K=16, but A K=8
+        let op = make_matmul(true);
+        let shapes = vec![vec![4, 8], vec![16, 16]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("inner_dims_match"))
+        );
+    }
+
+    #[test]
+    fn test_matmul_odd_m_dim_rejected() {
+        // M=3 (odd) → ANE tiling requires even output channels
+        let op = make_matmul(false);
+        let shapes = vec![vec![3, 8], vec![8, 16]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("output_channels_even"))
+        );
+    }
+
+    #[test]
+    fn test_matmul_no_shapes_gracefully_allows() {
+        // When no shapes are provided, the validator skips the check
+        let op = make_matmul(false);
+        let shapes: Vec<Vec<usize>> = vec![];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_matmul_one_shape_gracefully_allows() {
+        // When only one shape is provided, the validator skips the check
+        let op = make_matmul(false);
+        let shapes = vec![vec![4, 8]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_matmul_llm_dimensions_allowed() {
+        // Typical LLM: [1, 512, 64] × [64, 512] → M=512 even, K=64 match
+        let op = make_matmul(false);
+        let shapes = vec![vec![1, 512, 64], vec![64, 512]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
     }
 }
