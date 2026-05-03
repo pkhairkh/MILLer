@@ -326,3 +326,82 @@ fn test_variant_count_matches_expectation() {
         variants.len()
     );
 }
+
+/// T-22: Verify that ops moved from PE/NE to CPU-only actually return None.
+/// These ops have NO ANEC converter in any ANE family per the per-op support matrix.
+#[test]
+fn test_t22_cpu_only_ops_moved_from_pe_ne() {
+    let moved_ops: Vec<MirOp> = vec![
+        // Trig inverse / hyperbolic (no ANEC converter)
+        MirOp::MILAcos { name: "acos".into(), x: nid("x") },
+        MirOp::MILAsin { name: "asin".into(), x: nid("x") },
+        MirOp::MILAtan { name: "atan".into(), x: nid("x") },
+        MirOp::MILAtanh { name: "atanh".into(), x: nid("x") },
+        MirOp::MILTan { name: "tan".into(), x: nid("x") },
+        MirOp::MILCosh { name: "cosh".into(), x: nid("x") },
+        MirOp::MILSinh { name: "sinh".into(), x: nid("x") },
+        // Logical (no ANEC converter)
+        MirOp::MILLogicalAnd { name: "la".into(), x: nid("x"), y: nid("y") },
+        MirOp::MILLogicalOr { name: "lo".into(), x: nid("x"), y: nid("y") },
+        MirOp::MILLogicalXor { name: "lx".into(), x: nid("x"), y: nid("y") },
+        MirOp::MILLogicalNot { name: "lnot".into(), x: nid("x") },
+        // Activation variants (no ANEC converter)
+        MirOp::MILRelu6 { name: "relu6".into(), x: nid("x") },
+        MirOp::MILSigmoidHard { name: "sh".into(), x: nid("x"), alpha: 1.0, beta: 1.0 },
+        MirOp::MILThresholdedRelu { name: "tr".into(), x: nid("x"), alpha: 1.0 },
+        MirOp::MILClampedRelu { name: "cr".into(), x: nid("x"), alpha: 0.0, beta: 6.0 },
+        MirOp::MILLinearActivation { name: "la".into(), x: nid("x"), alpha: 1.0, beta: 0.0 },
+        MirOp::MILPrelu { name: "pr".into(), x: nid("x"), alpha: "a".into() },
+        MirOp::MILSoftsign { name: "ss".into(), x: nid("x") },
+        MirOp::MILScaledTanh { name: "st".into(), x: nid("x"), alpha: 1.0, beta: 1.0 },
+        MirOp::MILSoftplus { name: "sp".into(), x: nid("x") },
+        MirOp::MILSoftplusParametric { name: "spp".into(), x: nid("x"), alpha: "a".into(), beta: "b".into() },
+        // Other elementwise (no ANEC converter)
+        MirOp::MILThreshold { name: "thr".into(), x: nid("x"), alpha: 1.0 },
+        MirOp::MILInverse { name: "inv".into(), x: nid("x"), epsilon: 1e-6 },
+        MirOp::MILMod { name: "mod".into(), x: nid("x"), y: nid("y") },
+        MirOp::MILClip { name: "clip".into(), x: nid("x"), min_val: 0.0, max_val: 6.0 },
+        // Miscellaneous (no ANEC converter)
+        MirOp::MILBandPart { name: "bp".into(), x: nid("x"), num_lower: -1, num_upper: 0 },
+        MirOp::MILReverseSequence { name: "rseq".into(), x: nid("x"), lengths: nid("l"), batch_axis: 0, seq_axis: 1 },
+        MirOp::MILEinsum { name: "e".into(), inputs: vec![nid("a"), nid("b")], equation: "ij,jk->ik".into() },
+    ];
+
+    for op in &moved_ops {
+        assert_eq!(op.default_engine(), None,
+            "T-22: Expected None (CPU-only) for {:?}, but got Some engine", op);
+    }
+}
+
+/// T-22: Verify that ANE-legal ops that were kept in PE still return PE.
+/// These ops have ANEC converters per the per-op support matrix but
+/// currently lack MirOpCompat variants (see T-38/T-39).
+#[test]
+fn test_t22_ane_legal_ops_still_in_pe() {
+    use crate::ane_engine::AneEngine;
+    let ane_legal_ops: Vec<MirOp> = vec![
+        MirOp::MILElu { name: "elu".into(), x: nid("x"), alpha: 1.0 },
+        MirOp::MILSquare { name: "sq".into(), x: nid("x") },
+        MirOp::MILExp2 { name: "exp2".into(), x: nid("x") },
+        MirOp::MILErf { name: "erf".into(), x: nid("x") },
+        MirOp::MILQuantize { name: "q".into(), x: nid("x"), scale: 1.0, zero_point: 0, axis: -1, output_dtype: MilDtype::UInt8 },
+        MirOp::MILDequantize { name: "dq".into(), x: nid("x"), scale: 1.0, zero_point: 0, axis: -1, output_dtype: MilDtype::Fp16 },
+    ];
+
+    for op in &ane_legal_ops {
+        assert_eq!(op.default_engine(), Some(AneEngine::PE),
+            "T-22: Expected PE (ANE-legal) for {:?}", op);
+    }
+}
+
+/// T-22: Verify mil_op_name() returns non-empty names for all variants.
+#[test]
+fn test_mil_op_name_returns_nonempty() {
+    let variants = all_mir_op_variants();
+    for (name, op) in &variants {
+        let mil_name = op.mil_op_name();
+        assert!(!mil_name.is_empty(),
+            "mil_op_name() returned empty string for variant {}", name);
+        let _ = mil_name; // Also verify no panic
+    }
+}

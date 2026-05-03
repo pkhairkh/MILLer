@@ -8,21 +8,21 @@
 
 ## 🔴 CRITICAL — Do These Now
 
-### T-22 · Align Three Sources of Truth (Engine / CPU-Only / Compat)
+### T-22 · Align Three Sources of Truth (Engine / CPU-Only / Compat) ✅
 
 - **ISSUES ref**: I-01
 - **AUDIT ref**: §II-A, §II-B, §IV (B-1, B-2)
-- **Severity**: CRITICAL
+- **Severity**: CRITICAL → RESOLVED
 - **Effort**: L (3-5 days)
-- **Description**: 55 ops are assigned ANE engines in `default_engine()` but map to `MirOpCompat::Unsupported`. 4 ops (band_part, logical_and/or/not) are on the CPU-only list but still return ANE engines. The three sources of truth have diverged catastrophically. Action: audit every `MirOp` variant and ensure each is either (a) ANE-legal with a compat converter + correct engine, or (b) CPU-only with `default_engine() → None` + entry in `CPU_ONLY_OPS`.
+- **Resolution**: Moved 28 MirOp variants from PE/NE to None (CPU-only) based on the ANE per-op support matrix. Added 10 entries to CPU_ONLY_OPS set (relu6, sigmoid_hard, thresholded_relu, clamped_relu, linear_activation, scaled_tanh, softplus_parametric, threshold, inverse, einsum). Added `MirOp::mil_op_name()` method for cross-referencing. ANE-legal ops with MirOpCompat gaps (BatchNorm, MaxPool, Quantize, etc.) remain in PE/NE — they have real ANEC converters and just need MirOpCompat variants (T-38/T-39).
 
-### T-23 · Wire `is_cpu_only()` into Placement Validation
+### T-23 · Wire `is_cpu_only()` into Placement Validation ✅
 
 - **ISSUES ref**: I-02
 - **AUDIT ref**: §II-B, §IV (B-2)
-- **Severity**: CRITICAL
-- **Effort**: S (0.5 day)
-- **Description**: `placement_validate.rs` uses only `default_engine().is_none()` to determine CPU-only status. The `cpu_only_ops::is_cpu_only()` function is never consulted. Add a check in `validate_placement()` that rejects ops on the CPU-only list regardless of engine assignment.
+- **Severity**: CRITICAL → RESOLVED
+- **Effort**: S (0.5 day) — bundled with T-22
+- **Resolution**: Added `cpu_only_ops::is_cpu_only(op.mil_op_name())` check as a hard gate in `placement_validate.rs` before the `default_engine().is_none()` check. This provides defense-in-depth: even if `default_engine()` and CPU_ONLY_OPS drift apart again, the validator catches it.
 
 ### T-24 · Fix V6 (A12 Silicon) → A14 Family Mapping
 
@@ -214,8 +214,8 @@
 
 | Task | Issue(s) | Severity | Effort | Status |
 |------|----------|----------|--------|--------|
-| T-22 | I-01 | CRITICAL | L | ⬜ |
-| T-23 | I-02 | CRITICAL | S | ⬜ |
+| T-22 | I-01 | CRITICAL | L | ✅ |
+| T-23 | I-02 | CRITICAL | S | ✅ |
 | T-24 | I-03 | HIGH | M | ⬜ |
 | T-25 | I-04 | HIGH | S | ⬜ |
 | T-26 | I-05 | HIGH | S | ⬜ |

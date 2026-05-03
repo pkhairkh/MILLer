@@ -187,6 +187,22 @@ pub static CPU_ONLY_OPS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "gather_grad",
         "scatter_along_axis_grad",
         "reverse_sequence",
+        // ─── T-22 additions: ops with no ANEC converter ─────────────
+        // Source: ane-constraints-docs/04-operation-support/ per-op matrix.
+        // These ops were incorrectly assigned ANE engines before T-22.
+        // Activation variants with no ANEC converter
+        "relu6",
+        "sigmoid_hard",
+        "thresholded_relu",
+        "clamped_relu",
+        "linear_activation",
+        "scaled_tanh",
+        "softplus_parametric",
+        // Elementwise ops with no ANEC converter
+        "threshold",
+        "inverse",
+        // Einsum: no ANEC converter in any family
+        "einsum",
     ];
     ops.iter().copied().collect()
 });
@@ -307,10 +323,10 @@ mod tests {
 
     #[test]
     fn test_cpu_only_set_size() {
-        // Should have at least 83 entries (was 80, added gather/gather_along_axis/gather_nd)
+        // Should have at least 93 entries (was 83, added 10 in T-22)
         assert!(
-            CPU_ONLY_OPS.len() >= 83,
-            "CPU_ONLY_OPS has {} entries, expected >= 83",
+            CPU_ONLY_OPS.len() >= 93,
+            "CPU_ONLY_OPS has {} entries, expected >= 93",
             CPU_ONLY_OPS.len()
         );
     }

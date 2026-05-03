@@ -1063,7 +1063,7 @@ impl MirOp {
             // ─── NE pipeline: conv/pool/matmul/attention ────────────
             MirOp::MILLinear { .. }
             | MirOp::MILMatMul { .. }
-            | MirOp::MILEinsum { .. }
+            // MILEinsum moved to CPU-only (T-22): no ANEC converter.
             | MirOp::MILConv { .. }
             | MirOp::MILConvTranspose { .. }
             | MirOp::MILScaledDotProductAttention { .. }
@@ -1086,7 +1086,12 @@ impl MirOp {
             | MirOp::MILSpaceToBatch { .. } => Some(AneEngine::NE),
 
             // ─── PE pipeline: elementwise/reduction/cast/shape ──────
-            // Elementwise binary
+            //
+            // T-22 NOTE: Many ops were moved from PE to the None (CPU-only)
+            // branch because they have NO ANEC converter in any ANE family.
+            // See the None branch for the complete CPU-only list.
+            //
+            // Elementwise binary (ANE-legal per per-op support matrix)
             MirOp::MILAdd { .. }
             | MirOp::MILMul { .. }
             | MirOp::MILSub { .. }
@@ -1094,7 +1099,7 @@ impl MirOp {
             | MirOp::MILMinimum { .. }
             | MirOp::MILRealDiv { .. }
             | MirOp::MILFloorDiv { .. }
-            | MirOp::MILMod { .. }
+            // MILMod moved to CPU-only (T-22): no ANEC converter
             | MirOp::MILPow { .. }
             | MirOp::MILEqual { .. }
             | MirOp::MILNotEqual { .. }
@@ -1102,57 +1107,43 @@ impl MirOp {
             | MirOp::MILGreaterEqual { .. }
             | MirOp::MILLess { .. }
             | MirOp::MILLessEqual { .. }
-            | MirOp::MILLogicalAnd { .. }
-            | MirOp::MILLogicalOr { .. }
-            | MirOp::MILLogicalXor { .. }
-            // Elementwise unary / activations
+            // MILLogicalAnd/Or/Xor moved to CPU-only (T-22): no ANEC converter.
+            // Comparison ops (Equal, NotEqual, Greater, Less) ARE ANE-legal.
+            // Elementwise unary / activations (ANE-legal per per-op matrix)
             | MirOp::MILAbs { .. }
             | MirOp::MILNeg { .. }
             | MirOp::MILSigmoid { .. }
             | MirOp::MILTanh { .. }
             | MirOp::MILRelu { .. }
-            | MirOp::MILRelu6 { .. }
+            // MILRelu6, SigmoidHard, ThresholdedRelu, ClampedRelu,
+            // LinearActivation, Prelu, Softsign, ScaledTanh, Softplus,
+            // SoftplusParametric moved to CPU-only (T-22).
             | MirOp::MILLeakyRelu { .. }
-            | MirOp::MILSigmoidHard { .. }
-            | MirOp::MILThresholdedRelu { .. }
-            | MirOp::MILClampedRelu { .. }
-            | MirOp::MILLinearActivation { .. }
-            | MirOp::MILPrelu { .. }
-            | MirOp::MILSoftsign { .. }
             | MirOp::MILSilu { .. }
-            | MirOp::MILScaledTanh { .. }
-            | MirOp::MILElu { .. }
-            | MirOp::MILSoftplus { .. }
-            | MirOp::MILSoftplusParametric { .. }
+            | MirOp::MILElu { .. }   // ANE-legal: per-op matrix row 34
             | MirOp::MILGelu { .. }
-            | MirOp::MILClip { .. }
-            | MirOp::MILSquare { .. }
-            | MirOp::MILThreshold { .. }
+            // MILClip moved to CPU-only (T-22): no ANEC converter for clamp.
+            | MirOp::MILSquare { .. }  // ANE-legal: per-op matrix row 19 (A13Minus/A14Plus split)
+            // MILThreshold moved to CPU-only (T-22).
             | MirOp::MILSqrt { .. }
             | MirOp::MILRsqrt { .. }
-            | MirOp::MILInverse { .. }
+            // MILInverse moved to CPU-only (T-22).
             | MirOp::MILCeil { .. }
             | MirOp::MILFloor { .. }
             | MirOp::MILRound { .. }
             | MirOp::MILExp { .. }
-            | MirOp::MILExp2 { .. }
+            | MirOp::MILExp2 { .. }    // ANE-legal: per-op matrix row 22
             | MirOp::MILLog { .. }
             | MirOp::MILSign { .. }
             | MirOp::MILCos { .. }
             | MirOp::MILSin { .. }
-            | MirOp::MILTan { .. }
-            | MirOp::MILAcos { .. }
-            | MirOp::MILAsin { .. }
-            | MirOp::MILAtan { .. }
-            | MirOp::MILCosh { .. }
-            | MirOp::MILSinh { .. }
-            | MirOp::MILAtanh { .. }
-            | MirOp::MILErf { .. }
-            | MirOp::MILLogicalNot { .. }
+            // MILTan, Acos, Asin, Atan, Cosh, Sinh, Atanh moved to CPU-only (T-22).
+            | MirOp::MILErf { .. }     // ANE-legal: per-op matrix row 25
+            // MILLogicalNot moved to CPU-only (T-22).
             // Cast / softmax
             | MirOp::MILCast { .. }
             | MirOp::MILSoftmax { .. }
-            // Reductions
+            // Reductions (ANE-legal per per-op matrix)
             | MirOp::MILReduceSum { .. }
             | MirOp::MILReduceMean { .. }
             | MirOp::MILReduceMax { .. }
@@ -1165,13 +1156,13 @@ impl MirOp {
             | MirOp::MILReduceLogSum { .. }
             | MirOp::MILReduceArgmax { .. }
             | MirOp::MILReduceArgmin { .. }
-            // Normalization
+            // Normalization (ANE-legal per per-op matrix)
             | MirOp::MILBatchNorm { .. }
             | MirOp::MILInstanceNorm { .. }
             | MirOp::MILLayerNorm { .. }
             | MirOp::MILL2Norm { .. }
             | MirOp::MILLocalResponseNorm { .. }
-            // Shape / rearrange
+            // Shape / rearrange (ANE-legal per per-op matrix)
             | MirOp::MILReshape { .. }
             | MirOp::MILReshapeLike { .. }
             | MirOp::MILExpandDims { .. }
@@ -1188,25 +1179,17 @@ impl MirOp {
             | MirOp::MILSliceUpdate { .. }
             | MirOp::MILSlidingWindows { .. }
             | MirOp::MILReverse { .. }
-            | MirOp::MILReverseSequence { .. }
-            // Quantize / dequantize
+            // MILReverseSequence moved to CPU-only (T-22).
+            // Quantize / dequantize (ANE-legal per per-op matrix rows 84-85,
+            // but currently lack MirOpCompat variants — see T-39)
             | MirOp::MILQuantize { .. }
             | MirOp::MILDequantize { .. }
-            // Gather ops are CPU-only — ANE plannability ~0.26, causes
-            // CPU fallback with sync stalls. Replaced with SliceByIndex
-            // in the decode_step path. Only embedding uses Gather (runs on CPU).
-            // Sort / topk / band_part remain ANE-legal.
+            // Sort / topk (ANE-legal)
             | MirOp::MILArgsort { .. }
             | MirOp::MILTopk { .. }
-            | MirOp::MILBandPart { .. }
+            // MILBandPart moved to CPU-only (T-22).
             // Identity / misc (ANE-legal)
             | MirOp::MILIdentity { .. }
-            // NOTE: MILSelect and MILWhere are CPU-only.
-            // Despite per-op matrix row 69 listing ConvertSelect, empirical testing
-            // shows mb.select causes CPU fallback. Decompose to arithmetic instead.
-            // They are in the None branch below.
-            // NOTE: Sign, Erf, Exp2 are already in the PE branch above
-            // (rows 15, 25, 22 of the per-op support matrix).
             | MirOp::MILCrop { .. } => Some(AneEngine::PE),
 
             // ─── TransposeEngine ───────────────────────────────────
@@ -1269,7 +1252,232 @@ impl MirOp {
             // Only embedding uses Gather (runs on CPU anyway).
             | MirOp::MILGather { .. }
             | MirOp::MILGatherAlongAxis { .. }
-            | MirOp::MILGatherNd { .. } => None,
+            | MirOp::MILGatherNd { .. }
+            // ─── T-22: CPU-only ops moved from PE/NE pipeline ──────
+            // These ops have NO ANEC converter in any ANE family.
+            // Source: ane-constraints-docs/04-operation-support/ per-op matrix
+            // and the CPU_ONLY_OPS set in ane-passes/src/cpu_only_ops.rs.
+            //
+            // Trig inverse / hyperbolic: no ANEC converter
+            | MirOp::MILAcos { .. }
+            | MirOp::MILAsin { .. }
+            | MirOp::MILAtan { .. }
+            | MirOp::MILAtanh { .. }
+            | MirOp::MILTan { .. }
+            | MirOp::MILCosh { .. }
+            | MirOp::MILSinh { .. }
+            // Logical: no ANEC converter for logical_and/or/xor/not
+            // (comparison ops equal/not_equal/greater/less ARE ANE-legal)
+            | MirOp::MILLogicalAnd { .. }
+            | MirOp::MILLogicalOr { .. }
+            | MirOp::MILLogicalXor { .. }
+            | MirOp::MILLogicalNot { .. }
+            // Activation variants with no ANEC converter:
+            // relu6, sigmoid_hard, thresholded_relu, clamped_relu,
+            // linear_activation, prelu, softsign, scaled_tanh, softplus,
+            // softplus_parametric — none appear in the per-op support matrix.
+            | MirOp::MILRelu6 { .. }
+            | MirOp::MILSigmoidHard { .. }
+            | MirOp::MILThresholdedRelu { .. }
+            | MirOp::MILClampedRelu { .. }
+            | MirOp::MILLinearActivation { .. }
+            | MirOp::MILPrelu { .. }
+            | MirOp::MILSoftsign { .. }
+            | MirOp::MILScaledTanh { .. }
+            | MirOp::MILSoftplus { .. }
+            | MirOp::MILSoftplusParametric { .. }
+            // Other elementwise with no ANEC converter:
+            // threshold, inverse, modulo, clamp — not in per-op matrix.
+            | MirOp::MILThreshold { .. }
+            | MirOp::MILInverse { .. }
+            | MirOp::MILMod { .. }
+            | MirOp::MILClip { .. }
+            // Miscellaneous CPU-only:
+            // band_part, reverse_sequence, einsum — no ANEC converter.
+            | MirOp::MILBandPart { .. }
+            | MirOp::MILReverseSequence { .. }
+            // Einsum: no ANEC converter in any family.
+            | MirOp::MILEinsum { .. } => None,
+        }
+    }
+
+    /// Returns the canonical lowercase MIL op name for this variant.
+    ///
+    /// This is used for CPU-only op set lookups and cross-referencing
+    /// with the constraint documentation. The name matches the MIL
+    /// builder function name (e.g., "add", "conv", "scaled_dot_product_attention").
+    pub fn mil_op_name(&self) -> &'static str {
+        match self {
+            MirOp::MILConst { .. } => "const",
+            MirOp::MILLinear { .. } => "linear",
+            MirOp::MILMatMul { .. } => "matmul",
+            MirOp::MILEinsum { .. } => "einsum",
+            MirOp::MILConv { .. } => "conv",
+            MirOp::MILConvTranspose { .. } => "conv_transpose",
+            MirOp::MILAdd { .. } => "add",
+            MirOp::MILMul { .. } => "mul",
+            MirOp::MILSub { .. } => "sub",
+            MirOp::MILMaximum { .. } => "maximum",
+            MirOp::MILMinimum { .. } => "minimum",
+            MirOp::MILRealDiv { .. } => "real_div",
+            MirOp::MILFloorDiv { .. } => "floor_div",
+            MirOp::MILMod { .. } => "modulo",
+            MirOp::MILPow { .. } => "pow",
+            MirOp::MILEqual { .. } => "equal",
+            MirOp::MILNotEqual { .. } => "not_equal",
+            MirOp::MILGreater { .. } => "greater",
+            MirOp::MILGreaterEqual { .. } => "greater_equal",
+            MirOp::MILLess { .. } => "less",
+            MirOp::MILLessEqual { .. } => "less_equal",
+            MirOp::MILLogicalAnd { .. } => "logical_and",
+            MirOp::MILLogicalOr { .. } => "logical_or",
+            MirOp::MILLogicalXor { .. } => "logical_xor",
+            MirOp::MILAbs { .. } => "abs",
+            MirOp::MILNeg { .. } => "neg",
+            MirOp::MILSigmoid { .. } => "sigmoid",
+            MirOp::MILTanh { .. } => "tanh",
+            MirOp::MILRelu { .. } => "relu",
+            MirOp::MILRelu6 { .. } => "relu6",
+            MirOp::MILLeakyRelu { .. } => "leaky_relu",
+            MirOp::MILSigmoidHard { .. } => "sigmoid_hard",
+            MirOp::MILThresholdedRelu { .. } => "thresholded_relu",
+            MirOp::MILClampedRelu { .. } => "clamped_relu",
+            MirOp::MILLinearActivation { .. } => "linear_activation",
+            MirOp::MILPrelu { .. } => "prelu",
+            MirOp::MILSoftsign { .. } => "softsign",
+            MirOp::MILSilu { .. } => "silu",
+            MirOp::MILScaledTanh { .. } => "scaled_tanh",
+            MirOp::MILElu { .. } => "elu",
+            MirOp::MILSoftplus { .. } => "softplus",
+            MirOp::MILSoftplusParametric { .. } => "softplus_parametric",
+            MirOp::MILGelu { .. } => "gelu",
+            MirOp::MILClip { .. } => "clamp",
+            MirOp::MILSquare { .. } => "square",
+            MirOp::MILThreshold { .. } => "threshold",
+            MirOp::MILSqrt { .. } => "sqrt",
+            MirOp::MILRsqrt { .. } => "rsqrt",
+            MirOp::MILInverse { .. } => "inverse",
+            MirOp::MILCeil { .. } => "ceil",
+            MirOp::MILFloor { .. } => "floor",
+            MirOp::MILRound { .. } => "round",
+            MirOp::MILExp { .. } => "exp",
+            MirOp::MILExp2 { .. } => "exp2",
+            MirOp::MILLog { .. } => "log",
+            MirOp::MILSign { .. } => "sign",
+            MirOp::MILCos { .. } => "cos",
+            MirOp::MILSin { .. } => "sin",
+            MirOp::MILTan { .. } => "tan",
+            MirOp::MILAcos { .. } => "acos",
+            MirOp::MILAsin { .. } => "asin",
+            MirOp::MILAtan { .. } => "atan",
+            MirOp::MILCosh { .. } => "cosh",
+            MirOp::MILSinh { .. } => "sinh",
+            MirOp::MILAtanh { .. } => "atanh",
+            MirOp::MILErf { .. } => "erf",
+            MirOp::MILLogicalNot { .. } => "logical_not",
+            MirOp::MILCast { .. } => "cast",
+            MirOp::MILSelect { .. } => "select",
+            MirOp::MILWhere { .. } => "where",
+            MirOp::MILSoftmax { .. } => "softmax",
+            MirOp::MILReduceSum { .. } => "reduce_sum",
+            MirOp::MILReduceMean { .. } => "reduce_mean",
+            MirOp::MILReduceMax { .. } => "reduce_max",
+            MirOp::MILReduceMin { .. } => "reduce_min",
+            MirOp::MILReduceProd { .. } => "reduce_prod",
+            MirOp::MILReduceSumSquare { .. } => "reduce_sum_square",
+            MirOp::MILReduceL2Norm { .. } => "reduce_l2_norm",
+            MirOp::MILReduceL1Norm { .. } => "reduce_l1_norm",
+            MirOp::MILReduceLogSumExp { .. } => "reduce_log_sum_exp",
+            MirOp::MILReduceLogSum { .. } => "reduce_log_sum",
+            MirOp::MILReduceArgmax { .. } => "reduce_argmax",
+            MirOp::MILReduceArgmin { .. } => "reduce_argmin",
+            MirOp::MILBatchNorm { .. } => "batch_norm",
+            MirOp::MILInstanceNorm { .. } => "instance_norm",
+            MirOp::MILLayerNorm { .. } => "layer_norm",
+            MirOp::MILL2Norm { .. } => "l2_norm",
+            MirOp::MILLocalResponseNorm { .. } => "local_response_norm",
+            MirOp::MILMaxPool { .. } => "max_pool",
+            MirOp::MILAvgPool { .. } => "avg_pool",
+            MirOp::MILL2Pool { .. } => "l2_pool",
+            MirOp::MILResize { .. } => "resize",
+            MirOp::MILResizeNearestNeighbor { .. } => "resize_nearest_neighbor",
+            MirOp::MILResizeBilinear { .. } => "resize_bilinear",
+            MirOp::MILUpsampleNearestNeighbor { .. } => "upsample_nearest_neighbor",
+            MirOp::MILUpsampleBilinear { .. } => "upsample_bilinear",
+            MirOp::MILCropResize { .. } => "crop_resize",
+            MirOp::MILAffine { .. } => "affine",
+            MirOp::MILResample { .. } => "resample",
+            MirOp::MILReshape { .. } => "reshape",
+            MirOp::MILReshapeLike { .. } => "reshape_like",
+            MirOp::MILTranspose { .. } => "transpose",
+            MirOp::MILSplit { .. } => "split",
+            MirOp::MILConcat { .. } => "concat",
+            MirOp::MILExpandDims { .. } => "expand_dims",
+            MirOp::MILSqueeze { .. } => "squeeze",
+            MirOp::MILFlatten2d { .. } => "flatten2d",
+            MirOp::MILReverse { .. } => "reverse",
+            MirOp::MILReverseSequence { .. } => "reverse_sequence",
+            MirOp::MILSliceByIndex { .. } => "slice_by_index",
+            MirOp::MILSliceBySize { .. } => "slice_by_size",
+            MirOp::MILSliceUpdate { .. } => "slice_update",
+            MirOp::MILSlidingWindows { .. } => "sliding_windows",
+            MirOp::MILDepthToSpace { .. } => "depth_to_space",
+            MirOp::MILSpaceToDepth { .. } => "space_to_depth",
+            MirOp::MILPixelShuffle { .. } => "pixel_shuffle",
+            MirOp::MILPixelUnshuffle { .. } => "pixel_unshuffle",
+            MirOp::MILBatchToSpace { .. } => "batch_to_space",
+            MirOp::MILSpaceToBatch { .. } => "space_to_batch",
+            MirOp::MILPad { .. } => "pad",
+            MirOp::MILStack { .. } => "stack",
+            MirOp::MILTile { .. } => "tile",
+            MirOp::MILCumsum { .. } => "cumsum",
+            MirOp::MILFill { .. } => "fill",
+            MirOp::MILFillLike { .. } => "fill_like",
+            MirOp::MILIdentity { .. } => "identity",
+            MirOp::MILOneHot { .. } => "one_hot",
+            MirOp::MILNonZero { .. } => "non_zero",
+            MirOp::MILArgsort { .. } => "argsort",
+            MirOp::MILBandPart { .. } => "band_part",
+            MirOp::MILRange1d { .. } => "range1d",
+            MirOp::MILShape { .. } => "shape",
+            MirOp::MILCrop { .. } => "crop",
+            MirOp::MILGather { .. } => "gather",
+            MirOp::MILGatherAlongAxis { .. } => "gather_along_axis",
+            MirOp::MILGatherNd { .. } => "gather_nd",
+            MirOp::MILScatter { .. } => "scatter",
+            MirOp::MILScatterAlongAxis { .. } => "scatter_along_axis",
+            MirOp::MILScatterNd { .. } => "scatter_nd",
+            MirOp::MILNonMaximumSuppression { .. } => "non_maximum_suppression",
+            MirOp::MILScaledDotProductAttention { .. } => "scaled_dot_product_attention",
+            MirOp::MILQuantize { .. } => "quantize",
+            MirOp::MILDequantize { .. } => "dequantize",
+            MirOp::MILConstexprAffineDequantize { .. } => "constexpr_affine_dequantize",
+            MirOp::MILConstexprBlockwiseShiftScale { .. } => "constexpr_blockwise_shift_scale",
+            MirOp::MILConstexprLutToDense { .. } => "constexpr_lut_to_dense",
+            MirOp::MILConstexprSparseToDense { .. } => "constexpr_sparse_to_dense",
+            MirOp::MILConstexprCast { .. } => "constexpr_cast",
+            MirOp::MILConstexprLutToSparse { .. } => "constexpr_lut_to_sparse",
+            MirOp::MILConstexprSparseBlockwiseShiftScale { .. } => "constexpr_sparse_blockwise_shift_scale",
+            MirOp::MILRnn { .. } => "rnn",
+            MirOp::MILGru { .. } => "gru",
+            MirOp::MILLstm { .. } => "lstm",
+            MirOp::MILCond { .. } => "cond",
+            MirOp::MILWhileLoop { .. } => "while_loop",
+            MirOp::MILMakeList { .. } => "make_list",
+            MirOp::MILListLength { .. } => "list_length",
+            MirOp::MILListWrite { .. } => "list_write",
+            MirOp::MILListRead { .. } => "list_read",
+            MirOp::MILListGather { .. } => "list_gather",
+            MirOp::MILListScatter { .. } => "list_scatter",
+            MirOp::MILRandomBernoulli { .. } => "random_bernoulli",
+            MirOp::MILRandomNormal { .. } => "random_normal",
+            MirOp::MILRandomUniform { .. } => "random_uniform",
+            MirOp::MILRandomCategorical { .. } => "random_categorical",
+            MirOp::MILReadState { .. } => "read_state",
+            MirOp::MILCoremlUpdateState { .. } => "coreml_update_state",
+            MirOp::MILStateWrite { .. } => "state_write",
+            MirOp::MILTopk { .. } => "topk",
+            MirOp::MILClassify { .. } => "classify",
         }
     }
 }

@@ -8,6 +8,7 @@
 
 use ane_ir::ane_target::AneFamily;
 use ane_ir::mir::MirOp;
+use crate::cpu_only_ops;
 
 /// Placement decision for a MIR op being considered for ANE execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,6 +134,16 @@ pub fn validate_placement(
 
         // Ops with no ANE engine — immediate CPU
         op => {
+            // T-22: Check the CPU_ONLY_OPS set as a hard gate.
+            // This catches ops that are on the CPU-only list but might
+            // still have a default_engine() assignment (defensive check).
+            if cpu_only_ops::is_cpu_only(op.mil_op_name()) {
+                return PlacementDecision::CpuOnly(format!(
+                    "{:?} is in the CPU_ONLY set ({})",
+                    op_name(op),
+                    op.mil_op_name()
+                ));
+            }
             if op.default_engine().is_none() {
                 PlacementDecision::CpuOnly(format!(
                     "{:?} has no ANE engine assignment",

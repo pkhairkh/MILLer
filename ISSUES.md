@@ -10,41 +10,30 @@
 
 ### I-01 · Three Sources of Truth Diverged (Engine / CPU-Only / Compat)
 
-**Status:** ⬜ Open
-**Files:** `crates/ir/src/mir.rs`, `crates/passes/src/cpu_only_ops.rs`, `crates/coreml-proto/src/lib.rs`
+**Status:** ✅ FIXED (T-22)
+**Files:** `crates/ir/src/mir.rs`, `crates/passes/src/cpu_only_ops.rs`, `crates/passes/src/placement_validate.rs`
 **AUDIT ref:** §II-A, §IV (B-1)
-**Severity:** CRITICAL — 55 ops assigned ANE engines but have no compat converter; will silently fail at emission
-**Effort:** L (3-5 days)
-**Task:** T-22
+**Severity:** CRITICAL → RESOLVED
+**Resolution:** Performed full three-way alignment of `MirOp::default_engine()`, `CPU_ONLY_OPS`, and `MirOpCompat` coverage. Moved 28 MirOp variants from PE/NE to None (CPU-only):
+- Trig inverse/hyperbolic: Acos, Asin, Atan, Atanh, Tan, Cosh, Sinh
+- Logical: LogicalAnd, LogicalOr, LogicalXor, LogicalNot
+- Activation variants: Relu6, SigmoidHard, ThresholdedRelu, ClampedRelu, LinearActivation, Prelu, Softsign, ScaledTanh, Softplus, SoftplusParametric
+- Other elementwise: Threshold, Inverse, Mod, Clip
+- Miscellaneous: BandPart, ReverseSequence, Einsum
 
-The three sources of truth for op legality have diverged:
-1. `MirOp::default_engine()` assigns ANE engines (NE/PE/TE) to ops
-2. `CPU_ONLY_OPS` set declares which ops are CPU-exiled
-3. `MirOpCompat` enum determines what can actually be emitted
+Added 10 entries to CPU_ONLY_OPS: relu6, sigmoid_hard, thresholded_relu, clamped_relu, linear_activation, scaled_tanh, softplus_parametric, threshold, inverse, einsum. Added `MirOp::mil_op_name()` method for cross-referencing.
 
-55 ops have ANE engine assignments but map to `MirOpCompat::Unsupported`, meaning they pass placement validation as ANE-legal but will fail silently at emission time. Critical gaps include: ConvTranspose, all pooling ops, BatchNorm, InstanceNorm, Quantize/Dequantize, all resize/upsample ops, and numerous elementwise/reduction variants.
-
-**Fix:** Audit every MirOp variant. For each, ensure one of:
-- (a) ANE-legal: has compat converter + correct engine assignment
-- (b) CPU-only: `default_engine() → None` + entry in `CPU_ONLY_OPS`
-- (c) Transitional: compat converter exists but is incomplete → add compat variant
+ANE-legal ops that still lack MirOpCompat variants (BatchNorm, MaxPool, AvgPool, Quantize, Dequantize, all resize ops, etc.) remain in PE/NE — they have real ANEC converters per the per-op support matrix and need MirOpCompat variants (tracked by T-38/T-39).
 
 ---
 
 ### I-02 · CPU-Only List Not Checked by Placement Validator
 
-**Status:** ⬜ Open
+**Status:** ✅ FIXED (T-22/T-23)
 **Files:** `crates/passes/src/placement_validate.rs`, `crates/passes/src/cpu_only_ops.rs`
 **AUDIT ref:** §II-B, §IV (B-2d)
-**Severity:** CRITICAL — CPU-only ops can be routed to ANE
-**Effort:** S (0.5 day)
-**Task:** T-23
-
-`validate_placement()` uses only `op.default_engine().is_none()` to determine CPU-only status. The `cpu_only_ops::is_cpu_only()` function is never consulted. This means ops like `band_part`, `logical_and/or/not` (which are on the CPU-only list but have `default_engine() → Some(PE)`) pass ANE placement validation.
-
-Additionally, `default_engine()` and `CPU_ONLY_OPS` are independently maintained and have diverged for at least 4 ops.
-
-**Fix:** Add `cpu_only_ops::is_cpu_only()` check in `validate_placement()`. Also reconcile `default_engine()` with `CPU_ONLY_OPS`.
+**Severity:** CRITICAL → RESOLVED
+**Resolution:** Added `cpu_only_ops::is_cpu_only(op.mil_op_name())` as a hard gate in `validate_placement()` before the `default_engine().is_none()` check. Also reconciled `default_engine()` with `CPU_ONLY_OPS` by moving all CPU-only ops from PE/NE to None (see I-01 resolution). The validator now provides defense-in-depth against future drift.
 
 ---
 
@@ -375,10 +364,10 @@ The following issues from the previous tracker have been resolved and archived t
 
 | Priority | Total | Open | In Progress | Fixed |
 |----------|-------|------|-------------|-------|
-| P0 | 3 | 3 | 0 | 0 |
+| P0 | 3 | 1 | 0 | 2 |
 | P1 | 8 | 8 | 0 | 0 |
 | P2 | 8 | 8 | 0 | 0 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **20** | **0** | **0** |
+| **Total** | **20** | **18** | **0** | **2** |
 
-*Pre-audit issues: 14 fixed, 4 partially fixed (subsumed), 4 open (archived to CHANGELOG.md)*
+*P0 issues I-01 and I-02 resolved by T-22/T-23. I-03 (V6→A14 mapping) remains open.*
