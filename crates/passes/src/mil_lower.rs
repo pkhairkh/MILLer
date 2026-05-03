@@ -206,8 +206,10 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
             // non-trivial axis (e.g., RoPE rotate_half concatenates two
             // [B,H,S,D/2] halves along axis=3, producing [B,H,S,D]).
             Ok(if let Some(first_shape) = inputs.first().and_then(|id| node_shapes.get(id)) {
-                let input_shapes: Vec<&[usize]> =
-                    inputs.iter().filter_map(|id| node_shapes.get(id).map(|s| s.as_slice())).collect();
+                let input_shapes: Vec<&[usize]> = inputs
+                    .iter()
+                    .filter_map(|id| node_shapes.get(id).map(|s| s.as_slice()))
+                    .collect();
                 shape_ops::concat_shape(&input_shapes, *axis).unwrap_or_else(|| first_shape.clone())
             } else {
                 vec![]
@@ -234,8 +236,11 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         | AirOp::LayerNorm { input, .. } => Ok(node_shapes.get(input).cloned().unwrap_or_default()),
         AirOp::RealDiv { x, .. } => Ok(node_shapes.get(x).cloned().unwrap_or_default()),
         AirOp::Topk { input, k, axis } => Ok(if let Some(shape) = node_shapes.get(input) {
-            let ax =
-                if *axis >= 0 { *axis as usize } else { shape.len().saturating_add(*axis as usize) };
+            let ax = if *axis >= 0 {
+                *axis as usize
+            } else {
+                shape.len().saturating_add(*axis as usize)
+            };
             shape_ops::topk_shape(shape, *k, ax)
         } else {
             vec![]
@@ -376,13 +381,11 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
             })
         }
         // ─── Squeeze: remove dims at specified axes ───
-        AirOp::Squeeze { input, axis } => {
-            Ok(if let Some(input_shape) = node_shapes.get(input) {
-                shape_ops::squeeze_shape(input_shape, axis)
-            } else {
-                vec![]
-            })
-        }
+        AirOp::Squeeze { input, axis } => Ok(if let Some(input_shape) = node_shapes.get(input) {
+            shape_ops::squeeze_shape(input_shape, axis)
+        } else {
+            vec![]
+        }),
         // ─── Stack: like Concat but inserts a new dimension at `axis` ───
         // Stack([t1, t2, ..., tN], axis) → shape is same as t1 but with a new
         // dim of size N inserted at `axis`. E.g. Stack([a,b], axis=0) where

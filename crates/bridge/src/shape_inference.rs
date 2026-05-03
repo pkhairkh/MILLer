@@ -1107,16 +1107,9 @@ mod tests {
     #[test]
     fn test_tile_gqa_style() {
         // GQA tile: repeat along head dimension
-        let op = MirOp::MILTile {
-            name: "t".into(),
-            x: nid("x"),
-            reps: vec![1, 1, 2, 1, 1],
-        };
+        let op = MirOp::MILTile { name: "t".into(), x: nid("x"), reps: vec![1, 1, 2, 1, 1] };
         let ns = shapes_with(vec![("x", vec![1, 8, 1, 512, 128])]);
-        assert_eq!(
-            compat_output_shape_default("node", &op, &[], &ns),
-            vec![1, 8, 2, 512, 128]
-        );
+        assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 8, 2, 512, 128]);
     }
 
     #[test]
@@ -1965,35 +1958,48 @@ mod tests {
 
     #[test]
     fn test_reduce_sum_no_keep_dims() {
-        let op = MirOp::MILReduceSum { name: "rs".into(), x: nid("x"), axes: vec![1], keep_dims: false };
+        let op =
+            MirOp::MILReduceSum { name: "rs".into(), x: nid("x"), axes: vec![1], keep_dims: false };
         let ns = shapes_with(vec![("x", vec![1, 512, 1024])]);
         assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 1024]);
     }
 
     #[test]
     fn test_reduce_sum_square_keep_dims() {
-        let op = MirOp::MILReduceSumSquare { name: "rss".into(), x: nid("x"), axes: vec![2], keep_dims: true };
+        let op = MirOp::MILReduceSumSquare {
+            name: "rss".into(),
+            x: nid("x"),
+            axes: vec![2],
+            keep_dims: true,
+        };
         let ns = shapes_with(vec![("x", vec![1, 512, 1024])]);
         assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 512, 1]);
     }
 
     #[test]
     fn test_reduce_l2_norm_no_keep() {
-        let op = MirOp::MILReduceL2Norm { name: "rl2".into(), x: nid("x"), axes: vec![1, 2], keep_dims: false };
+        let op = MirOp::MILReduceL2Norm {
+            name: "rl2".into(),
+            x: nid("x"),
+            axes: vec![1, 2],
+            keep_dims: false,
+        };
         let ns = shapes_with(vec![("x", vec![1, 512, 1024])]);
         assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1]);
     }
 
     #[test]
     fn test_reduce_argmax_keep_dims() {
-        let op = MirOp::MILReduceArgmax { name: "ram".into(), x: nid("x"), axis: 2, keep_dims: true };
+        let op =
+            MirOp::MILReduceArgmax { name: "ram".into(), x: nid("x"), axis: 2, keep_dims: true };
         let ns = shapes_with(vec![("x", vec![1, 512, 1024])]);
         assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 512, 1]);
     }
 
     #[test]
     fn test_reduce_argmin_no_keep_dims() {
-        let op = MirOp::MILReduceArgmin { name: "rin".into(), x: nid("x"), axis: 1, keep_dims: false };
+        let op =
+            MirOp::MILReduceArgmin { name: "rin".into(), x: nid("x"), axis: 1, keep_dims: false };
         let ns = shapes_with(vec![("x", vec![1, 512, 1024])]);
         assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 1024]);
     }

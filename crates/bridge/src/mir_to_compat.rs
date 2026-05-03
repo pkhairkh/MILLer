@@ -37,7 +37,8 @@ use ane_coreml_proto::mir_compat::{
     ComputeUnitHintCompat, MilDtypeCompat, MirGraphCompat, MirOpCompat,
 };
 use ane_ir::mir::{ComputeUnitHint, MilDtype, MirGraph, MirNode, MirOp};
-#[allow(unused_imports)] // T-38: ToProto trait methods will be used for validation in future PRs
+#[allow(unused_imports)]
+// T-38: ToProto trait methods will be used for validation in future PRs
 use ane_ir::toproto::ToProto;
 use anyhow::Result;
 use std::collections::HashMap;

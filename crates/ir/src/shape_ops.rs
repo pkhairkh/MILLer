@@ -66,18 +66,9 @@ pub fn broadcast_shape(a: &[usize], b: &[usize]) -> Option<Vec<usize>> {
 /// ```
 pub fn reduce_shape(shape: &[usize], axes: &[usize], keep_dims: bool) -> Vec<usize> {
     if keep_dims {
-        shape
-            .iter()
-            .enumerate()
-            .map(|(i, &dim)| if axes.contains(&i) { 1 } else { dim })
-            .collect()
+        shape.iter().enumerate().map(|(i, &dim)| if axes.contains(&i) { 1 } else { dim }).collect()
     } else {
-        shape
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !axes.contains(i))
-            .map(|(_, &dim)| dim)
-            .collect()
+        shape.iter().enumerate().filter(|(i, _)| !axes.contains(i)).map(|(_, &dim)| dim).collect()
     }
 }
 
@@ -498,10 +489,7 @@ mod tests {
     #[test]
     fn test_tile_gqa() {
         // GQA tile: repeat along head dimension
-        assert_eq!(
-            tile_shape(&[1, 8, 1, 512, 128], &[1, 1, 2, 1, 1]),
-            vec![1, 8, 2, 512, 128]
-        );
+        assert_eq!(tile_shape(&[1, 8, 1, 512, 128], &[1, 1, 2, 1, 1]), vec![1, 8, 2, 512, 128]);
     }
 
     #[test]
@@ -583,10 +571,7 @@ mod tests {
 
     #[test]
     fn test_transpose_basic() {
-        assert_eq!(
-            transpose_shape(&[1, 512, 8, 128], &[0, 2, 1, 3]),
-            vec![1, 8, 512, 128]
-        );
+        assert_eq!(transpose_shape(&[1, 512, 8, 128], &[0, 2, 1, 3]), vec![1, 8, 512, 128]);
     }
 
     // ─── resolve_reshape_zeros ──────────────────────────────────────
@@ -619,28 +604,19 @@ mod tests {
     #[test]
     fn test_reshape_element_count_fallback() {
         // [2,3,4] = 24 elements → [0, 12] → element-count: 24/12 = 2
-        assert_eq!(
-            resolve_reshape_zeros(&[2, 3, 4], &[0, 12]).unwrap(),
-            vec![2, 12]
-        );
+        assert_eq!(resolve_reshape_zeros(&[2, 3, 4], &[0, 12]).unwrap(), vec![2, 12]);
     }
 
     #[test]
     fn test_reshape_two_zeros() {
         // [2,3,4] = 24 elements → [0, 0, 12] → batch=1, 24/12=2 → [1, 2, 12]
-        assert_eq!(
-            resolve_reshape_zeros(&[2, 3, 4], &[0, 0, 12]).unwrap(),
-            vec![1, 2, 12]
-        );
+        assert_eq!(resolve_reshape_zeros(&[2, 3, 4], &[0, 0, 12]).unwrap(), vec![1, 2, 12]);
     }
 
     #[test]
     fn test_reshape_zero_input() {
         // Input with zero elements: return as-is
-        assert_eq!(
-            resolve_reshape_zeros(&[0, 3, 4], &[0, 12]).unwrap(),
-            vec![0, 12]
-        );
+        assert_eq!(resolve_reshape_zeros(&[0, 3, 4], &[0, 12]).unwrap(), vec![0, 12]);
     }
 
     // ─── pad_shape ──────────────────────────────────────────────────
@@ -661,10 +637,7 @@ mod tests {
 
     #[test]
     fn test_concat_basic() {
-        assert_eq!(
-            concat_shape(&[&[1, 512, 64], &[1, 512, 64]], 2),
-            Some(vec![1, 512, 128])
-        );
+        assert_eq!(concat_shape(&[&[1, 512, 64], &[1, 512, 64]], 2), Some(vec![1, 512, 128]));
     }
 
     #[test]

@@ -10,9 +10,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::toproto::ToProto;
 use super::common::IrNodeId;
 pub use super::common::{ComputeUnitHint, MilDtype};
+use crate::toproto::ToProto;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MirNodeId(pub String);
@@ -1677,13 +1677,13 @@ impl ToProto for MirOp {
             // ─── Linear / FC ─────────────────────────────────────────
             MirOp::MILLinear { x, weight, bias, .. } => {
                 let mut refs = vec![x.0.clone(), weight.clone()];
-                if let Some(b) = bias { refs.push(b.clone()); }
+                if let Some(b) = bias {
+                    refs.push(b.clone());
+                }
                 refs
             }
             MirOp::MILMatMul { x, y, .. } => vec![x.0.clone(), y.0.clone()],
-            MirOp::MILEinsum { inputs, .. } => {
-                inputs.iter().map(|id| id.0.clone()).collect()
-            }
+            MirOp::MILEinsum { inputs, .. } => inputs.iter().map(|id| id.0.clone()).collect(),
 
             // ─── Convolution ─────────────────────────────────────────
             MirOp::MILConv { x, weight, .. } => vec![x.0.clone(), weight.0.clone()],
@@ -1770,8 +1770,7 @@ impl ToProto for MirOp {
             // ─── Cast / Softmax / Select / Where ─────────────────────
             MirOp::MILCast { x, .. } => vec![x.0.clone()],
             MirOp::MILSoftmax { x, .. } => vec![x.0.clone()],
-            MirOp::MILSelect { condition, x, y, .. }
-            | MirOp::MILWhere { condition, x, y, .. } => {
+            MirOp::MILSelect { condition, x, y, .. } | MirOp::MILWhere { condition, x, y, .. } => {
                 vec![condition.0.clone(), x.0.clone(), y.0.clone()]
             }
 
@@ -1787,25 +1786,36 @@ impl ToProto for MirOp {
             | MirOp::MILReduceLogSumExp { x, .. }
             | MirOp::MILReduceLogSum { x, .. } => vec![x.0.clone()],
 
-            MirOp::MILReduceArgmax { x, .. }
-            | MirOp::MILReduceArgmin { x, .. } => vec![x.0.clone()],
+            MirOp::MILReduceArgmax { x, .. } | MirOp::MILReduceArgmin { x, .. } => {
+                vec![x.0.clone()]
+            }
 
             // ─── Normalization ───────────────────────────────────────
             MirOp::MILBatchNorm { x, mean, variance, gamma, beta, .. } => {
                 let mut refs = vec![x.0.clone(), mean.clone(), variance.clone()];
-                if let Some(g) = gamma { refs.push(g.clone()); }
-                if let Some(b) = beta { refs.push(b.clone()); }
+                if let Some(g) = gamma {
+                    refs.push(g.clone());
+                }
+                if let Some(b) = beta {
+                    refs.push(b.clone());
+                }
                 refs
             }
             MirOp::MILInstanceNorm { x, gamma, beta, .. } => {
                 let mut refs = vec![x.0.clone()];
-                if let Some(g) = gamma { refs.push(g.clone()); }
-                if let Some(b) = beta { refs.push(b.clone()); }
+                if let Some(g) = gamma {
+                    refs.push(g.clone());
+                }
+                if let Some(b) = beta {
+                    refs.push(b.clone());
+                }
                 refs
             }
             MirOp::MILLayerNorm { x, weight, bias, .. } => {
                 let mut refs = vec![x.0.clone(), weight.clone()];
-                if let Some(b) = bias { refs.push(b.clone()); }
+                if let Some(b) = bias {
+                    refs.push(b.clone());
+                }
                 refs
             }
             MirOp::MILL2Norm { x, .. } => vec![x.0.clone()],
@@ -1840,9 +1850,7 @@ impl ToProto for MirOp {
             }
             MirOp::MILTranspose { x, .. } => vec![x.0.clone()],
             MirOp::MILSplit { x, .. } => vec![x.0.clone()],
-            MirOp::MILConcat { values, .. } => {
-                values.iter().map(|id| id.0.clone()).collect()
-            }
+            MirOp::MILConcat { values, .. } => values.iter().map(|id| id.0.clone()).collect(),
             MirOp::MILExpandDims { x, .. }
             | MirOp::MILSqueeze { x, .. }
             | MirOp::MILFlatten2d { x, .. } => vec![x.0.clone()],
@@ -1866,9 +1874,7 @@ impl ToProto for MirOp {
             | MirOp::MILSpaceToBatch { x, .. } => vec![x.0.clone()],
 
             MirOp::MILPad { x, .. } => vec![x.0.clone()],
-            MirOp::MILStack { values, .. } => {
-                values.iter().map(|id| id.0.clone()).collect()
-            }
+            MirOp::MILStack { values, .. } => values.iter().map(|id| id.0.clone()).collect(),
             MirOp::MILTile { x, .. } => vec![x.0.clone()],
             MirOp::MILCumsum { x, .. } => vec![x.0.clone()],
             MirOp::MILFill { .. } => vec![],
@@ -1897,13 +1903,14 @@ impl ToProto for MirOp {
             // ─── Attention ───────────────────────────────────────────
             MirOp::MILScaledDotProductAttention { query, key, value, attention_mask, .. } => {
                 let mut refs = vec![query.0.clone(), key.0.clone(), value.0.clone()];
-                if let Some(m) = attention_mask { refs.push(m.0.clone()); }
+                if let Some(m) = attention_mask {
+                    refs.push(m.0.clone());
+                }
                 refs
             }
 
             // ─── Quantization ────────────────────────────────────────
-            MirOp::MILQuantize { x, .. }
-            | MirOp::MILDequantize { x, .. } => vec![x.0.clone()],
+            MirOp::MILQuantize { x, .. } | MirOp::MILDequantize { x, .. } => vec![x.0.clone()],
 
             // ─── Constexpr / Compression ─────────────────────────────
             MirOp::MILConstexprAffineDequantize { quantized_data, .. } => {
@@ -1930,18 +1937,32 @@ impl ToProto for MirOp {
 
             // ─── Recurrent ───────────────────────────────────────────
             MirOp::MILRnn { x, initial_h, weight_ih, weight_hh, bias, .. } => {
-                let mut refs = vec![x.0.clone(), initial_h.0.clone(), weight_ih.clone(), weight_hh.clone()];
-                if let Some(b) = bias { refs.push(b.clone()); }
+                let mut refs =
+                    vec![x.0.clone(), initial_h.0.clone(), weight_ih.clone(), weight_hh.clone()];
+                if let Some(b) = bias {
+                    refs.push(b.clone());
+                }
                 refs
             }
             MirOp::MILGru { x, initial_h, weight_ih, weight_hh, bias, .. } => {
-                let mut refs = vec![x.0.clone(), initial_h.0.clone(), weight_ih.clone(), weight_hh.clone()];
-                if let Some(b) = bias { refs.push(b.clone()); }
+                let mut refs =
+                    vec![x.0.clone(), initial_h.0.clone(), weight_ih.clone(), weight_hh.clone()];
+                if let Some(b) = bias {
+                    refs.push(b.clone());
+                }
                 refs
             }
             MirOp::MILLstm { x, initial_h, initial_c, weight_ih, weight_hh, bias, .. } => {
-                let mut refs = vec![x.0.clone(), initial_h.0.clone(), initial_c.0.clone(), weight_ih.clone(), weight_hh.clone()];
-                if let Some(b) = bias { refs.push(b.clone()); }
+                let mut refs = vec![
+                    x.0.clone(),
+                    initial_h.0.clone(),
+                    initial_c.0.clone(),
+                    weight_ih.clone(),
+                    weight_hh.clone(),
+                ];
+                if let Some(b) = bias {
+                    refs.push(b.clone());
+                }
                 refs
             }
 
@@ -1950,9 +1971,7 @@ impl ToProto for MirOp {
             MirOp::MILWhileLoop { loop_vars, .. } => {
                 loop_vars.iter().map(|id| id.0.clone()).collect()
             }
-            MirOp::MILMakeList { elems, .. } => {
-                elems.iter().map(|id| id.0.clone()).collect()
-            }
+            MirOp::MILMakeList { elems, .. } => elems.iter().map(|id| id.0.clone()).collect(),
             MirOp::MILListLength { ls, .. } => vec![ls.0.clone()],
             MirOp::MILListWrite { ls, index, value, .. } => {
                 vec![ls.0.clone(), index.0.clone(), value.0.clone()]
