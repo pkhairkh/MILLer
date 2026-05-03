@@ -101,16 +101,11 @@ ANE-legal ops that still lack MirOpCompat variants (BatchNorm, MaxPool, AvgPool,
 
 ### I-09 · `% 1 == 0` Always-True Logic Bug
 
-**Status:** ⬜ Open
-**Files:** `crates/bridge/src/mir_to_compat.rs:1265,1271`
+**Status:** ✅ FIXED (T-30)
+**Files:** `crates/bridge/src/mir_to_compat.rs`
 **AUDIT ref:** §III (CQ-1), §IV (B-10)
-**Severity:** HIGH — Likely placeholder code masking a real divisor bug
-**Effort:** S (0.5 day)
-**Task:** T-30
-
-`remaining % 1 == 0` is always true (modulo 1 is always 0). The corresponding `/ 1` divisions on lines 1266/1272 are identity operations. Line 1287 uses `product_so_far` as the divisor, suggesting lines 1265/1271 should also use `product_so_far`.
-
-**Fix:** Replace `% 1` with `% product_so_far` and remove `/ 1`.
+**Severity:** HIGH → RESOLVED
+**Resolution:** Fixed `% 1 == 0` always-true bug in `resolve_reshape_shape()`. The 2-zero case used `remaining % 1 == 0` which is trivially always true, making the else branch dead code; the corresponding `/ 1` divisions were identity operations. Unified the 2-zero and 3+-zero cases into a single match arm using `product_so_far` consistently. Also fixed a latent bug where failed positional resolution (target rank > input rank) left the `resolved` array partially modified, corrupting the subsequent `non_zero_product` calculation. Added 6 new tests.
 
 ---
 
@@ -323,9 +318,9 @@ The following issues from the previous tracker have been resolved and archived t
 | Priority | Total | Open | In Progress | Fixed |
 |----------|-------|------|-------------|-------|
 | P0 | 3 | 0 | 0 | 3 |
-| P1 | 8 | 3 | 0 | 5 |
+| P1 | 8 | 2 | 0 | 6 |
 | P2 | 8 | 8 | 0 | 0 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **12** | **0** | **8** |
+| **Total** | **20** | **11** | **0** | **9** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04, I-05, I-06, I-07, and I-08 resolved by T-25, T-26, T-27, T-28, and T-29.*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04, I-05, I-06, I-07, I-08, and I-09 resolved by T-25, T-26, T-27, T-28, T-29, and T-30.*

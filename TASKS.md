@@ -76,13 +76,13 @@
 - **Effort**: S (0.5 day)
 - **Resolution**: Two-pronged approach: (1) Changed `eprintln!` warnings in `mir_to_compat.rs` to `anyhow::bail!()` hard gates — reshape ops with unresolved zero dimensions now produce compilation errors instead of silently emitting invalid shapes. Both `mir_op_to_compat_with_shapes()` and `mir_op_to_compat()` now reject zeros with diagnostic messages including zero positions, raw shape, node_shape, and input_shape. (2) Added defense-in-depth zero-dim validation gate in `mir_to_proto.rs` `convert_mir_to_proto_multifunction()` — scans all `MirOpCompat::Reshape` and `MirOpCompat::Fill` ops for zero dimensions in shape vectors, bailing with clear error messages. Fixed `test_reshape_zero_placeholders_resolved_from_node_shape` Case 4 to assert error instead of asserting zeros survive. Added 7 new emission-layer tests covering: multi-zero reshape rejection, single-zero reshape rejection, all-zero reshape rejection, Fill with zeros (caught by ANE-illegal gate), concrete reshape passing validation, and multiple zero-dim ops all reported. 785 total tests pass.
 
-### T-30 · Fix `% 1 == 0` Logic Bug
+### T-30 · Fix `% 1 == 0` Logic Bug ✅
 
 - **ISSUES ref**: I-09
 - **AUDIT ref**: §III (CQ-1), §IV (B-10)
-- **Severity**: HIGH
+- **Severity**: HIGH → RESOLVED
 - **Effort**: S (0.5 day)
-- **Description**: `mir_to_compat.rs:1265,1271` uses `remaining % 1 == 0` which is always true. The corresponding `/ 1` divisions are identity operations. Replace `% 1` with the correct divisor (likely `product_so_far` per line 1287) and remove `/ 1`.
+- **Resolution**: Fixed the `% 1 == 0` always-true logic bug in `mir_to_compat.rs` `resolve_reshape_shape()`. The 2-zero case used `remaining % 1 == 0` which is trivially always true (modulo 1 is always 0), making the else branch dead code. The corresponding `/ 1` divisions were identity operations. Unified the 2-zero and 3+-zero cases into a single `2 | _` arm using `product_so_far` consistently: all zeros except the last are set to 1, the last zero is set to `remaining / product_so_far`. Fixed `product_so_far *= 1` to `product_so_far *= resolved[pos]` for self-documenting correctness. Also fixed a latent bug where failed positional resolution (target rank > input rank) left the `resolved` array partially modified, corrupting the subsequent `non_zero_product` calculation — now resets to `target_shape` on positional failure. Added 6 new tests covering 2-zero, 3+-zero, single-zero, zero-input, and incompatible-count scenarios. All 790 tests pass.
 
 ### T-31 · Add `attention_mask` and `scale` to SDPA Compat
 
@@ -222,7 +222,7 @@
 | T-27 | I-06 | HIGH | M | ✅ |
 | T-28 | I-07 | HIGH | S | ✅ |
 | T-29 | I-08 | HIGH | S | ✅ |
-| T-30 | I-09 | HIGH | S | ⬜ |
+| T-30 | I-09 | HIGH | S | ✅ |
 | T-31 | I-10 | HIGH | M | ⬜ |
 | T-32 | I-11 | MEDIUM | S | ⬜ |
 | T-33 | I-12 | MEDIUM | M | ⬜ |
