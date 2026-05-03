@@ -133,6 +133,24 @@ impl VersionedCompiler {
                         .to_string(),
                 );
             }
+            AneFamily::A13 => {
+                report.warnings.push(
+                    "A13: Broadcast supports full dtype (unlike A11/A12), but uses A14Minus elementwise/reduction converters."
+                        .to_string(),
+                );
+                report.warnings.push(
+                    "A13: SDPA not supported. Attention must decompose to MatMul+Softmax+MatMul."
+                        .to_string(),
+                );
+                report.warnings.push(
+                    "A13: LayerNorm not supported on ANE. Use RMSNorm decomposition instead."
+                        .to_string(),
+                );
+                report.warnings.push(
+                    "A13: ReduceMin only supports FP types; non-FP ReduceMin falls back to CPU."
+                        .to_string(),
+                );
+            }
             AneFamily::A14 => {
                 report.warnings.push(
                     "A14: SDPA not supported. Attention must decompose to MatMul+Softmax+MatMul."
@@ -420,10 +438,10 @@ impl OpSupportMatrix {
             SirOp::ReduceSum { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::ReduceMax { .. } => OpSupport::AneSupported(AneEngineSupport::PE),
             SirOp::ReduceMin { .. } => {
-                if matches!(self.family, AneFamily::A11Legacy | AneFamily::A12) {
+                if !self.family.supports_reducemin_all_dtypes() {
                     OpSupport::FamilyGated {
                         minimum_family: AneFamily::A14,
-                        reason: "ReduceMin requires A14+ for non-FP types".to_string(),
+                        reason: "ReduceMin requires A14+ for non-FP types (A11/A12/A13 are FP-only)".to_string(),
                     }
                 } else {
                     OpSupport::AneSupported(AneEngineSupport::PE)
@@ -803,6 +821,7 @@ fn family_to_default_revision(family: AneFamily) -> AneRevision {
     match family {
         AneFamily::A11Legacy => AneRevision::V4,
         AneFamily::A12 => AneRevision::V5,
+        AneFamily::A13 => AneRevision::V6,
         AneFamily::A14 => AneRevision::V7,
         AneFamily::A15 => AneRevision::V8,
         AneFamily::A16 => AneRevision::V10,
@@ -818,14 +837,17 @@ fn family_meets_minimum(actual: AneFamily, minimum: AneFamily) -> bool {
 }
 
 /// Assign a numeric level to each family for comparison.
+/// A13 sits between A12 and A14 — it has full-dtype broadcast (unlike A12)
+/// but A14Minus converters and FP-only ReduceMin (unlike A14).
 fn family_level(family: AneFamily) -> u32 {
     match family {
         AneFamily::A11Legacy => 0,
         AneFamily::A12 => 1,
-        AneFamily::A14 => 2,
-        AneFamily::A15 => 3,
-        AneFamily::A16 => 4,
-        AneFamily::A18 => 5,
+        AneFamily::A13 => 2,
+        AneFamily::A14 => 3,
+        AneFamily::A15 => 4,
+        AneFamily::A16 => 5,
+        AneFamily::A18 => 6,
     }
 }
 
@@ -850,7 +872,47 @@ mod tests {
         assert!(family_level(AneFamily::A18) > family_level(AneFamily::A16));
         assert!(family_level(AneFamily::A16) > family_level(AneFamily::A15));
         assert!(family_level(AneFamily::A15) > family_level(AneFamily::A14));
-        assert!(family_level(AneFamily::A14) > family_level(AneFamily::A12));
+        assert!(family_level(AneFamily::A14) > family_level(AneFamily::A13));
+        assert!(family_level(AneFamily::A13) > family_level(AneFamily::A12));
+        assert!(family_level(AneFamily::A12) > family_level(AneFamily::A11Legacy));
+    }
+
+    #[test]
+    fn test_a13_constraint_profile() {
+        let compiler = VersionedCompiler::new(AneFamily::A13);
+        assert!(!compiler.target_family().broadcast_fp16_only());
+        assert!(compiler.target_family().uses_a14minus_converters());
+        assert!(!compiler.target_family().supports_sdpa());
+        assert!(!compiler.target_family().supports_layernorm());
+        assert!(!compiler.target_family().supports_reducemin_all_dtypes());
+    }
+
+    #[test]
+    fn test_reducemin_family_gated_on_a13() {
+        let matrix = OpSupportMatrix::for_family(AneFamily::A13);
+        let reducemin = SirOp::ReduceMin {
+            input: SirNodeId("x".into()),
+            axes: vec![1],
+            keep_dims: false,
+        };
+        match matrix.check_op(&reducemin) {
+            OpSupport::FamilyGated { .. } => {} // expected — A13 is FP-only
+            other => panic!("Expected FamilyGated for ReduceMin on A13, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_reducemin_supported_on_a14() {
+        let matrix = OpSupportMatrix::for_family(AneFamily::A14);
+        let reducemin = SirOp::ReduceMin {
+            input: SirNodeId("x".into()),
+            axes: vec![1],
+            keep_dims: false,
+        };
+        match matrix.check_op(&reducemin) {
+            OpSupport::AneSupported(_) => {} // expected — A14 supports all dtypes
+            other => panic!("Expected AneSupported for ReduceMin on A14, got {:?}", other),
+        }
     }
 
     #[test]

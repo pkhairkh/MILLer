@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn test_fp16_always_legal() {
-        for family in [AneFamily::A11Legacy, AneFamily::A12, AneFamily::A14, AneFamily::A18] {
+        for family in [AneFamily::A11Legacy, AneFamily::A12, AneFamily::A13, AneFamily::A14, AneFamily::A18] {
             assert!(is_dtype_ane_legal(&MilDtype::Fp16, &family).is_ok());
         }
     }
@@ -184,8 +184,11 @@ mod tests {
 
     #[test]
     fn test_broadcast_fp16_only_a11_a12() {
+        // A11/A12: FP16-only broadcast
         assert!(is_broadcast_dtype_legal(&MilDtype::Fp16, &AneFamily::A12).is_ok());
         assert!(is_broadcast_dtype_legal(&MilDtype::Fp32, &AneFamily::A12).is_err());
+        // A13+: full dtype broadcast
+        assert!(is_broadcast_dtype_legal(&MilDtype::Fp32, &AneFamily::A13).is_ok());
         assert!(is_broadcast_dtype_legal(&MilDtype::Fp32, &AneFamily::A14).is_ok());
     }
 }

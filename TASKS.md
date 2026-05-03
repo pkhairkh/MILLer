@@ -24,13 +24,13 @@
 - **Effort**: S (0.5 day) — bundled with T-22
 - **Resolution**: Added `cpu_only_ops::is_cpu_only(op.mil_op_name())` check as a hard gate in `placement_validate.rs` before the `default_engine().is_none()` check. This provides defense-in-depth: even if `default_engine()` and CPU_ONLY_OPS drift apart again, the validator catches it.
 
-### T-24 · Fix V6 (A12 Silicon) → A14 Family Mapping
+### T-24 · Fix V6 (A13 Silicon) → A14 Family Mapping ✅
 
 - **ISSUES ref**: I-03
 - **AUDIT ref**: §III (CQ-13), §IV (B-3)
-- **Severity**: HIGH
+- **Severity**: HIGH → RESOLVED
 - **Effort**: M (1 day)
-- **Description**: `ane_target.rs` maps V6 to A14 family. This causes A12 silicon to get A14 constraints — allowing non-FP16 broadcast and incorrectly gating SDPA/LayerNorm. Either add an `A13` family variant or map V6 to `A12` family (which has correct broadcast/SDPA/LayerNorm behavior).
+- **Resolution**: Added `AneFamily::A13` variant with the correct constraint profile: full-dtype broadcast (unlike A12's FP16-only), but A14Minus elementwise/reduction converters and FP-only ReduceMin (unlike A14's A14Plus and all-type ReduceMin). Mapped `AneRevision::V6` to `A13` family (was incorrectly grouped with V7 under A14). Added three new `AneFamily` methods: `uses_a14minus_converters()`, `supports_reducemin_all_dtypes()`, and updated ReduceMin gate to use the latter. Updated all 6 exhaustive match sites (versioned.rs, CLI), 7 family-gated `matches!()` patterns, strategy.rs KvCache benefit, dtype_constraints.rs tests. Fixed chip comment errors (A11≠M1, A12≠M2, V17=M1 not A18). Corrected Mac chip-to-family mapping (M1→A14, M2→A15, M3→A16, M4→A18). Added iPhone chip aliases. All 660+ tests pass.
 
 ---
 
@@ -216,7 +216,7 @@
 |------|----------|----------|--------|--------|
 | T-22 | I-01 | CRITICAL | L | ✅ |
 | T-23 | I-02 | CRITICAL | S | ✅ |
-| T-24 | I-03 | HIGH | M | ⬜ |
+| T-24 | I-03 | HIGH | M | ✅ |
 | T-25 | I-04 | HIGH | S | ⬜ |
 | T-26 | I-05 | HIGH | S | ⬜ |
 | T-27 | I-06 | HIGH | M | ⬜ |

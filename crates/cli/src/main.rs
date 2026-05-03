@@ -5034,40 +5034,54 @@ fn identify_shared_weights(
 /// Parse an ANE family string into an AneFamily enum value.
 ///
 /// Accepts both ANE generation codes (A12, A16, etc.) and Apple Silicon
-/// chip names (M1, M2, M3, etc.) as aliases. The mapping is:
+/// chip names (M1, M2, M3, iPhone models, etc.) as aliases. The mapping is:
 ///
-/// | Chip          | ANE Gen | Notes                              |
-/// |---------------|---------|------------------------------------|
-/// | M1            | A12     | broadcast_fp16_only=true           |
-/// | M1 Pro/Max    | A14     |                                    |
-/// | M2            | A12     | same ANE as M1 (Rev V5)            |
-/// | M2 Pro/Max    | A14     |                                    |
-/// | M3            | A15     |                                    |
-/// | M3 Pro/Max    | A16     | first with reliable SDPA           |
-/// | M4            | A16     |                                    |
-/// | M4 Pro/Max    | A18     |                                    |
+/// | Chip          | ANE Gen | ANE Rev | Notes                              |
+/// |---------------|---------|---------|------------------------------------|
+/// | A11 (iPhone8/X)| A11Legacy| V4    | FP16-only broadcast                |
+/// | A12 (iPhoneXS) | A12     | V5      | FP16-only broadcast                |
+/// | A13 (iPhone11) | A13     | V6      | Full broadcast, A14Minus converters|
+/// | A14 (iPhone12) | A14     | V7      | A14Plus converters                 |
+/// | A15 (iPhone13) | A15     | V8      | Adds LayerNorm                     |
+/// | A16 (iPhone14P)| A16     | V10     | Adds reliable SDPA                 |
+/// | M1            | A14     | V17     | Mac — A14-class ANE                |
+/// | M2            | A15     | —       | Mac — A15-class ANE                |
+/// | M3            | A16     | —       | Mac — A16-class ANE                |
+/// | M4            | A18     | V20     | Mac — A18-class ANE                |
 fn parse_ane_family(s: &str) -> Result<ane_ir::ane_target::AneFamily, String> {
     use ane_ir::ane_target::AneFamily;
     match s.to_lowercase().as_str() {
         // ANE generation codes
         "a11legacy" | "a11" => Ok(AneFamily::A11Legacy),
         "a12" => Ok(AneFamily::A12),
+        "a13" => Ok(AneFamily::A13),
         "a14" => Ok(AneFamily::A14),
         "a15" => Ok(AneFamily::A15),
         "a16" => Ok(AneFamily::A16),
         "a18" => Ok(AneFamily::A18),
-        // Apple Silicon chip name aliases
-        "m1" => Ok(AneFamily::A12),
+        // iPhone chip name aliases (direct A-series mapping)
+        "iphone8" | "iphonex" => Ok(AneFamily::A11Legacy),
+        "iphonexs" | "iphonexr" => Ok(AneFamily::A12),
+        "iphone11" | "iphone11pro" => Ok(AneFamily::A13),
+        "iphone12" | "iphone12pro" => Ok(AneFamily::A14),
+        "iphone13" | "iphone13pro" => Ok(AneFamily::A15),
+        "iphone14pro" => Ok(AneFamily::A16),
+        "iphone15pro" => Ok(AneFamily::A16),
+        "iphone16" | "iphone16pro" => Ok(AneFamily::A18),
+        // Apple Silicon Mac chip name aliases
+        // Note: M1 uses A14-class ANE (V17), M2 uses A15-class, etc.
+        // These map to the closest ANE family for the Mac's ANE revision.
+        "m1" => Ok(AneFamily::A14),
         "m1pro" | "m1_max" | "m1max" | "m1ultra" => Ok(AneFamily::A14),
-        "m2" => Ok(AneFamily::A12),
-        "m2pro" | "m2_max" | "m2max" | "m2ultra" => Ok(AneFamily::A14),
-        "m3" => Ok(AneFamily::A15),
+        "m2" => Ok(AneFamily::A15),
+        "m2pro" | "m2_max" | "m2max" | "m2ultra" => Ok(AneFamily::A15),
+        "m3" => Ok(AneFamily::A16),
         "m3pro" | "m3_max" | "m3max" => Ok(AneFamily::A16),
-        "m4" => Ok(AneFamily::A16),
+        "m4" => Ok(AneFamily::A18),
         "m4pro" | "m4_max" | "m4max" => Ok(AneFamily::A18),
         _ => Err(format!(
-            "Unknown ANE family '{}'. Valid: A11Legacy, A12, A14, A15, A16, A18, \
-             or chip names: M1, M2, M3, M4 (with Pro/Max variants)",
+            "Unknown ANE family '{}'. Valid: A11Legacy, A12, A13, A14, A15, A16, A18, \
+             or chip names: iPhone 8/X/XS/11/12/13/14Pro/16, M1/M2/M3/M4 (with Pro/Max variants)",
             s
         )),
     }

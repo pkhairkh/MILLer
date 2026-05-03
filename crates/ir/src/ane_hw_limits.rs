@@ -61,11 +61,11 @@ impl AneHwLimits {
         }
     }
 
-    /// A12 (M2) ANE hardware limits.
+    /// A12 Bionic (ANE V5) hardware limits.
     ///
     /// **WARNING**: These limits are estimated/approximate. They are copied from
     /// the A11 legacy values and have NOT been independently verified on actual
-    /// Apple M2 hardware. The A12 ANE may differ from A11 in NE count, bandwidth,
+    /// A12 hardware. The A12 ANE may differ from A11 in NE count, bandwidth,
     /// tensor dimension limits, and other parameters. Use these values with caution
     /// and verify against real hardware when possible.
     ///
@@ -73,12 +73,15 @@ impl AneHwLimits {
     /// users that these are approximate.
     fn a12() -> Self {
         eprintln!(
-            "WARNING: A12 (ANE V5) hardware limits are approximate — copied from A11 values \
-             and not yet verified on real M2 hardware. Results may be inaccurate."
+            "WARNING: A12 Bionic (ANE V5) hardware limits are approximate — copied from A11 values \
+             and not yet verified on real A12 hardware. Results may be inaccurate."
         );
         Self { revision: AneRevision::V5, ..Self::a11_legacy() }
     }
 
+    /// A13 Bionic (ANE V6) hardware limits.
+    /// A13 has doubled tensor width/height compared to A11/A12 but
+    /// retains the A14Minus elementwise/reduction converter family.
     fn a13() -> Self {
         Self {
             revision: AneRevision::V6,

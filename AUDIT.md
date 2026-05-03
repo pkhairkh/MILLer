@@ -138,8 +138,8 @@ These ops are listed in `cpu_only_ops.rs` but `default_engine()` returns a non-N
 | CQ-9 | 49 files unformatted | All crates except coreml-ffi | Run `cargo fmt` | LOW |
 | CQ-10 | 85 clippy warnings total | 6 crates | ~57 auto-fixable via `cargo clippy --fix` | LOW |
 | CQ-11 | Deprecated `kv_cache_rewrite` still `pub` | `passes/src/lib.rs:21` | Make `pub(crate)` or remove entirely | LOW |
-| CQ-12 | Chip comments wrong | `ir/ane_target.rs:11-22` | A11≠M1, A12≠M2, A14≠M3 — fix comments | LOW |
-| CQ-13 | V6 (A12 silicon) mapped to A14 family | `ir/ane_target.rs:68` | A12 gets wrong broadcast/LayerNorm/SDPA gates | HIGH |
+| CQ-12 | Chip comments wrong | `ir/ane_target.rs:11-22` | **FIXED T-24**: Corrected A11≠M1, A12≠M2, A14≠M3 comments; added iPhone chip IDs | ~~LOW~~ |
+| CQ-13 | V6 (A12 silicon) mapped to A14 family | `ir/ane_target.rs:68` | **FIXED T-24**: Added `AneFamily::A13`, mapped V6→A13 | ~~HIGH~~ |
 | CQ-14 | V17 (M1) mapped to A18 family | `ir/ane_target.rs:71-73` | M1 is A14-class, gets A18's SDPA/LayerNorm gates | MEDIUM |
 | CQ-15 | `MilDtype` missing Int4, UInt4, E4M3, E5M2 | `ir/common.rs:15-24` | Cannot enforce Int4-per-cout-dequant or float8 rules | HIGH |
 | CQ-16 | Model-specific `vocab_size=32000` default | `passes/role_mir.rs:640-642,1103` | Read from TaskSpec instead | MEDIUM |
@@ -160,7 +160,7 @@ These ops are listed in `cpu_only_ops.rs` but `default_engine()` returns a non-N
 |---|---|---|---|---|
 | B-1 | Silent emission failure for 55 ops | Any model using ops outside the ~50 MirOpCompat variants (e.g., ConvTranspose, pooling, quantize/dequantize, batch/instance norm) | Align `default_engine()`, CPU_ONLY list, and compat coverage; add `is_cpu_only()` check to `placement_validate.rs` | HIGH |
 | B-2 | CPU-only ops routed to ANE | Ops like `band_part`, `logical_and/or/not` on CPU-only list but `default_engine()` returns PE | Fix `default_engine()` to return `None` for CPU-only ops; add `is_cpu_only()` gate in placement validator | HIGH |
-| B-3 | A12 silicon gets wrong constraints | V6 mapped to A14 family → non-FP16 broadcast allowed on A12 hardware | Add `A13` family variant or map V6→A12 family | HIGH |
+| B-3 | A12/A13 silicon gets wrong constraints | V6 mapped to A14 family → non-FP16 broadcast allowed on A12 hardware | **FIXED T-24**: Added `A13` family variant, V6→A13 mapping | ~~HIGH~~ |
 | B-4 | M1 (A14-class) gets A18 constraints | V17 mapped to A18 family → SDPA/LayerNorm allowed on M1 | Add V17→A14 mapping | MEDIUM |
 | B-5 | Reshape `.unwrap()` panics | `mil_lower.rs:220-221` — reshapes with no zero-dim inference target | Replace with proper error handling | HIGH |
 | B-6 | Zero-dimension shapes in emitted Core ML | Tile/attention reshape placeholders survive when shape inference fails | Add zero-dimension validation before emission; error if any dim is 0 | HIGH |

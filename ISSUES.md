@@ -37,23 +37,13 @@ ANE-legal ops that still lack MirOpCompat variants (BatchNorm, MaxPool, AvgPool,
 
 ---
 
-### I-03 · V6 (A12 Silicon) Mapped to A14 Family
+### I-03 · V6 (A13 Silicon) Mapped to A14 Family
 
-**Status:** ⬜ Open
-**Files:** `crates/ir/src/ane_target.rs:68`
+**Status:** ✅ FIXED (T-24)
+**Files:** `crates/ir/src/ane_target.rs`, `crates/trace/src/versioned.rs`, `crates/ir/src/strategy.rs`, `crates/cli/src/main.rs`, `crates/passes/src/dtype_constraints.rs`, `crates/ir/src/ane_hw_limits.rs`
 **AUDIT ref:** §III (CQ-13), §IV (B-3)
-**Severity:** HIGH — A12 hardware gets wrong broadcast/SDPA/LayerNorm gates
-**Effort:** M (1 day)
-**Task:** T-24
-
-`AneRevision::V6` (Apple A12 Bionic) maps to `AneFamily::A14` in `ane_target.rs`. This causes A12 silicon to get A14 family constraints:
-- Non-FP16 broadcast allowed (should be FP16-only)
-- SDPA gate uses A14 rules (should be blocked)
-- LayerNorm gate uses A14 rules (should be limited)
-
-The `broadcast_fp16_only()` method correctly returns true for `A11Legacy | A12`, but V6 never maps to A12 family, so A12 silicon never hits this code path.
-
-**Fix:** Either add an `A13` family variant for V6-V7, or map V6 to `A12` family (since A12 and A13 share FP16-only broadcast).
+**Severity:** HIGH → RESOLVED
+**Resolution:** Added `AneFamily::A13` variant with distinct constraint profile. A13 has full-dtype broadcast (unlike A12's FP16-only) but retains A14Minus elementwise/reduction converters and FP-only ReduceMin (unlike A14's A14Plus). Mapped V6→A13 instead of V6→A14. Added `uses_a14minus_converters()` and `supports_reducemin_all_dtypes()` helper methods. Updated ReduceMin gate in versioned.rs to use `supports_reducemin_all_dtypes()` (catches A11/A12/A13). Updated all exhaustive match arms, family levels, CLI parsing, strategy KvCache benefit. Fixed chip comments and Mac-to-family mapping.
 
 ---
 
@@ -364,10 +354,10 @@ The following issues from the previous tracker have been resolved and archived t
 
 | Priority | Total | Open | In Progress | Fixed |
 |----------|-------|------|-------------|-------|
-| P0 | 3 | 1 | 0 | 2 |
+| P0 | 3 | 0 | 0 | 3 |
 | P1 | 8 | 8 | 0 | 0 |
 | P2 | 8 | 8 | 0 | 0 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **18** | **0** | **2** |
+| **Total** | **20** | **17** | **0** | **3** |
 
-*P0 issues I-01 and I-02 resolved by T-22/T-23. I-03 (V6→A14 mapping) remains open.*
+*P0 issues I-01, I-02, and I-03 all resolved. I-03 was fixed by T-24 (added A13 family variant).*

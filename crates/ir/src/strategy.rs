@@ -464,9 +464,9 @@ fn probe_kv_cache_strategies(
         target_family,
         AneFamily::A14 | AneFamily::A15 | AneFamily::A16 | AneFamily::A18
     ) {
-        0.9 // Major benefit on ANE-targeted families
+        0.9 // Major benefit on A14+ families (A14Plus converters, pool-to-conv available)
     } else {
-        0.3 // Modest benefit on older families
+        0.3 // Modest benefit on A13 and older (A14Minus converters, pool-to-conv blocked)
     };
 
     strategies.push(StrategySpec {
