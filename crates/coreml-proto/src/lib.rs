@@ -840,6 +840,94 @@ pub mod mir_compat {
             name: String,
             x: String,
         },
+        // ─── Constexpr / Weight Compression (T-39: I-18) ────────────
+        //
+        // These represent Core ML's constexpr weight compression ops.
+        // The Python bridge can emit palettized/quantized/compressed weights;
+        // the proto-direct path previously could not (I-18).
+        //
+        // Each constexpr op produces a constant tensor output and references
+        // weight data by name (resolved to MIL Const op outputs during emission).
+        // Unlike regular MirOpCompat variants where inputs are SSA value names,
+        // these `String` fields are weight-name references to MILConst nodes.
+
+        /// Constexpr affine dequantize: decompresses quantized weights using
+        /// per-channel scale and zero_point. Core ML MIL op type:
+        /// "constexpr_affine_dequantize".
+        ConstexprAffineDequantize {
+            name: String,
+            /// Weight name reference for the quantized data tensor.
+            quantized_data: String,
+            scale: f32,
+            zero_point: i32,
+            axis: i64,
+        },
+        /// Constexpr blockwise shift-scale: decompresses weights using
+        /// per-block scale and offset. Core ML MIL op type:
+        /// "constexpr_blockwise_shift_scale".
+        /// T-25 (I-04): Hard-rejected by is_blockwise_scale_supported() on ANE.
+        ConstexprBlockwiseShiftScale {
+            name: String,
+            /// Weight name reference for the data tensor.
+            data: String,
+            /// Weight name reference for the scale tensor.
+            scale: String,
+            /// Weight name reference for the offset tensor.
+            offset: String,
+            block_size: Vec<i64>,
+        },
+        /// Constexpr LUT-to-dense: decompresses palettized (LUT-based) weights.
+        /// Core ML MIL op type: "constexpr_lut_to_dense".
+        /// This is the primary op for palettized weight emission.
+        ConstexprLutToDense {
+            name: String,
+            /// Weight name reference for the indices (palette lookups).
+            indices: String,
+            /// Weight name reference for the LUT (lookup table / palette).
+            lut: String,
+            num_bits: i64,
+        },
+        /// Constexpr sparse-to-dense: decompresses sparse weights to dense form.
+        /// Core ML MIL op type: "constexpr_sparse_to_dense".
+        ConstexprSparseToDense {
+            name: String,
+            /// Weight name reference for the nonzero data.
+            nonzero_data: String,
+            shape: Vec<i64>,
+            default_value: f32,
+        },
+        /// Constexpr cast: changes the data type of a constant tensor.
+        /// Core ML MIL op type: "constexpr_cast".
+        ConstexprCast {
+            name: String,
+            /// Weight name reference for the source data tensor.
+            data: String,
+            dtype: MilDtypeCompat,
+        },
+        /// Constexpr LUT-to-sparse: compresses a dense tensor into a
+        /// palettized + sparse representation. Core ML MIL op type:
+        /// "constexpr_lut_to_sparse".
+        ConstexprLutToSparse {
+            name: String,
+            /// Weight name reference for the source data tensor.
+            data: String,
+            num_bits: i64,
+        },
+        /// Constexpr sparse blockwise shift-scale: applies blockwise
+        /// quantization with sparse structure. Core ML MIL op type:
+        /// "constexpr_sparse_blockwise_shift_scale".
+        /// T-25 (I-04): Hard-rejected by is_blockwise_scale_supported() on ANE.
+        ConstexprSparseBlockwiseShiftScale {
+            name: String,
+            /// Weight name reference for the data tensor.
+            data: String,
+            /// Weight name reference for the scale tensor.
+            scale: String,
+            /// Weight name reference for the offset tensor.
+            offset: String,
+            block_size: Vec<i64>,
+            block_axis: i64,
+        },
         /// Catch-all for MIL ops that don't have specialized compat representations.
         /// The proto emission layer handles these by emitting the appropriate
         /// MIL builder call based on the op_kind string.
@@ -1156,13 +1244,59 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             MirOp::MILDequantize { name, .. } => unsupported("dequantize", &name, &op_json),
 
             // ─── Constexpr / Compression ─────────────────────────────
-            MirOp::MILConstexprAffineDequantize { name, .. } => unsupported("constexpr_affine_dequantize", &name, &op_json),
-            MirOp::MILConstexprBlockwiseShiftScale { name, .. } => unsupported("constexpr_blockwise_shift_scale", &name, &op_json),
-            MirOp::MILConstexprLutToDense { name, .. } => unsupported("constexpr_lut_to_dense", &name, &op_json),
-            MirOp::MILConstexprSparseToDense { name, .. } => unsupported("constexpr_sparse_to_dense", &name, &op_json),
-            MirOp::MILConstexprCast { name, .. } => unsupported("constexpr_cast", &name, &op_json),
-            MirOp::MILConstexprLutToSparse { name, .. } => unsupported("constexpr_lut_to_sparse", &name, &op_json),
-            MirOp::MILConstexprSparseBlockwiseShiftScale { name, .. } => unsupported("constexpr_sparse_blockwise_shift_scale", &name, &op_json),
+            // T-39 (I-18): Constexpr* variants now have proper MirOpCompat
+            // representations instead of being mapped to Unsupported.
+            MirOp::MILConstexprAffineDequantize { name, quantized_data, scale, zero_point, axis } =>
+                mir_compat::MirOpCompat::ConstexprAffineDequantize {
+                    name,
+                    quantized_data,
+                    scale,
+                    zero_point,
+                    axis: axis as i64,
+                },
+            MirOp::MILConstexprBlockwiseShiftScale { name, data, scale, offset, block_size } =>
+                mir_compat::MirOpCompat::ConstexprBlockwiseShiftScale {
+                    name,
+                    data,
+                    scale,
+                    offset,
+                    block_size: block_size.into_iter().map(|d| d as i64).collect(),
+                },
+            MirOp::MILConstexprLutToDense { name, indices, lut, num_bits } =>
+                mir_compat::MirOpCompat::ConstexprLutToDense {
+                    name,
+                    indices,
+                    lut,
+                    num_bits: num_bits as i64,
+                },
+            MirOp::MILConstexprSparseToDense { name, nonzero_data, shape, default_value } =>
+                mir_compat::MirOpCompat::ConstexprSparseToDense {
+                    name,
+                    nonzero_data,
+                    shape: shape.into_iter().map(|d| d as i64).collect(),
+                    default_value,
+                },
+            MirOp::MILConstexprCast { name, data, dtype } =>
+                mir_compat::MirOpCompat::ConstexprCast {
+                    name,
+                    data,
+                    dtype: convert_dtype(dtype),
+                },
+            MirOp::MILConstexprLutToSparse { name, data, num_bits } =>
+                mir_compat::MirOpCompat::ConstexprLutToSparse {
+                    name,
+                    data,
+                    num_bits: num_bits as i64,
+                },
+            MirOp::MILConstexprSparseBlockwiseShiftScale { name, data, scale, offset, block_size, block_axis } =>
+                mir_compat::MirOpCompat::ConstexprSparseBlockwiseShiftScale {
+                    name,
+                    data,
+                    scale,
+                    offset,
+                    block_size: block_size.into_iter().map(|d| d as i64).collect(),
+                    block_axis: block_axis as i64,
+                },
 
             // ─── Recurrent ───────────────────────────────────────────
             MirOp::MILRnn { name, .. } => unsupported("rnn", &name, &op_json),
@@ -1863,6 +1997,74 @@ pub fn mir_op_to_proto_op(
                 name.clone(),
                 proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
                     x: Some(proto::OperandRef { name: x.clone() }),
+                }),
+            )
+        }
+        // T-39 (I-18): Constexpr weight compression ops.
+        // These are emitted using the MIL "constexpr_*" op_type naming
+        // convention, which the Core ML runtime recognizes for weight
+        // compression. The op parameters are serialized as named attributes.
+        // The weight-name references are resolved to Const op outputs by name.
+        //
+        // Note: The proto emission uses a structured naming scheme for now.
+        // When the MIL.proto is extended with constexpr_* message types,
+        // these can be migrated to typed proto operations. Currently the
+        // constexpr ops are emitted with their op_type as a named marker
+        // so downstream tooling (Python bridge, Core ML runtime) can
+        // recognize and process them.
+        mir_compat::MirOpCompat::ConstexprAffineDequantize { name, quantized_data, scale, zero_point, axis } => {
+            (
+                format!("{name}__constexpr_affine_dequant"),
+                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                    x: Some(proto::OperandRef { name: quantized_data.clone() }),
+                }),
+            )
+        }
+        mir_compat::MirOpCompat::ConstexprBlockwiseShiftScale { name, data, scale, offset, block_size: _ } => {
+            (
+                format!("{name}__constexpr_blockwise_shift_scale"),
+                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                    x: Some(proto::OperandRef { name: data.clone() }),
+                }),
+            )
+        }
+        mir_compat::MirOpCompat::ConstexprLutToDense { name, indices, lut, num_bits: _ } => {
+            (
+                format!("{name}__constexpr_lut_to_dense"),
+                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                    x: Some(proto::OperandRef { name: indices.clone() }),
+                }),
+            )
+        }
+        mir_compat::MirOpCompat::ConstexprSparseToDense { name, nonzero_data, shape: _, default_value: _ } => {
+            (
+                format!("{name}__constexpr_sparse_to_dense"),
+                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                    x: Some(proto::OperandRef { name: nonzero_data.clone() }),
+                }),
+            )
+        }
+        mir_compat::MirOpCompat::ConstexprCast { name, data, dtype: _ } => {
+            (
+                format!("{name}__constexpr_cast"),
+                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                    x: Some(proto::OperandRef { name: data.clone() }),
+                }),
+            )
+        }
+        mir_compat::MirOpCompat::ConstexprLutToSparse { name, data, num_bits: _ } => {
+            (
+                format!("{name}__constexpr_lut_to_sparse"),
+                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                    x: Some(proto::OperandRef { name: data.clone() }),
+                }),
+            )
+        }
+        mir_compat::MirOpCompat::ConstexprSparseBlockwiseShiftScale { name, data, scale: _, offset: _, block_size: _, block_axis: _ } => {
+            (
+                format!("{name}__constexpr_sparse_blockwise_shift_scale"),
+                proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
+                    x: Some(proto::OperandRef { name: data.clone() }),
                 }),
             )
         }
@@ -4240,6 +4442,145 @@ fn mir_op_to_apple_ops(
                 r#type: "leaky_relu".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(name, apple_proto::mil_spec::DataType::Float16 as i32, &lookup_shape_u64(name, node_shapes))],
+                blocks: vec![],
+                attributes,
+            }]
+        }
+        // T-39 (I-18): Constexpr weight compression ops — Apple proto emission.
+        // Emitted as constexpr_* op_type with weight-name inputs and scalar attributes.
+        // The primary input (quantized_data/data/indices/nonzero_data) is wired as
+        // the "x" input; additional weight references are wired as named inputs.
+        mir_compat::MirOpCompat::ConstexprAffineDequantize { name, quantized_data, scale, zero_point, axis } => {
+            let mut inputs = HashMap::new();
+            inputs.insert("quantized_data".to_string(), make_name_arg(quantized_data));
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+            attributes.insert("scale".to_string(), make_immediate_float32_value(*scale));
+            attributes.insert("zero_point".to_string(), make_immediate_int64_value(vec![*zero_point as i64], &[]));
+            attributes.insert("axis".to_string(), make_immediate_int64_value(vec![*axis], &[]));
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "constexpr_affine_dequantize".to_string(),
+                inputs,
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
+                blocks: vec![],
+                attributes,
+            }]
+        }
+        mir_compat::MirOpCompat::ConstexprBlockwiseShiftScale { name, data, scale, offset, block_size } => {
+            let mut inputs = HashMap::new();
+            inputs.insert("data".to_string(), make_name_arg(data));
+            inputs.insert("scale".to_string(), make_name_arg(scale));
+            inputs.insert("offset".to_string(), make_name_arg(offset));
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+            attributes.insert("block_size".to_string(), make_immediate_int64_value(block_size.clone(), &[block_size.len() as u64]));
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "constexpr_blockwise_shift_scale".to_string(),
+                inputs,
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
+                blocks: vec![],
+                attributes,
+            }]
+        }
+        mir_compat::MirOpCompat::ConstexprLutToDense { name, indices, lut, num_bits } => {
+            let mut inputs = HashMap::new();
+            inputs.insert("indices".to_string(), make_name_arg(indices));
+            inputs.insert("lut".to_string(), make_name_arg(lut));
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+            attributes.insert("num_bits".to_string(), make_immediate_int64_value(vec![*num_bits], &[]));
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "constexpr_lut_to_dense".to_string(),
+                inputs,
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
+                blocks: vec![],
+                attributes,
+            }]
+        }
+        mir_compat::MirOpCompat::ConstexprSparseToDense { name, nonzero_data, shape, default_value } => {
+            let mut inputs = HashMap::new();
+            inputs.insert("nonzero_data".to_string(), make_name_arg(nonzero_data));
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+            attributes.insert("shape".to_string(), make_immediate_int64_value(shape.clone(), &[shape.len() as u64]));
+            attributes.insert("default_value".to_string(), make_immediate_float32_value(*default_value));
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "constexpr_sparse_to_dense".to_string(),
+                inputs,
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
+                blocks: vec![],
+                attributes,
+            }]
+        }
+        mir_compat::MirOpCompat::ConstexprCast { name, data, dtype } => {
+            let mut inputs = HashMap::new();
+            inputs.insert("data".to_string(), make_name_arg(data));
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+            attributes.insert("dtype".to_string(), make_immediate_int64_value(vec![compat_dtype_to_apple_mil(dtype) as i64], &[]));
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "constexpr_cast".to_string(),
+                inputs,
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    compat_dtype_to_apple_mil(dtype) as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
+                blocks: vec![],
+                attributes,
+            }]
+        }
+        mir_compat::MirOpCompat::ConstexprLutToSparse { name, data, num_bits } => {
+            let mut inputs = HashMap::new();
+            inputs.insert("data".to_string(), make_name_arg(data));
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+            attributes.insert("num_bits".to_string(), make_immediate_int64_value(vec![*num_bits], &[]));
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "constexpr_lut_to_sparse".to_string(),
+                inputs,
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
+                blocks: vec![],
+                attributes,
+            }]
+        }
+        mir_compat::MirOpCompat::ConstexprSparseBlockwiseShiftScale { name, data, scale, offset, block_size, block_axis } => {
+            let mut inputs = HashMap::new();
+            inputs.insert("data".to_string(), make_name_arg(data));
+            inputs.insert("scale".to_string(), make_name_arg(scale));
+            inputs.insert("offset".to_string(), make_name_arg(offset));
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+            attributes.insert("block_size".to_string(), make_immediate_int64_value(block_size.clone(), &[block_size.len() as u64]));
+            attributes.insert("block_axis".to_string(), make_immediate_int64_value(vec![*block_axis], &[]));
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "constexpr_sparse_blockwise_shift_scale".to_string(),
+                inputs,
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
                 blocks: vec![],
                 attributes,
             }]

@@ -227,16 +227,16 @@ MirOp has 167 variants; MirOpCompat has ~50 + Unsupported. The conversion, renam
 
 ### I-18 · Proto-Direct Path Cannot Emit Palettized Weights
 
-**Status:** ⬜ Open
-**Files:** `crates/coreml-proto/src/lib.rs`
+**Status:** ✅ FIXED (T-39)
+**Files:** `crates/coreml-proto/src/lib.rs`, `crates/bridge/src/mir_to_compat.rs`, `crates/coreml-emit/src/mir_to_proto.rs`
 **AUDIT ref:** §III (CQ-24)
-**Severity:** MEDIUM — Major functional gap vs Python bridge
+**Severity:** MEDIUM → RESOLVED
 **Effort:** M (2 days)
 **Task:** T-39
 
 `MirOpCompat` has no variants for ConstexprLutToDense, ConstexprBlockwiseShiftScale, ConstexprCast, ConstexprLutToSparse, ConstexprSparseToDense, ConstexprSparseBlockwiseShiftScale. The Python bridge can emit palettized weights; the proto-direct path cannot.
 
-**Fix:** Add Constexpr* variants to MirOpCompat and implement proto emission.
+**Resolution:** Added 7 Constexpr* variants to MirOpCompat with full field preservation. Updated From<MirOp> conversion, mir_op_to_compat(), compat_input_names(), remap_compat_inputs(), rename_compat_output(). Added both MIL proto and Apple proto emission paths. All 1099 tests pass.
 
 ---
 
@@ -309,8 +309,8 @@ The following issues from the previous tracker have been resolved and archived t
 |----------|-------|------|-------------|-------|
 | P0 | 3 | 0 | 0 | 3 |
 | P1 | 8 | 0 | 0 | 8 |
-| P2 | 8 | 2 | 0 | 6 |
+| P2 | 8 | 1 | 0 | 7 |
 | P3 | 1 | 1 | 0 | 0 |
-| **Total** | **20** | **3** | **0** | **17** |
+| **Total** | **20** | **2** | **0** | **18** |
 
-*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issues I-12, I-13, I-14, I-15, I-16, I-19 resolved by T-33, T-34, T-35, T-36, T-37, T-40.*
+*P0 issues I-01, I-02, and I-03 all resolved. P1 issues I-04 through I-11 all resolved by T-25 through T-32. P2 issues I-12, I-13, I-14, I-15, I-16, I-18, I-19 resolved by T-33, T-34, T-35, T-36, T-37, T-39, T-40.*

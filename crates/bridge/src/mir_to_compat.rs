@@ -521,6 +521,17 @@ fn compat_input_names(op: &MirOpCompat) -> Vec<String> {
         MirOpCompat::Select { condition, x, y, .. } => vec![condition.clone(), x.clone(), y.clone()],
         // LeakyRelu: unary with alpha param
         MirOpCompat::LeakyRelu { x, .. } => vec![x.clone()],
+        // T-39: Constexpr weight compression ops.
+        // These use weight-name references as inputs (resolved to MIL Const ops).
+        MirOpCompat::ConstexprAffineDequantize { quantized_data, .. } => vec![quantized_data.clone()],
+        MirOpCompat::ConstexprBlockwiseShiftScale { data, scale, offset, .. } =>
+            vec![data.clone(), scale.clone(), offset.clone()],
+        MirOpCompat::ConstexprLutToDense { indices, lut, .. } => vec![indices.clone(), lut.clone()],
+        MirOpCompat::ConstexprSparseToDense { nonzero_data, .. } => vec![nonzero_data.clone()],
+        MirOpCompat::ConstexprCast { data, .. } => vec![data.clone()],
+        MirOpCompat::ConstexprLutToSparse { data, .. } => vec![data.clone()],
+        MirOpCompat::ConstexprSparseBlockwiseShiftScale { data, scale, offset, .. } =>
+            vec![data.clone(), scale.clone(), offset.clone()],
         MirOpCompat::Unsupported { .. } => vec![],
     }
 }
@@ -881,6 +892,54 @@ fn remap_compat_inputs(
         MirOpCompat::LeakyRelu { name, x, alpha } => {
             MirOpCompat::LeakyRelu { name, x: remap_name(x, aliases), alpha }
         }
+        // T-39: Constexpr weight compression ops — remap weight-name references.
+        MirOpCompat::ConstexprAffineDequantize { name, quantized_data, scale, zero_point, axis } =>
+            MirOpCompat::ConstexprAffineDequantize {
+                name,
+                quantized_data: remap_name(quantized_data, aliases),
+                scale, zero_point, axis,
+            },
+        MirOpCompat::ConstexprBlockwiseShiftScale { name, data, scale, offset, block_size } =>
+            MirOpCompat::ConstexprBlockwiseShiftScale {
+                name,
+                data: remap_name(data, aliases),
+                scale: remap_name(scale, aliases),
+                offset: remap_name(offset, aliases),
+                block_size,
+            },
+        MirOpCompat::ConstexprLutToDense { name, indices, lut, num_bits } =>
+            MirOpCompat::ConstexprLutToDense {
+                name,
+                indices: remap_name(indices, aliases),
+                lut: remap_name(lut, aliases),
+                num_bits,
+            },
+        MirOpCompat::ConstexprSparseToDense { name, nonzero_data, shape, default_value } =>
+            MirOpCompat::ConstexprSparseToDense {
+                name,
+                nonzero_data: remap_name(nonzero_data, aliases),
+                shape, default_value,
+            },
+        MirOpCompat::ConstexprCast { name, data, dtype } =>
+            MirOpCompat::ConstexprCast {
+                name,
+                data: remap_name(data, aliases),
+                dtype,
+            },
+        MirOpCompat::ConstexprLutToSparse { name, data, num_bits } =>
+            MirOpCompat::ConstexprLutToSparse {
+                name,
+                data: remap_name(data, aliases),
+                num_bits,
+            },
+        MirOpCompat::ConstexprSparseBlockwiseShiftScale { name, data, scale, offset, block_size, block_axis } =>
+            MirOpCompat::ConstexprSparseBlockwiseShiftScale {
+                name,
+                data: remap_name(data, aliases),
+                scale: remap_name(scale, aliases),
+                offset: remap_name(offset, aliases),
+                block_size, block_axis,
+            },
         other => other,
     }
 }
@@ -1042,6 +1101,21 @@ fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
         MirOpCompat::LeakyRelu { name: _, x, alpha } => {
             MirOpCompat::LeakyRelu { name: new_name, x, alpha }
         }
+        // T-39: Constexpr weight compression ops — rename output name.
+        MirOpCompat::ConstexprAffineDequantize { name: _, quantized_data, scale, zero_point, axis } =>
+            MirOpCompat::ConstexprAffineDequantize { name: new_name, quantized_data, scale, zero_point, axis },
+        MirOpCompat::ConstexprBlockwiseShiftScale { name: _, data, scale, offset, block_size } =>
+            MirOpCompat::ConstexprBlockwiseShiftScale { name: new_name, data, scale, offset, block_size },
+        MirOpCompat::ConstexprLutToDense { name: _, indices, lut, num_bits } =>
+            MirOpCompat::ConstexprLutToDense { name: new_name, indices, lut, num_bits },
+        MirOpCompat::ConstexprSparseToDense { name: _, nonzero_data, shape, default_value } =>
+            MirOpCompat::ConstexprSparseToDense { name: new_name, nonzero_data, shape, default_value },
+        MirOpCompat::ConstexprCast { name: _, data, dtype } =>
+            MirOpCompat::ConstexprCast { name: new_name, data, dtype },
+        MirOpCompat::ConstexprLutToSparse { name: _, data, num_bits } =>
+            MirOpCompat::ConstexprLutToSparse { name: new_name, data, num_bits },
+        MirOpCompat::ConstexprSparseBlockwiseShiftScale { name: _, data, scale, offset, block_size, block_axis } =>
+            MirOpCompat::ConstexprSparseBlockwiseShiftScale { name: new_name, data, scale, offset, block_size, block_axis },
         MirOpCompat::Placeholder { name: _, dtype } => {
             MirOpCompat::Placeholder { name: new_name, dtype }
         }
@@ -1742,6 +1816,59 @@ pub fn mir_op_to_compat(
         MirOp::MILSign { name, x } => Ok(MirOpCompat::Sign { name: name.clone(), x: x.0.clone() }),
         MirOp::MILLog { name, x, .. } => Ok(MirOpCompat::Log { name: name.clone(), x: x.0.clone() }),
 
+        // ─── Constexpr / Weight Compression (T-39: I-18) ────────────
+        MirOp::MILConstexprAffineDequantize { name, quantized_data, scale, zero_point, axis } =>
+            Ok(MirOpCompat::ConstexprAffineDequantize {
+                name: name.clone(),
+                quantized_data: quantized_data.clone(),
+                scale: *scale,
+                zero_point: *zero_point,
+                axis: *axis as i64,
+            }),
+        MirOp::MILConstexprBlockwiseShiftScale { name, data, scale, offset, block_size } =>
+            Ok(MirOpCompat::ConstexprBlockwiseShiftScale {
+                name: name.clone(),
+                data: data.clone(),
+                scale: scale.clone(),
+                offset: offset.clone(),
+                block_size: block_size.iter().map(|&d| d as i64).collect(),
+            }),
+        MirOp::MILConstexprLutToDense { name, indices, lut, num_bits } =>
+            Ok(MirOpCompat::ConstexprLutToDense {
+                name: name.clone(),
+                indices: indices.clone(),
+                lut: lut.clone(),
+                num_bits: *num_bits as i64,
+            }),
+        MirOp::MILConstexprSparseToDense { name, nonzero_data, shape, default_value } =>
+            Ok(MirOpCompat::ConstexprSparseToDense {
+                name: name.clone(),
+                nonzero_data: nonzero_data.clone(),
+                shape: shape.iter().map(|&d| d as i64).collect(),
+                default_value: *default_value,
+            }),
+        MirOp::MILConstexprCast { name, data, dtype } =>
+            Ok(MirOpCompat::ConstexprCast {
+                name: name.clone(),
+                data: data.clone(),
+                dtype: mil_dtype_to_compat(dtype),
+            }),
+        MirOp::MILConstexprLutToSparse { name, data, num_bits } =>
+            Ok(MirOpCompat::ConstexprLutToSparse {
+                name: name.clone(),
+                data: data.clone(),
+                num_bits: *num_bits as i64,
+            }),
+        MirOp::MILConstexprSparseBlockwiseShiftScale { name, data, scale, offset, block_size, block_axis } =>
+            Ok(MirOpCompat::ConstexprSparseBlockwiseShiftScale {
+                name: name.clone(),
+                data: data.clone(),
+                scale: scale.clone(),
+                offset: offset.clone(),
+                block_size: block_size.iter().map(|&d| d as i64).collect(),
+                block_axis: *block_axis as i64,
+            }),
+
         // ─── Full-coverage wildcard for all remaining MirOp variants ───
         // These map to MirOpCompat::Unsupported which carries the op kind
         // and serialized parameters for flexible proto emission.
@@ -1922,26 +2049,29 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         }
         MirOp::MILQuantize { name, .. } => ("quantize".into(), name.clone(), "{}".into()),
         MirOp::MILDequantize { name, .. } => ("dequantize".into(), name.clone(), "{}".into()),
+        // T-39: Constexpr* variants are now handled in mir_op_to_compat()
+        // with proper MirOpCompat representations. These arms should be
+        // unreachable but are kept for exhaustiveness.
         MirOp::MILConstexprAffineDequantize { name, .. } => {
-            ("constexpr_affine_dequantize".into(), name.clone(), "{}".into())
+            unreachable!("constexpr_affine_dequantize is now handled in mir_op_to_compat: {}", name)
         }
         MirOp::MILConstexprBlockwiseShiftScale { name, .. } => {
-            ("constexpr_blockwise_shift_scale".into(), name.clone(), "{}".into())
+            unreachable!("constexpr_blockwise_shift_scale is now handled in mir_op_to_compat: {}", name)
         }
         MirOp::MILConstexprLutToDense { name, .. } => {
-            ("constexpr_lut_to_dense".into(), name.clone(), "{}".into())
+            unreachable!("constexpr_lut_to_dense is now handled in mir_op_to_compat: {}", name)
         }
         MirOp::MILConstexprSparseToDense { name, .. } => {
-            ("constexpr_sparse_to_dense".into(), name.clone(), "{}".into())
+            unreachable!("constexpr_sparse_to_dense is now handled in mir_op_to_compat: {}", name)
         }
         MirOp::MILConstexprCast { name, .. } => {
-            ("constexpr_cast".into(), name.clone(), "{}".into())
+            unreachable!("constexpr_cast is now handled in mir_op_to_compat: {}", name)
         }
         MirOp::MILConstexprLutToSparse { name, .. } => {
-            ("constexpr_lut_to_sparse".into(), name.clone(), "{}".into())
+            unreachable!("constexpr_lut_to_sparse is now handled in mir_op_to_compat: {}", name)
         }
         MirOp::MILConstexprSparseBlockwiseShiftScale { name, .. } => {
-            ("constexpr_sparse_blockwise_shift_scale".into(), name.clone(), "{}".into())
+            unreachable!("constexpr_sparse_blockwise_shift_scale is now handled in mir_op_to_compat: {}", name)
         }
         MirOp::MILRnn { name, .. } => ("rnn".into(), name.clone(), "{}".into()),
         MirOp::MILGru { name, .. } => ("gru".into(), name.clone(), "{}".into()),

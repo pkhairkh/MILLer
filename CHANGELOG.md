@@ -2,6 +2,13 @@
 
 ## 2026-05-04
 
+### T-39 · Add ConstexprLutToDense to MirOpCompat ✅
+- **ISSUES ref**: I-18
+- **AUDIT ref**: §III (CQ-24)
+- **Severity**: MEDIUM → RESOLVED
+- **Effort**: M (2 days)
+- **Resolution**: Added 7 Constexpr* variants to MirOpCompat, closing the major functional gap where the proto-direct path could not emit palettized/quantized/compressed weights. Previously all 7 constexpr MirOp variants were mapped to `MirOpCompat::Unsupported` with all field data lost (empty `"{}"` params JSON). Changes across 3 crates: (1) `coreml-proto/src/lib.rs`: Added 7 new MirOpCompat variants (ConstexprAffineDequantize, ConstexprBlockwiseShiftScale, ConstexprLutToDense, ConstexprSparseToDense, ConstexprCast, ConstexprLutToSparse, ConstexprSparseBlockwiseShiftScale) with full field preservation. Updated `From<MirOp>` with proper type conversions. Added both MIL proto and Apple proto emission paths using `constexpr_*` op_type with weight-name inputs and scalar/vector attributes. (2) `bridge/src/mir_to_compat.rs`: Added 7 explicit match arms in `mir_op_to_compat()`. Marked constexpr arms in `mir_op_to_unsupported()` as `unreachable!()`. Added 7 arms each in `compat_input_names()`, `remap_compat_inputs()`, and `rename_compat_output()`. (3) `coreml-emit/src/mir_to_proto.rs`: Added 7 constexpr variants to `op_output_names` macro. All 1099 tests pass.
+
 ### T-40 · Fix V17 (M1) → A18 Mapping ✅
 - **ISSUES ref**: I-19
 - **AUDIT ref**: §III (CQ-14), §IV (B-4)

@@ -637,6 +637,9 @@ fn op_output_names(op: &MirOpCompat) -> Vec<String> {
         Greater, GreaterEqual, Less, LessEqual, LogicalNot, LogicalAnd,
         LogicalOr, Pad, ReduceMax, ReduceMin, ReduceProd, Select,
         LeakyRelu, FloorDiv, Mod, Ceil, Floor, Round, Sign, Log,
+        ConstexprAffineDequantize, ConstexprBlockwiseShiftScale,
+        ConstexprLutToDense, ConstexprSparseToDense, ConstexprCast,
+        ConstexprLutToSparse, ConstexprSparseBlockwiseShiftScale,
     )
 }
 

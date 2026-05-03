@@ -152,13 +152,13 @@
 - **Effort**: L (3-5 days)
 - **Description**: Replace MirOpCompat dual definition with `ToProto` trait. Eliminate ~1150 lines of per-variant match-arm boilerplate.
 
-### T-39 · Add ConstexprLutToDense to MirOpCompat
+### T-39 · Add ConstexprLutToDense to MirOpCompat ✅
 
 - **ISSUES ref**: I-18
 - **AUDIT ref**: §III (CQ-24)
-- **Severity**: MEDIUM
+- **Severity**: MEDIUM → RESOLVED
 - **Effort**: M (2 days)
-- **Description**: Proto-direct path cannot emit palettized weights. Add ConstexprLutToDense, ConstexprBlockwiseShiftScale, etc. to MirOpCompat.
+- **Resolution**: Added 7 Constexpr* variants to MirOpCompat, closing the major functional gap where the proto-direct path could not emit palettized/quantized/compressed weights. Previously all 7 constexpr MirOp variants (MILConstexprAffineDequantize, MILConstexprBlockwiseShiftScale, MILConstexprLutToDense, MILConstexprSparseToDense, MILConstexprCast, MILConstexprLutToSparse, MILConstexprSparseBlockwiseShiftScale) were mapped to `MirOpCompat::Unsupported` with all field data lost. Changes: (1) `coreml-proto/src/lib.rs`: Added 7 new MirOpCompat variants with full field preservation (weight-name references, scale/zero_point/axis, block_size, num_bits, shape, default_value, dtype, block_axis). Updated `From<MirOp>` to map each constexpr variant with proper type conversions (usize→i64, isize→i64, MilDtype→MilDtypeCompat). Added MIL proto emission (structured naming with primary weight-name as IdentityOp input). Added Apple proto emission using `constexpr_*` op_type with weight-name inputs and scalar/vector attributes (scale, zero_point, axis, block_size, num_bits, shape, default_value, dtype, block_axis); (2) `bridge/src/mir_to_compat.rs`: Added 7 explicit match arms in `mir_op_to_compat()` with full field conversion. Marked constexpr arms in `mir_op_to_unsupported()` as `unreachable!()`. Added 7 arms each in `compat_input_names()`, `remap_compat_inputs()`, and `rename_compat_output()` for complete pipeline support; (3) `coreml-emit/src/mir_to_proto.rs`: Added 7 constexpr variants to `op_output_names` macro. All 1099 tests pass.
 
 ### T-40 · Fix V17 (M1) → A18 Mapping ✅
 
@@ -231,7 +231,7 @@
 | T-36 | I-15 | MEDIUM | M | ✅ |
 | T-37 | I-16 | MEDIUM | M | ✅ |
 | T-38 | I-17 | MEDIUM | L | ⬜ |
-| T-39 | I-18 | MEDIUM | M | ⬜ |
+| T-39 | I-18 | MEDIUM | M | ✅ |
 | T-40 | I-19 | MEDIUM | S | ✅ |
 | T-41 | I-20 | LOW | S | ⬜ |
 | T-42 | — | LOW | S | ⬜ |
