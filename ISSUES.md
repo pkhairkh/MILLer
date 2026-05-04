@@ -608,7 +608,7 @@ ConvTranspose always passes placement validation unconditionally. Five ANEC-spec
 
 ### I-70 · Multi-Surface Ordering and Uniformity Not Validated
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-95)
 **Files:** `crates/coreml-emit/src/mir_to_proto.rs`, `crates/bridge/src/mir_to_compat.rs`
 **AUDIT ref:** V-105, V-117, V-118, V-119, V-120, V-121 (ane-violations.md §III)
 **Severity:** HIGH
@@ -617,13 +617,13 @@ ConvTranspose always passes placement validation unconditionally. Five ANEC-spec
 
 ANE requires multi-output/input surfaces in alphabetical order (Orion #3, #19) with uniform allocation sizes (Orion #2, #18). Neither is validated. Incorrect ordering causes silent data corruption. Non-uniform sizes cause 0x1d runtime error. Flat buffer layout packed [1,C,1,S] (Orion #20) not validated.
 
-**Fix:** Sort surfaces alphabetically before emission. Validate uniform sizes. Validate flat buffer layout.
+**Fix:** Fixed in T-95: Added alphabetical sorting of multi-output (Orion #3) and multi-input (Orion #19) surfaces before emission. Added `validate_surface_uniformity()` for Orion #2/#18. Added `validate_flat_buffer_layout()` for Orion #20.
 
 ---
 
 ### I-71 · MILLinear→MILMatMul Defeats Conv1x1AsLinear Optimization
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-96)
 **Files:** `crates/passes/src/mil_lower.rs:3268-3307`, `crates/passes/src/legality_rewrite.rs:354-370`
 **AUDIT ref:** V-114 (ane-violations.md §III)
 **Severity:** HIGH
@@ -632,7 +632,7 @@ ANE requires multi-output/input surfaces in alphabetical order (Orion #3, #19) w
 
 The AIR→MIR pipeline creates Conv1x1AsLinear in legality_rewrite, but mil_lower converts ALL MILLinear to MILMatMul. Orion #17 documents conv 1x1 is 3x faster than matmul on ANE. The comment says "linear op may not have an ANE execution converter" but ConvertLayer has 97 instances vs ConvertMatMul's 8.
 
-**Fix:** Preserve Conv1x1AsLinear as MILConv(1x1) for ANE targets. Keep MILLinear→MILMatMul for CPU targets.
+**Fix:** Fixed in T-96: Changed ANE legality rewrite to convert MILLinear → MILConv(1x1) instead of MILMatMul for ANE targets (Orion #17: conv 1x1 is 3x faster). CPU path retains MILLinear→MILMatMul.
 
 ---
 
@@ -1540,7 +1540,7 @@ DEFAULT_OPSET_VERSION = "iOS18" and minimum_deployment_target hardcoded. Models 
 
 ### I-91 · ANEC Attribute Shape Validation Missing
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-116)
 **Files:** `crates/coreml-emit/src/mir_to_proto.rs`
 **AUDIT ref:** V-107 (ane-violations.md §III)
 **Severity:** MEDIUM
@@ -1549,11 +1549,13 @@ DEFAULT_OPSET_VERSION = "iOS18" and minimum_deployment_target hardcoded. Models 
 
 ANEC defines precise attribute shapes for all 98 operations (e.g., conv: stride=shape{3}). MILLer doesn't validate emitted attributes match ANEC expectations. Wrong-shaped attributes fail at ANEC compile time.
 
+**Fix:** Fixed in T-116: Added `validate_anec_attribute_shapes()` validating stride, pad_amounts, dilation shapes per ANEC schema for conv, pool, deconv ops. Wired into mir_to_compat conversion.
+
 ---
 
 ### I-92 · AneFamily Missing 2 Binary-Defined Families
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-117)
 **Files:** `crates/ir/src/ane_target.rs`
 **AUDIT ref:** V-109 (ane-violations.md §III)
 **Severity:** MEDIUM
@@ -1561,6 +1563,8 @@ ANEC defines precise attribute shapes for all 98 operations (e.g., conv: stride=
 **Task:** T-117
 
 Binary MinimumFamily enum has 8 values (0-7), MILLer only models 6 (A11Legacy through A18). Families 6-7 unmapped — MILLer cannot express constraints for these families.
+
+**Fix:** Fixed in T-117: Added `minimum_family_value()` / `from_minimum_family_value()` mapping all 8 AneFamily variants to ANEC binary MinimumFamily discriminants 0-7. Added `family_level()` ordering and `ALL_FAMILIES` constant.
 
 ---
 

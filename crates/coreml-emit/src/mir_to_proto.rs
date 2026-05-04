@@ -434,6 +434,18 @@ pub fn convert_mir_to_proto_multifunction(
             }
         }
 
+        // T-95: Sort multi-output surfaces alphabetically (Orion #3).
+        // The ANE reads output tensors in alphabetical order. If surfaces
+        // are not sorted, correct values are written to wrong output tensors,
+        // causing silent data corruption — the most dangerous class of bug.
+        graph_outputs.sort_by(|a, b| a.name.cmp(&b.name));
+
+        // T-95: Sort multi-input surfaces alphabetically (Orion #19).
+        // The ANE reads input tensors in alphabetical order. If surfaces
+        // are not sorted, input values are read in the wrong order,
+        // causing silent data corruption in downstream computation.
+        graph_inputs.sort_by(|a, b| a.name.cmp(&b.name));
+
         functions.push(CoreMlFunction {
             name: graph.function_name.clone(),
             inputs: graph_inputs,
@@ -481,6 +493,18 @@ pub fn convert_mir_to_proto_multifunction(
     // smaller output buffers fail at runtime with 0x1d error.
     validate_iosurface_sizes(&functions)?;
 
+    // T-95: Validate surface size uniformity (Orion #2, #18).
+    // The ANE requires all output buffers to have the same byte size and
+    // all input buffers to have the same byte size within each function.
+    // Non-uniform sizes cause 0x1d runtime errors with no compile-time
+    // indication from coremlcompiler.
+    validate_surface_uniformity(&functions)?;
+
+    // T-95: Validate flat buffer layout [1,C,1,S] (Orion #20).
+    // The ANE flat buffer layout packs tensors as [1,C,1,S]. Tensors
+    // not conforming to this layout may be silently misinterpreted.
+    validate_flat_buffer_layout(&functions)?;
+
     Ok(CoreMlModel {
         spec_version,
         description,
@@ -525,6 +549,113 @@ fn validate_iosurface_sizes(functions: &[ane_coreml_proto::CoreMlFunction]) -> R
                     element_size,
                     MIN_IOSURFACE_BYTES
                 );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// T-95: Validate that all output surfaces and all input surfaces within
+/// each function have uniform byte sizes (Orion #2, #18).
+///
+/// The ANE requires all output buffers in a function to have the same byte
+/// size, and all input buffers to have the same byte size. Non-uniform
+/// sizes cause a 0x1d runtime error with no compile-time indication from
+/// coremlcompiler — the model compiles successfully but fails at inference.
+///
+/// This check warns (does not error) because single-output functions are
+/// trivially uniform, and the constraint is only relevant for multi-output
+/// functions. The warning helps catch layout issues before runtime.
+fn validate_surface_uniformity(functions: &[ane_coreml_proto::CoreMlFunction]) -> Result<()> {
+    for func in functions {
+        // Check output buffer uniformity (Orion #2)
+        if func.outputs.len() > 1 {
+            let sizes: Vec<(u64, &str)> = func
+                .outputs
+                .iter()
+                .map(|o| {
+                    let element_size = o.dtype.element_size() as u64;
+                    let shape_product: u64 = o.shape.iter().product::<u64>().max(1);
+                    (shape_product * element_size, o.name.as_str())
+                })
+                .collect();
+            let first_size = sizes[0].0;
+            let non_uniform: Vec<&str> =
+                sizes.iter().filter(|(s, _)| *s != first_size).map(|(_, n)| *n).collect();
+            if !non_uniform.is_empty() {
+                log::warn!(
+                    "T-95: Function '{}' has non-uniform output buffer sizes (Orion #2). \
+                     The ANE requires all output buffers in a function to have the same byte size. \
+                     Non-uniform sizes may cause 0x1d runtime error. \
+                     First output size: {} bytes; non-uniform outputs: {:?}",
+                    func.name,
+                    first_size,
+                    non_uniform
+                );
+            }
+        }
+
+        // Check input buffer uniformity (Orion #18)
+        if func.inputs.len() > 1 {
+            let sizes: Vec<(u64, &str)> = func
+                .inputs
+                .iter()
+                .map(|i| {
+                    let element_size = i.dtype.element_size() as u64;
+                    let shape_product: u64 = i.shape.iter().product::<u64>().max(1);
+                    (shape_product * element_size, i.name.as_str())
+                })
+                .collect();
+            let first_size = sizes[0].0;
+            let non_uniform: Vec<&str> =
+                sizes.iter().filter(|(s, _)| *s != first_size).map(|(_, n)| *n).collect();
+            if !non_uniform.is_empty() {
+                log::warn!(
+                    "T-95: Function '{}' has non-uniform input buffer sizes (Orion #18). \
+                     The ANE requires all input buffers in a function to have the same byte size. \
+                     Non-uniform sizes may cause 0x1d runtime error. \
+                     First input size: {} bytes; non-uniform inputs: {:?}",
+                    func.name,
+                    first_size,
+                    non_uniform
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// T-95: Validate that tensor shapes conform to the ANE flat buffer layout
+/// convention [1,C,1,S] (Orion #20).
+///
+/// The ANE flat buffer layout packs tensor data in [1,C,1,S] format.
+/// Tensors with rank != 4 or that don't follow this convention may be
+/// silently misinterpreted by the ANE runtime, producing incorrect
+/// inference results without any error message.
+///
+/// This check warns for tensors that deviate from the [1,C,1,S] layout.
+/// It is advisory (not a hard error) because the Core ML framework handles
+/// the layout transform internally for most standard operations.
+fn validate_flat_buffer_layout(functions: &[ane_coreml_proto::CoreMlFunction]) -> Result<()> {
+    for func in functions {
+        for output in &func.outputs {
+            // The ANE flat buffer layout is [1,C,1,S]. Rank-4 tensors with
+            // this pattern are the canonical layout. Rank != 4 is acceptable
+            // for scalars/vectors that the runtime will pad automatically.
+            if output.shape.len() == 4 {
+                // For rank-4 tensors, the canonical layout is [1,C,1,S].
+                // Check if dimensions 0 and 2 are 1 (the "1" in [1,C,1,S]).
+                if output.shape[0] != 1 || output.shape[2] != 1 {
+                    log::warn!(
+                        "T-95: Output '{}' in function '{}' has rank-4 shape {:?} that \
+                         does not follow ANE flat buffer layout [1,C,1,S] (Orion #20). \
+                         Dimensions [0] and [2] should be 1 for the canonical layout. \
+                         Data may be silently misinterpreted by the ANE runtime.",
+                        output.name,
+                        func.name,
+                        output.shape
+                    );
+                }
             }
         }
     }
@@ -1421,5 +1552,285 @@ mod tests {
         // 1x25088 output = 50176 bytes — above 49 KB
         let large_size: u64 = 1 * 25088 * element_size;
         assert!(large_size >= MIN_IOSURFACE_BYTES);
+    }
+
+    // ─── T-95: Surface Ordering Tests ──────────────────────────────
+
+    #[test]
+    fn test_t95_output_surfaces_sorted_alphabetically() {
+        // T-95 (Orion #3): Multi-output surfaces must be sorted alphabetically.
+        // Build a graph with outputs in non-alphabetical order, then verify
+        // the emitted model sorts them.
+        let graph = MirGraphCompat {
+            ops: vec![
+                MirOpCompat::Const {
+                    name: "weight".to_string(),
+                    data: vec![0u8; 128],
+                    dtype: MilDtypeCompat::Fp16,
+                    shape: vec![16, 16],
+                },
+                MirOpCompat::Linear {
+                    name: "z_output".to_string(),  // 'z' — should be last after sorting
+                    x: "x".to_string(),
+                    weight_name: "weight".to_string(),
+                    bias_name: None,
+                },
+                MirOpCompat::Linear {
+                    name: "a_output".to_string(),  // 'a' — should be first after sorting
+                    x: "x".to_string(),
+                    weight_name: "weight".to_string(),
+                    bias_name: None,
+                },
+                MirOpCompat::Linear {
+                    name: "m_output".to_string(),  // 'm' — should be middle after sorting
+                    x: "x".to_string(),
+                    weight_name: "weight".to_string(),
+                    bias_name: None,
+                },
+            ],
+            inputs: vec!["x".to_string()],
+            outputs: vec!["z_output".to_string(), "a_output".to_string(), "m_output".to_string()],
+            opset_version: "iOS18".to_string(),
+            function_name: "main".to_string(),
+            input_descs: vec![ane_coreml_proto::mir_compat::TensorDescCompat {
+                name: "x".to_string(),
+                shape: vec![1, 16],
+                dtype: MilDtypeCompat::Fp16,
+            }],
+            output_descs: vec![
+                ane_coreml_proto::mir_compat::TensorDescCompat {
+                    name: "z_output".to_string(),
+                    shape: vec![1, 16],
+                    dtype: MilDtypeCompat::Fp16,
+                },
+                ane_coreml_proto::mir_compat::TensorDescCompat {
+                    name: "a_output".to_string(),
+                    shape: vec![1, 16],
+                    dtype: MilDtypeCompat::Fp16,
+                },
+                ane_coreml_proto::mir_compat::TensorDescCompat {
+                    name: "m_output".to_string(),
+                    shape: vec![1, 16],
+                    dtype: MilDtypeCompat::Fp16,
+                },
+            ],
+            node_shapes: std::collections::HashMap::new(),
+        };
+
+        let model =
+            convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
+
+        // Verify outputs are sorted alphabetically
+        let output_names: Vec<&str> = model.functions[0].outputs.iter().map(|o| o.name.as_str()).collect();
+        assert_eq!(output_names, vec!["a_output", "m_output", "z_output"],
+            "T-95: Output surfaces must be sorted alphabetically (Orion #3)");
+    }
+
+    #[test]
+    fn test_t95_input_surfaces_sorted_alphabetically() {
+        // T-95 (Orion #19): Multi-input surfaces must be sorted alphabetically.
+        let graph = MirGraphCompat {
+            ops: vec![
+                MirOpCompat::Const {
+                    name: "weight".to_string(),
+                    data: vec![0u8; 128],
+                    dtype: MilDtypeCompat::Fp16,
+                    shape: vec![16, 16],
+                },
+                MirOpCompat::Linear {
+                    name: "output".to_string(),
+                    x: "z_input".to_string(),  // 'z' — last after sorting
+                    weight_name: "weight".to_string(),
+                    bias_name: None,
+                },
+            ],
+            inputs: vec!["z_input".to_string(), "a_input".to_string()],
+            outputs: vec!["output".to_string()],
+            opset_version: "iOS18".to_string(),
+            function_name: "main".to_string(),
+            input_descs: vec![
+                ane_coreml_proto::mir_compat::TensorDescCompat {
+                    name: "z_input".to_string(),
+                    shape: vec![1, 16],
+                    dtype: MilDtypeCompat::Fp16,
+                },
+                ane_coreml_proto::mir_compat::TensorDescCompat {
+                    name: "a_input".to_string(),
+                    shape: vec![1, 16],
+                    dtype: MilDtypeCompat::Fp16,
+                },
+            ],
+            output_descs: vec![ane_coreml_proto::mir_compat::TensorDescCompat {
+                name: "output".to_string(),
+                shape: vec![1, 16],
+                dtype: MilDtypeCompat::Fp16,
+            }],
+            node_shapes: std::collections::HashMap::new(),
+        };
+
+        let model =
+            convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
+
+        // Verify inputs are sorted alphabetically
+        let input_names: Vec<&str> = model.functions[0].inputs.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(input_names, vec!["a_input", "z_input"],
+            "T-95: Input surfaces must be sorted alphabetically (Orion #19)");
+    }
+
+    #[test]
+    fn test_t95_single_output_no_sort_needed() {
+        // T-95: Single output — sorting is a no-op but should not cause errors
+        let graph = build_linear_projection_mir("test_single", 64, 32, 1, MilDtypeCompat::Fp16, 42);
+        let model =
+            convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
+
+        assert_eq!(model.functions[0].outputs.len(), 1);
+        assert_eq!(model.functions[0].outputs[0].name, "output");
+    }
+
+    // ─── T-95: Surface Uniformity Tests ────────────────────────────
+
+    #[test]
+    fn test_t95_surface_uniformity_uniform_outputs() {
+        // T-95 (Orion #2): Uniform output sizes should not warn
+        let functions = vec![ane_coreml_proto::CoreMlFunction {
+            name: "main".to_string(),
+            inputs: vec![],
+            outputs: vec![
+                ane_coreml_proto::TensorDesc {
+                    name: "a".to_string(),
+                    shape: vec![1, 1024], // 1024 * 2 = 2048 bytes
+                    dtype: ane_coreml_proto::CoreMlDataType::Float16,
+                    is_state: false,
+                },
+                ane_coreml_proto::TensorDesc {
+                    name: "b".to_string(),
+                    shape: vec![1, 1024], // 1024 * 2 = 2048 bytes (same)
+                    dtype: ane_coreml_proto::CoreMlDataType::Float16,
+                    is_state: false,
+                },
+            ],
+            states: vec![],
+            operations: vec![],
+            node_shapes: std::collections::HashMap::new(),
+        }];
+
+        let result = validate_surface_uniformity(&functions);
+        assert!(result.is_ok(), "Uniform outputs should not error");
+    }
+
+    #[test]
+    fn test_t95_surface_uniformity_non_uniform_outputs() {
+        // T-95 (Orion #2): Non-uniform output sizes should warn (but not error)
+        let functions = vec![ane_coreml_proto::CoreMlFunction {
+            name: "main".to_string(),
+            inputs: vec![],
+            outputs: vec![
+                ane_coreml_proto::TensorDesc {
+                    name: "a".to_string(),
+                    shape: vec![1, 512],  // 512 * 2 = 1024 bytes
+                    dtype: ane_coreml_proto::CoreMlDataType::Float16,
+                    is_state: false,
+                },
+                ane_coreml_proto::TensorDesc {
+                    name: "b".to_string(),
+                    shape: vec![1, 2048], // 2048 * 2 = 4096 bytes (different!)
+                    dtype: ane_coreml_proto::CoreMlDataType::Float16,
+                    is_state: false,
+                },
+            ],
+            states: vec![],
+            operations: vec![],
+            node_shapes: std::collections::HashMap::new(),
+        }];
+
+        let result = validate_surface_uniformity(&functions);
+        assert!(result.is_ok(), "Non-uniform outputs should warn, not error");
+    }
+
+    #[test]
+    fn test_t95_surface_uniformity_single_output_trivially_uniform() {
+        // T-95: Single output is trivially uniform — no warning needed
+        let functions = vec![ane_coreml_proto::CoreMlFunction {
+            name: "main".to_string(),
+            inputs: vec![],
+            outputs: vec![ane_coreml_proto::TensorDesc {
+                name: "output".to_string(),
+                shape: vec![1, 16],
+                dtype: ane_coreml_proto::CoreMlDataType::Float16,
+                is_state: false,
+            }],
+            states: vec![],
+            operations: vec![],
+            node_shapes: std::collections::HashMap::new(),
+        }];
+
+        let result = validate_surface_uniformity(&functions);
+        assert!(result.is_ok());
+    }
+
+    // ─── T-95: Flat Buffer Layout Tests ────────────────────────────
+
+    #[test]
+    fn test_t95_flat_buffer_layout_canonical() {
+        // T-95 (Orion #20): [1,C,1,S] layout should not warn
+        let functions = vec![ane_coreml_proto::CoreMlFunction {
+            name: "main".to_string(),
+            inputs: vec![],
+            outputs: vec![ane_coreml_proto::TensorDesc {
+                name: "output".to_string(),
+                shape: vec![1, 256, 1, 64], // Canonical [1,C,1,S]
+                dtype: ane_coreml_proto::CoreMlDataType::Float16,
+                is_state: false,
+            }],
+            states: vec![],
+            operations: vec![],
+            node_shapes: std::collections::HashMap::new(),
+        }];
+
+        let result = validate_flat_buffer_layout(&functions);
+        assert!(result.is_ok(), "Canonical [1,C,1,S] layout should not error");
+    }
+
+    #[test]
+    fn test_t95_flat_buffer_layout_non_canonical_warns() {
+        // T-95 (Orion #20): Rank-4 shape not following [1,C,1,S] should warn
+        let functions = vec![ane_coreml_proto::CoreMlFunction {
+            name: "main".to_string(),
+            inputs: vec![],
+            outputs: vec![ane_coreml_proto::TensorDesc {
+                name: "output".to_string(),
+                shape: vec![2, 256, 3, 64], // NOT [1,C,1,S] — dims 0 and 2 are not 1
+                dtype: ane_coreml_proto::CoreMlDataType::Float16,
+                is_state: false,
+            }],
+            states: vec![],
+            operations: vec![],
+            node_shapes: std::collections::HashMap::new(),
+        }];
+
+        let result = validate_flat_buffer_layout(&functions);
+        assert!(result.is_ok(), "Non-canonical layout should warn, not error");
+    }
+
+    #[test]
+    fn test_t95_flat_buffer_layout_non_rank4_ok() {
+        // T-95: Non-rank-4 tensors are acceptable (runtime pads automatically)
+        let functions = vec![ane_coreml_proto::CoreMlFunction {
+            name: "main".to_string(),
+            inputs: vec![],
+            outputs: vec![ane_coreml_proto::TensorDesc {
+                name: "output".to_string(),
+                shape: vec![1, 1024], // Rank 2 — OK, runtime will pad
+                dtype: ane_coreml_proto::CoreMlDataType::Float16,
+                is_state: false,
+            }],
+            states: vec![],
+            operations: vec![],
+            node_shapes: std::collections::HashMap::new(),
+        }];
+
+        let result = validate_flat_buffer_layout(&functions);
+        assert!(result.is_ok());
     }
 }

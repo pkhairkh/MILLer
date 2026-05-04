@@ -5021,16 +5021,17 @@ mod tests {
         let input_shapes = std::collections::HashMap::new();
         let mirs = mil_lower.run(&air, &shard_plan, &input_shapes).unwrap();
 
-        // After the ANE legality rewrite, Conv1x1AsLinear → MILLinear → MILMatMul
-        // (MILLinear is replaced with MILMatMul by the post-lowering rewrite)
-        let matmul_node =
-            mirs[0].nodes.iter().find(|n| matches!(n.op, MirOp::MILMatMul { .. })).expect(
-                "Expected MILMatMul node (replaced from MILLinear by ANE legality rewrite)",
+        // After the ANE legality rewrite, Conv1x1AsLinear → MILLinear → MILConv(1x1)
+        // T-96: MILLinear is now replaced with MILConv(1x1) for ANE targets
+        // (Orion #17: conv 1x1 is 3x faster than matmul on ANE)
+        let conv_node =
+            mirs[0].nodes.iter().find(|n| matches!(n.op, MirOp::MILConv { .. })).expect(
+                "Expected MILConv node (replaced from MILLinear by T-96 ANE legality rewrite)",
             );
         assert_eq!(
-            matmul_node.dtype,
+            conv_node.dtype,
             MilDtype::Fp32,
-            "MILMatMul node dtype must be fp32 when AIR precision_override is fp32"
+            "MILConv node dtype must be fp32 when AIR precision_override is fp32"
         );
     }
 

@@ -1,15 +1,94 @@
 # Changelog
 
-## Current Status — 2026-05-04
+## Current Status — 2026-05-05
 
-- **1586 tests passing**, 0 failures
+- **1614 tests passing**, 0 failures
 - IR Cleanliness Score: 89%
 - 0 clippy warnings, 0 errors
-- **16 open tasks** (1 CRITICAL, 3 HIGH, 5 MEDIUM, 7 LOW) — see [TASKS.md](TASKS.md)
-- **28 tasks resolved** across sprint cycles
+- **13 open tasks** (1 CRITICAL, 1 HIGH, 3 MEDIUM, 8 LOW) — see [TASKS.md](TASKS.md)
+- **32 tasks resolved** across sprint cycles
 
 Audit details: [docs/audit/tabula-rasa-v3.md](docs/audit/tabula-rasa-v3.md)
 Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
+
+---
+
+## [sprint-ane-emission-lowering-correctness] — 2026-05-05
+
+### Sprint: ANE Emission & Lowering Correctness (T-95, T-96, T-116, T-117)
+
+Resolved 4 tasks (2 HIGH, 2 MEDIUM) from the NECROSCOPY forensic audit
+(ane-violations.md). All changes fix emission and lowering paths where
+incorrect or suboptimal code silently produced broken or slow models.
+
+#### Tasks Resolved
+
+| Task | Description | Issues Fixed |
+|------|-------------|--------------|
+| T-95 | Add Multi-Surface Ordering and Uniformity Validation | I-70 |
+| T-96 | Fix MILLinear→MILMatMul Defeating Conv1x1AsLinear Optimization | I-71 |
+| T-116 | Add ANEC Attribute Shape Validation | I-91 |
+| T-117 | Extend AneFamily to Cover All 8 Binary-Defined Families | I-92 |
+
+#### Added
+
+- T-95: Alphabetical sorting of multi-output surfaces (Orion #3) and
+  multi-input surfaces (Orion #19) before emission in `mir_to_proto.rs`.
+  The ANE reads surfaces in alphabetical order; unsorted surfaces cause
+  silent data corruption (correct values written to wrong tensors).
+- T-95: `validate_surface_uniformity()` function checking all output
+  buffers have the same byte size (Orion #2) and all input buffers
+  have the same byte size (Orion #18). Non-uniform sizes cause 0x1d
+  runtime errors.
+- T-95: `validate_flat_buffer_layout()` function checking tensor shapes
+  conform to the ANE flat buffer layout [1,C,1,S] convention (Orion #20).
+- T-116: `validate_anec_attribute_shapes()` function in `op_constraints.rs`
+  validating stride, pad_amounts, and dilation vector shapes per ANEC
+  schema for conv, pool, and deconv operations. Strides must be length
+  2 (2D) or 3 (3D); pad_amounts must be 2×spatial_dims; dilations must
+  match stride dimensions.
+- T-117: `minimum_family_value()` method mapping each `AneFamily` variant
+  to its ANEC binary `MinimumFamily` discriminant (0–7).
+- T-117: `from_minimum_family_value(u8)` constructor for converting ANEC
+  binary discriminant values back to `AneFamily`.
+- T-117: `family_level()` method providing total ordering over families.
+- T-117: `ALL_FAMILIES` constant (array of all 8 family variants).
+
+#### Changed
+
+- T-96: **Breaking change** in ANE legality rewrite pass: `MILLinear` is
+  now converted to `MILConv(1x1)` instead of `MILMatMul` for ANE targets.
+  Per Orion #17, conv 1x1 is 3× faster than matmul on ANE. The CPU path
+  retains the existing `MILLinear→MILMatMul` conversion. The `bias` field
+  of `MILLinear` is no longer silently dropped — when bias is present,
+  a `log::warn!` message is emitted.
+- T-116: The mir_to_compat conversion now calls `validate_anec_attribute_shapes()`
+  for conv and pool ops, logging warnings when attribute shapes don't match
+  ANEC expectations. This catches shape mismatches before the attributes are
+  dropped by the conversion layer.
+- T-95: Model emission now sorts input and output surfaces alphabetically.
+  This is a behavioral change: models with multiple inputs/outputs will have
+  their I/O order changed to alphabetical, matching ANE requirements.
+
+#### Tests Added (28 new tests)
+
+- T-95: 9 tests — output surface alphabetical sorting, input surface sorting,
+  single-output no-sort, surface uniformity (uniform, non-uniform, single),
+  flat buffer layout (canonical, non-canonical, non-rank4)
+- T-96: 3 tests — Conv1x1 ANE path, attribute shape validation, bias warning
+- T-116: 10 tests — conv 2D/3D valid, wrong stride/pad/dilation shapes,
+  pool 2D valid/wrong, stride-pad mismatch, deconv valid, empty strides
+- T-117: 6 tests — round-trip mapping, sequential discriminants, unknown
+  values, ALL_FAMILIES constant, family level ordering, binary match
+
+#### Issues Closed
+
+| Issue | Description | Task |
+|-------|-------------|------|
+| I-70 | Multi-Surface Ordering and Uniformity Not Validated | T-95 |
+| I-71 | MILLinear→MILMatMul Defeats Conv1x1AsLinear Optimization | T-96 |
+| I-91 | ANEC Attribute Shape Validation Missing | T-116 |
+| I-92 | AneFamily Missing 2 Binary-Defined Families | T-117 |
 
 ---
 

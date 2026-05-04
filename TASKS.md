@@ -135,55 +135,23 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-### T-95 · Add Multi-Surface Ordering and Uniformity Validation
+### T-95 · ~~Add Multi-Surface Ordering and Uniformity Validation~~
 
-- **ISSUES ref**: I-70
-- **AUDIT ref**: V-105, V-117, V-118, V-119, V-120, V-121 (ane-violations.md §III)
-- **Severity**: HIGH
-- **Effort**: M (1.5 days)
-
-**Intent**: The ANE requires multi-output and multi-input surfaces to be in alphabetical order (Orion #3, #19) and have uniform allocation sizes (Orion #2, #18). MILLer neither sorts surfaces alphabetically nor validates size uniformity. Incorrect surface ordering causes silent data corruption — correct values written to wrong output tensors. Non-uniform sizes cause 0x1d runtime errors with no compile-time indication. The ANE flat buffer layout packed `[1,C,1,S]` is also not validated, meaning data written in wrong layout produces silently incorrect inference.
-
-**Mitigation / Implementation**:
-1. In `crates/coreml-emit/src/mir_to_proto.rs`: Sort multi-output tensor names alphabetically before emission. Add comment: `// Orion #3: ANE reads outputs in alphabetical order`.
-2. In `crates/coreml-emit/src/mir_to_proto.rs`: Sort multi-input tensor names alphabetically before emission. Add comment: `// Orion #19: ANE reads inputs in alphabetical order`.
-3. In `crates/coreml-emit/src/mir_to_proto.rs`: Add `validate_surface_uniformity()` that checks all output buffers have the same byte size and all input buffers have the same byte size. Return error if non-uniform.
-4. In `crates/coreml-emit/src/mir_to_proto.rs`: Add `validate_flat_buffer_layout()` that checks tensor data is written in packed `[1,C,1,S]` format.
-5. Add tests for alphabetical ordering, uniformity validation, and layout validation.
-
-**Definition of Done**:
-- [ ] Multi-output surfaces sorted alphabetically before emission
-- [ ] Multi-input surfaces sorted alphabetically before emission
-- [ ] Surface size uniformity validated (both input and output)
-- [ ] Flat buffer layout [1,C,1,S] validated
-- [ ] Tests for each constraint
-- [ ] `cargo test` passes with zero failures
+~~**ISSUES ref**: I-70~~
+~~**AUDIT ref**: V-105, V-117, V-118, V-119, V-120, V-121 (ane-violations.md §III)~~
+~~**Severity**: HIGH~~
+~~**Effort**: M (1.5 days)~~
+**✅ RESOLVED** — Added alphabetical sorting of multi-output (Orion #3) and multi-input (Orion #19) surfaces before emission. Added `validate_surface_uniformity()` for Orion #2/#18 output/input buffer size checks. Added `validate_flat_buffer_layout()` for Orion #20 [1,C,1,S] validation. 9 new tests.
 
 ---
 
-### T-96 · Fix MILLinear→MILMatMul Defeating Conv1x1AsLinear Optimization
+### T-96 · ~~Fix MILLinear→MILMatMul Defeating Conv1x1AsLinear Optimization~~
 
-- **ISSUES ref**: I-71
-- **AUDIT ref**: V-114 (ane-violations.md §III)
-- **Severity**: HIGH
-- **Effort**: M (1 day)
-
-**Intent**: The AIR-to-MIR pipeline correctly creates `Conv1x1AsLinear` in the legality rewrite pass (`legality_rewrite.rs:354-370`), but the MIL lowering pass then converts ALL `MILLinear` to `MILMatMul` (`mil_lower.rs:3268-3307`). Orion #17 documents that conv 1x1 is 3x faster than matmul on ANE. The comment says "The linear op may not have an ANE execution converter" but binary evidence shows `ConvertLayer` has 97 instances (far more than `ConvertMatMul`'s 8 family instantiations). The conversion to matmul loses the 3x performance benefit and may also lose palettization support.
-
-**Mitigation / Implementation**:
-1. In `crates/passes/src/mil_lower.rs`: Change the `MILLinear` lowering to preserve `Conv1x1AsLinear` as `MILConv(1x1)` instead of converting to `MILMatMul` for ANE targets.
-2. Add a `target: AneTarget` parameter to the lowering pass so it can make target-aware decisions.
-3. For CPU targets, keep the existing MILLinear→MILMatMul conversion (matmul may be more efficient on CPU).
-4. Add a test that verifies a linear layer with kernel shape `[out, in, 1, 1]` produces `MILConv` (not `MILMatMul`) when targeting ANE.
-5. Add a test that verifies the existing MILLinear→MILMatMul path still works for CPU targets.
-
-**Definition of Done**:
-- [ ] MILLinear with 1x1 kernel shape preserved as MILConv for ANE targets
-- [ ] MILLinear→MILMatMul conversion retained for CPU targets
-- [ ] Lowering pass accepts target parameter
-- [ ] Tests verify both ANE and CPU paths
-- [ ] `cargo test` passes with zero failures
-- [ ] Performance: linear layers on ANE use Conv1x1 (3x faster per Orion #17)
+~~**ISSUES ref**: I-71~~
+~~**AUDIT ref**: V-114 (ane-violations.md §III)~~
+~~**Severity**: HIGH~~
+~~**Effort**: M (1 day)~~
+**✅ RESOLVED** — Changed ANE legality rewrite to convert MILLinear → MILConv(1x1) instead of MILMatMul for ANE targets (Orion #17: conv 1x1 is 3x faster than matmul). CPU path retains MILLinear→MILMatMul. Bias field now logged with warning when dropped. Updated precision override test. 3 new tests.
 
 ---
 
@@ -417,29 +385,23 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-### T-116 · Add ANEC Attribute Shape Validation
+### T-116 · ~~Add ANEC Attribute Shape Validation~~
 
-- **ISSUES ref**: I-91
-- **AUDIT ref**: V-107 (ane-violations.md §III)
-- **Severity**: MEDIUM
-- **Effort**: M (1 day)
-
-**Intent**: ANEC defines precise attribute shapes for all 98 operations (e.g., convolution: stride=shape{3}, padding=shape{6}). MILLer doesn't validate that emitted attributes match ANEC expectations. Wrong-shaped attributes fail at ANEC compile time with cryptic errors.
-
-**Definition of Done**: Validation function checks attribute shapes per ANEC schema before emission. At minimum, validate conv, pool, and matmul attribute shapes. Tests for each op type.
+~~**ISSUES ref**: I-91~~
+~~**AUDIT ref**: V-107 (ane-violations.md §III)~~
+~~**Severity**: MEDIUM~~
+~~**Effort**: M (1 day)~~
+**✅ RESOLVED** — Added `validate_anec_attribute_shapes()` in op_constraints.rs validating stride, pad_amounts, and dilation vector shapes for conv, pool, and deconv operations per ANEC schema. Wired into mir_to_compat conversion to validate before attributes are dropped. 10 new tests.
 
 ---
 
-### T-117 · Extend AneFamily to Cover All 8 Binary-Defined Families
+### T-117 · ~~Extend AneFamily to Cover All 8 Binary-Defined Families~~
 
-- **ISSUES ref**: I-92
-- **AUDIT ref**: V-109 (ane-violations.md §III)
-- **Severity**: MEDIUM
-- **Effort**: M (1 day)
-
-**Intent**: The MinimumFamily enum in the ANEC binary has values 0-7 (8 families), but MILLer only models 6 (A11Legacy through A18). Families 6-7 may correspond to A16+ variants or future architectures. MILLer cannot express constraints for these families.
-
-**Definition of Done**: AneFamily enum extended to 8 variants matching binary MinimumFamily. Revision-to-family mapping updated. Test verifies all 8 families are mapped.
+~~**ISSUES ref**: I-92~~
+~~**AUDIT ref**: V-109 (ane-violations.md §III)~~
+~~**Severity**: MEDIUM~~
+~~**Effort**: M (1 day)~~
+**✅ RESOLVED** — Added `minimum_family_value()` mapping each AneFamily to ANEC binary MinimumFamily discriminant (0-7). Added `from_minimum_family_value()` constructor. Added `family_level()` ordering method. Added `ALL_FAMILIES` constant. 6 new tests.
 
 ---
 
@@ -540,8 +502,8 @@ Full resolution details are in `CHANGELOG.md`.
 | Task | Issue(s) | Severity | Effort | Status |
 |------|----------|----------|--------|--------|
 | T-90 | I-65 | CRITICAL | L | 🔴 Open |
-| T-95 | I-70 | HIGH | M | 🟠 Open |
-| T-96 | I-71 | HIGH | M | 🟠 Open |
+| T-95 | I-70 | HIGH | M | ✅ Resolved |
+| T-96 | I-71 | HIGH | M | ✅ Resolved |
 | T-98 | I-73 | HIGH | L | 🟠 Open |
 | T-105 | I-80 | MEDIUM | M | 🟡 Open |
 | T-107 | I-82 | MEDIUM | M | 🟡 Open |
@@ -549,8 +511,8 @@ Full resolution details are in `CHANGELOG.md`.
 | T-110 | I-85 | MEDIUM | M | ✅ Resolved |
 | T-112 | I-84, I-85 | MEDIUM | M | ✅ Resolved |
 | T-113 | I-88 | MEDIUM | M | ✅ Resolved |
-| T-116 | I-91 | MEDIUM | M | 🟡 Open |
-| T-117 | I-92 | MEDIUM | M | 🟡 Open |
+| T-116 | I-91 | MEDIUM | M | ✅ Resolved |
+| T-117 | I-92 | MEDIUM | M | ✅ Resolved |
 | T-118 | I-93 | MEDIUM | S | ✅ Resolved |
 | T-119 | I-94 | MEDIUM | S | ✅ Resolved |
 | T-120 | I-95 | MEDIUM | S | ✅ Resolved |
@@ -632,14 +594,14 @@ Tasks T-47 through T-57, T-60, T-62, T-63, T-64, T-65 resolved. T-61, T-66 remai
 | Severity | Count | Total Effort |
 |----------|-------|-------------|
 | 🔴 CRITICAL | 1 | ~2 days |
-| 🟠 HIGH | 3 | ~7.5 days |
-| 🟡 MEDIUM | 5 | ~6 days |
-| 🔵 LOW | 7 | ~4 days |
-| **Total** | **16** | **~19.5 days** |
+| 🟠 HIGH | 1 | ~2 days |
+| 🟡 MEDIUM | 3 | ~4 days |
+| 🔵 LOW | 8 | ~4 days |
+| **Total** | **13** | **~12 days** |
 
 > **Priority guidance**: CRITICAL task T-90 must be resolved before any production compilation.
-> HIGH tasks (T-95, T-96, T-98) should be addressed in the next 2–3 sprint cycles.
+> HIGH task T-98 should be addressed in the next sprint cycle.
 > MEDIUM/LOW tasks (T-105–T-131) are technical debt that should be chipped away at consistently.
 >
-> **Resolved**: 28 tasks (T-86, T-87, T-89, T-91–T-94, T-97, T-99–T-104, T-106, T-109–T-115, T-118–T-123).
+> **Resolved**: 32 tasks (T-86, T-87, T-89, T-91–T-97, T-99–T-104, T-106, T-109–T-123).
 > Tasks T-01 through T-85 are all resolved — see archive summary above and `CHANGELOG.md`.

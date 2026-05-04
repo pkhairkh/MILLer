@@ -940,6 +940,140 @@ const _: fn() = || {
     }
 };
 
+/// T-116: Validate ANEC attribute shapes for conv, pool, deconv, and matmul operations.
+///
+/// The ANEC compiler expects precise attribute vector shapes for each operation type.
+/// Wrong-shaped attributes (e.g., stride with 1 element for a 2D conv that expects 2)
+/// fail at ANEC compile time with cryptic error messages like "invalid attribute shape".
+/// This function validates attribute shapes before the mir_to_compat conversion drops
+/// the shaped attributes, catching mismatches early with clear error messages.
+///
+/// ## ANEC Attribute Shape Expectations
+///
+/// | Op Kind      | Attribute     | 2D Shape | 3D Shape |
+/// |-------------|---------------|----------|----------|
+/// | conv         | strides       | [2]      | [3]      |
+/// | conv         | pad_amounts   | [4]      | [6]      |
+/// | conv         | dilations     | [2]      | [3]      |
+/// | max_pool     | kernel_sizes  | [2]      | [3]      |
+/// | max_pool     | strides       | [2]      | [3]      |
+/// | max_pool     | pad_amounts   | [4]      | [6]      |
+/// | avg_pool     | (same as max_pool) | —   | —        |
+/// | conv_transpose | (same as conv) | —    | —        |
+///
+/// For conv/deconv: strides and dilations must have the same length (N),
+/// and pad_amounts must have 2*N elements.
+/// For pool: kernel_sizes and strides must have the same length (N),
+/// and pad_amounts must have 2*N elements.
+pub fn validate_anec_attribute_shapes(
+    op_kind: &str,
+    kernel_sizes: &[usize],
+    strides: &[usize],
+    pad_amounts: &[usize],
+    dilations: &[usize],
+) -> Result<()> {
+    match op_kind {
+        "conv" | "conv_transpose" => {
+            // Strides must be non-empty (2 for 2D, 3 for 3D conv)
+            if strides.is_empty() {
+                bail!(
+                    "Op kind '{}' violates constraint 'stride_shape': \
+                     strides vector is empty. ANEC expects strides shape {{2}} for 2D or {{3}} for 3D convolution.",
+                    op_kind
+                );
+            }
+            let spatial_dims = strides.len();
+            if spatial_dims < 2 || spatial_dims > 3 {
+                bail!(
+                    "Op kind '{}' violates constraint 'stride_shape': \
+                     strides has {} elements, but ANEC expects 2 (2D) or 3 (3D) for convolution. \
+                     Got strides={:?}",
+                    op_kind, spatial_dims, strides
+                );
+            }
+
+            // Dilations must match stride dimensions
+            if dilations.len() != spatial_dims {
+                bail!(
+                    "Op kind '{}' violates constraint 'dilation_shape': \
+                     dilations has {} elements, but strides has {} (must match for {}D convolution). \
+                     Got dilations={:?}, strides={:?}",
+                    op_kind, dilations.len(), spatial_dims, spatial_dims,
+                    dilations, strides
+                );
+            }
+
+            // Pad amounts must be 2 * spatial_dims
+            let expected_pad_len = spatial_dims * 2;
+            if pad_amounts.len() != expected_pad_len {
+                bail!(
+                    "Op kind '{}' violates constraint 'pad_shape': \
+                     pad_amounts has {} elements, but ANEC expects {} for {}D convolution (2*spatial_dims). \
+                     Got pad_amounts={:?}",
+                    op_kind, pad_amounts.len(), expected_pad_len, spatial_dims, pad_amounts
+                );
+            }
+
+            // Cross-check: strides and pad dimensions must be consistent
+            // (pad_amounts length should be 2 * strides length)
+            if pad_amounts.len() != 2 * strides.len() {
+                bail!(
+                    "Op kind '{}' violates constraint 'stride_pad_consistency': \
+                     strides has {} elements but pad_amounts has {} (expected {}). \
+                     strides={:?}, pad_amounts={:?}",
+                    op_kind, strides.len(), pad_amounts.len(), 2 * strides.len(),
+                    strides, pad_amounts
+                );
+            }
+        }
+        "max_pool" | "avg_pool" | "l2_pool" => {
+            // Kernel sizes must be non-empty (2 for 2D, 3 for 3D pool)
+            if kernel_sizes.is_empty() {
+                bail!(
+                    "Op kind '{}' violates constraint 'kernel_size_shape': \
+                     kernel_sizes vector is empty. ANEC expects kernel_sizes shape {{2}} for 2D or {{3}} for 3D pooling.",
+                    op_kind
+                );
+            }
+            let spatial_dims = kernel_sizes.len();
+            if spatial_dims < 2 || spatial_dims > 3 {
+                bail!(
+                    "Op kind '{}' violates constraint 'kernel_size_shape': \
+                     kernel_sizes has {} elements, but ANEC expects 2 (2D) or 3 (3D) for pooling. \
+                     Got kernel_sizes={:?}",
+                    op_kind, spatial_dims, kernel_sizes
+                );
+            }
+
+            // Strides must match kernel dimensionality
+            if strides.len() != spatial_dims {
+                bail!(
+                    "Op kind '{}' violates constraint 'stride_shape': \
+                     strides has {} elements, but kernel_sizes has {} (must match for {}D pooling). \
+                     Got strides={:?}, kernel_sizes={:?}",
+                    op_kind, strides.len(), spatial_dims, spatial_dims,
+                    strides, kernel_sizes
+                );
+            }
+
+            // Pad amounts must be 2 * spatial_dims
+            let expected_pad_len = spatial_dims * 2;
+            if pad_amounts.len() != expected_pad_len {
+                bail!(
+                    "Op kind '{}' violates constraint 'pad_shape': \
+                     pad_amounts has {} elements, but ANEC expects {} for {}D pooling (2*spatial_dims). \
+                     Got pad_amounts={:?}",
+                    op_kind, pad_amounts.len(), expected_pad_len, spatial_dims, pad_amounts
+                );
+            }
+        }
+        _ => {
+            // Unknown op kind — no attribute shape validation needed
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1658,5 +1792,148 @@ mod tests {
             16
         )
         .is_ok());
+    }
+
+    // ─── T-116: ANEC Attribute Shape Validation Tests ──────────────────
+
+    #[test]
+    fn test_t116_conv_2d_attribute_shapes_valid() {
+        // T-116: 2D conv with correct attribute shapes (strides=2, pad_amounts=4, dilations=2)
+        let result = validate_anec_attribute_shapes(
+            "conv",
+            &[],         // kernel_sizes (not used for conv)
+            &[1, 1],     // strides: 2 elements for 2D
+            &[0, 0, 0, 0], // pad_amounts: 4 elements for 2D
+            &[1, 1],     // dilations: 2 elements for 2D
+        );
+        assert!(result.is_ok(), "Valid 2D conv attribute shapes should pass");
+    }
+
+    #[test]
+    fn test_t116_conv_3d_attribute_shapes_valid() {
+        // T-116: 3D conv with correct attribute shapes (strides=3, pad_amounts=6, dilations=3)
+        let result = validate_anec_attribute_shapes(
+            "conv",
+            &[],
+            &[1, 1, 1],     // strides: 3 elements for 3D
+            &[0, 0, 0, 0, 0, 0], // pad_amounts: 6 elements for 3D
+            &[1, 1, 1],     // dilations: 3 elements for 3D
+        );
+        assert!(result.is_ok(), "Valid 3D conv attribute shapes should pass");
+    }
+
+    #[test]
+    fn test_t116_conv_wrong_stride_shape() {
+        // T-116: Conv with wrong stride vector length
+        let result = validate_anec_attribute_shapes(
+            "conv",
+            &[],
+            &[1],         // strides: 1 element — wrong for 2D/3D conv
+            &[0, 0, 0, 0],
+            &[1, 1],
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("stride_shape"));
+    }
+
+    #[test]
+    fn test_t116_conv_wrong_pad_amounts_shape() {
+        // T-116: Conv with wrong pad_amounts vector length
+        let result = validate_anec_attribute_shapes(
+            "conv",
+            &[],
+            &[1, 1],
+            &[0, 0],      // pad_amounts: 2 elements — wrong (need 4 for 2D)
+            &[1, 1],
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("pad_shape"));
+    }
+
+    #[test]
+    fn test_t116_conv_wrong_dilation_shape() {
+        // T-116: Conv with wrong dilation vector length
+        let result = validate_anec_attribute_shapes(
+            "conv",
+            &[],
+            &[1, 1],
+            &[0, 0, 0, 0],
+            &[1],          // dilations: 1 element — wrong for 2D conv
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("dilation_shape"));
+    }
+
+    #[test]
+    fn test_t116_pool_2d_attribute_shapes_valid() {
+        // T-116: 2D pool with correct shapes
+        let result = validate_anec_attribute_shapes(
+            "max_pool",
+            &[3, 3],       // kernel_sizes: 2 elements for 2D
+            &[1, 1],       // strides: 2 elements for 2D
+            &[0, 0, 0, 0], // pad_amounts: 4 elements for 2D
+            &[],           // dilations: not used for pool
+        );
+        assert!(result.is_ok(), "Valid 2D pool attribute shapes should pass");
+    }
+
+    #[test]
+    fn test_t116_pool_wrong_kernel_sizes_shape() {
+        // T-116: Pool with wrong kernel_sizes vector length
+        let result = validate_anec_attribute_shapes(
+            "avg_pool",
+            &[3],          // kernel_sizes: 1 element — wrong for 2D pool
+            &[1, 1],
+            &[0, 0, 0, 0],
+            &[],
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("kernel_size_shape"));
+    }
+
+    #[test]
+    fn test_t116_conv_stride_pad_mismatch() {
+        // T-96: Stride shape and pad shape inconsistent (2D stride with mismatched pad)
+        // pad_amounts=6 but strides=2 → pad expects 4 for 2D
+        let result = validate_anec_attribute_shapes(
+            "conv",
+            &[],
+            &[1, 1],          // 2D strides
+            &[0, 0, 0, 0, 0, 0], // 6 pad elements — wrong for 2D (expects 4)
+            &[1, 1],          // 2D dilations
+        );
+        assert!(result.is_err());
+        // The pad_shape check catches this before stride_pad_consistency
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("pad_shape") || err_msg.contains("stride_pad_consistency"),
+            "Error should mention pad shape or stride-pad consistency: {}", err_msg
+        );
+    }
+
+    #[test]
+    fn test_t116_deconv_2d_attribute_shapes_valid() {
+        // T-116: 2D deconv with correct attribute shapes
+        let result = validate_anec_attribute_shapes(
+            "conv_transpose",
+            &[],
+            &[2, 2],       // strides: 2 elements for 2D
+            &[0, 0, 0, 0], // pad_amounts: 4 elements for 2D
+            &[1, 1],       // dilations: 2 elements for 2D
+        );
+        assert!(result.is_ok(), "Valid 2D deconv attribute shapes should pass");
+    }
+
+    #[test]
+    fn test_t116_empty_strides_rejected() {
+        // T-116: Empty stride vector is invalid
+        let result = validate_anec_attribute_shapes(
+            "conv",
+            &[],
+            &[],            // Empty strides
+            &[0, 0, 0, 0],
+            &[1, 1],
+        );
+        assert!(result.is_err());
     }
 }

@@ -2,6 +2,10 @@
 //!
 //! Sprint 59 dependency: these types are used by constraint validation,
 //! dtype legality checks, and hardware limit enforcement.
+//!
+//! T-117: The ANEC binary defines a `MinimumFamily` enum with discriminant
+//! values 0–7 (8 families). Our `AneFamily` enum covers all 8 values via
+//! the `minimum_family_value()` / `from_minimum_family_value()` mapping.
 
 use serde::{Deserialize, Serialize};
 
@@ -10,36 +14,61 @@ use serde::{Deserialize, Serialize};
 /// Each family represents a distinct constraint profile for the ANE.
 /// Families are ordered by capability level (see `family_level()`).
 ///
-/// | Family  | Broadcast     | SDPA   | LayerNorm | Elementwise | ReduceMin | ArgMinMax |
-/// |---------|---------------|--------|-----------|-------------|-----------|-----------|
-/// | A11Legacy | FP16-only   | No     | No        | A14Minus    | FP only   | Yes       |
-/// | A12     | FP16-only     | No     | No        | A14Minus    | FP only   | Yes       |
-/// | A13     | Full dtype    | No     | No        | A14Minus    | FP only   | Yes       |
-/// | A14     | Full dtype    | No     | No        | A14Plus     | All types | Yes       |
-/// | A15     | Full dtype    | No     | Yes       | A14Plus     | All types | Yes       |
-/// | A16     | Full dtype    | Yes    | Yes       | A14Plus     | All types | Yes       |
-/// | A17     | Full dtype    | Yes    | Yes       | A14Plus     | All types | Yes       |
-/// | A18     | Full dtype    | Yes    | Yes       | A14Plus     | All types | **No**    |
+/// The discriminant values (0–7) match the ANEC binary's `MinimumFamily` enum.
+/// Use `minimum_family_value()` to get the binary value and
+/// `from_minimum_family_value()` to convert from a binary discriminant.
+///
+/// | Discriminant | Family    | Broadcast     | SDPA   | LayerNorm | Elementwise | ReduceMin | ArgMinMax |
+/// |-------------|-----------|---------------|--------|-----------|-------------|-----------|-----------|
+/// | 0           | A11Legacy | FP16-only     | No     | No        | A14Minus    | FP only   | Yes       |
+/// | 1           | A12       | FP16-only     | No     | No        | A14Minus    | FP only   | Yes       |
+/// | 2           | A13       | Full dtype    | No     | No        | A14Minus    | FP only   | Yes       |
+/// | 3           | A14       | Full dtype    | No     | No        | A14Plus     | All types | Yes       |
+/// | 4           | A15       | Full dtype    | No     | Yes       | A14Plus     | All types | Yes       |
+/// | 5           | A16       | Full dtype    | Yes    | Yes       | A14Plus     | All types | Yes       |
+/// | 6           | A17       | Full dtype    | Yes    | Yes       | A14Plus     | All types | Yes       |
+/// | 7           | A18       | Full dtype    | Yes    | Yes       | A14Plus     | All types | **No**    |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AneFamily {
     /// A11 Bionic — legacy ANE, V4 hardware revision.
+    /// MinimumFamily discriminant: 0.
     A11Legacy,
     /// A12 Bionic — improved ANE, FP16-only broadcast, A14Minus converters.
+    /// MinimumFamily discriminant: 1.
     A12,
     /// A13 Bionic — lifts FP16 broadcast restriction but retains A14Minus converters.
+    /// MinimumFamily discriminant: 2.
     A13,
     /// A14 Bionic — significant expansion, A14Plus elementwise/reduction converters.
+    /// MinimumFamily discriminant: 3.
     A14,
     /// A15 Bionic — adds LayerNorm support.
+    /// MinimumFamily discriminant: 4.
     A15,
     /// A16 Bionic — adds reliable SDPA.
+    /// MinimumFamily discriminant: 5.
     A16,
     /// A17 Pro — adds E4M3 (FP8) conditional support (LSE_6).
     /// Retains SDPA, LayerNorm, and ArgMinMax from A16.
+    /// MinimumFamily discriminant: 6.
     A17,
     /// A18 Bionic (M4) — latest generation. Drops ArgMinMax (no LSE_7 converter).
+    /// MinimumFamily discriminant: 7.
     A18,
 }
+
+/// T-117: All 8 AneFamily variants, ordered by their ANEC binary MinimumFamily
+/// discriminant value (0–7). Useful for iterating over all families in binary order.
+pub const ALL_FAMILIES: [AneFamily; 8] = [
+    AneFamily::A11Legacy,
+    AneFamily::A12,
+    AneFamily::A13,
+    AneFamily::A14,
+    AneFamily::A15,
+    AneFamily::A16,
+    AneFamily::A17,
+    AneFamily::A18,
+];
 
 impl AneFamily {
     /// Whether this family restricts broadcast operations to fp16 only.
@@ -97,6 +126,67 @@ impl AneFamily {
     /// T-52 (I-26): Added A17 family for E4M3 support on V11 (A17 Pro).
     pub fn supports_e4m3(&self) -> bool {
         matches!(self, AneFamily::A17 | AneFamily::A18)
+    }
+
+    /// T-117: Get the ANEC binary `MinimumFamily` discriminant for this family.
+    ///
+    /// The ANEC binary uses a `MinimumFamily` enum with values 0–7 to identify
+    /// ANE silicon families. This method returns the binary discriminant value
+    /// for the current family, enabling direct mapping between MILLer's
+    /// `AneFamily` and the ANEC's internal family identification.
+    ///
+    /// | Value | Family    |
+    /// |-------|-----------|
+    /// | 0     | A11Legacy |
+    /// | 1     | A12       |
+    /// | 2     | A13       |
+    /// | 3     | A14       |
+    /// | 4     | A15       |
+    /// | 5     | A16       |
+    /// | 6     | A17       |
+    /// | 7     | A18       |
+    pub fn minimum_family_value(&self) -> u8 {
+        match self {
+            AneFamily::A11Legacy => 0,
+            AneFamily::A12 => 1,
+            AneFamily::A13 => 2,
+            AneFamily::A14 => 3,
+            AneFamily::A15 => 4,
+            AneFamily::A16 => 5,
+            AneFamily::A17 => 6,
+            AneFamily::A18 => 7,
+        }
+    }
+
+    /// T-117: Convert an ANEC binary `MinimumFamily` discriminant to an `AneFamily`.
+    ///
+    /// Returns `None` for values outside the 0–7 range, which would indicate
+    /// a future or unknown ANE family not yet modeled by MILLer.
+    pub fn from_minimum_family_value(value: u8) -> Option<AneFamily> {
+        match value {
+            0 => Some(AneFamily::A11Legacy),
+            1 => Some(AneFamily::A12),
+            2 => Some(AneFamily::A13),
+            3 => Some(AneFamily::A14),
+            4 => Some(AneFamily::A15),
+            5 => Some(AneFamily::A16),
+            6 => Some(AneFamily::A17),
+            7 => Some(AneFamily::A18),
+            _ => None,
+        }
+    }
+
+    /// T-117: Get the capability level of this family (0 = oldest, 7 = newest).
+    ///
+    /// The level corresponds to the `MinimumFamily` discriminant and provides
+    /// a total ordering over families. Higher levels are supersets of lower
+    /// levels' capabilities (with the notable exception of A18, which drops
+    /// ArgMinMax support).
+    ///
+    /// Use this for comparisons like `family_a.level() >= family_b.level()`
+    /// to test if one family has at least the capabilities of another.
+    pub fn family_level(&self) -> u8 {
+        self.minimum_family_value()
     }
 }
 
@@ -498,5 +588,73 @@ mod tests {
                 rev_str, actual_family, expected_family
             );
         }
+    }
+
+    // ─── T-117: MinimumFamily Discriminant Mapping Tests ────────────────
+
+    #[test]
+    fn test_minimum_family_value_round_trip() {
+        // T-117: Every family must round-trip through minimum_family_value → from_minimum_family_value
+        for family in &ALL_FAMILIES {
+            let disc = family.minimum_family_value();
+            let recovered = AneFamily::from_minimum_family_value(disc);
+            assert_eq!(
+                recovered,
+                Some(*family),
+                "Family {:?} round-trip failed: discriminant {} → {:?}",
+                family, disc, recovered
+            );
+        }
+    }
+
+    #[test]
+    fn test_minimum_family_values_sequential() {
+        // T-117: Discriminant values must be 0–7, sequential, matching ANEC binary
+        let values: Vec<u8> = ALL_FAMILIES.iter().map(|f| f.minimum_family_value()).collect();
+        assert_eq!(values, vec![0, 1, 2, 3, 4, 5, 6, 7],
+            "MinimumFamily discriminants must be sequential 0–7 matching ANEC binary");
+    }
+
+    #[test]
+    fn test_from_minimum_family_value_unknown() {
+        // T-117: Values outside 0–7 return None (future/unknown families)
+        assert_eq!(AneFamily::from_minimum_family_value(8), None);
+        assert_eq!(AneFamily::from_minimum_family_value(255), None);
+    }
+
+    #[test]
+    fn test_all_families_constant_covers_8_variants() {
+        // T-117: ALL_FAMILIES must have exactly 8 entries covering all discriminants
+        assert_eq!(ALL_FAMILIES.len(), 8);
+        // Each discriminant 0–7 must be present exactly once
+        let discs: std::collections::HashSet<u8> =
+            ALL_FAMILIES.iter().map(|f| f.minimum_family_value()).collect();
+        assert_eq!(discs.len(), 8, "All 8 discriminants must be unique");
+        assert_eq!(discs.iter().min(), Some(&0));
+        assert_eq!(discs.iter().max(), Some(&7));
+    }
+
+    #[test]
+    fn test_family_level_ordering() {
+        // T-117: family_level() provides total ordering matching discriminant values
+        assert!(AneFamily::A18.family_level() > AneFamily::A17.family_level());
+        assert!(AneFamily::A17.family_level() > AneFamily::A16.family_level());
+        assert!(AneFamily::A16.family_level() > AneFamily::A15.family_level());
+        assert!(AneFamily::A14.family_level() > AneFamily::A13.family_level());
+        assert!(AneFamily::A11Legacy.family_level() < AneFamily::A12.family_level());
+    }
+
+    #[test]
+    fn test_minimum_family_value_matches_anec_binary() {
+        // T-117: Verify the complete mapping matches ANEC binary MinimumFamily enum:
+        //   0=A11Legacy, 1=A12, 2=A13, 3=A14, 4=A15, 5=A16, 6=A17, 7=A18
+        assert_eq!(AneFamily::A11Legacy.minimum_family_value(), 0);
+        assert_eq!(AneFamily::A12.minimum_family_value(), 1);
+        assert_eq!(AneFamily::A13.minimum_family_value(), 2);
+        assert_eq!(AneFamily::A14.minimum_family_value(), 3);
+        assert_eq!(AneFamily::A15.minimum_family_value(), 4);
+        assert_eq!(AneFamily::A16.minimum_family_value(), 5);
+        assert_eq!(AneFamily::A17.minimum_family_value(), 6);
+        assert_eq!(AneFamily::A18.minimum_family_value(), 7);
     }
 }

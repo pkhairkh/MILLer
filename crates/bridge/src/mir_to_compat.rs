@@ -1197,16 +1197,36 @@ pub fn mir_op_to_compat(
             weight,
             pad_type,
             groups,
-            strides: _,
-            pad_amounts: _,
-            dilations: _,
-        } => Ok(MirOpCompat::Conv {
-            name: name.clone(),
-            x: x.0.clone(),
-            weight: weight.0.clone(),
-            pad_type: pad_type.clone(),
-            groups: *groups as i64,
-        }),
+            strides,
+            pad_amounts,
+            dilations,
+        } => {
+            // T-116: Validate ANEC attribute shapes before dropping them.
+            // The mir_to_compat layer discards strides, pad_amounts, and dilations
+            // (they're not carried in MirOpCompat::Conv), so we validate them here
+            // to catch shape mismatches that would fail at ANEC compile time.
+            if let Err(e) = ane_passes::op_constraints::validate_anec_attribute_shapes(
+                "conv",
+                &[],
+                strides,
+                pad_amounts,
+                dilations,
+            ) {
+                log::warn!(
+                    "T-116: Conv '{}' has invalid ANEC attribute shapes: {}. \
+                     Strides={:?}, Pad={:?}, Dilations={:?}. \
+                     These attributes will be dropped in the MirOpCompat conversion.",
+                    name, e, strides, pad_amounts, dilations
+                );
+            }
+            Ok(MirOpCompat::Conv {
+                name: name.clone(),
+                x: x.0.clone(),
+                weight: weight.0.clone(),
+                pad_type: pad_type.clone(),
+                groups: *groups as i64,
+            })
+        },
         MirOp::MILSplit { name, x, axis, num_splits } => Ok(MirOpCompat::Split {
             name: name.clone(),
             x: x.0.clone(),
@@ -1356,6 +1376,16 @@ pub fn mir_op_to_compat(
 
         // ─── Pooling (T-66 / I-40) ──────────────────────────────────────
         MirOp::MILMaxPool { name, x, kernel_sizes, strides, pad_types, pad_amounts } => {
+            // T-116: Validate ANEC attribute shapes for pool ops
+            if let Err(e) = ane_passes::op_constraints::validate_anec_attribute_shapes(
+                "max_pool", kernel_sizes, strides, pad_amounts, &[],
+            ) {
+                log::warn!(
+                    "T-116: MaxPool '{}' has invalid ANEC attribute shapes: {}. \
+                     kernel_sizes={:?}, strides={:?}, pad_amounts={:?}",
+                    name, e, kernel_sizes, strides, pad_amounts
+                );
+            }
             Ok(MirOpCompat::MaxPool {
                 name: name.clone(),
                 x: x.0.clone(),
@@ -1373,16 +1403,38 @@ pub fn mir_op_to_compat(
             pad_types,
             pad_amounts,
             count_include_padding,
-        } => Ok(MirOpCompat::AvgPool {
-            name: name.clone(),
-            x: x.0.clone(),
-            kernel_sizes: kernel_sizes.iter().map(|&d| d as i32).collect(),
-            strides: strides.iter().map(|&d| d as i32).collect(),
-            pad_type: pad_types.first().cloned().unwrap_or_else(|| "valid".to_string()),
-            pad_amounts: pad_amounts.iter().map(|&d| d as i32).collect(),
-            count_include_padding: *count_include_padding,
-        }),
+        } => {
+            // T-116: Validate ANEC attribute shapes for pool ops
+            if let Err(e) = ane_passes::op_constraints::validate_anec_attribute_shapes(
+                "avg_pool", kernel_sizes, strides, pad_amounts, &[],
+            ) {
+                log::warn!(
+                    "T-116: AvgPool '{}' has invalid ANEC attribute shapes: {}. \
+                     kernel_sizes={:?}, strides={:?}, pad_amounts={:?}",
+                    name, e, kernel_sizes, strides, pad_amounts
+                );
+            }
+            Ok(MirOpCompat::AvgPool {
+                name: name.clone(),
+                x: x.0.clone(),
+                kernel_sizes: kernel_sizes.iter().map(|&d| d as i32).collect(),
+                strides: strides.iter().map(|&d| d as i32).collect(),
+                pad_type: pad_types.first().cloned().unwrap_or_else(|| "valid".to_string()),
+                pad_amounts: pad_amounts.iter().map(|&d| d as i32).collect(),
+                count_include_padding: *count_include_padding,
+            })
+        }
         MirOp::MILL2Pool { name, x, kernel_sizes, strides, pad_types, pad_amounts } => {
+            // T-116: Validate ANEC attribute shapes for pool ops
+            if let Err(e) = ane_passes::op_constraints::validate_anec_attribute_shapes(
+                "l2_pool", kernel_sizes, strides, pad_amounts, &[],
+            ) {
+                log::warn!(
+                    "T-116: L2Pool '{}' has invalid ANEC attribute shapes: {}. \
+                     kernel_sizes={:?}, strides={:?}, pad_amounts={:?}",
+                    name, e, kernel_sizes, strides, pad_amounts
+                );
+            }
             Ok(MirOpCompat::L2Pool {
                 name: name.clone(),
                 x: x.0.clone(),
