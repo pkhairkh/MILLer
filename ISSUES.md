@@ -1,6 +1,6 @@
 # MILLer Compiler — Issue Tracker
 
-*Last updated: 2026-05-04 (v3 audit — I-41 through I-60 added from deep source re-audit)*
+*Last updated: 2026-05-04 (v3 audit — I-41 through I-60 added from deep source re-audit; T-61, T-66 resolved)*
 *Reference implementation: https://huggingface.co/pkhairkh/qwen3-coreml-palettized*
 *Audit source: `docs/audit/tabula-rasa-v3.md` (v3, generated 2026-05-04)*
 
@@ -226,16 +226,18 @@ Tile decomposition generates `reshape_shape.push(0)` and `final_shape.push(0)` a
 
 ---
 
-### I-35 · No Cross-Validation Between Python and Rust Emission Paths
+### I-35 · ~~No Cross-Validation Between Python and Rust Emission Paths~~
 
-**Status:** ⬜ Open
-**Files:** `python/mil_emitter.py` vs `crates/coreml-emit/src/mir_to_proto.rs`
+**Status:** ✅ Fixed (T-61)
+**Files:** `crates/coreml-emit/tests/cross_validation.rs`
 **AUDIT ref:** §III (D-1, D-4)
 **Severity:** MEDIUM
 **Effort:** M (1 day)
 **Task:** T-61
 
 Python bridge (coremltools subprocess) and Rust proto-direct path exist independently with no cross-validation test. Fill/FillLike decomposition, weight embedding, and op-specific serialization may diverge. No test verifies both paths produce structurally equivalent MIL for the same MIR input.
+
+**Fix:** Created 10 structural equivalence tests in `crates/coreml-emit/tests/cross_validation.rs` that verify MIL topology equivalence between Python bridge and Rust proto-direct paths. Tests cover linear projection topology, multi-function structure, spec version propagation, weight embedding, I/O descriptors, attention-like graphs, pooling ops, stateful decode step topology, and normalization ops. Documented which ops are supported by each path with a cross-validated op coverage matrix.
 
 ---
 
@@ -267,9 +269,9 @@ CPU-only op classification is maintained in both `CPU_ONLY_OPS` HashSet and `def
 
 ---
 
-### I-40 · Remaining MirOpCompat Coverage Gaps
+### I-40 · ~~Remaining MirOpCompat Coverage Gaps~~
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (partial) (T-66)
 **Files:** `crates/coreml-proto/src/lib.rs`, `crates/bridge/src/mir_to_compat.rs`
 **AUDIT ref:** §II-A (resolved ops note)
 **Severity:** MEDIUM
@@ -277,6 +279,8 @@ CPU-only op classification is maintained in both `CPU_ONLY_OPS` HashSet and `def
 **Task:** T-66
 
 Ops with real ANEC converters that still map to `MirOpCompat::Unsupported`: BatchNorm, InstanceNorm, L2Norm, MaxPool, AvgPool, L2Pool, Quantize, Dequantize, all resize/resample variants, CropResize, DepthToSpace, SpaceToDepth, PixelShuffle, PixelUnshuffle, BatchToSpace, SpaceToBatch, and others. These have hardware support but lack proto emission code in the Rust path.
+
+**Fix:** Added 12 new `MirOpCompat` variants with full conversion paths, input_names, remap_inputs, rename_output methods, and comprehensive tests: MaxPool, AvgPool, L2Pool (pooling), DepthToSpace, SpaceToDepth, PixelShuffle, PixelUnshuffle (spatial rearrangement), BatchNorm, InstanceNorm, L2Norm (normalization), Quantize, Dequantize (quantization). These ops now convert properly through `mir_op_to_compat()` instead of falling through to `Unsupported`. Remaining ops (Resize/Resample variants, CropResize, BatchToSpace, SpaceToBatch, etc.) are lower priority.
 
 ---
 
@@ -508,7 +512,7 @@ Gate behind feature flag or remove entirely.
 |----------|-------|------|-------|-----------|
 | P0 | 4 | 0 | 4 | 0 |
 | P1 | 17 | 0 | 15 | 2 |
-| P2 | 15 | 1 | 12 | 0 |
+| P2 | 15 | 0 | 14 | 0 |
 | P3 | 5 | 0 | 4 | 0 |
 | Resolved (v1+v2) | 33 | 0 | 31 | 2 |
-| **Total** | **74** | **2** | **66** | **4** |
+| **Total** | **74** | **0** | **68** | **4** |

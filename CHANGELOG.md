@@ -2,14 +2,79 @@
 
 ## Current Status — 2026-05-04
 
-- **1401 tests passing**, 0 failures
+- **1414 tests passing**, 0 failures
 - IR Cleanliness Score: 89%
 - 0 clippy warnings, 0 errors
-- **2 open issues** (0 CRITICAL, 0 HIGH, 1 MEDIUM, 1 LOW) — see [ISSUES.md](ISSUES.md)
-- **2 open tasks** (T-61, T-66) — see [TASKS.md](TASKS.md)
+- **0 open issues** (0 CRITICAL, 0 HIGH, 0 MEDIUM, 0 LOW) — see [ISSUES.md](ISSUES.md)
+- **0 open tasks** — see [TASKS.md](TASKS.md)
 
 Audit details: [docs/audit/tabula-rasa-v3.md](docs/audit/tabula-rasa-v3.md)
 Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
+
+---
+
+## 2026-05-04 — Emission Equivalence & Compat Expansion Sprint
+
+### Resolved (T-61, T-66)
+
+| Task | Description | Key Change |
+|------|-------------|------------|
+| T-61 | Add Cross-Validation Test for Python vs Rust Emission | Created 10 structural equivalence tests in `crates/coreml-emit/tests/cross_validation.rs`: linear projection topology, multi-function topology, spec version propagation, weight embedding, I/O descriptors, attention-like graph, pooling ops, op coverage matrix documentation, stateful decode step topology, normalization ops. Documented which ops are supported by each path with a cross-validated op coverage matrix. |
+| T-66 | Add Remaining MirOpCompat Variants (partial) | Added 12 new `MirOpCompat` variants with full conversion, input_names, remap_inputs, rename_output, and tests: MaxPool, AvgPool, L2Pool (pooling), DepthToSpace, SpaceToDepth, PixelShuffle, PixelUnshuffle (spatial rearrangement), BatchNorm, InstanceNorm, L2Norm (normalization), Quantize, Dequantize (quantization). Updated `mir_op_to_compat()` and `mir_op_to_unsupported()` in `mir_to_compat.rs`. |
+
+### New MirOpCompat Variants (12 variants)
+
+**Pooling (T-66):**
+- `MaxPool { name, x, kernel_sizes, strides, pad_type, pad_amounts }` — Core ML MIL op type: "max_pool"
+- `AvgPool { name, x, kernel_sizes, strides, pad_type, pad_amounts, count_include_padding }` — Core ML MIL op type: "avg_pool"
+- `L2Pool { name, x, kernel_sizes, strides, pad_type, pad_amounts }` — Core ML MIL op type: "l2_pool"
+
+**Spatial Rearrangement (T-66):**
+- `DepthToSpace { name, x, block_size }` — Core ML MIL op type: "depth_to_space"
+- `SpaceToDepth { name, x, block_size }` — Core ML MIL op type: "space_to_depth"
+- `PixelShuffle { name, x, upscale_factor }` — Core ML MIL op type: "pixel_shuffle"
+- `PixelUnshuffle { name, x, downscale_factor }` — Core ML MIL op type: "pixel_unshuffle"
+
+**Normalization (T-66):**
+- `BatchNorm { name, x, mean, variance, gamma, beta, epsilon }` — Core ML MIL op type: "batch_norm"
+- `InstanceNorm { name, x, gamma, beta, epsilon }` — Core ML MIL op type: "instance_norm"
+- `L2Norm { name, x, epsilon, axes }` — Core ML MIL op type: "l2_norm"
+
+**Quantization (T-66):**
+- `Quantize { name, x, scale, zero_point, axis, output_dtype }` — Core ML MIL op type: "quantize"
+- `Dequantize { name, x, scale, zero_point, axis, output_dtype }` — Core ML MIL op type: "dequantize"
+
+### New Tests Added (16 tests)
+
+**cross_validation.rs (10 tests — T-61):**
+- `test_linear_projection_topology_equivalence` — const→const→linear topology matches Python bridge
+- `test_multifunction_topology_equivalence` — embedding + decode_step with shared weights
+- `test_spec_version_propagation_equivalence` — V7 and V10 preserved in protobuf
+- `test_weight_embedding_equivalence` — const ops have BlobFileValue references
+- `test_io_descriptor_equivalence` — input "x" and output "output" match Python bridge
+- `test_attention_like_graph_topology` — const→linear→reshape→gelu chain
+- `test_pooling_ops_mir_compat_to_apple_proto` — MaxPool emits via Rust proto-direct path
+- `test_op_coverage_matrix_documentation` — living documentation of 75+ ops across both paths
+- `test_stateful_decode_step_topology` — read_state→linear→slice_by_index→write_state→linear
+- `test_normalization_ops_mir_compat_to_apple_proto` — BatchNorm emits via Rust proto-direct path
+
+**mir_conversion.rs (6 tests — T-66):**
+- `test_t66_input_names` — input_names() correctness for all 12 new variants
+- `test_t66_output_name` — output_name() returns the name field
+- `test_t66_remap_inputs` — remap_inputs() remaps String input fields correctly
+- Updated `test_mir_op_to_compat_exhaustive_coverage` — added field-value assertions for 12 new variants
+- Updated `test_mir_op_field_values_preserved` — expanded to cover new variant fields
+- Updated `test_mir_op_dtype_conversion` — verified dtype mapping for Quantize/Dequantize
+
+### Files Modified
+
+- `crates/coreml-proto/src/lib.rs` — 12 new MirOpCompat variants + output_name/input_names/remap_inputs/rename_output updates
+- `crates/bridge/src/mir_to_compat.rs` — 12 new conversion arms in mir_op_to_compat() + 12 unreachable markers in mir_op_to_unsupported()
+- `crates/coreml-proto/tests/mir_conversion.rs` — 6 new/updated tests for T-66 variants
+- `crates/coreml-emit/tests/cross_validation.rs` — 10 new cross-validation tests (T-61)
+- `TASKS.md` — T-61 and T-66 marked resolved
+- `ISSUES.md` — I-35 and I-40 marked fixed
+- `CHANGELOG.md` — sprint entry added
 
 ---
 

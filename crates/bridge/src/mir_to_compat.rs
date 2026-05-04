@@ -1312,6 +1312,121 @@ pub fn mir_op_to_compat(
             Ok(MirOpCompat::Log { name: name.clone(), x: x.0.clone() })
         }
 
+        // ─── Pooling (T-66 / I-40) ──────────────────────────────────────
+        MirOp::MILMaxPool { name, x, kernel_sizes, strides, pad_types, pad_amounts } => {
+            Ok(MirOpCompat::MaxPool {
+                name: name.clone(),
+                x: x.0.clone(),
+                kernel_sizes: kernel_sizes.iter().map(|&d| d as i32).collect(),
+                strides: strides.iter().map(|&d| d as i32).collect(),
+                pad_type: pad_types.first().cloned().unwrap_or_else(|| "valid".to_string()),
+                pad_amounts: pad_amounts.iter().map(|&d| d as i32).collect(),
+            })
+        }
+        MirOp::MILAvgPool { name, x, kernel_sizes, strides, pad_types, pad_amounts, count_include_padding } => {
+            Ok(MirOpCompat::AvgPool {
+                name: name.clone(),
+                x: x.0.clone(),
+                kernel_sizes: kernel_sizes.iter().map(|&d| d as i32).collect(),
+                strides: strides.iter().map(|&d| d as i32).collect(),
+                pad_type: pad_types.first().cloned().unwrap_or_else(|| "valid".to_string()),
+                pad_amounts: pad_amounts.iter().map(|&d| d as i32).collect(),
+                count_include_padding: *count_include_padding,
+            })
+        }
+        MirOp::MILL2Pool { name, x, kernel_sizes, strides, pad_types, pad_amounts } => {
+            Ok(MirOpCompat::L2Pool {
+                name: name.clone(),
+                x: x.0.clone(),
+                kernel_sizes: kernel_sizes.iter().map(|&d| d as i32).collect(),
+                strides: strides.iter().map(|&d| d as i32).collect(),
+                pad_type: pad_types.first().cloned().unwrap_or_else(|| "valid".to_string()),
+                pad_amounts: pad_amounts.iter().map(|&d| d as i32).collect(),
+            })
+        }
+
+        // ─── Spatial Rearrangement (T-66 / I-40) ───────────────────────
+        MirOp::MILDepthToSpace { name, x, block_size } => {
+            Ok(MirOpCompat::DepthToSpace {
+                name: name.clone(),
+                x: x.0.clone(),
+                block_size: *block_size as i64,
+            })
+        }
+        MirOp::MILSpaceToDepth { name, x, block_size } => {
+            Ok(MirOpCompat::SpaceToDepth {
+                name: name.clone(),
+                x: x.0.clone(),
+                block_size: *block_size as i64,
+            })
+        }
+        MirOp::MILPixelShuffle { name, x, upscale_factor } => {
+            Ok(MirOpCompat::PixelShuffle {
+                name: name.clone(),
+                x: x.0.clone(),
+                upscale_factor: *upscale_factor as i64,
+            })
+        }
+        MirOp::MILPixelUnshuffle { name, x, downscale_factor } => {
+            Ok(MirOpCompat::PixelUnshuffle {
+                name: name.clone(),
+                x: x.0.clone(),
+                downscale_factor: *downscale_factor as i64,
+            })
+        }
+
+        // ─── Normalization (T-66 / I-40) ───────────────────────────────
+        MirOp::MILBatchNorm { name, x, mean, variance, gamma, beta, epsilon } => {
+            Ok(MirOpCompat::BatchNorm {
+                name: name.clone(),
+                x: x.0.clone(),
+                mean: mean.clone(),
+                variance: variance.clone(),
+                gamma: gamma.clone(),
+                beta: beta.clone(),
+                epsilon: *epsilon,
+            })
+        }
+        MirOp::MILInstanceNorm { name, x, gamma, beta, epsilon } => {
+            Ok(MirOpCompat::InstanceNorm {
+                name: name.clone(),
+                x: x.0.clone(),
+                gamma: gamma.clone(),
+                beta: beta.clone(),
+                epsilon: *epsilon,
+            })
+        }
+        MirOp::MILL2Norm { name, x, epsilon, axes } => {
+            Ok(MirOpCompat::L2Norm {
+                name: name.clone(),
+                x: x.0.clone(),
+                epsilon: *epsilon,
+                axes: axes.iter().map(|&d| d as i64).collect(),
+            })
+        }
+
+        // ─── Quantize / Dequantize (T-66 / I-40) ───────────────────────
+        MirOp::MILQuantize { name, x, scale, zero_point, axis, output_dtype } => {
+            Ok(MirOpCompat::Quantize {
+                name: name.clone(),
+                x: x.0.clone(),
+                scale: *scale,
+                zero_point: *zero_point,
+                axis: *axis as i64,
+                output_dtype: mil_dtype_to_compat(output_dtype),
+            })
+        }
+        MirOp::MILDequantize { name, x, scale, zero_point, axis, output_dtype } => {
+            Ok(MirOpCompat::Dequantize {
+                name: name.clone(),
+                x: x.0.clone(),
+                scale: *scale,
+                zero_point: *zero_point,
+                axis: *axis as i64,
+                output_dtype: mil_dtype_to_compat(output_dtype),
+            })
+        }
+
         // ─── Constexpr / Weight Compression (T-39: I-18) ────────────
         MirOp::MILConstexprAffineDequantize { name, quantized_data, scale, zero_point, axis } => {
             Ok(MirOpCompat::ConstexprAffineDequantize {
@@ -1484,15 +1599,15 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILReduceLogSum { name, .. } => ("reduce_log_sum".into(), name.clone(), "{}".into()),
         MirOp::MILReduceArgmax { name, .. } => ("reduce_argmax".into(), name.clone(), "{}".into()),
         MirOp::MILReduceArgmin { name, .. } => ("reduce_argmin".into(), name.clone(), "{}".into()),
-        MirOp::MILBatchNorm { name, .. } => ("batch_norm".into(), name.clone(), "{}".into()),
-        MirOp::MILInstanceNorm { name, .. } => ("instance_norm".into(), name.clone(), "{}".into()),
-        MirOp::MILL2Norm { name, .. } => ("l2_norm".into(), name.clone(), "{}".into()),
+        MirOp::MILBatchNorm { .. } => unreachable!("MILBatchNorm is handled by mir_op_to_compat"),
+        MirOp::MILInstanceNorm { .. } => unreachable!("MILInstanceNorm is handled by mir_op_to_compat"),
+        MirOp::MILL2Norm { .. } => unreachable!("MILL2Norm is handled by mir_op_to_compat"),
         MirOp::MILLocalResponseNorm { name, .. } => {
             ("local_response_norm".into(), name.clone(), "{}".into())
         }
-        MirOp::MILMaxPool { name, .. } => ("max_pool".into(), name.clone(), "{}".into()),
-        MirOp::MILAvgPool { name, .. } => ("avg_pool".into(), name.clone(), "{}".into()),
-        MirOp::MILL2Pool { name, .. } => ("l2_pool".into(), name.clone(), "{}".into()),
+        MirOp::MILMaxPool { .. } => unreachable!("MILMaxPool is handled by mir_op_to_compat"),
+        MirOp::MILAvgPool { .. } => unreachable!("MILAvgPool is handled by mir_op_to_compat"),
+        MirOp::MILL2Pool { .. } => unreachable!("MILL2Pool is handled by mir_op_to_compat"),
         MirOp::MILResize { name, .. } => ("resize".into(), name.clone(), "{}".into()),
         MirOp::MILResizeNearestNeighbor { name, .. } => {
             ("resize_nearest_neighbor".into(), name.clone(), "{}".into())
@@ -1521,11 +1636,11 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILSlidingWindows { name, .. } => {
             ("sliding_windows".into(), name.clone(), "{}".into())
         }
-        MirOp::MILDepthToSpace { name, .. } => ("depth_to_space".into(), name.clone(), "{}".into()),
-        MirOp::MILSpaceToDepth { name, .. } => ("space_to_depth".into(), name.clone(), "{}".into()),
-        MirOp::MILPixelShuffle { name, .. } => ("pixel_shuffle".into(), name.clone(), "{}".into()),
-        MirOp::MILPixelUnshuffle { name, .. } => {
-            ("pixel_unshuffle".into(), name.clone(), "{}".into())
+        MirOp::MILDepthToSpace { .. } => unreachable!("MILDepthToSpace is handled by mir_op_to_compat"),
+        MirOp::MILSpaceToDepth { .. } => unreachable!("MILSpaceToDepth is handled by mir_op_to_compat"),
+        MirOp::MILPixelShuffle { .. } => unreachable!("MILPixelShuffle is handled by mir_op_to_compat"),
+        MirOp::MILPixelUnshuffle { .. } => {
+            unreachable!("MILPixelUnshuffle is handled by mir_op_to_compat")
         }
         MirOp::MILBatchToSpace { name, .. } => ("batch_to_space".into(), name.clone(), "{}".into()),
         MirOp::MILSpaceToBatch { name, .. } => ("space_to_batch".into(), name.clone(), "{}".into()),
@@ -1555,8 +1670,8 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILNonMaximumSuppression { name, .. } => {
             ("non_maximum_suppression".into(), name.clone(), "{}".into())
         }
-        MirOp::MILQuantize { name, .. } => ("quantize".into(), name.clone(), "{}".into()),
-        MirOp::MILDequantize { name, .. } => ("dequantize".into(), name.clone(), "{}".into()),
+        MirOp::MILQuantize { .. } => unreachable!("MILQuantize is handled by mir_op_to_compat"),
+        MirOp::MILDequantize { .. } => unreachable!("MILDequantize is handled by mir_op_to_compat"),
         // T-39: Constexpr* variants are now handled in mir_op_to_compat()
         // with proper MirOpCompat representations. These arms should be
         // unreachable but are kept for exhaustiveness.
