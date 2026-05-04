@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 /// | A14     | Full dtype    | No     | No        | A14Plus     | All types | Yes       |
 /// | A15     | Full dtype    | No     | Yes       | A14Plus     | All types | Yes       |
 /// | A16     | Full dtype    | Yes    | Yes       | A14Plus     | All types | Yes       |
+/// | A17     | Full dtype    | Yes    | Yes       | A14Plus     | All types | Yes       |
 /// | A18     | Full dtype    | Yes    | Yes       | A14Plus     | All types | **No**    |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AneFamily {
@@ -33,7 +34,10 @@ pub enum AneFamily {
     A15,
     /// A16 Bionic — adds reliable SDPA.
     A16,
-    /// A18 Bionic (M4) — latest generation.
+    /// A17 Pro — adds E4M3 (FP8) conditional support (LSE_6).
+    /// Retains SDPA, LayerNorm, and ArgMinMax from A16.
+    A17,
+    /// A18 Bionic (M4) — latest generation. Drops ArgMinMax (no LSE_7 converter).
     A18,
 }
 
@@ -55,19 +59,19 @@ impl AneFamily {
     /// Whether this family supports scaled dot-product attention (SDPA) reliably.
     /// SDPA is only reliable starting from A16.
     pub fn supports_sdpa(&self) -> bool {
-        matches!(self, AneFamily::A16 | AneFamily::A18)
+        matches!(self, AneFamily::A16 | AneFamily::A17 | AneFamily::A18)
     }
 
     /// Whether this family supports LayerNorm on ANE.
     /// LayerNorm is supported starting from A15.
     pub fn supports_layernorm(&self) -> bool {
-        matches!(self, AneFamily::A15 | AneFamily::A16 | AneFamily::A18)
+        matches!(self, AneFamily::A15 | AneFamily::A16 | AneFamily::A17 | AneFamily::A18)
     }
 
     /// Whether this family supports ReduceMin for non-FP types.
     /// A11/A12/A13 only support FP ReduceMin; A14+ supports all types.
     pub fn supports_reducemin_all_dtypes(&self) -> bool {
-        matches!(self, AneFamily::A14 | AneFamily::A15 | AneFamily::A16 | AneFamily::A18)
+        matches!(self, AneFamily::A14 | AneFamily::A15 | AneFamily::A16 | AneFamily::A17 | AneFamily::A18)
     }
 
     /// Whether this family supports ArgMin/ArgMax (reduce_argmax, reduce_argmin).
@@ -82,12 +86,14 @@ impl AneFamily {
     /// Whether this family supports E4M3 (FP8) data type on ANE.
     ///
     /// Per the per-op support matrix, E4M3/E5M2 is ❌ on A11 through A16,
-    /// and ⚠️ (conditionally supported) on A17/A18.
+    /// ⚠️ (conditionally supported) on A17+ (LSE_6 and later).
+    /// A17 Pro (LSE_6) adds conditional E4M3 support; A18 (LSE_7) continues it.
     /// The ANE error message is: "E4M3 is not supported" on older architectures.
     ///
     /// T-35 (I-14): E4M3 dtype constraint enforcement.
+    /// T-52 (I-26): Added A17 family for E4M3 support on V11 (A17 Pro).
     pub fn supports_e4m3(&self) -> bool {
-        matches!(self, AneFamily::A18)
+        matches!(self, AneFamily::A17 | AneFamily::A18)
     }
 }
 
@@ -127,7 +133,10 @@ impl AneRevision {
             AneRevision::V6 => AneFamily::A13,
             AneRevision::V7 => AneFamily::A14,
             AneRevision::V8 => AneFamily::A15,
-            AneRevision::V10 | AneRevision::V11 => AneFamily::A16,
+            // T-52: V11 (A17 Pro) is its own family (LSE_6) with E4M3 support.
+            // V10 (A16 Bionic) remains in A16 family without E4M3.
+            AneRevision::V10 => AneFamily::A16,
+            AneRevision::V11 => AneFamily::A17,
             // V17 is Apple M1 (Mac), which uses A14-class ANE.
             // M1 has A14's constraint profile: no SDPA, no LayerNorm,
             // A14Plus elementwise/reduction converters, full-dtype broadcast.
@@ -169,6 +178,8 @@ mod tests {
         assert_eq!(AneRevision::V7.family(), AneFamily::A14);
         assert_eq!(AneRevision::V8.family(), AneFamily::A15);
         assert_eq!(AneRevision::V10.family(), AneFamily::A16);
+        // T-52: V11 (A17 Pro) is its own family with E4M3 support.
+        assert_eq!(AneRevision::V11.family(), AneFamily::A17);
         // T-40: V17 (M1) is A14-class, NOT A18.
         assert_eq!(AneRevision::V17.family(), AneFamily::A14);
         assert_eq!(AneRevision::V19.family(), AneFamily::A18);
@@ -179,6 +190,7 @@ mod tests {
         assert!(!AneFamily::A13.supports_sdpa());
         assert!(!AneFamily::A14.supports_sdpa());
         assert!(AneFamily::A16.supports_sdpa());
+        assert!(AneFamily::A17.supports_sdpa());
         assert!(AneFamily::A18.supports_sdpa());
     }
 
@@ -187,6 +199,8 @@ mod tests {
         assert!(!AneFamily::A13.supports_layernorm());
         assert!(!AneFamily::A14.supports_layernorm());
         assert!(AneFamily::A15.supports_layernorm());
+        assert!(AneFamily::A16.supports_layernorm());
+        assert!(AneFamily::A17.supports_layernorm());
         assert!(AneFamily::A18.supports_layernorm());
     }
 
@@ -204,12 +218,14 @@ mod tests {
         assert!(!AneFamily::A12.supports_reducemin_all_dtypes());
         assert!(!AneFamily::A13.supports_reducemin_all_dtypes());
         assert!(AneFamily::A14.supports_reducemin_all_dtypes());
+        assert!(AneFamily::A16.supports_reducemin_all_dtypes());
+        assert!(AneFamily::A17.supports_reducemin_all_dtypes());
         assert!(AneFamily::A18.supports_reducemin_all_dtypes());
     }
 
     #[test]
     fn test_supports_argminmax() {
-        // ArgMinMax has ANEC converters for LSE_0-6 (all families through A16).
+        // ArgMinMax has ANEC converters for LSE_0-6 (all families through A17).
         // A18 (LSE_7) has no converter — this is the unique case where a newer
         // family drops support for an op that older families have.
         assert!(AneFamily::A11Legacy.supports_argminmax());
@@ -218,18 +234,20 @@ mod tests {
         assert!(AneFamily::A14.supports_argminmax());
         assert!(AneFamily::A15.supports_argminmax());
         assert!(AneFamily::A16.supports_argminmax());
+        assert!(AneFamily::A17.supports_argminmax()); // LSE_6 has ConvertReductionArg
         assert!(!AneFamily::A18.supports_argminmax());
     }
 
     #[test]
     fn test_supports_e4m3() {
-        // E4M3 (FP8) is NOT supported on A11-A16; only A18+ has limited support
+        // E4M3 (FP8) is NOT supported on A11-A16; A17+ has conditional support (LSE_6+)
         assert!(!AneFamily::A11Legacy.supports_e4m3());
         assert!(!AneFamily::A12.supports_e4m3());
         assert!(!AneFamily::A13.supports_e4m3());
         assert!(!AneFamily::A14.supports_e4m3());
         assert!(!AneFamily::A15.supports_e4m3());
         assert!(!AneFamily::A16.supports_e4m3());
+        assert!(AneFamily::A17.supports_e4m3()); // LSE_6 adds conditional E4M3
         assert!(AneFamily::A18.supports_e4m3());
     }
 
@@ -356,5 +374,75 @@ mod tests {
         // But A18 drops ArgMinMax support (no LSE_7 converter)
         assert!(!a18_family.supports_argminmax());
         assert!(m1_family.supports_argminmax());
+    }
+
+    // ─── T-52: A17 Pro (V11) Family Tests ──────────────────────────
+
+    #[test]
+    fn test_a17_v11_family_mapping() {
+        // T-52: V11 (A17 Pro) is A17 family, NOT A16.
+        assert_eq!(AneRevision::V11.family(), AneFamily::A17);
+        // V10 (A16 Bionic) remains A16
+        assert_eq!(AneRevision::V10.family(), AneFamily::A16);
+    }
+
+    #[test]
+    fn test_a17_e4m3_support() {
+        // T-52: A17 (LSE_6) supports E4M3 — the core fix for I-26.
+        assert!(AneFamily::A17.supports_e4m3());
+        // A16 still does NOT support E4M3
+        assert!(!AneFamily::A16.supports_e4m3());
+    }
+
+    #[test]
+    fn test_a17_sdpa_support() {
+        // A17 Pro has SDPA (same as A16)
+        assert!(AneFamily::A17.supports_sdpa());
+    }
+
+    #[test]
+    fn test_a17_layernorm_support() {
+        // A17 Pro has LayerNorm (same as A16)
+        assert!(AneFamily::A17.supports_layernorm());
+    }
+
+    #[test]
+    fn test_a17_argminmax_support() {
+        // A17 uses LSE_6 which has ConvertReductionArg converter
+        assert!(AneFamily::A17.supports_argminmax());
+        // A18 (LSE_7) drops it
+        assert!(!AneFamily::A18.supports_argminmax());
+    }
+
+    #[test]
+    fn test_a17_full_dtype_broadcast() {
+        // A17 supports full-dtype broadcast (like A16)
+        assert!(!AneFamily::A17.broadcast_fp16_only());
+    }
+
+    #[test]
+    fn test_a17_a14plus_converters() {
+        // A17 uses A14Plus converters
+        assert!(!AneFamily::A17.uses_a14minus_converters());
+    }
+
+    #[test]
+    fn test_a17_reducemin_all_dtypes() {
+        // A17 supports ReduceMin for all dtypes (A14+ feature)
+        assert!(AneFamily::A17.supports_reducemin_all_dtypes());
+    }
+
+    #[test]
+    fn test_a17_vs_a16_capabilities() {
+        // A17 differs from A16 in exactly one way: E4M3 support
+        assert!(!AneFamily::A16.supports_e4m3());
+        assert!(AneFamily::A17.supports_e4m3());
+        // All other capabilities are identical
+        assert_eq!(AneFamily::A16.broadcast_fp16_only(), AneFamily::A17.broadcast_fp16_only());
+        assert_eq!(AneFamily::A16.uses_a14minus_converters(), AneFamily::A17.uses_a14minus_converters());
+        assert_eq!(AneFamily::A16.supports_sdpa(), AneFamily::A17.supports_sdpa());
+        assert_eq!(AneFamily::A16.supports_layernorm(), AneFamily::A17.supports_layernorm());
+        assert_eq!(AneFamily::A16.supports_reducemin_all_dtypes(), AneFamily::A17.supports_reducemin_all_dtypes());
+        assert_eq!(AneFamily::A16.supports_argminmax(), AneFamily::A17.supports_argminmax());
     }
 }

@@ -172,6 +172,12 @@ impl VersionedCompiler {
                         .to_string(),
                 );
             }
+            AneFamily::A17 => {
+                report.warnings.push(
+                    "A17 Pro: SDPA, LayerNorm, and conditional E4M3 (FP8) support. Optimal for LLaMA-family models."
+                        .to_string(),
+                );
+            }
             AneFamily::A18 => {
                 report.warnings.push(
                     "A18: Full SDPA, LayerNorm, and E4M3 support. Most capable ANE generation."
@@ -844,6 +850,8 @@ fn family_to_default_revision(family: AneFamily) -> AneRevision {
         AneFamily::A14 => AneRevision::V7,
         AneFamily::A15 => AneRevision::V8,
         AneFamily::A16 => AneRevision::V10,
+        // T-52: V11 (A17 Pro) is the canonical revision for A17 family.
+        AneFamily::A17 => AneRevision::V11,
         // T-40: V17 is M1 (A14-class), not A18. A18's default revision is V19.
         AneFamily::A18 => AneRevision::V19,
     }
@@ -867,7 +875,8 @@ fn family_level(family: AneFamily) -> u32 {
         AneFamily::A14 => 3,
         AneFamily::A15 => 4,
         AneFamily::A16 => 5,
-        AneFamily::A18 => 6,
+        AneFamily::A17 => 6,
+        AneFamily::A18 => 7,
     }
 }
 
@@ -889,7 +898,8 @@ mod tests {
 
     #[test]
     fn test_family_level_ordering() {
-        assert!(family_level(AneFamily::A18) > family_level(AneFamily::A16));
+        assert!(family_level(AneFamily::A18) > family_level(AneFamily::A17));
+        assert!(family_level(AneFamily::A17) > family_level(AneFamily::A16));
         assert!(family_level(AneFamily::A16) > family_level(AneFamily::A15));
         assert!(family_level(AneFamily::A15) > family_level(AneFamily::A14));
         assert!(family_level(AneFamily::A14) > family_level(AneFamily::A13));

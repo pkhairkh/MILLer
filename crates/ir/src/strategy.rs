@@ -462,7 +462,7 @@ fn probe_kv_cache_strategies(
     // from community deployments is one instance of this pattern.
     let benefit = if matches!(
         target_family,
-        AneFamily::A14 | AneFamily::A15 | AneFamily::A16 | AneFamily::A18
+        AneFamily::A14 | AneFamily::A15 | AneFamily::A16 | AneFamily::A17 | AneFamily::A18
     ) {
         0.9 // Major benefit on A14+ families (A14Plus converters, pool-to-conv available)
     } else {

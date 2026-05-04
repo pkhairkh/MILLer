@@ -418,7 +418,7 @@ enum Commands {
         output: String,
 
         /// Target ANE family for constraint-aware compilation.
-        /// Accepts ANE generation codes (A11Legacy, A12, A14, A15, A16, A18)
+        /// Accepts ANE generation codes (A11Legacy, A12, A14, A15, A16, A17, A18)
         /// or Apple Silicon chip names (M1, M2, M3, M4, with Pro/Max variants).
         /// Defaults to A16 (first family with reliable SDPA support).
         #[arg(long, default_value = "A16")]
@@ -5054,6 +5054,7 @@ fn parse_ane_family(s: &str) -> Result<ane_ir::ane_target::AneFamily, String> {
         "a14" => Ok(AneFamily::A14),
         "a15" => Ok(AneFamily::A15),
         "a16" => Ok(AneFamily::A16),
+        "a17" => Ok(AneFamily::A17),
         "a18" => Ok(AneFamily::A18),
         // iPhone chip name aliases (direct A-series mapping)
         "iphone8" | "iphonex" => Ok(AneFamily::A11Legacy),
@@ -5062,7 +5063,7 @@ fn parse_ane_family(s: &str) -> Result<ane_ir::ane_target::AneFamily, String> {
         "iphone12" | "iphone12pro" => Ok(AneFamily::A14),
         "iphone13" | "iphone13pro" => Ok(AneFamily::A15),
         "iphone14pro" => Ok(AneFamily::A16),
-        "iphone15pro" => Ok(AneFamily::A16),
+        "iphone15pro" => Ok(AneFamily::A17),
         "iphone16" | "iphone16pro" => Ok(AneFamily::A18),
         // Apple Silicon Mac chip name aliases
         // Note: M1 uses A14-class ANE (V17), M2 uses A15-class, etc.
@@ -5076,8 +5077,8 @@ fn parse_ane_family(s: &str) -> Result<ane_ir::ane_target::AneFamily, String> {
         "m4" => Ok(AneFamily::A18),
         "m4pro" | "m4_max" | "m4max" => Ok(AneFamily::A18),
         _ => Err(format!(
-            "Unknown ANE family '{}'. Valid: A11Legacy, A12, A13, A14, A15, A16, A18, \
-             or chip names: iPhone 8/X/XS/11/12/13/14Pro/16, M1/M2/M3/M4 (with Pro/Max variants)",
+            "Unknown ANE family '{}'. Valid: A11Legacy, A12, A13, A14, A15, A16, A17, A18, \
+             or chip names: iPhone 8/X/XS/11/12/13/14Pro/15Pro/16, M1/M2/M3/M4 (with Pro/Max variants)",
             s
         )),
     }

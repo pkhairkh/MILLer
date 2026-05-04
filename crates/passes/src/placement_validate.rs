@@ -270,19 +270,24 @@ pub fn validate_placement_with_context(
     // const tensors → interleave=1, int4 tensors → interleave=8,
     // and channel divisibility by interleave factor.
     if let Some(interleave) = ctx.interleave {
-        let channels = ctx.channels.unwrap_or(0);
-        if let Err(violation) = ane_ir::ane_layout::validate_interleave_constraints(
-            interleave,
-            ctx.is_const,
-            ctx.is_int4,
-            channels,
-        ) {
-            return PlacementDecision::CpuOnly(format!(
-                "{}: interleave constraint '{}' — {}",
-                op_name(op),
-                violation.constraint,
-                violation.message
-            ));
+        // T-63: When channels are unknown, skip the interleave divisibility
+        // check but still validate other interleave constraints (valid factor,
+        // const→1, int4→8). Previously, channels.unwrap_or(0) trivially
+        // passed because 0 % N == 0, silently bypassing channel divisibility.
+        if let Some(channels) = ctx.channels {
+            if let Err(violation) = ane_ir::ane_layout::validate_interleave_constraints(
+                interleave,
+                ctx.is_const,
+                ctx.is_int4,
+                channels,
+            ) {
+                return PlacementDecision::CpuOnly(format!(
+                    "{}: interleave constraint '{}' — {}",
+                    op_name(op),
+                    violation.constraint,
+                    violation.message
+                ));
+            }
         }
     }
 

@@ -910,7 +910,7 @@ impl LegalityRewritePass {
                 // ─── All new 1:1 passthrough ops ─────────────────
                 op => {
                     let (air_op, pattern) =
-                        Self::sir_to_air_passthrough(op, &sir_node.id, &sir_to_air);
+                        Self::sir_to_air_passthrough(op, &sir_node.id, &sir_to_air)?;
                     let air_id = AirNodeId(sir_node.id.0.clone());
                     let nodes = vec![Self::make_air_node(
                         air_id.clone(),
@@ -3723,7 +3723,7 @@ impl LegalityRewritePass {
         op: &SirOp,
         node_id: &ane_ir::sir::SirNodeId,
         sir_to_air: &std::collections::HashMap<ane_ir::sir::SirNodeId, AirNodeId>,
-    ) -> (AirOp, &'static str) {
+    ) -> Result<(AirOp, &'static str)> {
         let aid = |sid: &ane_ir::sir::SirNodeId| -> AirNodeId {
             sir_to_air.get(sid).cloned().unwrap_or_else(|| AirNodeId(sid.0.clone()))
         };
@@ -3731,7 +3731,7 @@ impl LegalityRewritePass {
             |sids: &[ane_ir::sir::SirNodeId]| -> Vec<AirNodeId> { sids.iter().map(&aid).collect() };
         let _base = &node_id.0;
 
-        match op {
+        Ok(match op {
             // ─── Constants ───────────────────────────────────────
             SirOp::Const { value_path, dtype, .. } => {
                 (AirOp::Const { value_path: value_path.clone(), dtype: dtype.clone() }, "mb.const")
@@ -3898,9 +3898,9 @@ impl LegalityRewritePass {
             SirOp::Select { .. } | SirOp::Where { .. } => {
                 // UNREACHABLE: Select and Where are decomposed to arithmetic
                 // (cond*x + (1-cond)*y) in the main run() match above.
-                // If this panic fires, a new code path is producing Select/Where
+                // If this fires, a new code path is producing Select/Where
                 // without going through the decomposition.
-                panic!("BUG: SirOp::Select/Where reached sir_to_air_passthrough — these must be decomposed to arithmetic in run(), not passed through. mb.select and mb.where are ANE-illegal.");
+                anyhow::bail!("BUG: SirOp::Select/Where reached sir_to_air_passthrough — these must be decomposed to arithmetic in run(), not passed through. mb.select and mb.where are ANE-illegal.");
             }
             SirOp::Softmax { input, axis } => {
                 (AirOp::Softmax { input: aid(input), axis: *axis }, "mb.softmax")
@@ -4268,7 +4268,7 @@ impl LegalityRewritePass {
                 // in map_sir_op(). This is a bug — Tile is ANE-illegal and must
                 // never survive to AIR/MIR. Emit a panic to catch this during
                 // development rather than silently producing an ANE-incompatible model.
-                panic!(
+                anyhow::bail!(
                     "BUG: SirOp::Tile {{ input: {:?}, reps: {:?} }} reached the fallback \
                      passthrough in sir_to_air_op(). All Tile ops must be decomposed in \
                      map_sir_op() (ane.legal.tile_decompose) or eliminated at the SIR builder \
@@ -4634,7 +4634,7 @@ impl LegalityRewritePass {
             | SirOp::StateWrite { .. } => {
                 unreachable!("composite ops should be handled by explicit decompositions above")
             }
-        }
+        })
     }
 }
 

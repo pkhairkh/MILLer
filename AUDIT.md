@@ -55,7 +55,7 @@ The MILLer compiler lattice has matured substantially since the first TABULA RAS
 |---|---|---|---|---|
 | ~~Broadcast FP16-only for A13~~ | ~~A13 also FP16-only~~ | **VERIFIED CORRECT** — A13 excluded from FP16-only (per-family matrix ✅; Apple error msg says "A11/A12" only; constraint-doc §3.2 A13 text has internal error) | `ane_target.rs:43-45` | ~~HIGH~~ **RETRACTED** |
 | ReduceMin non-FP | A14+ only | ~~`supports_reducemin_all_dtypes()` exists but NOT enforced in placement validator for MILReduceMin~~ **Fixed by T-51:** Added `MILReduceMin` match arm checking `supports_reducemin_all_dtypes()` when dtype is non-FP | `placement_validate.rs` | ~~HIGH~~ **Fixed** |
-| E4M3 | A17+ (LSE_6) | A18 only — V11 (A17 Pro) maps to A16 family, denied E4M3 | `ane_target.rs:89-91` | **HIGH** |
+| E4M3 | A17+ (LSE_6) | ~~A18 only~~ **Fixed by T-52:** A17 and A18 both support E4M3; V11→A17 remapped | `ane_target.rs:89-91` | ~~HIGH~~ **Fixed** |
 | Square converter | A13Minus vs A14Plus | No per-family dtype validation | `placement_validate.rs` | MEDIUM |
 
 ### II-D. Constraint Validators Not Fully Wired
@@ -63,8 +63,8 @@ The MILLer compiler lattice has matured substantially since the first TABULA RAS
 | Constraint | Canon Reference | Status | File | Severity |
 |---|---|---|---|---|
 | Tensor dimension limits (HW limits) | §3.4 `hal_params` | ~~`validate_tensor_dims()` exists but NOT called from `validate_placement_with_context()`~~ **Fixed by T-53:** Wired into placement pipeline with `anef_revision` field and `extract_whdc()` helper | `ane_hw_limits.rs:148-193` | ~~HIGH~~ **Fixed** |
-| Conv kernel_d / stride | §4.1 | `validate_conv_constraints()` discards params with `let _ = (kernel_d, stride)` | `op_constraints.rs:37` | MEDIUM |
-| Zero-channels bypass | §6.3 | `channels.unwrap_or(0)` trivially passes interleave divisibility check | `placement_validate.rs:244` | MEDIUM |
+| Conv kernel_d / stride | §4.1 | ~~`validate_conv_constraints()` discards params with `let _ = (kernel_d, stride)`~~ **Fixed by T-62:** kernel_d and stride validation implemented per constraint docs | `op_constraints.rs:37` | ~~MEDIUM~~ **Fixed** |
+| Zero-channels bypass | §6.3 | ~~`channels.unwrap_or(0)` trivially passes interleave divisibility check~~ **Fixed by T-63:** Changed to `if let Some(channels)` pattern, skipping check when unknown | `placement_validate.rs:244` | ~~MEDIUM~~ **Fixed** |
 | Packed10 format | §5 | No MilDtype variant or explicit rejection exists | `ane_layout.rs` | LOW |
 
 ### II-E. Palettization Pass Is a No-Op — ✅ Fixed
@@ -80,10 +80,10 @@ The MILLer compiler lattice has matured substantially since the first TABULA RAS
 
 | # | Smell | Location | Suggestion | Severity |
 |---|---|---|---|---|
-| CQ-1 | ~~4 `panic!()` in production emission code~~ 4 `panic!()` in TEST emission code | `mir_to_proto.rs:865,877,994,1004` | Replace with `anyhow::bail!()` (code quality) | ~~HIGH~~ MEDIUM |
-| CQ-2 | ~~3 `panic!()` in MIL lowering~~ 3 `panic!()` intentional guards for unreachable compilation stages | `mil_lower.rs:943,1412,3320` | Replace with `bail!()` returning LoweringError (code quality) | ~~HIGH~~ MEDIUM |
+| CQ-1 | ~~4 `panic!()` in production emission code~~ 2 `panic!()` converted to `bail!()` in legality_rewrite.rs | `mir_to_proto.rs:865,877,994,1004` (TEST), `legality_rewrite.rs:3903,4271` | **Fixed by T-54:** Converted 2 production `panic!()` to `anyhow::bail!()` with `Result` return; 3 in mil_lower.rs are intentional safety-net guards | ~~HIGH~~ MEDIUM → Fixed (partial) |
+| CQ-2 | ~~3 `panic!()` in MIL lowering~~ 3 `panic!()` intentional guards for unreachable compilation stages | `mil_lower.rs:943,1412,3320` | Intentional safety-net guards — left as-is with documentation | MEDIUM |
 | ~~CQ-3~~ | ~~~20 `.unwrap()` in weight file I/O~~ | ~~`weights.rs:530-652`~~ | **RETRACTED** — All `.unwrap()` calls are in test code; production code uses `Result`/`bail!()` | ~~HIGH~~ **RETRACTED** |
-| CQ-4 | `panic!()` in legality passthrough — intentional guards | `legality_rewrite.rs:3903,4271` | Replace with `bail!()` for Select/Where/Tile passthrough (code quality) | MEDIUM |
+| CQ-4 | `panic!()` in legality passthrough — ~~intentional guards~~ converted to `bail!()` | `legality_rewrite.rs:3903,4271` | **Fixed by T-54:** Converted to `anyhow::bail!()` with `Result` return type | ~~MEDIUM~~ **Fixed** |
 | CQ-5 | `eprintln!` in library function | `ane_hw_limits.rs:77-80` | Use `log::warn!()` instead | LOW |
 | CQ-6 | Deprecated module still compiled | `kv_cache_rewrite` (pub(crate)) | Gate behind feature flag or remove entirely | MEDIUM |
 | CQ-7 | ~~`ModelArchConfig::default()` hardcodes Qwen3-0.6B~~ | `common.rs:248-258` | **Fixed by T-56:** Added `qwen3_0_6b()` factory method; Default delegates with deprecation notice | ~~HIGH~~ **Fixed** |
@@ -109,7 +109,7 @@ The MILLer compiler lattice has matured substantially since the first TABULA RAS
 | B-5 | ~~Palettization decisions silently ignored~~ | Any model with LUT/palettized weights | **Fixed by T-48:** Added `palette_bits` field; wired bits into annotation; added bit-width validation with clamping | ~~CRITICAL~~ **Fixed** |
 | ~~B-6~~ | ~~FP32 broadcast allowed on A13~~ | ~~A13 hardware with non-FP16 broadcast inputs~~ | **RETRACTED** — Per-family support matrix shows A13 broadcast = ✅; Apple error message specifically says "A11/A12"; constraint-doc A13 section text erroneously claims "same broadcast constraints" — code is correct | ~~HIGH~~ **RETRACTED** |
 | B-7 | ~~ReduceMin Int8 allowed on A11-A13~~ | Non-FP ReduceMin on pre-A14 hardware | **Fixed by T-51:** Added `MILReduceMin` guard in placement validator checking `supports_reducemin_all_dtypes()` | ~~HIGH~~ **Fixed** |
-| B-8 | E4M3 denied on A17 Pro hardware | V11→A16 family doesn't support E4M3 | Add A17 family or revision-level override | **HIGH** |
+| B-8 | ~~E4M3 denied on A17 Pro hardware~~ | ~~V11→A16 family doesn't support E4M3~~ | **Fixed by T-52:** Added `AneFamily::A17` variant; V11→A17 supports E4M3 | ~~HIGH~~ **Fixed** |
 | B-9 | Tile reshape zeros resolved incorrectly | Tile with multiple zero placeholders and ctx=None | Use ctx dimensions when available; require ctx for Tile | **HIGH** |
 | B-10 | ~~HW tensor dimension limits not enforced~~ | Large tensors pass placement but fail at ANE runtime | **Fixed by T-53:** Wired `validate_tensor_dims()` into placement pipeline with `anef_revision` field and `extract_whdc()` helper | ~~HIGH~~ **Fixed** |
 | B-11 | Sampler Gather forces CPU fallback | Sampler decomposition produces Gather (CPU-only) | Replace Gather with SliceByIndex or mark Sampler CPU-only | MEDIUM |
@@ -163,16 +163,21 @@ The MILLer compiler lattice has matured substantially since the first TABULA RAS
 │                                             │
 │  SIR ──██████████████████████████░  94%       │
 │  AIR ──█████████████████████████░░  91%       │
-│  MIR ──████████████████████████░░░  91%       │
+│  MIR ──████████████████████████░░░  92%       │
 │  PIR ──█████████████████████████░░  94%       │
 │                                             │
 │  OVERALL: █████████████████████████░  93%       │
 │                                             │
 │  Deductions from 100%:                      │
-│  - E4M3 denied on A17 Pro (V11→A16): -2%    │
-│  - Zero test coverage for 6 critical mods: -2%
-│  - panic!() in test/guard code (quality): -1%
+│  - Zero test coverage for 6 critical mods: -3%
 │  - Qwen3 deprecation warnings remaining: -2%
+│  - Tile reshape placeholder zeros (quality): -2%
+│                                             │
+│  Deductions resolved since v3 audit:        │
+│  + E4M3 denied on A17 Pro (V11→A16): FIXED  │
+│  + panic!() in legality passthrough: FIXED  │
+│  + Conv constraint discards params: FIXED   │
+│  + Zero-channels bypasses interleave: FIXED │
 │                                             │
 │  Deductions resolved since v2 audit:        │
 │  + 4 ops with PE engine but no ANEC: FIXED  │
@@ -209,9 +214,9 @@ Sorted by **impact x urgency** (highest first):
 | 3 | ~~**Add ~30 missing ops to CPU_ONLY_OPS**~~ | ~~HIGH~~ | ~~NOW~~ | S (0.5d) | I-23 | ✅ Fixed (T-49) |
 | ~~4~~ | ~~**Fix broadcast FP16-only to include A13**~~ | ~~HIGH~~ | **RETRACTED** | — | ~~I-24~~ | RETRACTED |
 | 5 | ~~**Add ReduceMin non-FP dtype guard**~~ | ~~HIGH~~ | ~~NEXT~~ | S (0.5d) | I-25 | ✅ Fixed (T-51) |
-| 6 | **Fix E4M3 support for A17 Pro (V11)**: Add A17 family or revision-level override so V11 gets E4M3 capability | HIGH | NEXT | M (1d) | I-26 | ⬜ Open |
+| 6 | ~~**Fix E4M3 support for A17 Pro (V11)**: Add A17 family or revision-level override so V11 gets E4M3 capability~~ | ~~HIGH~~ | ~~NEXT~~ | M (1d) | I-26 | ✅ Fixed (T-52) |
 | 7 | ~~**Wire `validate_tensor_dims()` into placement pipeline**~~ | ~~HIGH~~ | ~~NEXT~~ | S (0.5d) | I-27 | ✅ Fixed (T-53) |
-| 8 | **Replace `panic!()` in emission and lowering code**: Code quality improvement (downgraded from HIGH to MEDIUM — test/guard code, not production runtime risk) | MEDIUM | NEXT | S (0.5d) | I-28 | ⬜ Open |
+| 8 | ~~**Replace `panic!()` in emission and lowering code**: Code quality improvement (downgraded from HIGH to MEDIUM — test/guard code, not production runtime risk)~~ | ~~MEDIUM~~ | ~~NEXT~~ | S (0.5d) | I-28 | ✅ Fixed (T-54) |
 | ~~9~~ | ~~**Replace `.unwrap()` in weights.rs**~~ | ~~HIGH~~ | **RETRACTED** | — | ~~I-29~~ | RETRACTED |
 | 10 | ~~**Remove Qwen3 `Default` impl for ModelArchConfig**~~ | ~~HIGH~~ | ~~NEXT~~ | S (0.5d) | I-30 | ✅ Fixed (T-56) |
 | 11 | ~~**Fix Qwen3 architecture fallback in mir_to_compat.rs**~~ | ~~HIGH~~ | ~~NEXT~~ | S (0.5d) | I-31 | ✅ Fixed (T-57) |
@@ -219,8 +224,8 @@ Sorted by **impact x urgency** (highest first):
 | 13 | **Add tests for lab::session, lab::harness, lab::fallback**: Three 0%-coverage critical modules | HIGH | NEXT | L (2d) | I-33 | ⬜ Open |
 | 14 | **Fix Tile decomposition placeholder zeros**: Use ctx dimensions when available; document ctx requirement | MEDIUM | NEXT | S (0.5d) | I-34 | ⬜ Open |
 | 15 | **Add cross-validation test for Python vs Rust emission**: Structural equivalence test for same MIR input | MEDIUM | LATER | M (1d) | I-35 | ⬜ Open |
-| 16 | **Fix Conv constraint discarded params**: Implement kernel_d and stride validation | MEDIUM | LATER | S (0.5d) | I-36 | ⬜ Open |
-| 17 | **Fix zero-channels interleave bypass**: Return `AneConditional` when channels unknown | MEDIUM | LATER | S (0.5d) | I-37 | ⬜ Open |
+| 16 | ~~**Fix Conv constraint discarded params**: Implement kernel_d and stride validation~~ | ~~MEDIUM~~ | ~~LATER~~ | S (0.5d) | I-36 | ✅ Fixed (T-62) |
+| 17 | ~~**Fix zero-channels interleave bypass**: Return `AneConditional` when channels unknown~~ | ~~MEDIUM~~ | ~~LATER~~ | S (0.5d) | I-37 | ✅ Fixed (T-63) |
 | 18 | **Centralize palette bit-width validation**: Single `validate_palette_bits()` in ane_layout | MEDIUM | LATER | S (0.5d) | I-38 | ⬜ Open |
 | 19 | **Unify CPU-only classification**: Derive CPU_ONLY_OPS from `default_engine() == None` | MEDIUM | LATER | M (1d) | I-39 | ⬜ Open |
 | 20 | **Add ReduceMin/ArgMinMax/etc. to MirOpCompat**: Close remaining compat coverage gaps for ops with real ANEC converters | MEDIUM | LATER | M (2d) | I-40 | ⬜ Open |

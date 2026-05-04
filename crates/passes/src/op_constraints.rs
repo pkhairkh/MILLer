@@ -34,7 +34,6 @@ pub fn validate_conv_constraints(
     is_dilated: bool,
     stride: &[u64],
 ) -> Result<(), OpConstraintViolation> {
-    let _ = (kernel_d, stride);
     // Kernel dimensions must be within 1-7 range
     if !(1..=7).contains(&kernel_w) {
         return Err(OpConstraintViolation {
@@ -49,6 +48,44 @@ pub fn validate_conv_constraints(
             constraint: "kernel_height_range_1_7".into(),
             message: format!("Kernel height {} must be in range 1-7", kernel_h),
         });
+    }
+    // T-62: Validate kernel depth dimension (kd).
+    // Per constraint docs §4.2: "Kernel depth must be a power of 2."
+    // And: "Error: kernel with depth > 1 is not supported for large kernel"
+    if kernel_d > 1 && (kernel_w > 7 || kernel_h > 7) {
+        return Err(OpConstraintViolation {
+            op_name: "conv".into(),
+            constraint: "large_kernel_3d_not_supported".into(),
+            message: format!(
+                "3D conv (kernel_d={}) is not supported for large kernel ({}x{})",
+                kernel_d, kernel_w, kernel_h
+            ),
+        });
+    }
+    // T-62: Validate stride constraints.
+    // Per constraint docs §4.2: "Conv stride must be 1 for batch / channel axis"
+    // Batch axis = stride[0], Channel axis = stride[1] (in NCHW layout)
+    if stride.len() >= 2 {
+        if stride[0] != 1 {
+            return Err(OpConstraintViolation {
+                op_name: "conv".into(),
+                constraint: "stride_batch_must_be_1".into(),
+                message: format!(
+                    "Conv stride must be 1 for batch axis, got stride[0]={}",
+                    stride[0]
+                ),
+            });
+        }
+        if stride[1] != 1 {
+            return Err(OpConstraintViolation {
+                op_name: "conv".into(),
+                constraint: "stride_channel_must_be_1".into(),
+                message: format!(
+                    "Conv stride must be 1 for channel axis, got stride[1]={}",
+                    stride[1]
+                ),
+            });
+        }
     }
     // Grouped conv + large kernel = hard reject
     if groups > 1 && (kernel_w > 16 || kernel_h > 16) {

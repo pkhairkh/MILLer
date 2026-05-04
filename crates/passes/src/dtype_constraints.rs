@@ -376,6 +376,14 @@ mod tests {
         assert!(is_dtype_ane_legal(&MilDtype::E4M3, &AneFamily::A12).is_err());
         assert!(is_dtype_ane_legal(&MilDtype::E4M3, &AneFamily::A13).is_err());
         assert!(is_dtype_ane_legal(&MilDtype::E4M3, &AneFamily::A14).is_err());
+        assert!(is_dtype_ane_legal(&MilDtype::E4M3, &AneFamily::A15).is_err());
+        assert!(is_dtype_ane_legal(&MilDtype::E4M3, &AneFamily::A16).is_err());
+    }
+
+    #[test]
+    fn test_e4m3_legal_on_a17() {
+        // T-52: E4M3 has conditional support on A17 (LSE_6)
+        assert!(is_dtype_ane_legal(&MilDtype::E4M3, &AneFamily::A17).is_ok());
     }
 
     #[test]
