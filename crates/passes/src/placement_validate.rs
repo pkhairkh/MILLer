@@ -458,6 +458,29 @@ pub fn validate_placement_with_context(
             PlacementDecision::AneAllowed
         }
 
+        // T-90: Concat — Orion #1 constraint: concat only along channel axis
+        // (axis=1 in [N,C,H,W] layout) with constant positive axis. Concat
+        // along non-channel axes is rejected by the ANE compiler. Route to
+        // CPU when axis is not the channel axis.
+        MirOp::MILConcat { axis, .. } => {
+            // Channel axis is always axis=1 in ANE [N,C,H,W] layout.
+            // Concat along any other axis is rejected by ANEC.
+            if *axis != 1 {
+                log::warn!(
+                    "MILConcat along axis {} (non-channel) targeting ANE — \
+                     Orion #1: concat only supported along channel axis (1). \
+                     Consider using Stack+Reshape instead. (V-098, V-130)",
+                    axis
+                );
+                return PlacementDecision::CpuOnly(format!(
+                    "MILConcat axis {} != 1 (channel); ANE only supports concat \
+                     along channel axis (Orion #1, V-098, V-130)",
+                    axis
+                ));
+            }
+            PlacementDecision::AneAllowed
+        }
+
         // LayerNorm: A15+ only
         MirOp::MILLayerNorm { .. } => {
             if !target_family.supports_layernorm() {
@@ -1906,5 +1929,66 @@ mod tests {
             &op, &shapes, AneFamily::A16, false, &ctx,
         );
         assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    // ─── T-90: Concat placement validation tests (Orion #1) ─────────
+
+    #[test]
+    fn test_t90_concat_channel_axis_allowed() {
+        // MILConcat along axis=1 (channel axis) should be AneAllowed
+        let op = MirOp::MILConcat {
+            name: "test_concat".into(),
+            values: vec![MirNodeId("a".into()), MirNodeId("b".into())],
+            axis: 1,
+        };
+        let shapes: Vec<Vec<usize>> = vec![];
+        let ctx = PlacementContext::empty();
+        let decision = validate_placement_with_context(
+            &op, &shapes, AneFamily::A16, false, &ctx,
+        );
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_t90_concat_non_channel_axis_rejected() {
+        // MILConcat along axis=3 (non-channel) should be CpuOnly per Orion #1
+        let op = MirOp::MILConcat {
+            name: "test_concat".into(),
+            values: vec![MirNodeId("a".into()), MirNodeId("b".into())],
+            axis: 3,
+        };
+        let shapes: Vec<Vec<usize>> = vec![];
+        let ctx = PlacementContext::empty();
+        let decision = validate_placement_with_context(
+            &op, &shapes, AneFamily::A16, false, &ctx,
+        );
+        match decision {
+            PlacementDecision::CpuOnly(msg) => {
+                assert!(msg.contains("axis 3"), "Error should mention axis 3");
+                assert!(msg.contains("Orion #1"), "Error should reference Orion #1");
+            }
+            other => panic!("Expected CpuOnly for non-channel concat, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_t90_concat_axis_0_rejected() {
+        // MILConcat along axis=0 (batch, non-channel) should also be CpuOnly
+        let op = MirOp::MILConcat {
+            name: "test_concat".into(),
+            values: vec![MirNodeId("a".into()), MirNodeId("b".into())],
+            axis: 0,
+        };
+        let shapes: Vec<Vec<usize>> = vec![];
+        let ctx = PlacementContext::empty();
+        let decision = validate_placement_with_context(
+            &op, &shapes, AneFamily::A11Legacy, false, &ctx,
+        );
+        match decision {
+            PlacementDecision::CpuOnly(msg) => {
+                assert!(msg.contains("axis 0"), "Error should mention axis 0");
+            }
+            other => panic!("Expected CpuOnly for axis=0 concat, got {:?}", other),
+        }
     }
 }

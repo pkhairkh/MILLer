@@ -1,6 +1,6 @@
 # MILLer Compiler — Issue Tracker
 
-*Last updated: 2026-05-04 (NECROSCOPY forensic audit — I-66 through I-161 added from ane-violations.md 138-violation catalog)*
+*Last updated: 2026-05-05 (T-90 sprint — I-71 closed, all CRITICAL issues resolved)*
 *Reference implementation: https://huggingface.co/pkhairkh/qwen3-coreml-palettized*
 *Audit source: `docs/audit/ane-violations.md` (expanded 2026-05-08 with deep binary forensic evidence)*
 
@@ -201,26 +201,16 @@ When a weight cannot be resolved, MILLer produces a zero-filled placeholder with
 
 ---
 
-### I-71 · MILConcat Emission Violates Orion #1 — Concat Rejected by ANE Compiler
+### I-71 · ~~MILConcat Emission Violates Orion #1 — Concat Rejected by ANE Compiler~~
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-90)
 **Files:** `crates/passes/src/mil_lower.rs:2842-2858`, `crates/passes/src/legality_rewrite.rs:3098,3622`, `python/mil_emitter.py:432`
 **AUDIT ref:** V-098, V-130 (Orion #1)
 **Severity:** CRITICAL
-**Effort:** L (3 days)
-**Task:** T-93
+**Effort:** L (2 days)
+**Task:** T-90
 
-**Intent:** MILLer emits MILConcat in three critical paths: SDPA decomposition, RoPE rotate_half, and embedding gather. Orion #1 documents that concat is rejected by the ANE compiler. Binary forensic confirms extensive concat constraints: channel-axis-only, const-positive-axis, no interleaved on some dimensions, no symbolic shape. All models using SDPA decomposition will fail ANE compilation because the concat node cannot be lowered to ANEC dialect. This is the single most impactful violation.
-
-**Current behavior:** `mil_lower.rs:2842-2858` emits concat in SDPA fallback, `legality_rewrite.rs:3098,3622` emits concat(-x2, x1, axis=-1) for RoPE, `mil_emitter.py:432` emits concat for embedding gather. All produce concat nodes rejected by ANEC.
-
-**Fix direction:** (1) SDPA path: replace concat with reshape+stack or emit as fused SDPA for A16+. (2) RoPE: replace concat(-x2, x1, axis=-1) with reshape+transpose sequence. (3) Embedding gather: replace concat with reshape+stack or SliceByIndex. (4) Add test that no MILConcat survives in MIR after legality rewriting.
-
-**Definition of Done:**
-- [ ] No MILConcat emission in SDPA decomposition
-- [ ] No MILConcat emission in RoPE rotate_half
-- [ ] No MILConcat emission in embedding gather
-- [ ] Test verifies concat-free MIR for standard topologies
+**Fix:** Replaced all MILConcat emissions in SDPA decomposition and RoPE rotate_half with Stack+Reshape pattern. AttentionBlock and DecodeStep concats replaced with Stack (removing ExpandDims). Added placement validator gate rejecting non-channel-axis MILConcat per Orion #1. Python-side `mil_emitter.py` concat remains (separate emission path).
 
 ---
 

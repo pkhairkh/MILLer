@@ -1484,26 +1484,21 @@ impl LegalityRewritePass {
                     kq,
                 ));
 
-                // Expand dims: [B, S, D] → [B, 1, S, D] for concat along axis 1
-                let ctx_expanded_id = AirNodeId(format!("{base}_ctx_exp_{}", head_idx));
-                nodes.push(Self::make_air_node(
-                    ctx_expanded_id.clone(),
-                    AirOp::ExpandDims { input: ctx_part_id, axis: vec![1] },
-                    sir_node,
-                    "mb.expand_dims",
-                    kq,
-                ));
-
-                ctx_parts.push(ctx_expanded_id);
+                // Collect per-head context parts for Stack (no ExpandDims needed —
+                // Stack creates the new dimension at the specified axis, equivalent
+                // to ExpandDims + Concat but ANE-legal per Orion #1).
+                ctx_parts.push(ctx_part_id);
             }
 
-            // Concat all per-head context: [B, 1, S, D] × hq → [B, hq, S, D]
-            let ctx_concat_id = AirNodeId(format!("{base}_ctx_concat"));
+            // Stack all per-head context: [B, S, D] × hq → [B, hq, S, D]
+            // This replaces Concat along axis 1 (Orion #1: concat only along
+            // channel axis; Stack is ANE-legal and produces equivalent output).
+            let ctx_stack_id = AirNodeId(format!("{base}_ctx_stack"));
             nodes.push(Self::make_air_node(
-                ctx_concat_id.clone(),
-                AirOp::Concat { inputs: ctx_parts, axis: 1 },
+                ctx_stack_id.clone(),
+                AirOp::Stack { values: ctx_parts, axis: 1 },
                 sir_node,
-                "mb.concat",
+                "mb.stack",
                 kq,
             ));
 
@@ -1512,7 +1507,7 @@ impl LegalityRewritePass {
             nodes.push(Self::make_air_node(
                 attn_flat_id.clone(),
                 AirOp::Reshape {
-                    input: ctx_concat_id,
+                    input: ctx_stack_id,
                     target_shape: vec![batch as usize, seq as usize, attn_flat_dim as usize],
                 },
                 sir_node,
@@ -2391,34 +2386,28 @@ impl LegalityRewritePass {
                 kq,
             ));
 
-            // Expand dims: [B, 1, 1, hd] → [B, 1, 1, hd] with head axis
-            // for proper concat along axis 1
-            let ctx_expanded_id = AirNodeId(format!("{base}_ctx_exp_{}", hi));
-            nodes.push(Self::make_air_node(
-                ctx_expanded_id.clone(),
-                AirOp::ExpandDims { input: ctx_part_id, axis: vec![1] },
-                sir_node,
-                "mb.expand_dims",
-                kq,
-            ));
-
-            ctx_parts.push(ctx_expanded_id);
+            // Collect per-head context for Stack (no ExpandDims needed —
+            // Stack creates the new dimension at the specified axis, equivalent
+            // to ExpandDims + Concat but ANE-legal per Orion #1).
+            ctx_parts.push(ctx_part_id);
         }
 
-        // Concat all per-head context: [B, 1, 1, hd] × hq → [B, hq, 1, hd]
-        let ctx_concat_id = AirNodeId(format!("{base}_ctx_concat"));
+        // Stack all per-head context: [B, 1, 1, hd] × hq → [B, hq, 1, 1, hd]
+        // This replaces Concat along axis 1 (Orion #1: concat only along
+        // channel axis; Stack is ANE-legal and produces equivalent output).
+        let ctx_stack_id = AirNodeId(format!("{base}_ctx_stack"));
         nodes.push(Self::make_air_node(
-            ctx_concat_id.clone(),
-            AirOp::Concat { inputs: ctx_parts, axis: 1 },
+            ctx_stack_id.clone(),
+            AirOp::Stack { values: ctx_parts, axis: 1 },
             sir_node,
-            "mb.concat",
+            "mb.stack",
             kq,
         ));
 
         // Step 7: Reshape back to flat [B, num_heads * head_dim]
         // CRITICAL: Use heads * head_dim, NOT embed_dim. For models where
         // num_heads * head_dim != hidden_size (e.g., Qwen3-0.6B: 16*128=2048 ≠ 1024),
-        // using embed_dim produces an impossible reshape because the concat output
+        // using embed_dim produces an impossible reshape because the stack output
         // has num_heads * head_dim elements, not embed_dim elements. The output
         // projection (o_proj) then maps from num_heads*head_dim back to embed_dim.
         let attn_flat_dim = heads * head_dim;
@@ -2426,7 +2415,7 @@ impl LegalityRewritePass {
         nodes.push(Self::make_air_node(
             attn_flat_id.clone(),
             AirOp::Reshape {
-                input: ctx_concat_id,
+                input: ctx_stack_id,
                 target_shape: vec![batch as usize, attn_flat_dim as usize],
             },
             sir_node,
@@ -3131,9 +3120,13 @@ impl LegalityRewritePass {
     /// Apply the RoPE rotation to a 4D tensor: output = x * cos + rotate_half(x) * sin
     ///
     /// `rotate_half(x)` splits the last dimension in half, negates the
-    /// second half, swaps, and concatenates:
+    /// second half, swaps, and recombines via Stack+Reshape:
     ///   x1 = x[..., :d/2],  x2 = x[..., d/2:]
-    ///   rotate_half(x) = concat(-x2, x1, axis=-1)
+    ///   rotate_half(x) = stack([-x2, x1], axis=3) → reshape to [..., D]
+    ///
+    /// This uses Stack+Reshape instead of Concat because Orion #1 requires
+    /// concat only along the channel axis (axis=1); Stack is ANE-legal on
+    /// all axes and produces numerically equivalent output.
     ///
     /// This uses half-dim slices so cos/sin tables with shape [..., D/2]
     /// or full [..., D] both work — the broadcast is always compatible.
@@ -3195,13 +3188,25 @@ impl LegalityRewritePass {
             kq,
         ));
 
-        // Concatenate: rotated = concat(-x2, x1, axis=-1)
+        // Stack + Reshape replaces Concat along axis=3 (Orion #1: concat only
+        // along channel axis). Stack at axis=3 produces [B, H, S, 2, D/2],
+        // then reshape flattens the last two dims back to [B, H, S, D].
+        // This is numerically equivalent to concat([-x2, x1], axis=3).
+        let stack_id = AirNodeId(format!("{base}{suffix}_stack"));
+        nodes.push(Self::make_air_node(
+            stack_id.clone(),
+            AirOp::Stack { values: vec![neg_x2_id, x1_id], axis: 3 },
+            sir_node,
+            "mb.stack",
+            kq,
+        ));
+
         let rotated_id = AirNodeId(format!("{base}{suffix}_rotated"));
         nodes.push(Self::make_air_node(
             rotated_id.clone(),
-            AirOp::Concat { inputs: vec![neg_x2_id, x1_id], axis: 3 },
+            AirOp::Reshape { input: stack_id, target_shape: vec![0, 0, 0, half * 2] },
             sir_node,
-            "mb.concat",
+            "mb.reshape",
             kq,
         ));
 
@@ -3716,16 +3721,25 @@ impl LegalityRewritePass {
             kq,
         ));
 
-        // Step 6: Concatenate: rotated = concat(-x2, x1, axis=-1)
+        // Step 6: Stack + Reshape replaces Concat along axis=3 (Orion #1:
+        // concat only along channel axis). Stack at axis=3 produces
+        // [B, H, S, 2, D/2], then reshape flattens last two dims to [B, H, S, D].
+        // Numerically equivalent to concat([-x2, x1], axis=3).
+        let stack_id = AirNodeId(format!("{base}_stack"));
+        nodes.push(Self::make_air_node(
+            stack_id.clone(),
+            AirOp::Stack { values: vec![neg_x2_id, x1_id], axis: 3 },
+            sir_node,
+            "mb.stack",
+            kq,
+        ));
+
         let rotated_id = AirNodeId(format!("{base}_rotated"));
         nodes.push(Self::make_air_node(
             rotated_id.clone(),
-            AirOp::Concat {
-                inputs: vec![neg_x2_id, x1_id],
-                axis: 3, // last axis in [B, heads, S, head_dim]
-            },
+            AirOp::Reshape { input: stack_id, target_shape: vec![0, 0, 0, half * 2] },
             sir_node,
-            "mb.concat",
+            "mb.reshape",
             kq,
         ));
 
@@ -5366,6 +5380,7 @@ mod tests {
         let has_matmul = air.nodes.iter().any(|n| matches!(n.op, AirOp::MatMul { .. }));
         let has_softmax = air.nodes.iter().any(|n| matches!(n.op, AirOp::Softmax { .. }));
         let has_concat = air.nodes.iter().any(|n| matches!(n.op, AirOp::Concat { .. }));
+        let has_stack = air.nodes.iter().any(|n| matches!(n.op, AirOp::Stack { .. }));
         let has_sdpa =
             air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
         let has_tile = air.nodes.iter().any(|n| matches!(n.op, AirOp::Tile { .. }));
@@ -5377,7 +5392,12 @@ mod tests {
         assert!(has_slice, "Split-based attention must include SliceByIndex for head extraction");
         assert!(has_matmul, "Split-based attention must include MatMul ops");
         assert!(has_softmax, "Split-based attention must include Softmax ops");
-        assert!(has_concat, "Split-based attention must include Concat ops");
+        // T-90: Concat replaced by Stack (Orion #1: concat only along channel axis).
+        // Either Stack (new) or Concat (legacy) is acceptable for head merging.
+        assert!(
+            has_stack || has_concat,
+            "Split-based attention must include Stack or Concat ops for head merging"
+        );
         assert!(!has_sdpa, "Split-based attention must NOT include SDPA");
         assert!(!has_tile, "Split-based attention must NOT include Tile");
 
@@ -6679,11 +6699,13 @@ mod tests {
         assert!(!has_sdpa, "AttentionBlock with context must NOT use SDPA");
         assert!(!has_tile, "AttentionBlock must NOT use Tile (ANE-illegal)");
 
-        // Must have Concat to merge per-head outputs
+        // Must have Stack or Concat to merge per-head outputs
+        // T-90: Concat replaced by Stack (Orion #1: concat only along channel axis)
         let has_concat = air.nodes.iter().any(|n| matches!(n.op, AirOp::Concat { .. }));
+        let has_stack = air.nodes.iter().any(|n| matches!(n.op, AirOp::Stack { .. }));
         assert!(
-            has_concat,
-            "AttentionBlock must include Concat to merge per-head attention outputs"
+            has_stack || has_concat,
+            "AttentionBlock must include Stack or Concat to merge per-head attention outputs"
         );
 
         // Must have Conv1x1AsLinear for output projection
@@ -8025,6 +8047,115 @@ mod tests {
         assert!(
             !ctx_zero_kv.uses_gqa,
             "GQA should NOT be detected when kv_heads=0 (defaults to num_heads)"
+        );
+    }
+
+    // ─── T-90: Concat elimination tests (Orion #1) ───────────────
+
+    /// T-90: Verify that AttentionBlock per-head decomposition uses Stack
+    /// instead of Concat for head merging. This test uses the existing
+    /// attention decomposition infrastructure.
+    #[test]
+    fn test_t90_attention_uses_stack_not_concat() {
+        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+
+        let sir = SirGraph {
+            nodes: vec![SirNode {
+                id: SirNodeId("attn".into()),
+                op: SirOp::AttentionBlock {
+                    q: SirNodeId("input".into()),
+                    k: SirNodeId("input".into()),
+                    v: SirNodeId("input".into()),
+                    mask: None,
+                    rope: None,
+                },
+                name: "attn".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
+            inputs: vec![SirNodeId("input".into())],
+            outputs: vec![SirNodeId("attn".into())],
+        };
+
+        // batch=2, embed_dim=128, num_heads=4, head_dim=32, seq_len=16
+        let ctx = DecompositionContext::for_attention(2, 128, 4, 32, 16);
+        let pass = LegalityRewritePass::new();
+        let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
+
+        // Verify no AirOp::Concat with axis != 1 (non-channel) exists.
+        // T-90: Concat along non-channel axes replaced by Stack+Reshape.
+        let has_non_channel_concat = air.nodes.iter().any(|n| {
+            matches!(&n.op, AirOp::Concat { axis, .. } if *axis != 1)
+        });
+        assert!(!has_non_channel_concat,
+            "T-90: AttentionBlock must not produce Concat along non-channel axis. \
+             Found non-channel Concat ops in output."
+        );
+
+        // Verify Stack is used for head merging (replaces ExpandDims+Concat)
+        let has_stack = air.nodes.iter().any(|n| matches!(n.op, AirOp::Stack { .. }));
+        assert!(has_stack,
+            "T-90: AttentionBlock decomposition should use Stack for head merging"
+        );
+    }
+
+    /// T-90: Verify that DecodeStep per-head decomposition uses Stack
+    /// instead of Concat for head merging.
+    #[test]
+    fn test_t90_decode_step_uses_stack_not_concat() {
+        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+
+        let sir = SirGraph {
+            nodes: vec![SirNode {
+                id: SirNodeId("decode".into()),
+                op: SirOp::DecodeStep {
+                    token: SirNodeId("input".into()),
+                    state_map: vec![],
+                    q_weight: Some("q_w".into()),
+                    k_weight: Some("k_w".into()),
+                    v_weight: Some("v_w".into()),
+                    out_weight: Some("o_w".into()),
+                    rope_tables: None,
+                    position: None,
+                    q_norm_weight: None,
+                    k_norm_weight: None,
+                    norm_epsilon: 1e-6,
+                    qk_norm_type: "rms".into(),
+                    mask_ref: None,
+                },
+                name: "decode".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
+            inputs: vec![SirNodeId("input".into())],
+            outputs: vec![SirNodeId("decode".into())],
+        };
+
+        // batch=1, embed_dim=128, num_heads=4, head_dim=32, seq_len=16
+        let ctx = DecompositionContext::for_decode_step(1, 128, 4, 32, 16);
+        let pass = LegalityRewritePass::new();
+        let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
+
+        // Verify no AirOp::Concat with axis != 1 (non-channel) exists
+        let has_non_channel_concat = air.nodes.iter().any(|n| {
+            matches!(&n.op, AirOp::Concat { axis, .. } if *axis != 1)
+        });
+        assert!(!has_non_channel_concat,
+            "T-90: DecodeStep must not produce Concat along non-channel axis."
+        );
+
+        // Verify Stack is used for head merging
+        let has_stack = air.nodes.iter().any(|n| matches!(n.op, AirOp::Stack { .. }));
+        assert!(has_stack,
+            "T-90: DecodeStep decomposition should use Stack for head merging"
         );
     }
 }

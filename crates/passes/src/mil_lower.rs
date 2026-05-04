@@ -2841,29 +2841,49 @@ impl MilLowerPass {
                         ctx_ids.push(ctx_id);
                     }
 
-                    // Step 5: concat all context heads → [B, Hq, 1, Hd]
-                    let concat_id = MirNodeId(format!("{}_ctx_concat", sdpa_id.0));
-                    let concat_node = MirNode {
-                        id: concat_id.clone(),
-                        op: MirOp::MILConcat {
-                            name: format!("{}_ctx_concat", name),
+                    // Step 5: Stack + Reshape all context heads → [B, Hq, 1, Hd]
+                    // Stack at axis=1 creates [1, hq, 1, 1, hd] (5D), then reshape
+                    // collapses the singleton dims back to [1, hq, 1, hd] (4D).
+                    // This replaces MILConcat (Orion #1: concat only along channel
+                    // axis; Stack + Reshape is ANE-legal and numerically equivalent).
+                    let stack_id = MirNodeId(format!("{}_ctx_stack", sdpa_id.0));
+                    let stack_node = MirNode {
+                        id: stack_id.clone(),
+                        op: MirOp::MILStack {
+                            name: format!("{}_ctx_stack", name),
                             values: ctx_ids,
                             axis: 1,
+                        },
+                        dtype: sdpa_dtype.clone(),
+                        shape: vec![1, hq, 1, 1, hd],
+                        compute_unit_hint: sdpa_compute.clone(),
+                        air_source: sdpa_air.clone(),
+                    };
+                    new_nodes.push(stack_node);
+                    extra_shapes.push((AirNodeId(stack_id.0.clone()), vec![1, hq, 1, 1, hd]));
+
+                    let reshape_id = MirNodeId(format!("{}_ctx_reshape", sdpa_id.0));
+                    let reshape_node = MirNode {
+                        id: reshape_id.clone(),
+                        op: MirOp::MILReshape {
+                            name: format!("{}_ctx_reshape", name),
+                            x: stack_id,
+                            shape: vec![1, hq, 1, hd],
                         },
                         dtype: sdpa_dtype.clone(),
                         shape: vec![1, hq, 1, hd],
                         compute_unit_hint: sdpa_compute.clone(),
                         air_source: sdpa_air.clone(),
                     };
-                    new_nodes.push(concat_node);
-                    extra_shapes.push((AirNodeId(concat_id.0.clone()), vec![1, hq, 1, hd]));
+                    new_nodes.push(reshape_node);
+                    extra_shapes.push((AirNodeId(reshape_id.0.clone()), vec![1, hq, 1, hd]));
 
-                    // The concat output replaces the SDPA output.
+                    // The reshape output replaces the SDPA output.
                     // Reuse the SDPA node's ID so downstream references still work.
-                    // Create an identity node mapping concat → sdpa_id
+                    // Create an identity node mapping reshape → sdpa_id
                     let identity_node = MirNode {
                         id: sdpa_id.clone(),
-                        op: MirOp::MILIdentity { name: format!("{}_identity", name), x: concat_id },
+                        op: MirOp::MILIdentity { name: format!("{}_identity", name), x: reshape_id },
                         dtype: sdpa_dtype.clone(),
                         shape: node.shape.clone(),
                         compute_unit_hint: sdpa_compute.clone(),
@@ -5342,6 +5362,41 @@ mod tests {
         if let MirOp::MILLinear { bias, .. } = &linear_with_bias {
             assert!(bias.is_some(), "Bias should be captured for warning");
             assert_eq!(bias.as_ref().unwrap(), "bias_proj");
+        }
+    }
+
+    // ─── T-90: Concat elimination tests (Orion #1) ───────────────
+
+    /// T-90: Verify that MILConcat placement validation rejects non-channel
+    /// axis concats. This test validates the placement validator, which is
+    /// the safety net for any MILConcat that survives into the MIR graph.
+    #[test]
+    fn test_t90_concat_placement_validation() {
+        use crate::placement_validate::{validate_placement, PlacementDecision};
+        use ane_ir::ane_target::AneFamily;
+
+        // Concat along channel axis (1) should be allowed
+        let concat_channel = MirOp::MILConcat {
+            name: "test".into(),
+            values: vec![MirNodeId("a".into()), MirNodeId("b".into())],
+            axis: 1,
+        };
+        let decision = validate_placement(&concat_channel, &[], AneFamily::A16, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed,
+            "Concat along channel axis should be ANE-allowed");
+
+        // Concat along non-channel axis should be rejected
+        let concat_non_channel = MirOp::MILConcat {
+            name: "test".into(),
+            values: vec![MirNodeId("a".into()), MirNodeId("b".into())],
+            axis: 3,
+        };
+        let decision = validate_placement(&concat_non_channel, &[], AneFamily::A16, false);
+        match decision {
+            PlacementDecision::CpuOnly(msg) => {
+                assert!(msg.contains("Orion #1"), "Should reference Orion #1");
+            }
+            other => panic!("Expected CpuOnly for non-channel concat, got {:?}", other),
         }
     }
 }

@@ -75,29 +75,13 @@ Full resolution details are in `CHANGELOG.md`.
 
 ## 🔴 CRITICAL — Silent Miscompilation or Data Corruption
 
-### T-90 · Replace Concat Emissions with ANE-Legal Alternatives
+### T-90 · ~~Replace Concat Emissions with ANE-Legal Alternatives~~
 
-- **ISSUES ref**: I-65
-- **AUDIT ref**: V-098, V-130 (ane-violations.md §III)
-- **Severity**: CRITICAL
-- **Effort**: L (2 days)
-
-**Intent**: MILLer emits `MILConcat` in two critical code paths — the SDPA (scaled dot-product attention) decomposition path and the RoPE (rotary position embedding) rotate_half path. The ANE compiler rejects concat operations per Orion constraint #1 — concat is only supported along the channel axis with a constant positive axis. The SDPA path emits concat along non-channel axes, and the RoPE path emits `concat(-x2, x1, axis=-1)` which uses a negative axis value. Both paths produce models that fail at ANEC compile time. The binary forensic evidence confirms extensive concat constraints: "Concat supports only 1 axis", "ANE Concat supports only const positive axis", "failed: only works when concat is applied on the channel axis".
-
-**Mitigation / Implementation**:
-1. **SDPA path** (`crates/passes/src/mil_lower.rs:2842-2858`): Replace concat emission with reshape+stack sequence or emit as fused SDPA for A16+ targets (where `ConvertScaledDotProductAttention` is reliable). For pre-A16 targets, decompose into ANE-legal reshape+transpose+stack operations.
-2. **RoPE rotate_half** (`crates/passes/src/legality_rewrite.rs:3098,3622`): Replace `concat(-x2, x1, axis=-1)` with an equivalent reshape+transpose sequence: (a) Reshape the two halves to separate channel dimensions, (b) Stack along the channel axis using a reshape+transpose pattern, (c) Reshape back to the original output shape.
-3. Add a test that constructs a MIR graph with the old concat patterns, runs the lowering/rewrite passes, and verifies that no `MILConcat` nodes remain in the output graph for ANE-targeted paths.
-4. Add a linter check in the placement validator that warns if `MILConcat` appears in a graph targeting the ANE with a non-channel axis.
-5. Document the concat constraints from Orion #1 in `ane-constraints-docs/` if not already present.
-
-**Definition of Done**:
-- [ ] No `MILConcat` nodes emitted in SDPA decomposition path for ANE targets
-- [ ] No `MILConcat` nodes emitted in RoPE rotate_half path for ANE targets
-- [ ] New test verifies zero concat nodes in ANE-targeted graph output
-- [ ] Placement validator warns on ANE-targeted concat with non-channel axis
-- [ ] `cargo test` passes with zero failures
-- [ ] Existing SDPA and RoPE functionality preserved (output numerical equivalence)
+~~**ISSUES ref**: I-65~~
+~~**AUDIT ref**: V-098, V-130 (ane-violations.md §III)~~
+~~**Severity**: CRITICAL~~
+~~**Effort**: L (2 days)~~
+**✅ RESOLVED** — Replaced all MILConcat emissions in SDPA decomposition (mil_lower.rs) and RoPE rotate_half (legality_rewrite.rs) with Stack+Reshape pattern. AttentionBlock and DecodeStep concats replaced with Stack. Added placement validator gate rejecting non-channel-axis MILConcat (Orion #1). 6 new tests.
 
 ---
 
@@ -487,7 +471,7 @@ Full resolution details are in `CHANGELOG.md`.
 
 | Task | Issue(s) | Severity | Effort | Status |
 |------|----------|----------|--------|--------|
-| T-90 | I-65 | CRITICAL | L | 🔴 Open |
+| T-90 | I-65 | CRITICAL | L | ✅ Resolved |
 | T-95 | I-70 | HIGH | M | ✅ Resolved |
 | T-96 | I-71 | HIGH | M | ✅ Resolved |
 | T-98 | I-73, I-94 | HIGH | L | ✅ Resolved |
@@ -579,11 +563,10 @@ Tasks T-47 through T-57, T-60, T-62, T-63, T-64, T-65 resolved. T-61, T-66 remai
 
 | Severity | Count | Total Effort |
 |----------|-------|-------------|
-| 🔴 CRITICAL | 1 | ~2 days |
-| **Total** | **1** | **~2 days** |
+| 🔴 CRITICAL | 0 | 0 |
+| **Total** | **0** | **0** |
 
-> **Priority guidance**: CRITICAL task T-90 must be resolved before any production compilation.
-> All MEDIUM and LOW tasks are now resolved.
+> **All tasks resolved.** No open tasks remain.
 >
-> **Resolved**: 44 tasks (T-86, T-87, T-89, T-91–T-99, T-100–T-108, T-109–T-131).
+> **Resolved**: 45 tasks (T-86, T-87, T-89, T-90, T-91–T-99, T-100–T-108, T-109–T-131).
 > Tasks T-01 through T-85 are all resolved — see archive summary above and `CHANGELOG.md`.

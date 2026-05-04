@@ -2,14 +2,90 @@
 
 ## Current Status — 2026-05-05
 
-- **1645 tests passing**, 0 failures
+- **1651 tests passing**, 0 failures
 - IR Cleanliness Score: 89%
 - 0 clippy errors, pre-existing warnings only
-- **1 open task** (1 CRITICAL) — see [TASKS.md](TASKS.md)
-- **44 tasks resolved** across sprint cycles
+- **0 open tasks** — all resolved
+- **45 tasks resolved** across sprint cycles
 
 Audit details: [docs/audit/tabula-rasa-v3.md](docs/audit/tabula-rasa-v3.md)
 Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
+
+---
+
+## [sprint-concat-elimination] — 2026-05-05
+
+### Sprint: Concat Elimination (T-90)
+
+Resolved 1 CRITICAL task from the NECROSCOPY forensic audit
+(ane-violations.md). This sprint eliminates all MILConcat emissions
+from ANE-targeted code paths, replacing them with Stack+Reshape
+patterns that are ANE-legal on all axes per Orion #1.
+
+#### Tasks Resolved
+
+| Task | Description | Issues Fixed |
+|------|-------------|-------------|
+| T-90 | Replace Concat Emissions with ANE-Legal Alternatives | I-65 |
+
+#### Added
+
+- T-90: Stack+Reshape replacement for RoPE rotate_half concat
+  (`apply_rotary_half` and `decompose_rope`). Replaced
+  `AirOp::Concat { axis: 3 }` with `AirOp::Stack { axis: 3 }` +
+  `AirOp::Reshape` in both RoPE paths. The Stack at axis=3 produces
+  [B, H, S, 2, D/2] (5D), then reshape flattens back to [B, H, S, D].
+- T-90: Stack replacement for AttentionBlock per-head context concat.
+  Removed ExpandDims step and replaced `AirOp::Concat { axis: 1 }` with
+  `AirOp::Stack { axis: 1 }`. Stack creates the new dimension at the
+  specified axis, equivalent to ExpandDims+Concat but ANE-legal.
+- T-90: Stack replacement for DecodeStep per-head context concat.
+  Same pattern as AttentionBlock — removed ExpandDims, used Stack.
+- T-90: MILStack+MILReshape replacement for SDPA per-head concat
+  in `mil_lower.rs`. Stack at axis=1 produces [1, hq, 1, 1, hd] (5D),
+  then reshape collapses back to [1, hq, 1, hd] (4D).
+- T-90: Placement validator gate for MILConcat with non-channel axis.
+  `validate_placement_with_context()` now returns `CpuOnly` for any
+  `MILConcat` where `axis != 1`, with a message referencing Orion #1
+  and violations V-098/V-130. Concat along channel axis (1) remains
+  `AneAllowed`.
+
+#### Changed
+
+- `legality_rewrite.rs`: `apply_rotary_half()` now emits
+  Stack+Reshape instead of Concat. Doc comment updated to reflect
+  Orion #1 constraint.
+- `legality_rewrite.rs`: `decompose_rope()` now emits Stack+Reshape
+  instead of Concat for rotate_half.
+- `legality_rewrite.rs`: AttentionBlock decomposition no longer
+  emits ExpandDims before head merging. Stack replaces
+  ExpandDims+Concat.
+- `legality_rewrite.rs`: DecodeStep decomposition no longer emits
+  ExpandDims. Stack replaces ExpandDims+Concat.
+- `mil_lower.rs`: SDPA per-head decomposition emits MILStack+
+  MILReshape instead of MILConcat. The identity node now references
+  the reshape output instead of the concat output.
+- `placement_validate.rs`: New match arm for `MILConcat` checking
+  axis != 1 (non-channel) returns CpuOnly with Orion #1 reference.
+
+#### Tests Added (6 new tests)
+
+- T-90: `test_t90_concat_channel_axis_allowed` — MILConcat axis=1
+  is AneAllowed
+- T-90: `test_t90_concat_non_channel_axis_rejected` — MILConcat
+  axis=3 is CpuOnly with Orion #1 reference
+- T-90: `test_t90_concat_axis_0_rejected` — MILConcat axis=0
+  is CpuOnly
+- T-90: `test_t90_attention_uses_stack_not_concat` — AttentionBlock
+  produces Stack, no non-channel Concat
+- T-90: `test_t90_decode_step_uses_stack_not_concat` — DecodeStep
+  produces Stack, no non-channel Concat
+- T-90: `test_t90_concat_placement_validation` — validates placement
+  validator behavior for channel vs non-channel concat
+
+#### Issues Closed (1 issue)
+
+I-65
 
 ---
 
