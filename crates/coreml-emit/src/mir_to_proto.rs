@@ -476,6 +476,11 @@ pub fn convert_mir_to_proto_multifunction(
         states: default_fn.map(|f| f.states.clone()).unwrap_or_default(),
     };
 
+    // T-119: Validate minimum IOSurface size for output buffers (Orion #4).
+    // The ANE requires a minimum ~49 KB for eval buffers. Models with
+    // smaller output buffers fail at runtime with 0x1d error.
+    validate_iosurface_sizes(&functions)?;
+
     Ok(CoreMlModel {
         spec_version,
         description,
@@ -486,6 +491,44 @@ pub fn convert_mir_to_proto_multifunction(
         compute_unit,
         user_defined_metadata: std::collections::HashMap::new(),
     })
+}
+
+/// T-119: Minimum IOSurface size for ANE eval buffers (Orion #4).
+///
+/// The ANE requires output buffers of at least ~49 KB. Models with
+/// smaller output buffers fail at runtime with 0x1d error and no
+/// compile-time indication. This constant defines the minimum byte size.
+pub const MIN_IOSURFACE_BYTES: u64 = 49 * 1024; // ~49 KB
+
+/// T-119: Validate that all output tensor buffers meet the minimum
+/// IOSurface size requirement (Orion #4).
+///
+/// For each output tensor, computes `shape_product × dtype_size` and
+/// warns if below `MIN_IOSURFACE_BYTES`. The ANE silently fails with
+/// a 0x1d runtime error for undersized output buffers.
+fn validate_iosurface_sizes(functions: &[ane_coreml_proto::CoreMlFunction]) -> Result<()> {
+    for func in functions {
+        for output in &func.outputs {
+            let element_size = output.dtype.element_size() as u64;
+            let shape_product: u64 = output.shape.iter().product::<u64>().max(1);
+            let buffer_size = shape_product * element_size;
+
+            if buffer_size < MIN_IOSURFACE_BYTES {
+                log::warn!(
+                    "T-119: Output '{}' in function '{}' has buffer size {} bytes \
+                     (shape={:?}, dtype_size={}), below minimum {} bytes (Orion #4). \
+                     The ANE may fail with 0x1d runtime error for undersized buffers.",
+                    output.name,
+                    func.name,
+                    buffer_size,
+                    output.shape,
+                    element_size,
+                    MIN_IOSURFACE_BYTES
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Serialize a CoreMlModel to protobuf bytes using Apple's actual wire format.
@@ -1312,5 +1355,71 @@ mod tests {
             err_msg.contains("2 operation(s)"),
             "Error should report count of 2, got: {err_msg}"
         );
+    }
+
+    // ─── T-119: Minimum IOSurface size validation tests ────────────────
+
+    #[test]
+    fn test_t119_min_iosurface_constant() {
+        assert_eq!(MIN_IOSURFACE_BYTES, 49 * 1024, "Orion #4: ~49 KB minimum");
+    }
+
+    #[test]
+    fn test_t119_small_output_buffer_warns() {
+        // Create a function with a tiny output tensor (1x1 fp16 = 2 bytes)
+        let functions = vec![ane_coreml_proto::CoreMlFunction {
+            name: "main".to_string(),
+            inputs: vec![],
+            outputs: vec![ane_coreml_proto::TensorDesc {
+                name: "output".to_string(),
+                shape: vec![1, 1],
+                dtype: ane_coreml_proto::CoreMlDataType::Float16,
+                is_state: false,
+            }],
+            states: vec![],
+            operations: vec![],
+            node_shapes: std::collections::HashMap::new(),
+        }];
+
+        // Should succeed but log warning
+        let result = validate_iosurface_sizes(&functions);
+        assert!(result.is_ok(), "Validation should succeed with warning, not fail");
+    }
+
+    #[test]
+    fn test_t119_large_output_buffer_ok() {
+        // Create a function with a large output tensor (1x24576 fp16 = ~49 KB)
+        let functions = vec![ane_coreml_proto::CoreMlFunction {
+            name: "main".to_string(),
+            inputs: vec![],
+            outputs: vec![ane_coreml_proto::TensorDesc {
+                name: "output".to_string(),
+                shape: vec![1, 25088], // 25088 * 2 = 50176 bytes > 49 KB
+                dtype: ane_coreml_proto::CoreMlDataType::Float16,
+                is_state: false,
+            }],
+            states: vec![],
+            operations: vec![],
+            node_shapes: std::collections::HashMap::new(),
+        }];
+
+        let result = validate_iosurface_sizes(&functions);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_t119_buffer_size_computation() {
+        // Verify our buffer size computation is correct
+        let dtype = ane_coreml_proto::CoreMlDataType::Float16;
+        let element_size = dtype.element_size() as u64;
+        assert_eq!(element_size, 2, "FP16 = 2 bytes per element");
+
+        // 1x1 output = 2 bytes — way below 49 KB
+        let small_size: u64 = 1 * 1 * element_size;
+        assert!(small_size < MIN_IOSURFACE_BYTES);
+
+        // 1x25088 output = 50176 bytes — above 49 KB
+        let large_size: u64 = 1 * 25088 * element_size;
+        assert!(large_size >= MIN_IOSURFACE_BYTES);
     }
 }

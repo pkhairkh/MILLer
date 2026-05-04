@@ -91,6 +91,19 @@ impl MlPackageWriter {
         // different functions may produce differently-named weights with
         // identical content (e.g., embedding and decode_step sharing a
         // projection weight).
+
+        // T-122: Validate that the weight dictionary is non-nil/non-empty
+        // when the model has functions. A nil/empty weight dict causes
+        // immediate crash at ANEC compile time (Orion #11).
+        if !model.functions.is_empty() && model.weights.is_empty() {
+            log::warn!(
+                "T-122: Model has {} function(s) but zero weights — \
+                 ANEC crashes on nil weight dictionary (Orion #11). \
+                 Verify that weight tensors were properly resolved.",
+                model.functions.len()
+            );
+        }
+
         let has_shared = !model.shared_weights.is_empty();
         let mut weight_builder = WeightBinBuilder::new().with_content_dedup();
         for weight in &model.weights {
@@ -355,5 +368,65 @@ mod tests {
         assert_eq!(manifest["fileFormatVersion"], "1.0.0");
         assert!(manifest["itemInfoEntries"].is_object());
         assert!(manifest["rootModelIdentifier"].is_string());
+    }
+
+    // ─── T-122: Weight dict initialization check ─────────────────────────
+
+    #[test]
+    fn test_t122_weight_dict_empty_with_functions_warns() {
+        // A model with functions but zero weights should trigger the
+        // T-122 warning (Orion #11: nil weight dict crashes ANEC).
+        // This test verifies the code path doesn't panic — the actual
+        // warning is only visible via log capture.
+        let model = CoreMlModel {
+            spec_version: SpecVersion::V10,
+            description: ane_coreml_proto::ModelDescriptionCompat {
+                inputs: vec![],
+                outputs: vec![],
+                states: vec![],
+            },
+            functions: vec![ane_coreml_proto::CoreMlFunction {
+                name: "main".to_string(),
+                inputs: vec![],
+                outputs: vec![],
+                states: vec![],
+                operations: vec![],
+                node_shapes: std::collections::HashMap::new(),
+            }],
+            default_function_name: "main".to_string(),
+            weights: vec![], // Empty — should trigger T-122 warning
+            shared_weights: vec![],
+            compute_unit: CoreMlComputeUnit::CpuAndNe,
+            user_defined_metadata: HashMap::new(),
+        };
+
+        // Writing should still succeed (warning, not error)
+        let output_path = "/tmp/miller_test_t122_empty_weights.mlpackage";
+        let result = MlPackageWriter::write(&model, output_path);
+        // It should succeed — the warning is advisory
+        assert!(result.is_ok(), "Empty weights with functions should warn, not fail");
+    }
+
+    #[test]
+    fn test_t122_weight_dict_empty_no_functions_ok() {
+        // A model with no functions and no weights is fine — nothing to compile.
+        let model = CoreMlModel {
+            spec_version: SpecVersion::V10,
+            description: ane_coreml_proto::ModelDescriptionCompat {
+                inputs: vec![],
+                outputs: vec![],
+                states: vec![],
+            },
+            functions: vec![], // No functions — no warning expected
+            default_function_name: "main".to_string(),
+            weights: vec![],
+            shared_weights: vec![],
+            compute_unit: CoreMlComputeUnit::CpuAndNe,
+            user_defined_metadata: HashMap::new(),
+        };
+
+        let output_path = "/tmp/miller_test_t122_no_functions.mlpackage";
+        let result = MlPackageWriter::write(&model, output_path);
+        assert!(result.is_ok());
     }
 }

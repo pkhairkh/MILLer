@@ -27,7 +27,10 @@ use ane_ir::sir::{SirGraph, SirOp};
 /// T-64 (I-38): Previously defined locally in this module. Now centralized
 /// in `ane_ir::ane_layout` so that `ane-lab` and `ane-ir` can also use it
 /// without depending on `ane-passes`.
-pub use ane_ir::ane_layout::{validate_palette_bits, VALID_PALETTE_BITS};
+///
+/// T-118: Also re-exports `validate_palette_bits_for_family` for
+/// version-conditional palette bit-width validation.
+pub use ane_ir::ane_layout::{validate_palette_bits, validate_palette_bits_for_family, VALID_PALETTE_BITS};
 
 /// Result of the palettize weights pass.
 #[derive(Debug, Clone)]

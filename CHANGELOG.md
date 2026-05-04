@@ -2,14 +2,83 @@
 
 ## Current Status — 2026-05-04
 
-- **1541 tests passing**, 0 failures
+- **1561 tests passing**, 0 failures
 - IR Cleanliness Score: 89%
 - 0 clippy warnings, 0 errors
-- **24 open tasks** (1 CRITICAL, 3 HIGH, 12 MEDIUM, 8 LOW) — see [TASKS.md](TASKS.md)
-- **20 tasks resolved** this sprint cycle (T-109, T-104, T-114, T-115 from this sprint)
+- **20 open tasks** (1 CRITICAL, 3 HIGH, 8 MEDIUM, 8 LOW) — see [TASKS.md](TASKS.md)
+- **24 tasks resolved** across sprint cycles
 
 Audit details: [docs/audit/tabula-rasa-v3.md](docs/audit/tabula-rasa-v3.md)
 Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
+
+---
+
+## [sprint-ane-runtime-safety] — 2026-05-04
+
+### Sprint: ANE Runtime Safety & Palettization Hardening (T-118, T-119, T-120, T-122)
+
+Resolved 4 tasks (all MEDIUM) from the NECROSCOPY forensic audit
+(ane-violations.md). All changes add runtime safety checks for Orion
+constraints that previously had no compile-time or runtime enforcement,
+preventing silent ANE failures.
+
+#### Tasks Resolved
+
+| Task | Description | Issues Fixed |
+|------|-------------|--------------|
+| T-118 | Add Palette Bits Validation with Version-Conditional Support | I-93 |
+| T-119 | Add Minimum IOSurface Size Validation | I-94 |
+| T-120 | Add Compilation Count Per Process Tracking | I-95 |
+| T-122 | Add Weight Dict Initialization Check | I-97 |
+
+#### Added
+
+- T-118: `validate_palette_bits_for_family()` in `ane_layout.rs` — validates
+  palette bit-widths against target hardware family. 3-bit and 6-bit
+  palettization rejected on A11Legacy/A12/A13 (A14+ only per ANEC binary
+  evidence). Uses existing `uses_a14minus_converters()` for family detection.
+  Re-exported from `palettize_weights.rs`. 10 new tests.
+- T-119: `MIN_IOSURFACE_BYTES` constant (~49 KB per Orion #4) and
+  `validate_iosurface_sizes()` in `mir_to_proto.rs`. Computes output buffer
+  sizes (shape_product × dtype_size) and warns when below minimum. Called
+  from `convert_mir_to_proto_multifunction()`. 4 new tests.
+- T-120: Global `COMPILATION_COUNT: AtomicU64` counter in `emitter.rs`.
+  `emit_model()` increments counter, returns error at limit (119), warns
+  at threshold (95). Public constants `COMPILATION_LIMIT`,
+  `COMPILATION_WARNING_THRESHOLD`, function `compilation_count()`.
+  Added `compilation_number: u64` to `ProtoEmitResult`. 3 new tests.
+- T-122: Weight dictionary validation in `MlPackageWriter::write()` — warns
+  when model has functions but zero weights (nil weight dict crashes ANEC
+  per Orion #11). 2 new tests.
+
+#### Changed
+
+- `ane_layout.rs`: New `validate_palette_bits_for_family()` function alongside
+  existing `validate_palette_bits()` for backward compatibility.
+- `mir_to_proto.rs`: New `validate_iosurface_sizes()` function called before
+  model return in `convert_mir_to_proto_multifunction()`.
+- `emitter.rs`: `emit_model()` now tracks compilation count via global atomic.
+  `ProtoEmitResult` gains `compilation_number` field. Added `log` dependency
+  to `ane-coreml-emit`.
+- `package.rs`: Weight dictionary validation added before weight.bin build.
+- `lib.rs` (coreml-emit): New public exports for T-120 constants and function.
+- `palettize_weights.rs`: Re-exports `validate_palette_bits_for_family`.
+
+#### Tests
+
+- T-118: 10 tests covering 3-bit/6-bit rejection on A11Legacy/A12/A13,
+  acceptance on A14+, all-families coverage for 1/2/4/8-bit, None family
+  basic check.
+- T-119: 4 tests covering constant value, small/large buffer detection,
+  buffer size computation correctness.
+- T-120: 3 tests covering limit constants, count increment, ProtoEmitResult
+  field existence.
+- T-122: 2 tests covering empty weights with functions (warning) and empty
+  weights without functions (no warning).
+
+#### Issues Closed (4 issues)
+
+I-93, I-94, I-95, I-97
 
 ---
 

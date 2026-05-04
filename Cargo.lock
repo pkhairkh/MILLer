@@ -95,6 +95,7 @@ version = "0.1.0"
 dependencies = [
  "ane-coreml-proto",
  "anyhow",
+ "log",
  "prost",
  "serde",
  "serde_json",

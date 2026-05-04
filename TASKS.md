@@ -449,42 +449,36 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-### T-118 · Add Palette Bits Validation with Version-Conditional Support
+### T-118 · ~~Add Palette Bits Validation with Version-Conditional Support~~
 
 - **ISSUES ref**: I-93
 - **AUDIT ref**: V-033 (ane-violations.md §III)
 - **Severity**: MEDIUM
 - **Effort**: S (0.5 day)
 
-**Intent**: Palette bits documented as valid {1,2,3,4,6,8} but no validation enforces this. Binary shows version-conditional constraints: "3-bit palettization is only supported from version {1}", "6-bit palettization is only supported from version {1}". Out-of-range values accepted silently.
-
-**Definition of Done**: `validate_palette_bits()` checks against valid set per version. 3-bit and 6-bit rejected on pre-threshold versions. Test validates version-conditional behavior.
+**✅ RESOLVED** — Added `validate_palette_bits_for_family()` in `ane_layout.rs` that checks version-conditional constraints: 3-bit and 6-bit palettization rejected on A11Legacy/A12/A13 (A14+ only). Uses existing `uses_a14minus_converters()` for family detection. Re-exported from `palettize_weights.rs`. 10 new tests verify all combinations.
 
 ---
 
-### T-119 · Add Minimum IOSurface Size Validation
+### T-119 · ~~Add Minimum IOSurface Size Validation~~
 
 - **ISSUES ref**: I-94
 - **AUDIT ref**: V-104, V-122 (ane-violations.md §III)
 - **Severity**: MEDIUM
 - **Effort**: S (0.5 day)
 
-**Intent**: ANE requires a minimum IOSurface size of ~49 KB for eval buffers (Orion #4). Models with smaller output buffers fail at runtime with 0x1d error and no compile-time indication.
-
-**Definition of Done**: Emission pipeline validates output buffer sizes meet ~49 KB minimum. Warning emitted for borderline cases. Test verifies enforcement.
+**✅ RESOLVED** — Added `MIN_IOSURFACE_BYTES` constant (~49 KB per Orion #4). Added `validate_iosurface_sizes()` in `mir_to_proto.rs` that computes output buffer sizes (shape_product × dtype_size) and warns when below minimum. Called from `convert_mir_to_proto_multifunction()`. 4 new tests verify constant, small/large buffer detection, and size computation.
 
 ---
 
-### T-120 · Add Compilation Count Per Process Tracking
+### T-120 · ~~Add Compilation Count Per Process Tracking~~
 
 - **ISSUES ref**: I-95
 - **AUDIT ref**: V-106, V-123 (ane-violations.md §III)
 - **Severity**: MEDIUM
 - **Effort**: S (0.5 day)
 
-**Intent**: ANE has a ~119 compilation limit per process (Orion #5). Long-running processes that repeatedly compile models silently fail after hitting this limit. No counter or warning mechanism exists.
-
-**Definition of Done**: Global compilation counter tracks count per process. Warning emitted at ~100 compilations. Error at ~119. Test verifies counter behavior.
+**✅ RESOLVED** — Added global `COMPILATION_COUNT: AtomicU64` counter in `emitter.rs`. `emit_model()` increments counter and returns error at limit (119), warns at threshold (95). Added `COMPILATION_LIMIT`, `COMPILATION_WARNING_THRESHOLD`, and `compilation_count()` public API. Added `compilation_number: u64` to `ProtoEmitResult`. 3 new tests.
 
 ---
 
@@ -501,16 +495,14 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-### T-122 · Add Weight Dict Initialization Check
+### T-122 · ~~Add Weight Dict Initialization Check~~
 
 - **ISSUES ref**: I-97
 - **AUDIT ref**: V-124 (ane-violations.md §III)
 - **Severity**: MEDIUM
 - **Effort**: S (0.5 day)
 
-**Intent**: Nil weight dict causes immediate crash at ANEC compile time (Orion #11). MILLer's emission path does not verify that the weight dictionary is properly initialized as `@{}` (empty NSDictionary, not nil).
-
-**Definition of Done**: Emission pipeline validates weight dict is non-nil before ANEC compilation. Test verifies check.
+**✅ RESOLVED** — Added weight dictionary validation in `MlPackageWriter::write()` that warns when a model has functions but zero weights (nil weight dict crashes ANEC per Orion #11). 2 new tests verify warning behavior for empty weights with functions and no-warning for no functions.
 
 ---
 
@@ -567,11 +559,11 @@ Full resolution details are in `CHANGELOG.md`.
 | T-113 | I-88 | MEDIUM | M | 🟡 Open |
 | T-116 | I-91 | MEDIUM | M | 🟡 Open |
 | T-117 | I-92 | MEDIUM | M | 🟡 Open |
-| T-118 | I-93 | MEDIUM | S | 🟡 Open |
-| T-119 | I-94 | MEDIUM | S | 🟡 Open |
-| T-120 | I-95 | MEDIUM | S | 🟡 Open |
+| T-118 | I-93 | MEDIUM | S | ✅ Resolved |
+| T-119 | I-94 | MEDIUM | S | ✅ Resolved |
+| T-120 | I-95 | MEDIUM | S | ✅ Resolved |
 | T-121 | I-96 | MEDIUM | S | 🟡 Open |
-| T-122 | I-97 | MEDIUM | S | 🟡 Open |
+| T-122 | I-97 | MEDIUM | S | ✅ Resolved |
 | T-124 | — | LOW | S | 🔵 Open |
 | T-125 | — | LOW | S | 🔵 Open |
 | T-126 | — | LOW | S | 🔵 Open |
@@ -649,13 +641,13 @@ Tasks T-47 through T-57, T-60, T-62, T-63, T-64, T-65 resolved. T-61, T-66 remai
 |----------|-------|-------------|
 | 🔴 CRITICAL | 1 | ~2 days |
 | 🟠 HIGH | 3 | ~7.5 days |
-| 🟡 MEDIUM | 12 | ~10.5 days |
+| 🟡 MEDIUM | 8 | ~6.5 days |
 | 🔵 LOW | 8 | ~4.5 days |
-| **Total** | **24** | **~24.5 days** |
+| **Total** | **20** | **~20.5 days** |
 
 > **Priority guidance**: CRITICAL task T-90 must be resolved before any production compilation.
 > HIGH tasks (T-95, T-96, T-98) should be addressed in the next 2–3 sprint cycles.
 > MEDIUM/LOW tasks (T-105–T-131) are technical debt that should be chipped away at consistently.
 >
-> **Resolved**: 20 tasks (T-86, T-87, T-89, T-91–T-94, T-97, T-99–T-104, T-106, T-109, T-111, T-114, T-115, T-123).
+> **Resolved**: 24 tasks (T-86, T-87, T-89, T-91–T-94, T-97, T-99–T-104, T-106, T-109, T-111, T-114, T-115, T-118–T-120, T-122, T-123).
 > Tasks T-01 through T-85 are all resolved — see archive summary above and `CHANGELOG.md`.

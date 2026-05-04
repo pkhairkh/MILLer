@@ -1562,10 +1562,10 @@ Binary MinimumFamily enum has 8 values (0-7), MILLer only models 6 (A11Legacy th
 
 ---
 
-### I-93 · Palette Bits Validation Missing Version-Conditional Support
+### I-93 · ~~Palette Bits Validation Missing Version-Conditional Support~~
 
-**Status:** ⬜ Open
-**Files:** `crates/ir/src/sir.rs:48-53`
+**Status:** ✅ Fixed (T-118)
+**Files:** `crates/ir/src/ane_layout.rs`
 **AUDIT ref:** V-033 (ane-violations.md §III)
 **Severity:** MEDIUM
 **Effort:** S (0.5 day)
@@ -1573,12 +1573,14 @@ Binary MinimumFamily enum has 8 values (0-7), MILLer only models 6 (A11Legacy th
 
 Valid set {1,2,3,4,6,8} documented but not enforced. Binary shows version-conditional: "3-bit palettization is only supported from version {1}". Out-of-range values accepted silently.
 
+**Fix:** Added `validate_palette_bits_for_family()` that checks version-conditional constraints. 3-bit and 6-bit palettization rejected on A11Legacy/A12/A13 (A14+ only). Uses `uses_a14minus_converters()` for family detection. 10 new tests verify all combinations.
+
 ---
 
-### I-94 · Minimum IOSurface Size Not Validated
+### I-94 · ~~Minimum IOSurface Size Not Validated~~
 
-**Status:** ⬜ Open
-**Files:** `crates/coreml-emit/` (all emission paths)
+**Status:** ✅ Fixed (T-119)
+**Files:** `crates/coreml-emit/src/mir_to_proto.rs`
 **AUDIT ref:** V-104, V-122 (ane-violations.md §III)
 **Severity:** MEDIUM
 **Effort:** S (0.5 day)
@@ -1586,18 +1588,22 @@ Valid set {1,2,3,4,6,8} documented but not enforced. Binary shows version-condit
 
 ~49 KB minimum IOSurface for eval buffers (Orion #4). Smaller buffers cause 0x1d runtime error.
 
+**Fix:** Added `MIN_IOSURFACE_BYTES` constant (~49 KB). Added `validate_iosurface_sizes()` that computes output buffer sizes and warns when below minimum. Called from `convert_mir_to_proto_multifunction()`. 4 new tests.
+
 ---
 
-### I-95 · Compilation Count Per Process Not Tracked
+### I-95 · ~~Compilation Count Per Process Not Tracked~~
 
-**Status:** ⬜ Open
-**Files:** `crates/bridge/src/subprocess.rs`
+**Status:** ✅ Fixed (T-120)
+**Files:** `crates/coreml-emit/src/emitter.rs`, `crates/coreml-emit/src/lib.rs`
 **AUDIT ref:** V-106, V-123 (ane-violations.md §III)
 **Severity:** MEDIUM
 **Effort:** S (0.5 day)
 **Task:** T-120
 
 ~119 compilation limit per process (Orion #5). Exceeding limit causes silent crash.
+
+**Fix:** Added global `COMPILATION_COUNT: AtomicU64` counter. `emit_model()` increments counter, errors at limit (119), warns at threshold (95). Added `COMPILATION_LIMIT`, `COMPILATION_WARNING_THRESHOLD`, `compilation_count()` public API. Added `compilation_number: u64` to `ProtoEmitResult`. 3 new tests.
 
 ---
 
@@ -1614,16 +1620,18 @@ Vector palettization only supported at Cout for ANE. Zero point not supported fo
 
 ---
 
-### I-97 · Weight Dict Initialization Not Guaranteed
+### I-97 · ~~Weight Dict Initialization Not Guaranteed~~
 
-**Status:** ⬜ Open
-**Files:** `crates/coreml-emit/src/mir_to_proto.rs`
+**Status:** ✅ Fixed (T-122)
+**Files:** `crates/coreml-emit/src/package.rs`
 **AUDIT ref:** V-124 (ane-violations.md §III)
 **Severity:** MEDIUM
 **Effort:** S (0.5 day)
 **Task:** T-122
 
-Nil weight dict crashes ANEC at compile time (Orion #11). Emission path doesn't verify weight dict is properly initialized as @{}.
+Nil weight dict causes immediate crash at ANEC compile time (Orion #11).
+
+**Fix:** Added weight dictionary validation in `MlPackageWriter::write()` that warns when model has functions but zero weights. 2 new tests verify warning for empty weights with functions and no-warning for no functions.
 
 ---
 

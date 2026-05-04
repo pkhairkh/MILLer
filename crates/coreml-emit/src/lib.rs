@@ -71,6 +71,7 @@ pub mod package;
 pub mod weights;
 
 pub use emitter::ProtoEmitter;
+pub use emitter::{compilation_count, COMPILATION_LIMIT, COMPILATION_WARNING_THRESHOLD}; // T-120
 pub use mir_to_proto::convert_mir_to_proto;
 pub use package::MlPackageWriter;
 pub use weights::WeightBinBuilder;
