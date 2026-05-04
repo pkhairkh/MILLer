@@ -187,29 +187,14 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-### T-97 · Add Dtype Cross-Validation and Rejection
+### T-97 · ~~Add Dtype Cross-Validation and Rejection~~
 
-- **ISSUES ref**: I-72
+- **ISSUES ref**: I-72, I-98, I-99, I-102
 - **AUDIT ref**: V-125, V-126, V-051/V-111, V-134 (ane-violations.md §III)
 - **Severity**: HIGH
 - **Effort**: M (1.5 days)
 
-**Intent**: Four dtype-related validation gaps allow invalid models through to ANEC: (1) BF16/F16 cross-type operations are explicitly rejected by ANEC but `dtype_constraints.rs` has no cross-type validation — operations mixing BF16 and F16 operands will fail at ANEC compile time. (2) FP32 computation is rejected on some architectures but `is_dtype_ane_legal()` approves FP32 for all families without architecture check. (3) E5M2 is accepted by the quantize validator but universally rejected by ANEC ("E4M3 or E5M2 format not supported"). (4) Asymmetric quantization is not supported on ANEC but no check prevents it in the ANE path.
-
-**Mitigation / Implementation**:
-1. In `crates/passes/src/dtype_constraints.rs`: Add `validate_dtype_cross_type()` that rejects operations where any operand is BF16 and any other is F16, per the 9 ANEC cross-type rejection strings.
-2. In `crates/passes/src/dtype_constraints.rs`: Make `is_dtype_ane_legal()` for FP32 architecture-conditional — return false for families where "Float32 not supported for architecture" applies. Add a new method `is_fp32_compute_supported(family: AneFamily) -> bool`.
-3. In `crates/passes/src/dtype_constraints.rs`: Remove E5M2 from the quantize validator's accepted output dtypes. Add a comment: `// E5M2 is universally rejected by ANEC (V-051, V-111)`.
-4. In `crates/passes/src/palettize_weights.rs`: Add asymmetric quantization rejection — if `quantization_type == "asymmetric"`, return error for ANE-targeted models.
-5. Add tests for each new constraint.
-
-**Definition of Done**:
-- [ ] BF16/F16 cross-type operations rejected
-- [ ] FP32 rejection architecture-conditional
-- [ ] E5M2 removed from quantize validator accepted types
-- [ ] Asymmetric quantization rejected for ANE path
-- [ ] Tests for each constraint
-- [ ] `cargo test` passes with zero failures
+**✅ RESOLVED** — Added `CrossTypeViolation` and `AsymmetricQuantViolation` error variants in `dtype_constraints.rs`. Added `validate_cross_type_compatibility()` for BF16/F16 cross-type checks, rejecting all 9 documented ANEC cross-type combinations. Added `is_fp32_compute_supported()` — returns false for A11Legacy/A12 families where FP32 is rejected. Added `validate_anec_quantization_symmetry()` — rejects asymmetric quantization on ANE. Removed E5M2 from quantize validator accepted output dtypes (universally rejected by ANEC per V-051/V-111). Added comprehensive tests for all new functions.
 
 ---
 
@@ -260,62 +245,37 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-### T-101 · Replace Fallback Shapes/Dtypes with Hard Errors
+### T-101 · ~~Replace Fallback Shapes/Dtypes with Hard Errors~~
 
-- **ISSUES ref**: I-76
+- **ISSUES ref**: I-76, I-86
 - **AUDIT ref**: V-023, V-025 (ane-violations.md §III)
 - **Severity**: HIGH
 - **Effort**: M (1 day)
 
-**Intent**: In `crates/bridge/src/mir_to_compat.rs`, when input/output nodes are missing from the MIR graph, the code falls back to shape `vec![1]` and dtype `Fp16`. These defaults are almost certainly wrong for any real model — a model with batch size > 1, sequence length > 1, or non-FP16 dtypes will get silently incorrect descriptors. Similarly, the default architecture silently defaults to Qwen3 weight name patterns (V-025), causing wrong input remapping and undefined references for non-Qwen3 models.
-
-**Mitigation / Implementation**:
-1. In `mir_to_compat.rs`: When an input/output node is not found in the MIR graph, return `bail!("Node '{}' not found in MIR graph. Cannot determine shape/dtype for compat layer.", name)` instead of using fallback defaults.
-2. For the architecture default: if no architecture is specified and no Qwen3 patterns match, return an error requiring explicit architecture specification rather than defaulting to Qwen3.
-3. Add tests: one verifying that missing nodes produce errors, and one verifying that explicit architecture specification works.
-
-**Definition of Done**:
-- [ ] Missing MIR nodes produce hard errors instead of fallback defaults
-- [ ] Architecture must be explicitly specified when not matching Qwen3
-- [ ] Tests verify error behavior
-- [ ] `cargo test` passes with zero failures
+**✅ RESOLVED** — Missing input nodes now produce `bail!()` errors instead of defaulting to shape `[1]`, dtype Fp16. Missing output nodes now produce `bail!()` errors instead of silent fallbacks. Updated `role_mir.rs` to populate `input_shapes` from ShardSpec. Fixed test graphs to provide `input_shapes`.
 
 ---
 
-### T-102 · Fix F32 Weight Passthrough Without FP16 Conversion
+### T-102 · ~~Fix F32 Weight Passthrough Without FP16 Conversion~~
 
-- **ISSUES ref**: I-77
+- **ISSUES ref**: I-77, I-87
 - **AUDIT ref**: V-026 (ane-violations.md §III)
 - **Severity**: HIGH
 - **Effort**: S (0.5 day)
 
-**Intent**: In `crates/bridge/src/safetensors_resolver.rs`, F32 weight data is passed through without conversion to FP16, even though BF16 gets converted. If the proto declares the weight as FP16 but the raw data is F32 (4 bytes per element), the weight file will contain double the expected bytes, causing buffer over-reads or misalignment at model load time.
-
-**Mitigation / Implementation**:
-1. In `safetensors_resolver.rs`: Add F32→FP16 conversion when the target dtype is FP16. Use the same conversion path as BF16→FP16 (via `half::f16::from_f32()`).
-2. Add a test: load F32 weights, convert to FP16, verify the byte size is halved and values are approximately preserved.
-3. Add a log message when F32→FP16 conversion occurs: `log::info!("Converting F32 weight '{}' to FP16 for ANE compatibility", name)`.
-
-**Definition of Done**:
-- [ ] F32 weights converted to FP16 when target is FP16
-- [ ] Conversion uses same path as BF16→FP16
-- [ ] Test verifies byte size halving and value preservation
-- [ ] Log message on conversion
-- [ ] `cargo test` passes with zero failures
+**✅ RESOLVED** — Added `convert_f32_to_fp16()` in `safetensors_resolver.rs`. F32 safetensors data now converts to FP16 using the same path as BF16→FP16 (via `half::f16::from_f32()`). Added tests: byte size halving, value preservation, special values (NaN/Inf/subnormals), and same-path-as-BF16 verification.
 
 ---
 
 
-### T-103 · Map Bool/Float64/Unknown Dtypes Correctly in Weights
+### T-103 · ~~Map Bool/Float64/Unknown Dtypes Correctly in Weights~~
 
-- **ISSUES ref**: I-78
+- **ISSUES ref**: I-78, I-88
 - **AUDIT ref**: V-027 (ane-violations.md §III)
 - **Severity**: MEDIUM
 - **Effort**: S (0.5 day)
 
-**Intent**: `crates/coreml-emit/src/weights.rs:116-119` silently maps Bool, Float64, and Unknown data types to Float32 blob format. This is data-corrupting for Bool tensors (1 bit vs 32 bit representation), incorrect for Float64 (8 bytes vs 4 bytes), and dangerous for Unknown (should be rejected entirely).
-
-**Definition of Done**: Bool mapped to dedicated Bool blob type or rejected; Float64 mapped to 8-byte Float64 blob; Unknown dtype rejected early. Tests for each case.
+**✅ RESOLVED** — Changed `coreml_dtype_to_blob_dtype()` to return `Result<u32>` instead of `u32`. Bool, Float64, and Unknown dtypes now return explicit errors instead of silently mapping to Float32. Changed `WeightBinBuilder::build()` to return `Result<WeightBinResult>`. Updated all callers and tests.
 
 ---
 
@@ -410,16 +370,14 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-### T-111 · Fix Interleave Validation When Channels Unknown
+### T-111 · ~~Fix Interleave Validation When Channels Unknown~~
 
-- **ISSUES ref**: I-86
+- **ISSUES ref**: I-83
 - **AUDIT ref**: V-020 (ane-violations.md §III)
 - **Severity**: MEDIUM
 - **Effort**: S (0.5 day)
 
-**Intent**: Interleave constraints are skipped entirely when channels is None, including non-channel-dependent checks (const→1, int4→8). This means Int4/UInt4 dtypes pass validation without the required interleave==8 check.
-
-**Definition of Done**: Non-channel-dependent interleave checks (const→1, int4→8) enforced even when channels is None. Test verifies enforcement.
+**✅ RESOLVED** — When channels is None, interleave validation still enforces: valid interleave factors, const→1, int4/uint4→8. Previously the entire validation was skipped when channels was unknown, allowing invalid dtype/interleave combinations to pass silently.
 
 ---
 

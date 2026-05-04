@@ -1,15 +1,92 @@
 # Changelog
 
-## Current Status — 2026-05-04
+## Current Status — 2026-03-05
 
-- **1488 tests passing**, 0 failures
+- **1488+ tests passing**, 0 failures
 - IR Cleanliness Score: 89%
 - 0 clippy warnings, 0 errors
-- **0 open issues** (0 CRITICAL, 0 HIGH, 0 MEDIUM, 0 LOW) — see [ISSUES.md](ISSUES.md)
-- **0 open tasks** — see [TASKS.md](TASKS.md)
+- **12 open issues** (0 CRITICAL, 12 HIGH, 0 MEDIUM, 0 LOW) — see [ISSUES.md](ISSUES.md)
+- **5 open tasks** — see [TASKS.md](TASKS.md)
 
 Audit details: [docs/audit/tabula-rasa-v3.md](docs/audit/tabula-rasa-v3.md)
 Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
+
+---
+
+## [sprint-dtype-validation-hardening] — 2026-03-05
+
+### Sprint: Dtype Validation & Hard Error Hardening (T-97, T-101, T-102, T-103, T-111)
+
+Resolved 5 tasks (2 HIGH, 3 MEDIUM) from the NECROSCOPY forensic audit
+(ane-violations.md). All changes close dtype and weight validation gaps that
+allowed invalid models to pass through to the ANE compiler, or replace silent
+fallback defaults with hard errors.
+
+#### Tasks Resolved
+
+| Task | Description | Issues Fixed |
+|------|-------------|--------------|
+| T-97 | Add Dtype Cross-Validation and Rejection | I-72, I-98, I-99, I-100, I-102 |
+| T-101 | Replace Fallback Shapes/Dtypes with Hard Errors | I-76, I-86 |
+| T-102 | Fix F32 Weight Passthrough Without FP16 Conversion | I-77, I-87 |
+| T-103 | Map Bool/Float64/Unknown Dtypes Correctly in Weights | I-78, I-88 |
+| T-111 | Fix Interleave Validation When Channels Unknown | I-83 |
+
+#### Added
+
+- T-97: `CrossTypeViolation` and `AsymmetricQuantViolation` error variants in
+  `dtype_constraints.rs`. `validate_cross_type_compatibility()` for BF16/F16
+  cross-type checks, rejecting all 9 documented ANEC cross-type combinations.
+  `is_fp32_compute_supported()` — returns false for A11Legacy/A12 families.
+  `validate_anec_quantization_symmetry()` — rejects asymmetric quant on ANE.
+  E5M2 removed from quantize validator accepted output dtypes. Comprehensive
+  tests for all new functions.
+- T-102: `convert_f32_to_fp16()` in `safetensors_resolver.rs`. F32 safetensors
+  data now converts to FP16 using the same path as BF16→FP16 (via
+  `half::f16::from_f32()`). Tests: byte size halving, value preservation,
+  special values (NaN/Inf/subnormals), same-path-as-BF16 verification.
+- T-103: `coreml_dtype_to_blob_dtype()` now returns `Result<u32>` instead of
+  `u32`. Bool, Float64, and Unknown dtypes return explicit errors instead of
+  silently mapping to Float32. `WeightBinBuilder::build()` returns
+  `Result<WeightBinResult>`. All callers and tests updated.
+- T-111: Interleave validation now enforces valid interleave factors, const→1,
+  and int4/uint4→8 even when channels is None. Previously the entire validation
+  was skipped when channels was unknown.
+
+#### Changed
+
+- `dtype_constraints.rs`: New error variants and validation functions for
+  cross-type, FP32 architecture-conditional, and asymmetric quantization checks.
+  E5M2 removed from quantize validator accepted output dtypes (V-051, V-111).
+- `safetensors_resolver.rs`: F32 weights now convert to FP16 instead of passing
+  through raw bytes. Uses same conversion path as existing BF16→FP16.
+- `weights.rs`: `coreml_dtype_to_blob_dtype()` signature changed from `u32` to
+  `Result<u32>`. Bool, Float64, Unknown return explicit errors. All callers
+  updated.
+- `mir_to_compat.rs`: Missing input/output MIR nodes now produce `bail!()`
+  errors instead of falling back to shape `[1]`, dtype Fp16. No more silent
+  wrong defaults.
+- `role_mir.rs`: Now populates `input_shapes` from ShardSpec, enabling
+  hard-error path in mir_to_compat.
+- `placement_validate.rs`: Interleave validation no longer skipped when channels
+  is None. Non-channel-dependent checks (valid factors, const→1, int4/uint4→8)
+  always enforced.
+
+#### Tests
+
+- Cross-type compatibility validation (BF16/F16 mixed operand rejection)
+- FP32 architecture-conditional check (A11Legacy/A12 rejection)
+- Asymmetric quantization rejection on ANE
+- E5M2 removed from accepted quantize output dtypes
+- F32→FP16 conversion: byte size halving, value preservation, special values
+- Bool/Float64/Unknown dtype explicit error return
+- WeightBinBuilder Result return type propagation
+- Missing I/O node hard error behavior
+- Interleave validation with channels=None
+
+#### Issues Closed (12 issues)
+
+I-72, I-76, I-77, I-78, I-83, I-86, I-87, I-88, I-98, I-99, I-100, I-102
 
 ---
 

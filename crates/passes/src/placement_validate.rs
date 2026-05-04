@@ -297,6 +297,44 @@ pub fn validate_placement_with_context(
                     violation.message
                 ));
             }
+        } else {
+            // T-111 (I-83/V-020): When channels is unknown, we still need to
+            // enforce non-channel-dependent interleave checks. Previously,
+            // the entire validation was skipped when channels was None,
+            // allowing invalid dtype/interleave combinations through.
+            // Now we validate: valid interleave factor, const→1, int4/uint4→8.
+            use ane_ir::ane_layout::AneInterleave;
+            // Check valid interleave factor
+            let valid_factors = [
+                AneInterleave::Factor1,
+                AneInterleave::Factor2,
+                AneInterleave::Factor3,
+                AneInterleave::Factor4,
+                AneInterleave::Factor8,
+            ];
+            if !valid_factors.contains(&interleave) {
+                return PlacementDecision::CpuOnly(format!(
+                    "{}: interleave factor {:?} not in valid set {{1,2,3,4,8}}",
+                    op_name(op),
+                    interleave
+                ));
+            }
+            // Const tensors must have interleave=1
+            if ctx.is_const && interleave != AneInterleave::Factor1 {
+                return PlacementDecision::CpuOnly(format!(
+                    "{}: const tensor requires interleave=1, got {:?}",
+                    op_name(op),
+                    interleave
+                ));
+            }
+            // Int4/UInt4 tensors must have interleave=8
+            if ctx.is_int4 && interleave != AneInterleave::Factor8 {
+                return PlacementDecision::CpuOnly(format!(
+                    "{}: int4/uint4 tensor requires interleave=8, got {:?}",
+                    op_name(op),
+                    interleave
+                ));
+            }
         }
     }
 

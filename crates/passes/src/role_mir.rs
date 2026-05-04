@@ -112,6 +112,20 @@ impl RoleMirBuilder {
     pub fn build_mir(&self, spec: &ShardSpec) -> Result<MirGraph> {
         let mut nodes = Vec::new();
         let input_id = MirNodeId(format!("{}_input", spec.shard_name));
+        // T-101: Populate input_shapes from the spec so that mir_to_compat
+        // can determine shapes/dtypes for input nodes that aren't in the graph's
+        // node list. Previously, input_shapes was always empty, causing the
+        // compat conversion to fail when the input node is not present as a MirNode.
+        let input_shapes: std::collections::HashMap<MirNodeId, Vec<usize>> = {
+            let mut map = std::collections::HashMap::new();
+            for input_spec in &spec.input_specs {
+                map.insert(
+                    MirNodeId(format!("{}_input", spec.shard_name)),
+                    input_spec.shape.clone(),
+                );
+            }
+            map
+        };
 
         // Sprint 57: derive compute hint from the shard spec's compute_units
         // instead of always using the builder's default (which was CPUAndNE).
@@ -196,7 +210,7 @@ impl RoleMirBuilder {
                     outputs: vec![output_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
-                    input_shapes: std::collections::HashMap::new(),
+                    input_shapes: input_shapes.clone(),
                 })
             }
 
@@ -288,7 +302,7 @@ impl RoleMirBuilder {
                     outputs: vec![output_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
-                    input_shapes: std::collections::HashMap::new(),
+                    input_shapes: input_shapes.clone(),
                 })
             }
 
@@ -363,7 +377,7 @@ impl RoleMirBuilder {
                     outputs: vec![ln_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
-                    input_shapes: std::collections::HashMap::new(),
+                    input_shapes: input_shapes.clone(),
                 })
             }
 
@@ -472,7 +486,7 @@ impl RoleMirBuilder {
                     outputs: vec![q_id, k_id, v_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
-                    input_shapes: std::collections::HashMap::new(),
+                    input_shapes: input_shapes.clone(),
                 })
             }
 
@@ -570,7 +584,7 @@ impl RoleMirBuilder {
                     outputs: vec![attn_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
-                    input_shapes: std::collections::HashMap::new(),
+                    input_shapes: input_shapes.clone(),
                 })
             }
 
@@ -649,7 +663,7 @@ impl RoleMirBuilder {
                     outputs: vec![output_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
-                    input_shapes: std::collections::HashMap::new(),
+                    input_shapes: input_shapes.clone(),
                 })
             }
 
@@ -714,7 +728,7 @@ impl RoleMirBuilder {
                     outputs: vec![gather_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
-                    input_shapes: std::collections::HashMap::new(),
+                    input_shapes: input_shapes.clone(),
                 })
             }
 
@@ -750,7 +764,7 @@ impl RoleMirBuilder {
                     outputs: vec![softmax_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
-                    input_shapes: std::collections::HashMap::new(),
+                    input_shapes: input_shapes.clone(),
                 })
             }
 
@@ -805,7 +819,7 @@ impl RoleMirBuilder {
                     outputs: vec![linear_id],
                     opset_version: "iOS18".into(),
                     shard_name: spec.shard_name.clone(),
-                    input_shapes: std::collections::HashMap::new(),
+                    input_shapes: input_shapes.clone(),
                 })
             }
         }

@@ -201,9 +201,14 @@ impl SafetensorsWeightResolver {
                     convert_bf16_to_fp16(raw_data)
                 }
                 safetensors::Dtype::F32 => {
-                    // For ANE, we typically want FP16. But let the downstream
-                    // decide — return raw bytes and let the emission layer handle it.
-                    raw_data.to_vec()
+                    // T-102 (I-77/V-026): Previously, F32 weight data was passed
+                    // through without conversion to FP16, while BF16 was converted.
+                    // If the proto declares the weight as FP16 but the raw data is
+                    // F32 (4 bytes per element), the weight file will contain double
+                    // the expected bytes, causing buffer over-reads or misalignment
+                    // at model load time. Now we convert F32→FP16 for ANE
+                    // compatibility, same as the BF16→FP16 conversion path.
+                    convert_f32_to_fp16(raw_data)
                 }
                 safetensors::Dtype::F16 => {
                     // Already in the right format
@@ -396,6 +401,36 @@ fn parse_shard_weight_name(value_path: &str) -> Option<(String, usize)> {
     }
 
     None
+}
+
+/// Convert F32 tensor data to FP16.
+///
+/// T-102 (I-77/V-026): F32 weights must be converted to FP16 for ANE
+/// compatibility. If F32 data is written as-is but the proto declares FP16,
+/// the weight file contains double the expected bytes, causing buffer
+/// over-reads or misalignment at model load time.
+///
+/// Conversion uses the same `half` crate path as BF16→FP16: F32 → F16
+/// via `half::f16::from_f32()`, which correctly handles subnormals,
+/// infinities, and NaN payloads.
+fn convert_f32_to_fp16(f32_data: &[u8]) -> Vec<u8> {
+    // F32 is 4 bytes per element, little-endian
+    let num_elements = f32_data.len() / 4;
+    let mut fp16_data = Vec::with_capacity(num_elements * 2);
+
+    for i in 0..num_elements {
+        let f32_bits = u32::from_le_bytes([
+            f32_data[i * 4],
+            f32_data[i * 4 + 1],
+            f32_data[i * 4 + 2],
+            f32_data[i * 4 + 3],
+        ]);
+        let f32_val = f32::from_bits(f32_bits);
+        let fp16_val = half::f16::from_f32(f32_val);
+        fp16_data.extend_from_slice(&fp16_val.to_bits().to_le_bytes());
+    }
+
+    fp16_data
 }
 
 /// Convert BF16 tensor data to FP16.
@@ -866,5 +901,114 @@ mod tests {
         let shard_7 = resolver.resolve("lm_head.shard_7.weight").expect("shard_7 should resolve");
         let expected_last_rows = vocab_size - 7 * shard_size;
         assert_eq!(shard_7.shape, vec![expected_last_rows, hidden_size]);
+    }
+
+    // ─── T-102 (I-77/V-026): F32→FP16 Conversion Tests ──────────────────
+
+    #[test]
+    fn test_f32_to_fp16_conversion_byte_size_halved() {
+        // T-102: F32 (4 bytes/element) → FP16 (2 bytes/element) halves byte size.
+        // This is critical: if F32 data were passed through as-is but the proto
+        // declared FP16, the weight file would contain double the expected bytes.
+        let f32_values: Vec<f32> = vec![1.0, -1.0, 0.5, 2.0];
+        let mut f32_bytes = Vec::new();
+        for &val in &f32_values {
+            f32_bytes.extend_from_slice(&val.to_le_bytes());
+        }
+        assert_eq!(f32_bytes.len(), 16, "4 f32 values = 16 bytes");
+
+        let fp16_bytes = convert_f32_to_fp16(&f32_bytes);
+        assert_eq!(fp16_bytes.len(), 8, "4 fp16 values = 8 bytes (byte size halved)");
+    }
+
+    #[test]
+    fn test_f32_to_fp16_value_preservation() {
+        // Verify that the converted values are approximately preserved.
+        // FP16 has less precision than F32, so we check approximate equality.
+        let f32_values: Vec<f32> = vec![0.0, 1.0, -1.0, 0.5, 2.0, 0.1, 3.14159];
+
+        let mut f32_bytes = Vec::new();
+        for &val in &f32_values {
+            f32_bytes.extend_from_slice(&val.to_le_bytes());
+        }
+
+        let fp16_bytes = convert_f32_to_fp16(&f32_bytes);
+        let num_elements = fp16_bytes.len() / 2;
+
+        for i in 0..num_elements {
+            let fp16_bits = u16::from_le_bytes([fp16_bytes[i * 2], fp16_bytes[i * 2 + 1]]);
+            let fp16_val = half::f16::from_bits(fp16_bits);
+            let f32_val = f32_values[i];
+            let f32_from_fp16 = fp16_val.to_f32();
+
+            // Allow up to 0.1% relative error (FP16 precision)
+            if f32_val != 0.0 {
+                let rel_error = ((f32_from_fp16 - f32_val).abs() / f32_val.abs()).abs();
+                assert!(
+                    rel_error < 0.001,
+                    "F32→FP16 value not preserved: {} → {} (rel_error={:.6})",
+                    f32_val, f32_from_fp16, rel_error
+                );
+            } else {
+                assert_eq!(f32_from_fp16, 0.0, "Zero should be preserved");
+            }
+        }
+    }
+
+    #[test]
+    fn test_f32_to_fp16_special_values() {
+        // Test NaN, Inf, -Inf, -0.0 preservation through F32→FP16
+        let f32_values: Vec<f32> = vec![
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            -0.0f32,
+        ];
+
+        let mut f32_bytes = Vec::new();
+        for &val in &f32_values {
+            f32_bytes.extend_from_slice(&val.to_le_bytes());
+        }
+
+        let fp16_bytes = convert_f32_to_fp16(&f32_bytes);
+
+        // NaN
+        let nan_fp16 = half::f16::from_bits(u16::from_le_bytes([fp16_bytes[0], fp16_bytes[1]]));
+        assert!(nan_fp16.is_nan(), "F32 NaN should produce FP16 NaN");
+
+        // +Inf
+        let inf_fp16 = half::f16::from_bits(u16::from_le_bytes([fp16_bytes[2], fp16_bytes[3]]));
+        assert!(inf_fp16.is_infinite() && inf_fp16.is_sign_positive(), "F32 +Inf should produce FP16 +Inf");
+
+        // -Inf
+        let neg_inf_fp16 = half::f16::from_bits(u16::from_le_bytes([fp16_bytes[4], fp16_bytes[5]]));
+        assert!(neg_inf_fp16.is_infinite() && neg_inf_fp16.is_sign_negative(), "F32 -Inf should produce FP16 -Inf");
+
+        // -0.0
+        let neg_zero_fp16 = half::f16::from_bits(u16::from_le_bytes([fp16_bytes[6], fp16_bytes[7]]));
+        assert!(neg_zero_fp16.is_sign_negative(), "F32 -0 should produce FP16 -0");
+    }
+
+    #[test]
+    fn test_f32_to_fp16_uses_same_path_as_bf16() {
+        // T-102: Verify that F32→FP16 uses the same `half::f16::from_f32()`
+        // conversion path as BF16→FP16 (which goes through f32 internally).
+        let f32_val = 1.5f32;
+        let f32_bytes = f32_val.to_le_bytes();
+        let fp16_from_f32 = convert_f32_to_fp16(&f32_bytes);
+        let fp16_bits = u16::from_le_bytes([fp16_from_f32[0], fp16_from_f32[1]]);
+
+        // BF16 of the same value: F32 → truncate lower 16 bits → BF16
+        let bf16_bits = (f32_val.to_bits() >> 16) as u16;
+        let mut bf16_bytes = Vec::new();
+        bf16_bytes.extend_from_slice(&bf16_bits.to_le_bytes());
+        let fp16_from_bf16 = convert_bf16_to_fp16(&bf16_bytes);
+        let fp16_bits_bf16 = u16::from_le_bytes([fp16_from_bf16[0], fp16_from_bf16[1]]);
+
+        assert_eq!(
+            fp16_bits, fp16_bits_bf16,
+            "F32→FP16 and BF16→FP16 should produce the same result for value {}",
+            f32_val
+        );
     }
 }

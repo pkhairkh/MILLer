@@ -305,18 +305,18 @@ pub fn mir_graph_to_compat_with_arch(
         .map(|id| {
             use ane_coreml_proto::mir_compat::TensorDescCompat;
             match node_map.get(id.0.as_str()) {
-                Some(node) => TensorDescCompat {
+                Some(node) => Ok(TensorDescCompat {
                     name: node.id.0.clone(),
                     shape: compat_input_shape(&node.id.0, &node.shape, max_seq_len),
                     dtype: compat_input_dtype(&node.id.0, &node.dtype),
-                },
+                }),
                 None => {
                     // Input node not found in graph nodes — check if we have
                     // explicit input_shapes from the MIR graph. This happens for
                     // multi-function models where inputs like "sir_hidden_input"
                     // are referenced by ops but don't have their own MirNode.
                     if let Some(shape) = graph.input_shapes.get(id) {
-                        TensorDescCompat {
+                        Ok(TensorDescCompat {
                             name: id.0.clone(),
                             shape: shape.clone(),
                             dtype: if id.0.contains("position") || id.0.contains("pos") {
@@ -324,24 +324,25 @@ pub fn mir_graph_to_compat_with_arch(
                             } else {
                                 MilDtypeCompat::Fp16
                             },
-                        }
+                        })
                     } else {
-                        // Last resort: default shape [1].
-                        // Core ML requires every input to have shape constraints.
-                        eprintln!(
-                            "  Warning: input node '{}' not found in MIR graph — using default shape [1]",
+                        // T-101 (I-86/V-023): Previously defaulted to shape [1]
+                        // and dtype Fp16 for missing input nodes. These defaults
+                        // are almost certainly wrong for any real model with
+                        // batch > 1, sequence length > 1, or non-FP16 dtypes.
+                        // Now we return an error to force explicit shape/dtype.
+                        bail!(
+                            "Input node '{}' not found in MIR graph and no explicit \
+                             input_shapes provided. Cannot determine shape/dtype for \
+                             compat layer. Provide input_shapes in the MIR graph or \
+                             ensure all input nodes are present.",
                             id.0
                         );
-                        TensorDescCompat {
-                            name: id.0.clone(),
-                            shape: vec![1],
-                            dtype: MilDtypeCompat::Fp16,
-                        }
                     }
                 }
             }
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     // Build node_shapes map using forward shape inference.
     //
@@ -426,30 +427,29 @@ pub fn mir_graph_to_compat_with_arch(
         .map(|id| {
             use ane_coreml_proto::mir_compat::TensorDescCompat;
             match node_map.get(id.0.as_str()) {
-                Some(node) => TensorDescCompat {
+                Some(node) => Ok(TensorDescCompat {
                     name: node.id.0.clone(),
                     shape: node_shapes
                         .get(&node.id.0)
                         .cloned()
                         .unwrap_or_else(|| compat_output_shape(&node.id.0, &node.op, &node.shape, &node_shapes, max_seq_len)),
                     dtype: mil_dtype_to_compat(&node.dtype),
-                },
+                }),
                 None => {
-                    // Output node not found in graph nodes — use default shape/dtype.
-                    // Core ML requires at least one output with shape constraints.
-                    eprintln!(
-                        "  Warning: output node '{}' not found in MIR graph — using default shape [1]",
+                    // T-101 (I-86/V-023): Previously defaulted to shape [1]
+                    // and dtype Fp16 for missing output nodes. These defaults
+                    // are almost certainly wrong for any real model. Now we
+                    // return an error to force explicit shape/dtype specification.
+                    bail!(
+                        "Output node '{}' not found in MIR graph. Cannot determine \
+                         shape/dtype for compat layer. Ensure all output nodes are \
+                         present in the MIR graph.",
                         id.0
                     );
-                    TensorDescCompat {
-                        name: id.0.clone(),
-                        shape: vec![1],
-                        dtype: MilDtypeCompat::Fp16,
-                    }
                 }
             }
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(MirGraphCompat {
         ops: all_ops,
@@ -1873,7 +1873,11 @@ mod tests {
             outputs: vec![MirNodeId("output".to_string())],
             opset_version: "iOS18".to_string(),
             shard_name: "main".to_string(),
-            input_shapes: std::collections::HashMap::new(),
+            input_shapes: {
+                let mut shapes = std::collections::HashMap::new();
+                shapes.insert(MirNodeId("input".to_string()), vec![1, 64]);
+                shapes
+            },
         }
     }
 

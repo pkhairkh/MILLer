@@ -593,7 +593,11 @@ mod tests {
             outputs: vec![MirNodeId("out".into())],
             opset_version: "iOS18".into(),
             shard_name: "main".into(),
-            input_shapes: std::collections::HashMap::new(),
+            input_shapes: {
+                let mut shapes = std::collections::HashMap::new();
+                shapes.insert(MirNodeId("input".into()), vec![1, 64]);
+                shapes
+            },
         };
 
         let result = emit_mir_graph_proto_direct(&graph, output_path.to_str().unwrap()).unwrap();

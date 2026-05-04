@@ -109,7 +109,7 @@ impl MlPackageWriter {
         // We don't need to add it again — the dedup in add_weight
         // handles this.
 
-        let weight_result = weight_builder.build();
+        let weight_result = weight_builder.build()?;
         let weight_bin_path = weights_dir.join("weight.bin");
         fs::write(&weight_bin_path, &weight_result.data)?;
 

@@ -99,22 +99,47 @@ enum BlobDataType {
 ///
 /// This is a free function because we cannot add inherent methods to
 /// `CoreMlDataType` which is defined in the `ane-coreml-proto` crate.
-fn coreml_dtype_to_blob_dtype(dtype: &CoreMlDataType) -> u32 {
+///
+/// T-103 (I-78/V-027): Previously, Bool, Float64, and Unknown dtypes were
+/// silently mapped to Float32 blob format. This is data-corrupting for Bool
+/// tensors (1 bit packed as 4-byte float), incorrect for Float64 (8 bytes
+/// stored as 4-byte Float32), and meaningless for Unknown. Now these types
+/// return an error instead of silently producing corrupt weight data.
+fn coreml_dtype_to_blob_dtype(dtype: &CoreMlDataType) -> Result<u32> {
     match dtype {
-        CoreMlDataType::Float16 => BlobDataType::Float16 as u32,
-        CoreMlDataType::Float32 => BlobDataType::Float32 as u32,
-        CoreMlDataType::UInt8 => BlobDataType::UInt8 as u32,
-        CoreMlDataType::Int8 => BlobDataType::Int8 as u32,
-        CoreMlDataType::Int32 => BlobDataType::Int32 as u32,
+        CoreMlDataType::Float16 => Ok(BlobDataType::Float16 as u32),
+        CoreMlDataType::Float32 => Ok(BlobDataType::Float32 as u32),
+        CoreMlDataType::UInt8 => Ok(BlobDataType::UInt8 as u32),
+        CoreMlDataType::Int8 => Ok(BlobDataType::Int8 as u32),
+        CoreMlDataType::Int32 => Ok(BlobDataType::Int32 as u32),
         // T-35: new dtype blob mappings
-        CoreMlDataType::UInt16 => BlobDataType::UInt16 as u32,
-        CoreMlDataType::Int4 => BlobDataType::Int4 as u32,
-        CoreMlDataType::UInt4 => BlobDataType::UInt4 as u32,
-        CoreMlDataType::E4M3 => BlobDataType::Float8E4M3FN as u32,
-        CoreMlDataType::E5M2 => BlobDataType::Float8E5M2 as u32,
-        // Conservatively map unknown/unsupported types to Float32
-        CoreMlDataType::Float64 | CoreMlDataType::Bool | CoreMlDataType::Unknown => {
-            BlobDataType::Float32 as u32
+        CoreMlDataType::UInt16 => Ok(BlobDataType::UInt16 as u32),
+        CoreMlDataType::Int4 => Ok(BlobDataType::Int4 as u32),
+        CoreMlDataType::UInt4 => Ok(BlobDataType::UInt4 as u32),
+        CoreMlDataType::E4M3 => Ok(BlobDataType::Float8E4M3FN as u32),
+        CoreMlDataType::E5M2 => Ok(BlobDataType::Float8E5M2 as u32),
+        // T-103 (I-78/V-027): Float64 has no MILBlob representation (8 bytes
+        // per element). Silently mapping to Float32 loses the upper 4 bytes
+        // and produces data corruption. Reject with clear error.
+        CoreMlDataType::Float64 => {
+            bail!("Float64 dtype has no MILBlob blob representation. \
+                   ANE does not support FP64 weights. Use FP16 or FP32 instead.")
+        }
+        // T-103 (I-78/V-027): Bool tensors are 1-bit values, not 4-byte
+        // floats. Mapping to Float32 produces 32x data inflation and
+        // incorrect interpretation. Reject with clear error.
+        CoreMlDataType::Bool => {
+            bail!("Bool dtype has no MILBlob blob representation. \
+                   ANE weight format does not support Bool tensors. \
+                   Use UInt8 (0/1) as an alternative.")
+        }
+        // T-103 (I-78/V-027): Unknown dtype means the dtype could not be
+        // determined. Writing Unknown data as Float32 produces meaningless
+        // weight values. Reject with clear error.
+        CoreMlDataType::Unknown => {
+            bail!("Unknown dtype has no MILBlob blob representation. \
+                   Cannot write weight data with unrecognized dtype. \
+                   Ensure all weight dtypes are explicitly specified.")
         }
     }
 }
@@ -362,7 +387,7 @@ impl WeightBinBuilder {
     /// header for that weight — this is the offset that must go into the
     /// protobuf's `BlobFileValue.offset` field, because the runtime's
     /// StorageReader reads the metadata at that offset to locate the data.
-    pub fn build(self) -> WeightBinResult {
+    pub fn build(self) -> Result<WeightBinResult> {
         let num_entries = self.entries.len();
         let mut buf: Vec<u8> = Vec::new();
 
@@ -394,9 +419,12 @@ impl WeightBinBuilder {
             let data_offset = metadata_offset + BLOB_METADATA_SIZE;
 
             // Write blob_metadata (64 bytes)
+            // T-103: coreml_dtype_to_blob_dtype now returns Result —
+            // reject unsupported dtypes (Bool, Float64, Unknown) early.
+            let blob_dtype = coreml_dtype_to_blob_dtype(&entry.dtype)?;
             write_blob_metadata(
                 &mut buf,
-                coreml_dtype_to_blob_dtype(&entry.dtype),
+                blob_dtype,
                 entry.size,
                 data_offset,
             );
@@ -423,7 +451,7 @@ impl WeightBinBuilder {
         // ── Step 3: If there are zero entries, we still need a valid header ─
         // (Already written above with count=0.)
 
-        WeightBinResult {
+        Ok(WeightBinResult {
             data: buf,
             entries: updated_entries,
             total_size: current_pos,
@@ -431,7 +459,7 @@ impl WeightBinBuilder {
             deduplicated_bytes,
             content_deduplicated_count,
             content_deduplicated_bytes,
-        }
+        })
     }
 
     /// Check if a weight with the given name already exists.
@@ -529,7 +557,7 @@ mod tests {
             .add_weight("weight_0", vec![4, 16], CoreMlDataType::Float16, vec![1u8; 128])
             .unwrap();
 
-        let result = builder.build();
+        let result = builder.build().unwrap();
 
         // File must start with storage_header
         assert!(result.data.len() >= 64, "File must be at least 64 bytes for header");
@@ -553,7 +581,7 @@ mod tests {
             .add_weight("weight_0", vec![4, 16], CoreMlDataType::Float16, vec![1u8; 128])
             .unwrap();
 
-        let result = builder.build();
+        let result = builder.build().unwrap();
 
         // First blob_metadata starts at offset 64 (after storage_header)
         let sentinel = u32::from_le_bytes(result.data[64..68].try_into().unwrap());
@@ -567,7 +595,7 @@ mod tests {
             .add_weight("fp16_weight", vec![4, 16], CoreMlDataType::Float16, vec![1u8; 128])
             .unwrap();
 
-        let result = builder.build();
+        let result = builder.build().unwrap();
 
         // Check dtype field in metadata (offset 68-71)
         let dtype = u32::from_le_bytes(result.data[68..72].try_into().unwrap());
@@ -582,7 +610,7 @@ mod tests {
             .add_weight("weight_0", vec![4, 32], CoreMlDataType::Float16, weight_data.clone())
             .unwrap();
 
-        let result = builder.build();
+        let result = builder.build().unwrap();
 
         // The data offset should be metadata_offset + 64 = 64 + 64 = 128
         let data_offset = u64::from_le_bytes(result.data[80..88].try_into().unwrap());
@@ -599,7 +627,7 @@ mod tests {
             .add_weight("weight_0", vec![4, 16], CoreMlDataType::Float16, vec![1u8; 128])
             .unwrap();
 
-        let result = builder.build();
+        let result = builder.build().unwrap();
 
         // The entry.offset should point to the blob_metadata, not the raw data
         assert_eq!(result.entries[0].offset, 64, "Offset should point to metadata at byte 64");
@@ -615,7 +643,7 @@ mod tests {
             .add_weight("weight_1", vec![8, 16], CoreMlDataType::Float16, vec![2u8; 256])
             .unwrap();
 
-        let result = builder.build();
+        let result = builder.build().unwrap();
 
         // Check count in header
         let count = u32::from_le_bytes(result.data[0..4].try_into().unwrap());
@@ -651,7 +679,7 @@ mod tests {
             .add_weight("shared_weight", vec![8, 16], CoreMlDataType::Float16, data.clone())
             .unwrap();
 
-        let result = builder.build();
+        let result = builder.build().unwrap();
         assert_eq!(result.entries.len(), 1, "Only one entry, not two");
         assert_eq!(result.deduplicated_count, 1, "One dedup event");
     }
@@ -659,11 +687,42 @@ mod tests {
     #[test]
     fn test_blob_v1_dtype_mappings() {
         // Test each supported dtype maps correctly
-        assert_eq!(coreml_dtype_to_blob_dtype(&CoreMlDataType::Float16), 1);
-        assert_eq!(coreml_dtype_to_blob_dtype(&CoreMlDataType::Float32), 2);
-        assert_eq!(coreml_dtype_to_blob_dtype(&CoreMlDataType::UInt8), 3);
-        assert_eq!(coreml_dtype_to_blob_dtype(&CoreMlDataType::Int8), 4);
-        assert_eq!(coreml_dtype_to_blob_dtype(&CoreMlDataType::Int32), 14);
+        assert_eq!(coreml_dtype_to_blob_dtype(&CoreMlDataType::Float16).unwrap(), 1);
+        assert_eq!(coreml_dtype_to_blob_dtype(&CoreMlDataType::Float32).unwrap(), 2);
+        assert_eq!(coreml_dtype_to_blob_dtype(&CoreMlDataType::UInt8).unwrap(), 3);
+        assert_eq!(coreml_dtype_to_blob_dtype(&CoreMlDataType::Int8).unwrap(), 4);
+        assert_eq!(coreml_dtype_to_blob_dtype(&CoreMlDataType::Int32).unwrap(), 14);
+    }
+
+    /// T-103 (I-78/V-027): Verify that Bool, Float64, and Unknown dtypes
+    /// are now rejected instead of silently mapped to Float32.
+    #[test]
+    fn test_unsupported_dtypes_rejected() {
+        assert!(
+            coreml_dtype_to_blob_dtype(&CoreMlDataType::Bool).is_err(),
+            "Bool dtype should be rejected"
+        );
+        assert!(
+            coreml_dtype_to_blob_dtype(&CoreMlDataType::Float64).is_err(),
+            "Float64 dtype should be rejected"
+        );
+        assert!(
+            coreml_dtype_to_blob_dtype(&CoreMlDataType::Unknown).is_err(),
+            "Unknown dtype should be rejected"
+        );
+    }
+
+    /// T-103: Verify the error messages mention the dtype and alternative.
+    #[test]
+    fn test_unsupported_dtype_error_messages() {
+        let bool_err = coreml_dtype_to_blob_dtype(&CoreMlDataType::Bool).unwrap_err();
+        assert!(bool_err.to_string().contains("Bool"), "Error should mention Bool: {}", bool_err);
+
+        let f64_err = coreml_dtype_to_blob_dtype(&CoreMlDataType::Float64).unwrap_err();
+        assert!(f64_err.to_string().contains("Float64"), "Error should mention Float64: {}", f64_err);
+
+        let unknown_err = coreml_dtype_to_blob_dtype(&CoreMlDataType::Unknown).unwrap_err();
+        assert!(unknown_err.to_string().contains("Unknown"), "Error should mention Unknown: {}", unknown_err);
     }
 
     #[test]
@@ -672,7 +731,7 @@ mod tests {
         // 10 bytes of data — needs padding to 64-byte boundary
         builder.add_weight("small_weight", vec![10], CoreMlDataType::UInt8, vec![1u8; 10]).unwrap();
 
-        let result = builder.build();
+        let result = builder.build().unwrap();
 
         // metadata at 64, data at 128, data is 10 bytes, padded to 192
         assert_eq!(result.entries[0].offset, 64);
@@ -687,7 +746,7 @@ mod tests {
     #[test]
     fn test_blob_v1_empty_model() {
         let builder = WeightBinBuilder::new();
-        let result = builder.build();
+        let result = builder.build().unwrap();
 
         // Should still produce a valid header
         assert_eq!(result.entries.len(), 0);
@@ -754,7 +813,7 @@ mod tests {
             .add_weight("shared_proj", vec![8, 16], CoreMlDataType::Float16, vec![42u8; 128])
             .unwrap();
 
-        let result = builder.build();
+        let result = builder.build().unwrap();
 
         // 2 unique entries (weight_a + shared_proj), not 4
         assert_eq!(result.entries.len(), 2);
@@ -781,7 +840,7 @@ mod tests {
         builder.add_weight("w1", vec![8], CoreMlDataType::Float16, vec![0u8; 16]).unwrap();
         builder.add_weight("w2", vec![16], CoreMlDataType::Float16, vec![0u8; 32]).unwrap();
 
-        let result = builder.build();
+        let result = builder.build().unwrap();
 
         assert_eq!(result.deduplicated_count, 0, "No deduplication should produce count=0");
         assert_eq!(result.deduplicated_bytes, 0, "No deduplication should produce bytes=0");
@@ -812,7 +871,7 @@ mod tests {
             )
             .unwrap();
 
-        let result_no_dedup = builder_no_dedup.build();
+        let result_no_dedup = builder_no_dedup.build().unwrap();
         assert_eq!(result_no_dedup.entries.len(), 2,
             "Without content dedup: different names are stored separately even with identical content");
         assert_eq!(result_no_dedup.deduplicated_count, 0);
@@ -838,7 +897,7 @@ mod tests {
             )
             .unwrap();
 
-        let result = builder.build();
+        let result = builder.build().unwrap();
 
         // Only one entry should exist (second was content-deduped)
         assert_eq!(
@@ -867,7 +926,7 @@ mod tests {
             .add_weight("shared_w", vec![8, 16], CoreMlDataType::Float16, content.clone())
             .unwrap();
 
-        let result = builder.build();
+        let result = builder.build().unwrap();
 
         assert_eq!(result.entries.len(), 1, "Same name → one entry");
         assert_eq!(result.deduplicated_count, 1, "One name-based dedup event");
@@ -891,7 +950,7 @@ mod tests {
             .add_weight("weight_b", vec![8, 8], CoreMlDataType::Float16, content.clone())
             .unwrap();
 
-        let result = builder.build();
+        let result = builder.build().unwrap();
 
         assert_eq!(result.entries.len(), 2, "Same content, different shape → stored separately");
         assert_eq!(
@@ -909,7 +968,7 @@ mod tests {
         builder.add_weight("weight_a", vec![8], CoreMlDataType::Float16, content.clone()).unwrap();
         builder.add_weight("weight_b", vec![4], CoreMlDataType::Float32, content.clone()).unwrap();
 
-        let result = builder.build();
+        let result = builder.build().unwrap();
 
         assert_eq!(result.entries.len(), 2, "Same content, different dtype → stored separately");
         assert_eq!(
@@ -942,7 +1001,7 @@ mod tests {
                 weight_data.clone(),
             )
             .unwrap();
-        let no_dedup_result = no_dedup.build();
+        let no_dedup_result = no_dedup.build().unwrap();
 
         // --- Proto-direct with content dedup: shared ---
         let mut with_dedup = WeightBinBuilder::new().with_content_dedup();
@@ -962,7 +1021,7 @@ mod tests {
                 weight_data.clone(),
             )
             .unwrap();
-        let with_dedup_result = with_dedup.build();
+        let with_dedup_result = with_dedup.build().unwrap();
 
         assert_eq!(
             with_dedup_result.entries.len(),
@@ -997,7 +1056,7 @@ mod tests {
             .add_weight("weight_b", vec![8, 16], CoreMlDataType::Float16, vec![2u8; 256])
             .unwrap();
 
-        let result = builder.build();
+        let result = builder.build().unwrap();
 
         assert_eq!(result.entries.len(), 2, "Different content → stored separately");
         assert_eq!(result.content_deduplicated_count, 0);
@@ -1012,7 +1071,7 @@ mod tests {
             .add_weight("test_weight", vec![2, 16], CoreMlDataType::Float16, weight_data.clone())
             .unwrap();
 
-        let result = builder.build();
+        let result = builder.build().unwrap();
 
         // Total: header(64) + metadata(64) + data(64) = 192
         // (data is already 64-byte aligned, no padding needed)

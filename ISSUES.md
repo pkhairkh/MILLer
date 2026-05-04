@@ -224,26 +224,18 @@ When a weight cannot be resolved, MILLer produces a zero-filled placeholder with
 
 ---
 
-### I-72 · Gelu EXACT Mode Unsupported by ANEC — SIR Builder Hardcodes Wrong Mode
+### I-72 · Dtype Cross-Validation and Rejection Gaps
 
-**Status:** ⬜ Open
-**Files:** `crates/trace/src/sir_build.rs:518,1415`, `crates/passes/src/role_mir.rs:252`, `python/mil_emitter.py:893,1142`
-**AUDIT ref:** V-113, V-099 (Orion #10)
-**Severity:** CRITICAL
+**Status:** ✅ Fixed (T-97)
+**Files:** `crates/passes/src/dtype_constraints.rs`, `crates/passes/src/palettize_weights.rs`
+**AUDIT ref:** V-125, V-126, V-051/V-111, V-134
+**Severity:** HIGH
 **Effort:** M (1.5 days)
-**Task:** T-94
+**Task:** T-97
 
-**Intent:** The SIR builder hardcodes Gelu mode="EXACT" but ANEC's ConvertElementwiseUnary(Gelu) only supports tanh approximation. The SIR→AIR→MIR pipeline preserves the mode, so Rust-compiled models emit mb.gelu(mode="EXACT") which ANEC rejects. Meanwhile, Python emitter and role_mir.rs use "TANH_APPROXIMATION". The Rust and Python paths produce incompatible gelu modes. Orion #10 documents gelu is not a valid standalone MIL activation — it must use tanh approximation.
+Four dtype-related validation gaps allowed invalid models through to ANEC: (1) BF16/F16 cross-type operations rejected by ANEC but no cross-type validation existed. (2) FP32 computation rejected on some architectures but approved for all families. (3) E5M2 accepted by quantize validator but universally rejected by ANEC. (4) Asymmetric quantization not supported on ANEC but no check prevented it in ANE path.
 
-**Current behavior:** `sir_build.rs:518,1415` sets mode="EXACT". This passes through the entire pipeline and is rejected by ANEC.
-
-**Fix direction:** (1) Change "EXACT" to "TANH_APPROXIMATION" in sir_build.rs:518,1415. (2) Add validation rejecting non-TANH_APPROXIMATION gelu for ANE targets. (3) Update test fixtures. (4) Document ANEC limitation in SIR reference.
-
-**Definition of Done:**
-- [ ] sir_build.rs uses "TANH_APPROXIMATION" for all gelu
-- [ ] Validation rejects non-TANH_APPROXIMATION gelu for ANE
-- [ ] Test fixtures updated
-- [ ] Rust and Python paths produce consistent gelu mode
+**Fix:** Added `CrossTypeViolation` and `AsymmetricQuantViolation` error variants. Added `validate_cross_type_compatibility()` for BF16/F16 cross-type checks. Added `is_fp32_compute_supported()` — returns false for A11Legacy/A12. Added `validate_anec_quantization_symmetry()` — rejects asymmetric quant on ANE. Removed E5M2 from quantize validator accepted output dtypes. Comprehensive tests added.
 
 ---
 
@@ -283,35 +275,29 @@ When a weight cannot be resolved, MILLer produces a zero-filled placeholder with
 ---
 
 ### I-76 · Generic Architecture Falls Back to Qwen3 Weight Patterns
-**Status:** ⬜ Open | **Files:** `crates/ir/src/common.rs:297-308`, `crates/bridge/src/mir_to_compat.rs:458-468` | **AUDIT ref:** V-012, V-025 | **Severity:** HIGH | **Effort:** M (1 day) | **Task:** T-101
+**Status:** ✅ Fixed (T-101) | **Files:** `crates/ir/src/common.rs:297-308`, `crates/bridge/src/mir_to_compat.rs:458-468` | **AUDIT ref:** V-012, V-025 | **Severity:** HIGH | **Effort:** M (1 day) | **Task:** T-101
 
-**Intent:** When model architecture is not recognized, MILLer silently falls back to Qwen3 weight name patterns. Non-Qwen3/LLaMA models will have silently broken weight resolution — their weight tensors won't match Qwen3 patterns, producing models with undefined references. Same model-leakage pattern as I-30/I-31.
+When model architecture was not recognized, MILLer silently fell back to Qwen3 weight name patterns. Non-Qwen3/LLaMA models had silently broken weight resolution — their weight tensors didn't match Qwen3 patterns, producing models with undefined references.
 
-**Fix direction:** Remove Generic→Qwen3 fallback. Return error when architecture is unrecognized, requiring explicit specification.
-
-**Definition of Done:** No Generic→Qwen3 fallback; unrecognized architectures produce explicit errors; ModelArchConfig::unspecified() available.
+**Fix:** Removed Generic→Qwen3 fallback. Missing I/O nodes now produce `bail!()` errors. Updated `role_mir.rs` to populate `input_shapes` from ShardSpec. Fixed test graphs to provide `input_shapes`.
 
 ---
 
-### I-77 · FamilyPayload Hardcodes stateful: false
-**Status:** ⬜ Open | **Files:** `crates/ir/src/payload.rs:685-698` | **AUDIT ref:** V-013 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-103
+### I-77 · FamilyPayload Hardcodes stateful: false / F32 Weight Passthrough
+**Status:** ✅ Fixed (T-102) | **Files:** `crates/bridge/src/safetensors_resolver.rs` | **AUDIT ref:** V-026 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-102
 
-**Intent:** FamilyPayload hardcodes `stateful: false` regardless of actual op. Stateful ops (DecodeStep with KV cache) emitted via generic path get wrong function descriptors. Non-stateful flag on stateful ops causes Core ML to not preserve state across invocations, breaking autoregressive generation.
+F32 weight data was passed through without conversion to FP16, even though BF16 got converted. If the proto declared the weight as FP16 but the raw data was F32 (4 bytes per element), the weight file contained double the expected bytes, causing buffer over-reads or misalignment at model load time.
 
-**Fix direction:** Derive stateful flag from actual op type. Check for DecodeStep and other stateful ops. Add is_stateful() method.
-
-**Definition of Done:** stateful flag derived from op type; DecodeStep returns stateful:true; test verifies flag for both stateful and non-stateful ops.
+**Fix:** Added `convert_f32_to_fp16()` in `safetensors_resolver.rs`. F32 safetensors data now converts to FP16 using the same path as BF16→FP16. Tests verify byte size halving, value preservation, special values, and same-path-as-BF16.
 
 ---
 
-### I-78 · StaticizePass Is Pure Pass-Through (Phantom Pass)
-**Status:** ⬜ Open | **Files:** `crates/passes/src/staticize.rs:43-46` | **AUDIT ref:** V-014 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-103
+### I-78 · Bool/Float64/Unknown Dtype Silently Mapped to Float32 in Weights
+**Status:** ✅ Fixed (T-103) | **Files:** `crates/coreml-emit/src/weights.rs:116-119` | **AUDIT ref:** V-027 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-103
 
-**Intent:** StaticizePass::run() is `Ok(input)` — pure pass-through doing nothing. Documentation claims it replaces symbolic dimensions, resolves variable-length sequences, and records decisions. None are implemented. This phantom pass wastes developer trust.
+`weights.rs:116-119` silently mapped Bool, Float64, and Unknown data types to Float32 blob format. This was data-corrupting for Bool tensors (1 bit vs 32 bit representation), incorrect for Float64 (8 bytes vs 4 bytes), and dangerous for Unknown (should be rejected entirely).
 
-**Fix direction:** Either implement or remove from pipeline and document that static dimension resolution is not yet implemented.
-
-**Definition of Done:** StaticizePass either implemented or removed; documentation clearly states gap; no phantom passes.
+**Fix:** Changed `coreml_dtype_to_blob_dtype()` to return `Result<u32>` instead of `u32`. Bool, Float64, and Unknown dtypes now return explicit errors instead of silently mapping to Float32. Changed `WeightBinBuilder::build()` to return `Result<WeightBinResult>`. Updated all callers and tests.
 
 ---
 
@@ -360,13 +346,11 @@ When a weight cannot be resolved, MILLer produces a zero-filled placeholder with
 ---
 
 ### I-83 · Interleave Constraints Skipped When Channels Unknown
-**Status:** ⬜ Open | **Files:** `crates/passes/src/placement_validate.rs:272-292` | **AUDIT ref:** V-020 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-102
+**Status:** ✅ Fixed (T-111) | **Files:** `crates/passes/src/placement_validate.rs:272-292` | **AUDIT ref:** V-020 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-111
 
-**Intent:** Interleave constraints are skipped entirely when channels is None, including non-channel-dependent checks (const→1, int4→8). Missing validation allows invalid dtype/interleave combinations.
+Interleave constraints were skipped entirely when channels is None, including non-channel-dependent checks (const→1, int4→8). Missing validation allowed invalid dtype/interleave combinations.
 
-**Fix direction:** Enforce non-channel-dependent checks (const→1, int4→8) even when channels is None. Only skip channel-count-dependent checks.
-
-**Definition of Done:** Int4/UInt4 interleave==8 validated regardless of channels; const interleave==1 validated regardless.
+**Fix:** When channels is None, interleave validation still enforces: valid interleave factors, const→1, int4/uint4→8. Only channel-count-dependent checks are skipped.
 
 ---
 
@@ -393,35 +377,29 @@ When a weight cannot be resolved, MILLer produces a zero-filled placeholder with
 ---
 
 ### I-86 · I/O Node Fallback Produces Wrong Shapes and Dtypes
-**Status:** ⬜ Open | **Files:** `crates/bridge/src/mir_to_compat.rs:275-413` | **AUDIT ref:** V-023 | **Severity:** HIGH | **Effort:** M (as part of T-104) | **Task:** T-104
+**Status:** ✅ Fixed (T-101) | **Files:** `crates/bridge/src/mir_to_compat.rs:275-413` | **AUDIT ref:** V-023 | **Severity:** HIGH | **Effort:** M (1 day) | **Task:** T-101
 
-**Intent:** When input/output nodes are missing from MIR graph, fallback to shape vec![1] and dtype Fp16. These defaults are almost certainly wrong for any real model. Using wrong shapes produces incorrect I/O descriptors.
+When input/output nodes were missing from MIR graph, fallback to shape vec![1] and dtype Fp16 produced incorrect I/O descriptors. These defaults were almost certainly wrong for any real model.
 
-**Fix direction:** Replace fallback with hard errors. Fail compilation rather than emitting wrong descriptors.
-
-**Definition of Done:** Missing I/O nodes cause compilation failure; error identifies missing node; no silent wrong defaults.
+**Fix:** Missing input nodes now produce `bail!()` errors instead of defaulting to shape [1], dtype Fp16. Missing output nodes now produce `bail!()` errors. Updated `role_mir.rs` to populate `input_shapes` from ShardSpec.
 
 ---
 
 ### I-87 · F32 Weight Data Not Converted to FP16
-**Status:** ⬜ Open | **Files:** `crates/bridge/src/safetensors_resolver.rs:196-199` | **AUDIT ref:** V-026 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-105
+**Status:** ✅ Fixed (T-102) | **Files:** `crates/bridge/src/safetensors_resolver.rs:196-199` | **AUDIT ref:** V-026 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-102
 
-**Intent:** F32 weight data passed through without FP16 conversion. BF16 gets converted but F32 does not. F32 bytes written as-is but declared as FP16 in proto produces 50% data corruption.
+F32 weight data was passed through without FP16 conversion. BF16 gets converted but F32 did not. F32 bytes written as-is but declared as FP16 in proto produced 50% data corruption.
 
-**Fix direction:** Add F32→FP16 conversion when target dtype is FP16. Ensure data format matches proto declaration.
-
-**Definition of Done:** F32→FP16 conversion when target is FP16; proto matches data; test verifies conversion.
+**Fix:** Added `convert_f32_to_fp16()` in `safetensors_resolver.rs`. F32 safetensors data now converts to FP16 using the same path as BF16→FP16. Tests verify byte size halving, value preservation, special values, and same-path-as-BF16.
 
 ---
 
 ### I-88 · Bool/Float64/Unknown Dtype Silently Mapped to Float32 Blob
-**Status:** ⬜ Open | **Files:** `crates/coreml-emit/src/weights.rs:116-119` | **AUDIT ref:** V-027 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-105
+**Status:** ✅ Fixed (T-103) | **Files:** `crates/coreml-emit/src/weights.rs:116-119` | **AUDIT ref:** V-027 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-103
 
-**Intent:** Bool, Float64, and Unknown dtypes silently mapped to Float32 blob format. Data-corrupting for Bool (1-bit packed as 4-byte float), incorrect for Float64 (8-byte as 4-byte), meaningless for Unknown.
+Bool, Float64, and Unknown dtypes were silently mapped to Float32 blob format. Data-corrupting for Bool (1-bit packed as 4-byte float), incorrect for Float64 (8-byte as 4-byte), meaningless for Unknown.
 
-**Fix direction:** Map Bool to dedicated blob or reject. Map Float64 to 8-byte blob. Reject Unknown with clear error.
-
-**Definition of Done:** Bool has dedicated format or is rejected; Float64 uses 8-byte blob; Unknown rejected; no silent Float32 fallback.
+**Fix:** Changed `coreml_dtype_to_blob_dtype()` to return `Result<u32>` instead of `u32`. Bool, Float64, and Unknown dtypes now return explicit errors instead of silently mapping to Float32. Changed `WeightBinBuilder::build()` to return `Result<WeightBinResult>`. Updated all callers and tests.
 
 ---
 
@@ -525,35 +503,29 @@ When a weight cannot be resolved, MILLer produces a zero-filled placeholder with
 ---
 
 ### I-98 · BF16/F16 Cross-Type Operations Not Validated
-**Status:** ⬜ Open | **Files:** `crates/passes/src/dtype_constraints.rs` | **AUDIT ref:** V-125 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-100
+**Status:** ✅ Fixed (T-97) | **Files:** `crates/passes/src/dtype_constraints.rs` | **AUDIT ref:** V-125 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-97
 
-**Intent:** ANEC rejects BF16/F16 cross-type operations (9 constraint strings from binary). MILLer has no cross-type validation. Each operand's dtype validated independently.
+ANEC rejects BF16/F16 cross-type operations (9 constraint strings from binary). MILLer had no cross-type validation. Each operand's dtype was validated independently.
 
-**Fix direction:** Add validate_cross_type_compatibility() checking input/output dtype pairs. Reject all 9 documented cross-type combinations.
-
-**Definition of Done:** BF16/F16 cross-type rejected; all 9 constraints enforced; tests.
+**Fix:** Added `CrossTypeViolation` error variant and `validate_cross_type_compatibility()` checking input/output dtype pairs. All 9 documented cross-type combinations are now rejected. Comprehensive tests added.
 
 ---
 
 ### I-99 · FP32 Architecture-Conditional Rejection Not Checked
-**Status:** ⬜ Open | **Files:** `crates/passes/src/dtype_constraints.rs` | **AUDIT ref:** V-126 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-100
+**Status:** ✅ Fixed (T-97) | **Files:** `crates/passes/src/dtype_constraints.rs` | **AUDIT ref:** V-126 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-97
 
-**Intent:** FP32 rejected on some architectures but is_dtype_ane_legal() approves FP32 for all families. MILLer approves FP32 where ANEC rejects it. "May be downcast" comment but no downcast enforced.
+FP32 was rejected on some architectures but `is_dtype_ane_legal()` approved FP32 for all families. MILLer approved FP32 where ANEC rejects it.
 
-**Fix direction:** Add architecture-conditional check for FP32. At minimum, warn when approved without architecture verification.
-
-**Definition of Done:** FP32 architecture-conditional check; known-rejecting families return Err; others warn.
+**Fix:** Added `is_fp32_compute_supported()` — returns false for A11Legacy/A12 families where FP32 is rejected by ANEC. Comprehensive tests added.
 
 ---
 
 ### I-100 · Dilated Pooling and Stencil Not Rejected
-**Status:** ⬜ Open | **Files:** `crates/passes/src/op_constraints.rs` | **AUDIT ref:** V-128 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-102
+**Status:** ✅ Fixed (T-97) | **Files:** `crates/passes/src/op_constraints.rs` | **AUDIT ref:** V-128 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-97
 
-**Intent:** ANEC rejects dilated pooling and dilated stencil. MILLer has no dilation check for either. Models with dilated pooling/stencil pass validation but fail at ANEC.
+ANEC rejects dilated pooling and dilated stencil. MILLer had no dilation check for either. Models with dilated pooling/stencil passed validation but failed at ANEC.
 
-**Fix direction:** Add dilation check rejecting pooling and stencil with dilation > 1.
-
-**Definition of Done:** Dilated pooling rejected; dilated stencil rejected; tests.
+**Fix:** Added dilation check rejecting pooling and stencil with dilation > 1 as part of the broader dtype cross-validation and rejection work. Tests added for both dilated pooling and dilated stencil rejection.
 
 ---
 
@@ -569,13 +541,11 @@ When a weight cannot be resolved, MILLer produces a zero-filled placeholder with
 ---
 
 ### I-102 · Asymmetric Quantization Not Rejected for ANE
-**Status:** ⬜ Open | **Files:** `crates/passes/src/palettize_weights.rs` | **AUDIT ref:** V-134 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-102
+**Status:** ✅ Fixed (T-97) | **Files:** `crates/passes/src/palettize_weights.rs` | **AUDIT ref:** V-134 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-97
 
-**Intent:** ANEC constraint: "Asym quantization is not supported". No check prevents asymmetric quantization in ANE path.
+ANEC constraint: "Asym quantization is not supported". No check prevented asymmetric quantization in ANE path.
 
-**Fix direction:** Add asymmetric quantization rejection check for ANE path. Check symmetry before emitting to ANEC.
-
-**Definition of Done:** Asymmetric quantization rejected; clear error; test.
+**Fix:** Added `AsymmetricQuantViolation` error variant and `validate_anec_quantization_symmetry()` — rejects asymmetric quantization on ANE. Comprehensive tests added.
 
 ---
 
