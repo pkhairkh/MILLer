@@ -118,6 +118,12 @@ message MilConvOp {
     WeightData weight = 2;
     string pad_type = 3;  // "valid", "same", "custom"
     int64 groups = 4;
+    // T-98 (V-110): Quantized/palettized weight attributes for ANEC convolution.
+    // These fields carry per-op scale, zero-point, and LUT reference for
+    // quantized and palettized convolution weight tensors.
+    float kernel_scale = 5;                  // Per-op scale factor (0.0 = not set)
+    int32 kernel_zero_point = 6;             // Zero-point offset (0 = symmetric)
+    string kernel_palettized_lut = 7;        // Name of palettized LUT weight entry (empty = not palettized)
 }
 
 // ─── Elementwise ────────────────────────────────────────────────────────────

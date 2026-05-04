@@ -251,6 +251,82 @@ pub fn run_palettize_weights_pass_with_arch(
     result
 }
 
+/// T-98 (V-110): Populate quantized conv weight attributes on MILConv nodes.
+///
+/// After SIR→AIR→MIR lowering, this pass scans MIR graphs for `MILConv` nodes
+/// that have palettized weight entries and populates their `kernel_scale`,
+/// `kernel_zero_point`, and `kernel_palettized_lut` fields. These fields map
+/// to the ANEC `kernel_scale`, `kernel_zero_point`, and `kernel_palettized_LUT`
+/// convolution attributes required for quantized/palettized convolution emission.
+///
+/// # When to call
+///
+/// Call after lowering to MIR and after weight resolution, when the palettized
+/// weight entries are available. If no palettized conv weights exist, this
+/// function is a no-op.
+///
+/// # Palettization metadata
+///
+/// The `palettized_conv_weights` parameter maps conv node names to their
+/// quantization metadata. Each entry provides:
+/// - `kernel_scale`: the per-op scale factor for dequantization
+/// - `kernel_zero_point`: the zero-point offset (0 for symmetric)
+/// - `kernel_palettized_lut`: the name of the LUT weight entry
+///
+/// # Returns
+///
+/// The number of MILConv nodes that had their quantization fields populated.
+pub fn populate_conv_quantization_fields(
+    mir_nodes: &mut [ane_ir::mir::MirNode],
+    palettized_conv_weights: &std::collections::HashMap<String, ConvQuantizationInfo>,
+) -> usize {
+    let mut populated = 0;
+    for node in mir_nodes.iter_mut() {
+        if let ane_ir::mir::MirOp::MILConv { .. } = node.op {
+            // Extract name first to avoid borrow conflicts
+            let name = if let ane_ir::mir::MirOp::MILConv { ref name, .. } = node.op {
+                name.clone()
+            } else {
+                continue;
+            };
+
+            if let Some(info) = palettized_conv_weights.get(&name) {
+                if let ane_ir::mir::MirOp::MILConv {
+                    ref mut kernel_scale,
+                    ref mut kernel_zero_point,
+                    ref mut kernel_palettized_lut,
+                    ..
+                } = node.op
+                {
+                    *kernel_scale = Some(info.kernel_scale);
+                    *kernel_zero_point = Some(info.kernel_zero_point);
+                    *kernel_palettized_lut = Some(info.kernel_palettized_lut.clone());
+                    populated += 1;
+                }
+            }
+        }
+    }
+    populated
+}
+
+/// T-98 (V-110): Quantization metadata for a single conv weight tensor.
+///
+/// Maps to the ANEC `kernel_scale`, `kernel_zero_point`, and
+/// `kernel_palettized_LUT` attributes on the convolution operation.
+#[derive(Debug, Clone)]
+pub struct ConvQuantizationInfo {
+    /// Per-op scale factor for quantized/palettized conv weights.
+    /// Used to dequantize int4/int8 weights back to floating point.
+    pub kernel_scale: f32,
+    /// Zero-point offset for quantized conv weights.
+    /// Zero indicates symmetric quantization.
+    pub kernel_zero_point: i32,
+    /// Name of the palettized LUT weight entry for this conv.
+    /// References a weight entry in the weight blob that contains
+    /// the lookup table for palettized (kmeans) weights.
+    pub kernel_palettized_lut: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,5 +611,132 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ─── T-98: Conv quantization field population tests ─────────────────
+
+    #[test]
+    fn test_t98_populate_conv_quantization_fields() {
+        use ane_ir::mir::{MilDtype, MirNode, MirNodeId, MirOp};
+        use ane_ir::common::ComputeUnitHint;
+        use std::collections::HashMap;
+
+        let mut nodes = vec![
+            MirNode {
+                id: MirNodeId("conv1".into()),
+                op: MirOp::MILConv {
+                    name: "conv1".into(),
+                    x: MirNodeId("x".into()),
+                    weight: MirNodeId("w1".into()),
+                    pad_type: "valid".into(),
+                    groups: 1,
+                    strides: vec![1, 1],
+                    pad_amounts: vec![0, 0, 0, 0],
+                    dilations: vec![1, 1],
+                    kernel_scale: None,
+                    kernel_zero_point: None,
+                    kernel_palettized_lut: None,
+                },
+                dtype: MilDtype::Fp16,
+                shape: vec![1, 3, 32, 32],
+                compute_unit_hint: None,
+                air_source: None,
+            },
+            MirNode {
+                id: MirNodeId("conv2".into()),
+                op: MirOp::MILConv {
+                    name: "conv2".into(),
+                    x: MirNodeId("x2".into()),
+                    weight: MirNodeId("w2".into()),
+                    pad_type: "same".into(),
+                    groups: 2,
+                    strides: vec![2, 2],
+                    pad_amounts: vec![1, 1, 1, 1],
+                    dilations: vec![1, 1],
+                    kernel_scale: None,
+                    kernel_zero_point: None,
+                    kernel_palettized_lut: None,
+                },
+                dtype: MilDtype::Fp16,
+                shape: vec![1, 64, 16, 16],
+                compute_unit_hint: None,
+                air_source: None,
+            },
+        ];
+
+        let mut palettized = HashMap::new();
+        palettized.insert(
+            "conv1".to_string(),
+            ConvQuantizationInfo {
+                kernel_scale: 0.0078,
+                kernel_zero_point: 0,
+                kernel_palettized_lut: "conv1_weight_lut_4bit".to_string(),
+            },
+        );
+
+        let populated = populate_conv_quantization_fields(&mut nodes, &palettized);
+        assert_eq!(populated, 1, "Only conv1 should be populated");
+
+        // Verify conv1 has quantization fields set
+        if let MirOp::MILConv { name, kernel_scale, kernel_zero_point, kernel_palettized_lut, .. } = &nodes[0].op {
+            assert_eq!(name, "conv1");
+            assert_eq!(*kernel_scale, Some(0.0078));
+            assert_eq!(*kernel_zero_point, Some(0));
+            assert_eq!(kernel_palettized_lut.as_deref(), Some("conv1_weight_lut_4bit"));
+        } else {
+            panic!("Expected MILConv");
+        }
+
+        // Verify conv2 is untouched
+        if let MirOp::MILConv { kernel_scale, kernel_zero_point, kernel_palettized_lut, .. } = &nodes[1].op {
+            assert_eq!(*kernel_scale, None, "conv2 should not be populated");
+            assert_eq!(*kernel_zero_point, None);
+            assert_eq!(*kernel_palettized_lut, None);
+        }
+    }
+
+    #[test]
+    fn test_t98_populate_conv_quantization_empty_map() {
+        use ane_ir::mir::{MilDtype, MirNode, MirNodeId, MirOp};
+        use std::collections::HashMap;
+
+        let mut nodes = vec![
+            MirNode {
+                id: MirNodeId("conv1".into()),
+                op: MirOp::MILConv {
+                    name: "conv1".into(),
+                    x: MirNodeId("x".into()),
+                    weight: MirNodeId("w1".into()),
+                    pad_type: "valid".into(),
+                    groups: 1,
+                    strides: vec![1],
+                    pad_amounts: vec![0],
+                    dilations: vec![1],
+                    kernel_scale: None,
+                    kernel_zero_point: None,
+                    kernel_palettized_lut: None,
+                },
+                dtype: MilDtype::Fp16,
+                shape: vec![1, 3, 32, 32],
+                compute_unit_hint: None,
+                air_source: None,
+            },
+        ];
+
+        let palettized: HashMap<String, ConvQuantizationInfo> = HashMap::new();
+        let populated = populate_conv_quantization_fields(&mut nodes, &palettized);
+        assert_eq!(populated, 0, "No convs should be populated with empty map");
+    }
+
+    #[test]
+    fn test_t98_conv_quantization_info_fields() {
+        let info = ConvQuantizationInfo {
+            kernel_scale: 0.0156,
+            kernel_zero_point: -128,
+            kernel_palettized_lut: "conv_weight_lut_8bit".to_string(),
+        };
+        assert!((info.kernel_scale - 0.0156).abs() < f32::EPSILON);
+        assert_eq!(info.kernel_zero_point, -128);
+        assert_eq!(info.kernel_palettized_lut, "conv_weight_lut_8bit");
     }
 }

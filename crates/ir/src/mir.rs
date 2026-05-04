@@ -65,6 +65,16 @@ pub enum MirOp {
         strides: Vec<usize>,
         pad_amounts: Vec<usize>,
         dilations: Vec<usize>,
+        /// T-98 (V-110): Per-op scale factor for quantized/palettized weights.
+        /// Maps to ANEC `kernel_scale` attribute. `None` for unquantized weights.
+        kernel_scale: Option<f32>,
+        /// T-98 (V-110): Zero-point offset for quantized weights.
+        /// Maps to ANEC `kernel_zero_point` attribute. `None` for symmetric quant.
+        kernel_zero_point: Option<i32>,
+        /// T-98 (V-110): Name of the palettized LUT weight for this conv.
+        /// Maps to ANEC `kernel_palettized_LUT` attribute. `None` when not
+        /// palettized. When set, references a weight entry in the weight blob.
+        kernel_palettized_lut: Option<String>,
     },
     MILConvTranspose {
         name: String,
@@ -2273,6 +2283,9 @@ mod tests {
             strides: vec![1],
             pad_amounts: vec![0],
             dilations: vec![1],
+            kernel_scale: None,
+            kernel_zero_point: None,
+            kernel_palettized_lut: None,
         };
         assert_eq!(conv.default_engine(), Some(AneEngine::NE));
 
@@ -2396,6 +2409,9 @@ mod tests {
             strides: vec![1],
             pad_amounts: vec![0],
             dilations: vec![1],
+            kernel_scale: None,
+            kernel_zero_point: None,
+            kernel_palettized_lut: None,
         };
 
         // Conv should always return NE regardless of revision
@@ -2450,5 +2466,89 @@ mod tests {
 
         // With None revision: backward compat returns base engine (NE)
         assert_eq!(sdpa.default_engine_for_revision(None), Some(AneEngine::NE));
+    }
+
+    // ─── T-98: MILConv quantization fields ─────────────────────────────
+
+    /// T-98: Verify that MILConv can be constructed with quantized weight
+    /// attributes (kernel_scale, kernel_zero_point, kernel_palettized_lut).
+    #[test]
+    fn test_t98_conv_quantization_fields() {
+        let conv = MirOp::MILConv {
+            name: "quant_conv".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1, 1],
+            pad_amounts: vec![0, 0],
+            dilations: vec![1, 1],
+            kernel_scale: Some(0.0078),
+            kernel_zero_point: Some(0),
+            kernel_palettized_lut: Some("conv_weight_lut_4bit".into()),
+        };
+
+        if let MirOp::MILConv { kernel_scale, kernel_zero_point, kernel_palettized_lut, .. } = &conv {
+            assert_eq!(*kernel_scale, Some(0.0078));
+            assert_eq!(*kernel_zero_point, Some(0));
+            assert_eq!(kernel_palettized_lut.as_deref(), Some("conv_weight_lut_4bit"));
+        } else {
+            panic!("Expected MILConv");
+        }
+
+        // Conv with quantization fields still maps to NE engine
+        assert_eq!(conv.default_engine(), Some(AneEngine::NE));
+    }
+
+    /// T-98: Verify that MILConv defaults quantization fields to None.
+    #[test]
+    fn test_t98_conv_quantization_fields_default_none() {
+        let conv = MirOp::MILConv {
+            name: "plain_conv".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
+            kernel_scale: None,
+            kernel_zero_point: None,
+            kernel_palettized_lut: None,
+        };
+
+        if let MirOp::MILConv { kernel_scale, kernel_zero_point, kernel_palettized_lut, .. } = &conv {
+            assert_eq!(*kernel_scale, None, "Default kernel_scale should be None");
+            assert_eq!(*kernel_zero_point, None, "Default kernel_zero_point should be None");
+            assert_eq!(*kernel_palettized_lut, None, "Default kernel_palettized_lut should be None");
+        }
+    }
+
+    // ─── T-131: MatMul transpose flags ──────────────────────────────────
+
+    /// T-131: Verify MatMul retains transpose_y flag for named-const-node
+    /// emission in the Apple proto path. The actual emission change is in
+    /// coreml-proto, but the MIR struct must carry the flag correctly.
+    #[test]
+    fn test_t131_matmul_transpose_y_flag() {
+        let mm_true = MirOp::MILMatMul {
+            name: "mm_t".into(),
+            x: nid("a"),
+            y: nid("b"),
+            transpose_y: true,
+        };
+        let mm_false = MirOp::MILMatMul {
+            name: "mm_f".into(),
+            x: nid("a"),
+            y: nid("b"),
+            transpose_y: false,
+        };
+
+        if let MirOp::MILMatMul { transpose_y, .. } = &mm_true {
+            assert!(*transpose_y, "transpose_y should be true");
+        }
+        if let MirOp::MILMatMul { transpose_y, .. } = &mm_false {
+            assert!(!*transpose_y, "transpose_y should be false");
+        }
     }
 }

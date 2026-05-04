@@ -1200,6 +1200,9 @@ pub fn mir_op_to_compat(
             strides,
             pad_amounts,
             dilations,
+            kernel_scale,
+            kernel_zero_point,
+            kernel_palettized_lut,
         } => {
             // T-116: Validate ANEC attribute shapes before dropping them.
             // The mir_to_compat layer discards strides, pad_amounts, and dilations
@@ -1219,12 +1222,23 @@ pub fn mir_op_to_compat(
                     name, e, strides, pad_amounts, dilations
                 );
             }
+            // T-98: Log quantized conv attributes if present. These are carried
+            // through to the MirOpCompat::Conv for emission.
+            if kernel_scale.is_some() || kernel_zero_point.is_some() || kernel_palettized_lut.is_some() {
+                log::info!(
+                    "T-98: Conv '{}' has quantized weight attributes: scale={:?}, zero_point={:?}, palettized_lut={:?}",
+                    name, kernel_scale, kernel_zero_point, kernel_palettized_lut
+                );
+            }
             Ok(MirOpCompat::Conv {
                 name: name.clone(),
                 x: x.0.clone(),
                 weight: weight.0.clone(),
                 pad_type: pad_type.clone(),
                 groups: *groups as i64,
+                kernel_scale: *kernel_scale,
+                kernel_zero_point: *kernel_zero_point,
+                kernel_palettized_lut: kernel_palettized_lut.clone(),
             })
         },
         MirOp::MILSplit { name, x, axis, num_splits } => Ok(MirOpCompat::Split {
@@ -2283,6 +2297,9 @@ mod tests {
                     strides: vec![],
                     pad_amounts: vec![],
                     dilations: vec![],
+                    kernel_scale: None,
+                    kernel_zero_point: None,
+                    kernel_palettized_lut: None,
                 },
                 &[],
             ),
@@ -2323,6 +2340,9 @@ mod tests {
                     strides: vec![],
                     pad_amounts: vec![],
                     dilations: vec![],
+                    kernel_scale: None,
+                    kernel_zero_point: None,
+                    kernel_palettized_lut: None,
                 },
                 vec![],
             ),

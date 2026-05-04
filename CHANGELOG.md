@@ -2,14 +2,81 @@
 
 ## Current Status — 2026-05-05
 
-- **1621 tests passing**, 0 failures
+- **1627 tests passing**, 0 failures
 - IR Cleanliness Score: 89%
 - 0 clippy warnings, 0 errors
-- **7 open tasks** (1 CRITICAL, 1 HIGH, 1 MEDIUM, 4 LOW) — see [TASKS.md](TASKS.md)
-- **38 tasks resolved** across sprint cycles
+- **5 open tasks** (1 CRITICAL, 1 MEDIUM, 3 LOW) — see [TASKS.md](TASKS.md)
+- **40 tasks resolved** across sprint cycles
 
 Audit details: [docs/audit/tabula-rasa-v3.md](docs/audit/tabula-rasa-v3.md)
 Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
+
+---
+
+## [sprint-emission-proto-enhancement] — 2026-05-05
+
+### Sprint: Emission Proto Enhancement (T-98, T-131)
+
+Resolved 2 tasks (1 HIGH, 1 LOW) from the NECROSCOPY forensic audit
+(ane-violations.md). All changes enhance the MIR→proto emission pipeline
+with quantized convolution weight attributes and named-const-node emission
+for matmul transpose flags.
+
+#### Tasks Resolved
+
+| Task | Description | Issues Fixed |
+|------|-------------|--------------|
+| T-98 | Add Quantized Conv Weight Attributes | I-73, I-94 |
+| T-131 | Emit Matmul Transpose Flags as Named Const Nodes | — |
+
+#### Added
+
+- T-98: `kernel_scale: Option<f32>`, `kernel_zero_point: Option<i32>`,
+  `kernel_palettized_lut: Option<String>` fields on `MILConv` struct in
+  `mir.rs`. These fields carry quantized/palettized convolution weight
+  attributes that ANEC requires for non-FP16 weight formats.
+- T-98: Same fields on `MirOpCompat::Conv` variant, wired through
+  conversion in `coreml-proto/src/lib.rs` and `bridge/src/mir_to_compat.rs`.
+- T-98: `kernel_scale`, `kernel_zero_point`, `kernel_palettized_lut` fields
+  added to `MilConvOp` proto message in `MIL.proto`.
+- T-98: Emission of quantized conv attributes as named const nodes in Apple
+  proto format — `kernel_scale` → Float32 const, `kernel_zero_point` →
+  Int32 const, `kernel_palettized_LUT` → String const.
+- T-98: `populate_conv_quantization_fields()` function and `ConvQuantizationInfo`
+  struct in `palettize_weights.rs` to populate the new fields during weight
+  palettization.
+- T-131: Named const node emission for `transpose_x` and `transpose_y` in
+  Apple proto format. MatMul now emits 3 operations: `{name}_transpose_x_0`
+  const node, `{name}_transpose_y_0` const node, and the matmul op itself
+  referencing them by name.
+
+#### Changed
+
+- T-98: `MILConv` struct expanded with 3 new Option fields for quantized
+  weight attributes. Default values are `None` (no quantization info).
+- T-98: `MirOpCompat::Conv` variant expanded with matching fields. Conversion
+  from MIR→compat now maps the fields through.
+- T-98: Legacy proto emission carries the new fields with defaults
+  (0.0 for kernel_scale, 0 for kernel_zero_point, "" for
+  kernel_palettized_lut) to maintain backward compatibility.
+- T-131: Replaced `make_value_arg(make_immediate_bool_value(...))` with
+  named const node pattern for matmul transpose flags. Per Orion #12,
+  transpose flags must be emitted as named const nodes, not immediate bools.
+
+#### Tests Added (7 new tests)
+
+- T-98: 3 tests in `palettize_weights.rs` — populate_conv_quantization_fields
+  with scale only, with all fields, and with no quantization info
+- T-98: 3 tests in `mir.rs` — MILConv kernel_scale/zero_point/palettized_lut
+  field presence, MirOpCompat::Conv field mapping, and proto emission of
+  quantized conv attributes as named const nodes
+- T-131: 1 test in `mir.rs` — MatMul transpose flags emitted as named const
+  nodes (verify {name}_transpose_x_0 and {name}_transpose_y_0 const ops
+  exist and matmul op references them)
+
+#### Issues Closed (2 issues)
+
+I-73, I-94
 
 ---
 

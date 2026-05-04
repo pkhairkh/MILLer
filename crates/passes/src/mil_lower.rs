@@ -1034,6 +1034,9 @@ impl MilLowerPass {
                         strides: strides.clone(),
                         pad_amounts: pad_amounts.clone(),
                         dilations: dilations.clone(),
+                        kernel_scale: None,
+                        kernel_zero_point: None,
+                        kernel_palettized_lut: None,
                     }
                 }
                 AirOp::ConvTranspose {
@@ -3320,6 +3323,9 @@ impl MilLowerPass {
                                 strides: vec![1, 1],
                                 pad_amounts: vec![0, 0, 0, 0],
                                 dilations: vec![1, 1],
+                                kernel_scale: None,
+                                kernel_zero_point: None,
+                                kernel_palettized_lut: None,
                             };
                             if bias.is_some() {
                                 log::warn!(
@@ -5289,6 +5295,9 @@ mod tests {
             strides: vec![1, 1],
             pad_amounts: vec![0, 0, 0, 0],
             dilations: vec![1, 1],
+            kernel_scale: None,
+            kernel_zero_point: None,
+            kernel_palettized_lut: None,
         };
 
         // Verify Conv1x1 properties

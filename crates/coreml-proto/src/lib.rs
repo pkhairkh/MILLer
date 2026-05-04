@@ -528,6 +528,12 @@ pub mod mir_compat {
             weight: String,
             pad_type: String,
             groups: i64,
+            /// T-98 (V-110): Per-op scale factor for quantized/palettized conv weights.
+            kernel_scale: Option<f32>,
+            /// T-98 (V-110): Zero-point offset for quantized conv weights.
+            kernel_zero_point: Option<i32>,
+            /// T-98 (V-110): Name of the palettized LUT weight for this conv.
+            kernel_palettized_lut: Option<String>,
         },
         // Sprint 54: StateWrite compat (was previously bailing in mir_to_compat)
         // Note: This is the generic state-write op, distinct from CoremlUpdateState
@@ -1424,8 +1430,8 @@ pub mod mir_compat {
                 MirOpCompat::ReduceSum { name, x, axes, keep_dims } => {
                     MirOpCompat::ReduceSum { name, x: f(x), axes, keep_dims }
                 }
-                MirOpCompat::Conv { name, x, weight, pad_type, groups } => {
-                    MirOpCompat::Conv { name, x: f(x), weight: f(weight), pad_type, groups }
+                MirOpCompat::Conv { name, x, weight, pad_type, groups, kernel_scale, kernel_zero_point, kernel_palettized_lut } => {
+                    MirOpCompat::Conv { name, x: f(x), weight: f(weight), pad_type, groups, kernel_scale, kernel_zero_point, kernel_palettized_lut }
                 }
                 MirOpCompat::StateWrite { name, state_ref, value } => {
                     MirOpCompat::StateWrite { name, state_ref: f(state_ref), value: f(value) }
@@ -1783,8 +1789,8 @@ pub mod mir_compat {
                 MirOpCompat::ReduceSum { name: _, x, axes, keep_dims } => {
                     MirOpCompat::ReduceSum { name: new_name, x, axes, keep_dims }
                 }
-                MirOpCompat::Conv { name: _, x, weight, pad_type, groups } => {
-                    MirOpCompat::Conv { name: new_name, x, weight, pad_type, groups }
+                MirOpCompat::Conv { name: _, x, weight, pad_type, groups, kernel_scale, kernel_zero_point, kernel_palettized_lut } => {
+                    MirOpCompat::Conv { name: new_name, x, weight, pad_type, groups, kernel_scale, kernel_zero_point, kernel_palettized_lut }
                 }
                 MirOpCompat::StateWrite { name: _, state_ref, value } => {
                     MirOpCompat::StateWrite { name: new_name, state_ref, value }
@@ -2188,13 +2194,16 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             MirOp::MILEinsum { name, .. } => unsupported("einsum", &name, &op_json),
 
             // ─── Convolution ─────────────────────────────────────────
-            MirOp::MILConv { name, x, weight, pad_type, groups, .. } => {
+            MirOp::MILConv { name, x, weight, pad_type, groups, kernel_scale, kernel_zero_point, kernel_palettized_lut, .. } => {
                 mir_compat::MirOpCompat::Conv {
                     name,
                     x: nid(x),
                     weight: nid(weight),
                     pad_type,
                     groups: groups as i64,
+                    kernel_scale,
+                    kernel_zero_point,
+                    kernel_palettized_lut,
                 }
             }
             MirOp::MILConvTranspose { name, .. } => unsupported("conv_transpose", &name, &op_json),
@@ -3246,12 +3255,19 @@ pub fn mir_op_to_proto_op(
             }),
         ),
         // Sprint 54: Conv proto emission
-        mir_compat::MirOpCompat::Conv { name, x, weight, pad_type, groups } => {
+        // T-98: Now includes quantized weight attributes (kernel_scale, kernel_zero_point,
+        // kernel_palettized_lut) for the legacy MIL proto format.
+        mir_compat::MirOpCompat::Conv { name, x, weight, pad_type, groups, kernel_scale, kernel_zero_point, kernel_palettized_lut } => {
             let weight_data = weight_entries
                 .iter()
                 .find(|w| w.name == *weight)
                 .map(weight_entry_to_proto)
                 .unwrap_or_else(|| proto::WeightData { weight_data: None });
+
+            // T-98: Quantized conv attributes are logged in mir_to_compat.rs.
+            // The legacy MIL proto (MilConvOp) carries these as dedicated proto fields
+            // while the Apple wire format uses named const nodes for them.
+
             (
                 name.clone(),
                 proto::mil_operation::Operation::ConvOp(proto::MilConvOp {
@@ -3259,6 +3275,9 @@ pub fn mir_op_to_proto_op(
                     weight: Some(weight_data),
                     pad_type: pad_type.clone(),
                     groups: *groups,
+                    kernel_scale: kernel_scale.unwrap_or(0.0),
+                    kernel_zero_point: kernel_zero_point.unwrap_or(0),
+                    kernel_palettized_lut: kernel_palettized_lut.clone().unwrap_or_default(),
                 }),
             )
         }
@@ -4323,22 +4342,64 @@ fn mir_op_to_apple_ops(
             }]
         }
         mir_compat::MirOpCompat::MatMul { name, x, y, transpose_y } => {
+            // T-131 (V-129 / Orion #12): Per Orion #12, transpose flags must be
+            // emitted as named const nodes (not immediate bools). The ANEC
+            // ConvertMatMul converter is family-scoped (8 instantiations) and
+            // immediate bool values may not be accepted by all family
+            // implementations. Named const nodes are the canonical form used
+            // by Core ML's own tools for boolean parameters.
+            let transpose_x_name = format!("{name}_transpose_x_0");
+            let transpose_y_name = format!("{name}_transpose_y_0");
+
+            // Emit const op for transpose_x (always false)
+            let mut tx_const_attrs = HashMap::new();
+            add_name_attribute(&mut tx_const_attrs, &transpose_x_name);
+            tx_const_attrs.insert(
+                "val".to_string(),
+                make_immediate_bool_value(false),
+            );
+            let tx_const_op = apple_proto::mil_spec::Operation {
+                r#type: "const".to_string(),
+                inputs: HashMap::new(),
+                outputs: vec![make_apple_named_value_type(
+                    &transpose_x_name,
+                    apple_proto::mil_spec::DataType::Bool as i32,
+                    &[],
+                )],
+                blocks: vec![],
+                attributes: tx_const_attrs,
+            };
+
+            // Emit const op for transpose_y
+            let mut ty_const_attrs = HashMap::new();
+            add_name_attribute(&mut ty_const_attrs, &transpose_y_name);
+            ty_const_attrs.insert(
+                "val".to_string(),
+                make_immediate_bool_value(*transpose_y),
+            );
+            let ty_const_op = apple_proto::mil_spec::Operation {
+                r#type: "const".to_string(),
+                inputs: HashMap::new(),
+                outputs: vec![make_apple_named_value_type(
+                    &transpose_y_name,
+                    apple_proto::mil_spec::DataType::Bool as i32,
+                    &[],
+                )],
+                blocks: vec![],
+                attributes: ty_const_attrs,
+            };
+
+            // Emit matmul op referencing const nodes by name
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("y".to_string(), make_name_arg(y));
-            inputs.insert(
-                "transpose_x".to_string(),
-                make_value_arg(make_immediate_bool_value(false)),
-            );
-            inputs.insert(
-                "transpose_y".to_string(),
-                make_value_arg(make_immediate_bool_value(*transpose_y)),
-            );
+            inputs.insert("transpose_x".to_string(), make_name_arg(&transpose_x_name));
+            inputs.insert("transpose_y".to_string(), make_name_arg(&transpose_y_name));
 
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
 
-            vec![apple_proto::mil_spec::Operation {
+            let matmul_op = apple_proto::mil_spec::Operation {
                 r#type: "matmul".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -4348,7 +4409,9 @@ fn mir_op_to_apple_ops(
                 )],
                 blocks: vec![],
                 attributes,
-            }]
+            };
+
+            vec![tx_const_op, ty_const_op, matmul_op]
         }
         mir_compat::MirOpCompat::Add { name, x, y } => {
             let mut inputs = HashMap::new();
@@ -4920,7 +4983,7 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
-        mir_compat::MirOpCompat::Conv { name, x, weight, pad_type, groups } => {
+        mir_compat::MirOpCompat::Conv { name, x, weight, pad_type, groups, kernel_scale, kernel_zero_point, kernel_palettized_lut } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("weight".to_string(), make_name_arg(weight));
@@ -4960,10 +5023,89 @@ fn mir_op_to_apple_ops(
                 make_value_arg(make_immediate_int32_value(vec![*groups as i32], &[])),
             );
 
+            // T-98 (V-110): Emit quantized conv weight attributes as named const nodes.
+            // ANEC requires kernel_scale, kernel_zero_point, and kernel_palettized_LUT
+            // for quantized/palettized conv operations. Following the same named-const-node
+            // pattern as Cast dtype and MatMul transpose flags (Orion #12), we emit
+            // preceding const operations for each quantization parameter and reference
+            // them by name in the conv op's inputs map.
+            let mut const_ops: Vec<apple_proto::mil_spec::Operation> = Vec::new();
+
+            if let Some(scale) = kernel_scale {
+                let scale_const_name = format!("{name}_kernel_scale_0");
+                let mut scale_attrs = HashMap::new();
+                add_name_attribute(&mut scale_attrs, &scale_const_name);
+                scale_attrs.insert(
+                    "val".to_string(),
+                    make_immediate_float32_value(*scale),
+                );
+                let scale_const_op = apple_proto::mil_spec::Operation {
+                    r#type: "const".to_string(),
+                    inputs: HashMap::new(),
+                    outputs: vec![make_apple_named_value_type(
+                        &scale_const_name,
+                        apple_proto::mil_spec::DataType::Float32 as i32,
+                        &[],
+                    )],
+                    blocks: vec![],
+                    attributes: scale_attrs,
+                };
+                inputs.insert("kernel_scale".to_string(), make_name_arg(&scale_const_name));
+                const_ops.push(scale_const_op);
+            }
+
+            if let Some(zp) = kernel_zero_point {
+                let zp_const_name = format!("{name}_kernel_zero_point_0");
+                let mut zp_attrs = HashMap::new();
+                add_name_attribute(&mut zp_attrs, &zp_const_name);
+                zp_attrs.insert(
+                    "val".to_string(),
+                    make_immediate_int32_value(vec![*zp], &[]),
+                );
+                let zp_const_op = apple_proto::mil_spec::Operation {
+                    r#type: "const".to_string(),
+                    inputs: HashMap::new(),
+                    outputs: vec![make_apple_named_value_type(
+                        &zp_const_name,
+                        apple_proto::mil_spec::DataType::Int32 as i32,
+                        &[],
+                    )],
+                    blocks: vec![],
+                    attributes: zp_attrs,
+                };
+                inputs.insert("kernel_zero_point".to_string(), make_name_arg(&zp_const_name));
+                const_ops.push(zp_const_op);
+            }
+
+            if let Some(lut_name) = kernel_palettized_lut {
+                let lut_const_name = format!("{name}_kernel_palettized_LUT_0");
+                let mut lut_attrs = HashMap::new();
+                add_name_attribute(&mut lut_attrs, &lut_const_name);
+                // The LUT references a weight entry by name — emit as a named const
+                // that resolves to the palettized LUT weight data.
+                lut_attrs.insert(
+                    "val".to_string(),
+                    make_immediate_string_value(lut_name.clone()),
+                );
+                let lut_const_op = apple_proto::mil_spec::Operation {
+                    r#type: "const".to_string(),
+                    inputs: HashMap::new(),
+                    outputs: vec![make_apple_named_value_type(
+                        &lut_const_name,
+                        apple_proto::mil_spec::DataType::String as i32,
+                        &[],
+                    )],
+                    blocks: vec![],
+                    attributes: lut_attrs,
+                };
+                inputs.insert("kernel_palettized_LUT".to_string(), make_name_arg(&lut_const_name));
+                const_ops.push(lut_const_op);
+            }
+
             let mut attributes = HashMap::new();
             add_name_attribute(&mut attributes, name);
 
-            vec![apple_proto::mil_spec::Operation {
+            let conv_op = apple_proto::mil_spec::Operation {
                 r#type: "conv".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
@@ -4973,7 +5115,12 @@ fn mir_op_to_apple_ops(
                 )],
                 blocks: vec![],
                 attributes,
-            }]
+            };
+
+            // Return const ops first, then the conv op
+            let mut result = const_ops;
+            result.push(conv_op);
+            result
         }
         mir_compat::MirOpCompat::StateWrite { name, state_ref, value } => {
             let mut inputs = HashMap::new();

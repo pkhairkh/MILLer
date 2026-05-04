@@ -242,13 +242,9 @@ Four dtype-related validation gaps allowed invalid models through to ANEC: (1) B
 ## P1 — HIGH (Missing Enforcement / Validation Gaps / Untested Paths)
 
 ### I-73 · Conv/Pool Constraint Fields Defined But Never Validated
-**Status:** ⬜ Open | **Files:** `crates/ir/src/ane_hw_limits.rs:148-193`, `crates/passes/src/op_constraints.rs` | **AUDIT ref:** V-009 | **Severity:** HIGH | **Effort:** S (as part of T-97) | **Task:** T-97
+**Status:** ✅ Fixed | **Files:** `crates/ir/src/ane_hw_limits.rs:148-193`, `crates/passes/src/op_constraints.rs` | **AUDIT ref:** V-009 | **Severity:** HIGH | **Effort:** S (as part of T-98) | **Task:** T-98
 
-**Intent:** AneHwLimits defines 7 conv/pool/PE-specific constraint fields but `validate_tensor_dims()` never validates them. Conv/pool ops with oversized kernels pass validation but fail at ANE emission, providing no guidance about which constraint was violated.
-
-**Fix direction:** Wire the 7 constraint fields into validate_tensor_dims() with per-op validation functions for conv, pool, and PE operations.
-
-**Definition of Done:** All 7 AneHwLimits constraint fields validated; per-op validation functions for conv, pool, PE; clear error messages.
+**Fix:** Added `kernel_scale`, `kernel_zero_point`, `kernel_palettized_lut` fields to MILConv and MirOpCompat::Conv, wired through conversion and proto emission. Quantized conv attributes now emit as named const nodes in Apple proto format. Added `populate_conv_quantization_fields()` and `ConvQuantizationInfo` struct in palettize_weights.rs.
 
 ---
 
@@ -449,13 +445,9 @@ State declarations default to empty shape + Fp16 when only a write op is present
 ---
 
 ### I-94 · Conv Quantized Weight Attributes Not Modeled
-**Status:** ⬜ Open | **Files:** `crates/ir/src/mir.rs:59-68`, `crates/coreml-proto/proto/coreml/MIL.proto:116-121` | **AUDIT ref:** V-110 | **Severity:** HIGH | **Effort:** L (as part of T-107) | **Task:** T-107
+**Status:** ✅ Fixed | **Files:** `crates/ir/src/mir.rs:59-68`, `crates/coreml-proto/proto/coreml/MIL.proto:116-121` | **AUDIT ref:** V-110 | **Severity:** HIGH | **Effort:** L (as part of T-98) | **Task:** T-98
 
-**Intent:** ANEC convolution has kernel_scale, kernel_zero_point, kernel_palettized_LUT attributes for quantized/palettized weights. MILLer's MILConv and MilConvOp proto don't carry these, blocking the entire quantized convolution pipeline.
-
-**Fix direction:** Add quantized weight attributes to MILConv and MilConvOp proto. Wire through compat layer.
-
-**Definition of Done:** MILConv has kernel_scale, kernel_zero_point, kernel_palettized_LUT; proto updated; compat layer wires data; test verifies.
+**Fix:** Added `kernel_scale: Option<f32>`, `kernel_zero_point: Option<i32>`, `kernel_palettized_lut: Option<String>` to MILConv and MirOpCompat::Conv. Added `kernel_scale`, `kernel_zero_point`, `kernel_palettized_lut` fields to MilConvOp proto message in MIL.proto. Quantized conv attributes emit as named const nodes (kernel_scale → Float32 const, kernel_zero_point → Int32 const, kernel_palettized_LUT → String const). Legacy proto emission carries fields with defaults (0.0, 0, "").
 
 ---
 

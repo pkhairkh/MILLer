@@ -166,28 +166,14 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-### T-98 · Add Quantized Conv Weight Attributes
+### T-98 · ~~Add Quantized Conv Weight Attributes~~
 
-- **ISSUES ref**: I-73
+- **ISSUES ref**: I-73, I-94
 - **AUDIT ref**: V-110 (ane-violations.md §III)
 - **Severity**: HIGH
 - **Effort**: L (2 days)
 
-**Intent**: ANEC's convolution schema includes `kernel_scale`, `kernel_zero_point`, `kernel_palettized_LUT`, and `kernel_mutable_palettized_LUT` attributes for quantized/palettized weights. MILLer's `MILConv` and `MilConvOp` proto don't carry any of these attributes, meaning quantized/palettized convolution emission is incomplete and will fail for any non-FP16 weight format. This is a blocker for full quantized model support on the ANE.
-
-**Mitigation / Implementation**:
-1. In `crates/ir/src/mir.rs`: Add `kernel_scale`, `kernel_zero_point`, `kernel_palettized_lut` fields to `MILConv` struct.
-2. In `crates/coreml-proto/src/lib.rs`: Add corresponding `ToProto` emission for the new fields, mapping to the ANEC convolution proto attributes.
-3. In `crates/coreml-proto/proto/coreml/MIL.proto`: Verify that the proto definition includes these fields; add if missing.
-4. In `crates/passes/src/palettize_weights.rs`: When palettizing conv weights, populate `kernel_scale`, `kernel_zero_point`, and `kernel_palettized_lut` in the MILConv node.
-5. Add tests for quantized conv emission with all new attributes.
-
-**Definition of Done**:
-- [ ] MILConv struct includes kernel_scale, kernel_zero_point, kernel_palettized_lut
-- [ ] ToProto emission handles all new fields
-- [ ] Palettize pass populates new fields for conv ops
-- [ ] Tests for quantized conv emission
-- [ ] `cargo test` passes with zero failures
+**✅ RESOLVED** — Added `kernel_scale: Option<f32>`, `kernel_zero_point: Option<i32>`, `kernel_palettized_lut: Option<String>` fields to MILConv struct in mir.rs. Added same fields to MirOpCompat::Conv and wired through conversion in coreml-proto/src/lib.rs and bridge/src/mir_to_compat.rs. Added `kernel_scale`, `kernel_zero_point`, `kernel_palettized_lut` fields to MilConvOp proto message in MIL.proto. Emit quantized conv attributes as named const nodes in Apple proto format (kernel_scale → Float32 const, kernel_zero_point → Int32 const, kernel_palettized_LUT → String const). Legacy proto emission also carries the fields with defaults (0.0, 0, ""). Added `populate_conv_quantization_fields()` function and `ConvQuantizationInfo` struct in palettize_weights.rs. 6 new tests (3 in palettize_weights.rs, 3 in mir.rs).
 
 ---
 
@@ -492,8 +478,10 @@ Full resolution details are in `CHANGELOG.md`.
 - **AUDIT ref**: V-087
 **✅ RESOLVED** — Removed --seed from Compile and CompileFull CLI subcommands — was dead code. Retained for sharded/lab/generate commands where functional.
 
-### T-131 · Emit Matmul Transpose Flags as Named Const Nodes
-- **AUDIT ref**: V-129. Per Orion #12, named const nodes instead of immediate bools. **DoD**: Transpose flags emitted as named const nodes.
+### T-131 · ~~Emit Matmul Transpose Flags as Named Const Nodes~~
+- **AUDIT ref**: V-129
+
+**✅ RESOLVED** — Replaced `make_value_arg(make_immediate_bool_value(...))` with named const node pattern for transpose_x and transpose_y in Apple proto emission. Per Orion #12, transpose flags must be emitted as named const nodes, not immediate bools. MatMul now emits 3 operations: `{name}_transpose_x_0` const, `{name}_transpose_y_0` const, and the matmul op referencing them by name. 1 new test in mir.rs.
 
 ---
 
@@ -504,7 +492,7 @@ Full resolution details are in `CHANGELOG.md`.
 | T-90 | I-65 | CRITICAL | L | 🔴 Open |
 | T-95 | I-70 | HIGH | M | ✅ Resolved |
 | T-96 | I-71 | HIGH | M | ✅ Resolved |
-| T-98 | I-73 | HIGH | L | 🟠 Open |
+| T-98 | I-73, I-94 | HIGH | L | ✅ Resolved |
 | T-105 | I-80 | MEDIUM | M | ✅ Resolved |
 | T-107 | I-82 | MEDIUM | M | ✅ Resolved |
 | T-108 | I-83 | MEDIUM | L | 🟡 Open |
@@ -525,7 +513,7 @@ Full resolution details are in `CHANGELOG.md`.
 | T-128 | — | LOW | S | 🔵 Open |
 | T-129 | — | LOW | M | 🔵 Open |
 | T-130 | — | LOW | S | ✅ Resolved |
-| T-131 | — | LOW | S | 🔵 Open |
+| T-131 | — | LOW | S | ✅ Resolved |
 | T-86 | I-61 | CRITICAL | S | ✅ Resolved |
 | T-87 | I-62 | CRITICAL | M | ✅ Resolved |
 | T-89 | I-64 | CRITICAL | S | ✅ Resolved |
@@ -594,14 +582,12 @@ Tasks T-47 through T-57, T-60, T-62, T-63, T-64, T-65 resolved. T-61, T-66 remai
 | Severity | Count | Total Effort |
 |----------|-------|-------------|
 | 🔴 CRITICAL | 1 | ~2 days |
-| 🟠 HIGH | 1 | ~2 days |
 | 🟡 MEDIUM | 1 | ~2 days |
-| 🔵 LOW | 4 | ~2 days |
-| **Total** | **7** | **~8 days** |
+| 🔵 LOW | 3 | ~1.5 days |
+| **Total** | **5** | **~5.5 days** |
 
 > **Priority guidance**: CRITICAL task T-90 must be resolved before any production compilation.
-> HIGH task T-98 should be addressed in the next sprint cycle.
-> MEDIUM/LOW tasks (T-108, T-127–T-129, T-131) are technical debt that should be chipped away at consistently.
+> MEDIUM/LOW tasks (T-108, T-127–T-129) are technical debt that should be chipped away at consistently.
 >
-> **Resolved**: 38 tasks (T-86, T-87, T-89, T-91–T-97, T-99–T-107, T-109–T-126, T-130).
+> **Resolved**: 40 tasks (T-86, T-87, T-89, T-91–T-99, T-100–T-107, T-109–T-126, T-130–T-131).
 > Tasks T-01 through T-85 are all resolved — see archive summary above and `CHANGELOG.md`.

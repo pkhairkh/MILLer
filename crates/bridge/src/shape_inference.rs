@@ -1616,6 +1616,9 @@ mod tests {
             strides: vec![1, 1],
             pad_amounts: vec![0, 0, 0, 0],
             dilations: vec![1, 1],
+            kernel_scale: None,
+            kernel_zero_point: None,
+            kernel_palettized_lut: None,
         };
         let ns = shapes_with(vec![("x", vec![1, 3, 32, 32])]);
         assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![1, 3, 32, 32]);
