@@ -2,14 +2,84 @@
 
 ## Current Status — 2026-05-05
 
-- **1614 tests passing**, 0 failures
+- **1621 tests passing**, 0 failures
 - IR Cleanliness Score: 89%
 - 0 clippy warnings, 0 errors
-- **13 open tasks** (1 CRITICAL, 1 HIGH, 3 MEDIUM, 8 LOW) — see [TASKS.md](TASKS.md)
-- **32 tasks resolved** across sprint cycles
+- **7 open tasks** (1 CRITICAL, 1 HIGH, 1 MEDIUM, 4 LOW) — see [TASKS.md](TASKS.md)
+- **38 tasks resolved** across sprint cycles
 
 Audit details: [docs/audit/tabula-rasa-v3.md](docs/audit/tabula-rasa-v3.md)
 Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
+
+---
+
+## [sprint-pipeline-honesty-configuration] — 2026-05-05
+
+### Sprint: Pipeline Honesty & Configuration Hardening (T-107, T-105, T-124, T-125, T-126, T-130)
+
+Resolved 6 tasks (2 MEDIUM, 4 LOW) from the NECROSCOPY forensic audit
+(ane-violations.md). All changes make the compiler pipeline more honest —
+removing phantom passes, replacing silent defaults with errors, adding
+diagnostics for speculative paths, and cleaning up dead parameters.
+
+#### Tasks Resolved
+
+| Task | Description | Issues Fixed |
+|------|-------------|--------------|
+| T-107 | Implement or Remove StaticizePass | I-82 |
+| T-105 | Resolve Softmax/InstanceNorm Family Gating Contradiction | I-80 |
+| T-124 | Add V26 Speculative Warning | — |
+| T-125 | Replace Hardcoded Dimension Defaults | — |
+| T-126 | Add Canonicalization Cycle Limit Diagnostic | — |
+| T-130 | Wire --seed Parameter or Remove | — |
+
+#### Added
+
+- T-105: Soft-warning at placement for `MILSoftmax` and `MILInstanceNorm`
+  when targeting A11Legacy/A12/A13 families. These ops have family-agnostic
+  converters but architecture-conditional rejection is possible at ANEC
+  compile time. The warning alerts developers without blocking compilation.
+- T-105: `architecture_conditional` and `architecture_conditional_note` fields
+  added to `softmax` and `instance_norm` entries in `ane_op_family_matrix.json`.
+- T-124: `log::warn!()` in `AneHwLimits::future()` (V26 path) that limits
+  are speculative — inherited from A18_max with num_nes=16 and not verified
+  on real hardware. Follows the same pattern as the existing A12 warning.
+- T-126: `log::warn!()` when canonicalization substitution chain resolution
+  hits the 100-step limit. Previously this silently broke and returned a
+  potentially incorrect resolved target with no diagnostic output.
+
+#### Changed
+
+- T-107: **StaticizePass removed from compile pipeline** — was a phantom no-op
+  pass (`Ok(input)`) that claimed to resolve symbolic dimensions, replace
+  runtime-computed indices, and resolve variable-length sequences, but did
+  none of these. The struct is preserved with `#[deprecated]` for backward
+  compatibility and as a scaffold for future implementation. Pipeline step
+  numbering updated from 13 to 12 steps. All CLI doc comments and pipeline
+  description strings updated to remove StaticizePass references.
+- T-125: 8 hardcoded dimension defaults (`unwrap_or(64)`, `unwrap_or(48)`,
+  `unwrap_or(32)`) in `role_mir.rs` replaced with `ok_or_else()` error
+  returns. Missing shape specs now produce explicit errors naming the shard
+  and missing dimension instead of silently producing wrong-sized weight
+  tensors. Affected profiles: EntryLinear, InteriorLinear, ExitLinear,
+  LinearOnly.
+- T-130: `--seed` CLI parameter removed from `Compile` and `CompileFull`
+  subcommands — was dead code (`_seed` prefix) never used in the compile
+  pipeline. Seed is retained for `CompileSharded`, `CompileFullSharded`,
+  `Lab`, `LabSession`, `LabLoop`, and `GenerateTasks` commands where it
+  is functional.
+
+#### Tests Added (7 new tests)
+
+- T-105: 4 tests — Softmax A11Legacy/A16 allowed, InstanceNorm A11Legacy/A16
+  allowed. All return `AneAllowed` with soft warning on older families.
+- T-124: 1 test — V26 future limits verify revision and num_nes values.
+- T-125: 1 test — EntryLinear with empty specs returns error (fail-closed).
+- T-126: 1 test — Circular substitution chain completes without panic.
+
+#### Issues Closed (2 issues)
+
+I-82, I-80
 
 ---
 

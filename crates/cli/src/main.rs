@@ -4,7 +4,7 @@
 //! The `compile` subcommand drives the vertical slice:
 //! task spec → SIR → MIR → bridge → mlpackage → manifest + knowledge update.
 //! The `compile-full` subcommand drives the full pass pipeline:
-//! task spec → SIR → Canonicalize → Staticize → PrecisionPolicy → StateTopology
+//! task spec → SIR → Canonicalize → PrecisionPolicy → StateTopology
 //! → LegalityRewrite → RiskAnnotate → ShardPlan → MilLower → bridge → mlpackage
 //! → manifest + knowledge update + all IR dumps.
 //! The `lab` subcommand drives a complete lab run:
@@ -46,16 +46,14 @@ enum Commands {
         /// Knowledge store directory.
         #[arg(long)]
         knowledge: Option<String>,
-
-        /// Random seed for reproducibility.
-        #[arg(long, default_value_t = 42)]
-        seed: u64,
+        // T-130: Removed --seed parameter — was dead code in this compile path.
+        // Seed is only functional in GenerateTasks, Lab, and sharded compile commands.
     },
 
     /// Compile a synthetic linear projection task to mlpackage via the full pass pipeline.
     ///
     /// Unlike the fast-path `compile` command, this drives the complete pass pipeline:
-    /// SIR → Canonicalize → Staticize → PrecisionPolicy → StateTopology
+    /// SIR → Canonicalize → PrecisionPolicy → StateTopology
     /// → LegalityRewrite → RiskAnnotate → ShardPlan → MilLower → bridge.
     /// All intermediate IR representations (SIR, AIR, PIR, MIR) are written as artifacts.
     CompileFull {
@@ -78,10 +76,8 @@ enum Commands {
         /// Knowledge store directory.
         #[arg(long)]
         knowledge: Option<String>,
-
-        /// Random seed for reproducibility.
-        #[arg(long, default_value_t = 42)]
-        seed: u64,
+        // T-130: Removed --seed parameter — was dead code in this compile path.
+        // Seed is only functional in GenerateTasks, Lab, and sharded compile commands.
     },
 
     /// Compile a sharded linear pipeline task to multiple mlpackages with role semantics.
@@ -131,7 +127,7 @@ enum Commands {
     ///
     /// Unlike `compile-sharded` (which bypasses the pass pipeline and directly
     /// lowers each shard to MIR), this command drives each shard through the
-    /// complete pass pipeline: SIR → Canonicalize → Staticize → PrecisionPolicy
+    /// complete pass pipeline: SIR → Canonicalize → PrecisionPolicy
     /// → LegalityRewrite → RiskAnnotate → ShardPlan → MilLower → bridge.
     /// This is the first multi-unit orchestration path that exercises the full
     /// pass pipeline for each shard independently, with concrete handoff
@@ -474,17 +470,17 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Compile { input, output, bridge, python, knowledge, seed } => {
+        Commands::Compile { input, output, bridge, python, knowledge } => {
             if let Err(e) =
-                run_compile(&input, &output, &bridge, &python, knowledge.as_deref(), seed)
+                run_compile(&input, &output, &bridge, &python, knowledge.as_deref())
             {
                 eprintln!("Compile failed: {}", e);
                 std::process::exit(1);
             }
         }
-        Commands::CompileFull { input, output, bridge, python, knowledge, seed } => {
+        Commands::CompileFull { input, output, bridge, python, knowledge } => {
             if let Err(e) =
-                run_compile_full(&input, &output, &bridge, &python, knowledge.as_deref(), seed)
+                run_compile_full(&input, &output, &bridge, &python, knowledge.as_deref())
             {
                 eprintln!("Compile-full failed: {}", e);
                 std::process::exit(1);
@@ -692,7 +688,8 @@ fn run_compile(
     bridge_script: &str,
     python_path: &str,
     knowledge_dir: Option<&str>,
-    _seed: u64,
+    // T-130: Removed _seed: u64 parameter — was dead code in compile pipeline.
+    // Seed is only functional in GenerateTasks command.
 ) -> Result<(), String> {
     use ane_bridge::subprocess::PythonBridge;
     use ane_ir::linear_slice::{
@@ -939,7 +936,7 @@ impl<'a> ane_passes::knowledge_query::PassKnowledgeQuery for StoreKnowledgeQuery
 /// Unlike the fast-path `compile` command (which lowers directly from spec
 /// to MIR), this command drives the full pass pipeline:
 ///
-/// SIR → Canonicalize → Staticize → PrecisionPolicy → StateTopology
+/// SIR → Canonicalize → PrecisionPolicy → StateTopology
 ///   → LegalityRewrite → RiskAnnotate → ShardPlan → MilLower → bridge
 ///
 /// All intermediate IR representations (SIR, AIR, PIR, MIR) are written
@@ -950,7 +947,8 @@ fn run_compile_full(
     bridge_script: &str,
     python_path: &str,
     knowledge_dir: Option<&str>,
-    _seed: u64,
+    // T-130: Removed _seed: u64 parameter — was dead code in compile pipeline.
+    // Seed is only functional in GenerateTasks command.
 ) -> Result<(), String> {
     use ane_bridge::subprocess::PythonBridge;
     use ane_ir::linear_slice::{sir_from_linear_projection, FamilyPayload};
@@ -963,12 +961,12 @@ fn run_compile_full(
     use ane_passes::risk_annotate::RiskAnnotatePass;
     use ane_passes::shard_plan::ShardPlanPass;
     use ane_passes::static_tables::run_static_tables_pass;
-    use ane_passes::staticize::StaticizePass;
+    // T-107: StaticizePass removed from pipeline — was a phantom no-op pass
 
     println!("=== MILLer — Full Pass Pipeline Compile ===\n");
 
     // Step 1: Load task spec
-    println!("[1/13] Loading task spec: {}", input);
+    println!("[1/12] Loading task spec: {}", input);
     let spec = load_synthetic_task(input)?;
     println!("  Task: {} (family: {})", spec.name, spec.family);
 
@@ -986,7 +984,7 @@ fn run_compile_full(
     println!("  Op: {} {}x{}", spec.op.op_type_str(), input_dim, output_dim);
 
     // Step 2: Build SIR graph
-    println!("[2/13] Building SIR graph...");
+    println!("[2/12] Building SIR graph...");
     let sir = sir_from_linear_projection(&spec)?;
     println!(
         "  SIR: {} nodes, {} inputs, {} outputs",
@@ -1046,22 +1044,18 @@ fn run_compile_full(
     }
 
     // Step 3: Run CanonicalizePass on SIR (pass-through for now)
-    println!("[3/13] Running CanonicalizePass...");
+    println!("[3/12] Running CanonicalizePass...");
     let canonicalize = CanonicalizePass::new();
-    let sir = canonicalize.run(sir).map_err(|e| format!("CanonicalizePass failed: {}", e))?;
+    let mut sir = canonicalize.run(sir).map_err(|e| format!("CanonicalizePass failed: {}", e))?;
     println!("  Canonicalize: {} nodes (pass-through for linear projection)", sir.nodes.len());
 
-    // Step 4: Run StaticizePass on SIR (pass-through for now)
-    println!("[4/13] Running StaticizePass...");
-    let staticize = StaticizePass::new();
-    let mut sir = staticize.run(sir).map_err(|e| format!("StaticizePass failed: {}", e))?;
-    println!("  Staticize: {} nodes (pass-through for linear projection)", sir.nodes.len());
-
-    // Step 4a: Run static_tables pass on SIR — inserts Const nodes for
-    // pre-computed RoPE cos/sin/eye/mask tables. This must run before
-    // LegalityRewrite so the Const nodes are in the sir_to_air map when
-    // decompose_rope looks for them.
-    println!("[4a/13] Running StaticTablesPass...");
+    // Step 4: Run static_tables pass on SIR.
+    // T-107: StaticizePass was previously step [4/13] but was a phantom no-op
+    // (pure pass-through) and has been removed from the pipeline.
+    // The static_tables pass inserts Const nodes for pre-computed RoPE
+    // cos/sin/eye/mask tables. This must run before LegalityRewrite so the
+    // Const nodes are in the sir_to_air map when decompose_rope looks for them.
+    println!("[4/12] Running StaticTablesPass...");
     let static_tables_result = run_static_tables_pass(&mut sir);
     println!(
         "  StaticTables: {} RoPE pattern(s) converted, {} table constant(s) inserted",
@@ -1171,7 +1165,7 @@ fn run_compile_full(
         )),
         _ => None,
     };
-    println!("[5/13] Running LegalityRewritePass (SIR→AIR)...");
+    println!("[5/12] Running LegalityRewritePass (SIR→AIR)...");
     let legality = LegalityRewritePass::new();
     let air = match &knowledge_store {
         Some(store) => {
@@ -1195,7 +1189,7 @@ fn run_compile_full(
     );
 
     // Step 6: Run RiskAnnotatePass on AIR
-    println!("[6/13] Running RiskAnnotatePass...");
+    println!("[6/12] Running RiskAnnotatePass...");
     let risk = RiskAnnotatePass::new();
     let air = match &knowledge_store {
         Some(store) => {
@@ -1213,7 +1207,7 @@ fn run_compile_full(
     // This is the second pass that materially changes a compilation decision
     // based on stored empirical knowledge. When fallback risk is known to be
     // high for the shard's primary op, it overrides CPU_AND_NE to CPU_AND_GPU.
-    println!("[7/13] Running ShardPlanPass...");
+    println!("[7/12] Running ShardPlanPass...");
     let mut shard_plan_pass = ShardPlanPass::new();
     let (shard_plan, pir) = match &knowledge_store {
         Some(store) => {
@@ -1271,7 +1265,7 @@ fn run_compile_full(
         };
         input_shapes.insert(input_id.clone(), shape);
     }
-    println!("[8/13] Running MilLowerPass (AIR→MIR)...");
+    println!("[8/12] Running MilLowerPass (AIR→MIR)...");
     let mil_lower = MilLowerPass::new();
     let mirs = mil_lower
         .run(&air, &shard_plan, &input_shapes)
@@ -1291,7 +1285,7 @@ fn run_compile_full(
     // If precision policy adapted any dtype, use the adapted dtype for the bridge
     // payload. This ensures the knowledge-informed precision decision actually
     // reaches the emitted mlpackage via the Python bridge.
-    println!("[9/13] Building bridge payload...");
+    println!("[9/12] Building bridge payload...");
     let output_path = PathBuf::from(output);
     let mlpackage_output = output_path.join("mlpackage");
     let adapted_dtype: Option<&str> = if precision_policy.has_adaptations() {
@@ -1316,7 +1310,7 @@ fn run_compile_full(
     }
 
     // Step 10: Invoke Python bridge
-    println!("[10/13] Invoking Python bridge...");
+    println!("[10/12] Invoking Python bridge...");
     let bridge = PythonBridge::new(python_path, bridge_script);
     let result = bridge
         .execute_raw_payload(&payload_json)
@@ -1341,7 +1335,7 @@ fn run_compile_full(
     }
 
     // Step 11: Write manifest (version "0.5.0" for pass-pipeline path)
-    println!("[11/13] Writing artifact manifest...");
+    println!("[11/12] Writing artifact manifest...");
     fs::create_dir_all(&output_path).map_err(|e| format!("Failed to create output dir: {}", e))?;
 
     let mut manifest = {
@@ -1431,7 +1425,7 @@ fn run_compile_full(
     println!("  Manifest: {}", manifest_path.display());
 
     // Step 12: Write all IR dumps (SIR, AIR, PIR, MIR)
-    println!("[12/13] Writing IR dumps...");
+    println!("[12/12] Writing IR dumps...");
     let sir_path = output_path.join("sir.json");
     let sir_json = serde_json::to_string_pretty(&sir)
         .map_err(|e| format!("SIR serialization failed: {}", e))?;
@@ -1459,7 +1453,7 @@ fn run_compile_full(
     println!("  MIR: {} shard graphs", mirs.len());
 
     // Step 13: Write knowledge update
-    println!("[13/13] Writing knowledge update...");
+    println!("[post-12] Writing knowledge update...");
     let knowledge_output = match knowledge_dir {
         Some(dir) => PathBuf::from(dir),
         None => output_path.join("knowledge"),
@@ -1635,7 +1629,7 @@ fn build_artifact_manifest_pass_pipeline(
 /// 5. Produces a unified manifest with concrete handoff semantics and
 ///    per-shard provenance
 ///
-/// Each shard gets its own pass pipeline run (SIR → Canonicalize → Staticize
+/// Each shard gets its own pass pipeline run (SIR → Canonicalize
 /// → PrecisionPolicy → LegalityRewrite → RiskAnnotate → ShardPlan → MilLower
 /// → bridge), enabling knowledge-informed compilation per shard.
 fn run_compile_full_sharded(
@@ -1875,25 +1869,22 @@ fn run_compile_full_sharded(
         let shard_sir = sir_from_linear_projection(&shard_task_spec)
             .map_err(|e| format!("SIR build failed for shard {}: {}", shard_spec.shard_name, e))?;
 
-        // Run pass pipeline: Canonicalize → Staticize → PrecisionPolicy → LegalityRewrite → RiskAnnotate
+        // Run pass pipeline: Canonicalize → PrecisionPolicy → LegalityRewrite → RiskAnnotate
+        // T-107: StaticizePass removed from pipeline — was a phantom no-op pass
         use ane_passes::canonicalize::CanonicalizePass;
         use ane_passes::knowledge_query::NoKnowledge;
         use ane_passes::legality_rewrite::{DecompositionContext, LegalityRewritePass};
         use ane_passes::precision_policy::PrecisionPolicyPass;
         use ane_passes::risk_annotate::RiskAnnotatePass;
         use ane_passes::static_tables::run_static_tables_pass;
-        use ane_passes::staticize::StaticizePass;
+        // T-107: StaticizePass removed from pipeline — was a phantom no-op pass
 
         let canonicalize = CanonicalizePass::new();
-        let shard_sir = canonicalize.run(shard_sir).map_err(|e| {
+        let mut shard_sir = canonicalize.run(shard_sir).map_err(|e| {
             format!("CanonicalizePass failed for shard {}: {}", shard_spec.shard_name, e)
         })?;
 
-        let staticize = StaticizePass::new();
-        let mut shard_sir = staticize.run(shard_sir).map_err(|e| {
-            format!("StaticizePass failed for shard {}: {}", shard_spec.shard_name, e)
-        })?;
-
+        // T-107: StaticizePass removed — was step [4/13] but a phantom no-op.
         // Run static_tables pass — inserts Const nodes for RoPE tables
         let static_tables_result = run_static_tables_pass(&mut shard_sir);
         if static_tables_result.rope_converted > 0 {
@@ -2493,7 +2484,7 @@ fn build_full_sharded_manifest(
                 "effective_compute_units": r.effective_compute_units,
                 "precision_adaptations": precision_adaptations,
                 "compute_unit_adaptations": compute_adaptations,
-                "pass_pipeline": "Canonicalize→Staticize→PrecisionPolicy→LegalityRewrite→RiskAnnotate→ShardPlan→MilLower→bridge",
+                "pass_pipeline": "Canonicalize→PrecisionPolicy→LegalityRewrite→RiskAnnotate→ShardPlan→MilLower→bridge",
                 "compile_path": "compile_full_sharded",
             })
         }).collect();

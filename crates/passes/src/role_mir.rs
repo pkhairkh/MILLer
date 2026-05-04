@@ -138,11 +138,24 @@ impl RoleMirBuilder {
                 // Entry shard: Const (weight) → Linear → optional Reshape
                 let weight_name = format!("{}_weight", spec.shard_name);
                 let weight_id = MirNodeId(weight_name.clone());
+                // T-125 (V-089): Replaced unwrap_or(64) with fail-closed error.
+                // Missing shape specs produce incorrect weight tensors.
                 let output_dim = spec
                     .output_specs
                     .first()
                     .map(|s| s.shape.iter().product::<usize>())
-                    .unwrap_or(64);
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "EntryLinear shard '{}' has no output_specs — cannot determine output_dim",
+                        spec.shard_name
+                    ))?;
+                let input_dim = spec
+                    .input_specs
+                    .first()
+                    .map(|s| s.shape.iter().product::<usize>())
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "EntryLinear shard '{}' has no input_specs — cannot determine input_dim",
+                        spec.shard_name
+                    ))?;
 
                 nodes.push(MirNode {
                     id: weight_id.clone(),
@@ -152,13 +165,7 @@ impl RoleMirBuilder {
                         dtype: self.default_dtype.clone(),
                     },
                     dtype: self.default_dtype.clone(),
-                    shape: vec![
-                        output_dim,
-                        spec.input_specs
-                            .first()
-                            .map(|s| s.shape.iter().product::<usize>())
-                            .unwrap_or(64),
-                    ],
+                    shape: vec![output_dim, input_dim],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
                 });
@@ -218,11 +225,16 @@ impl RoleMirBuilder {
                 // Interior shard: Const → Linear → Activation
                 let weight_name = format!("{}_weight", spec.shard_name);
                 let weight_id = MirNodeId(weight_name.clone());
+                // T-125 (V-089): Replaced unwrap_or(48) with fail-closed error.
+                // Missing shape specs produce incorrect weight tensors.
                 let hidden_dim = spec
                     .input_specs
                     .first()
-                    .map(|s| s.shape.get(1).copied().unwrap_or(48))
-                    .unwrap_or(48);
+                    .and_then(|s| s.shape.get(1).copied())
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "InteriorLinear shard '{}' has no input_specs or shape[1] — cannot determine hidden_dim",
+                        spec.shard_name
+                    ))?;
 
                 nodes.push(MirNode {
                     id: weight_id.clone(),
@@ -310,11 +322,24 @@ impl RoleMirBuilder {
                 // Exit shard: Const (weight) → Linear → LayerNorm
                 let weight_name = format!("{}_weight", spec.shard_name);
                 let weight_id = MirNodeId(weight_name.clone());
+                // T-125 (V-089): Replaced unwrap_or(32)/unwrap_or(48) with fail-closed errors.
+                // Missing shape specs produce incorrect weight tensors.
                 let output_dim = spec
                     .output_specs
                     .first()
-                    .map(|s| s.shape.get(1).copied().unwrap_or(32))
-                    .unwrap_or(32);
+                    .and_then(|s| s.shape.get(1).copied())
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "ExitLinear shard '{}' has no output_specs or shape[1] — cannot determine output_dim",
+                        spec.shard_name
+                    ))?;
+                let input_dim = spec
+                    .input_specs
+                    .first()
+                    .and_then(|s| s.shape.get(1).copied())
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "ExitLinear shard '{}' has no input_specs or shape[1] — cannot determine input_dim",
+                        spec.shard_name
+                    ))?;
 
                 nodes.push(MirNode {
                     id: weight_id.clone(),
@@ -324,13 +349,7 @@ impl RoleMirBuilder {
                         dtype: self.default_dtype.clone(),
                     },
                     dtype: self.default_dtype.clone(),
-                    shape: vec![
-                        output_dim,
-                        spec.input_specs
-                            .first()
-                            .map(|s| s.shape.get(1).copied().unwrap_or(48))
-                            .unwrap_or(48),
-                    ],
+                    shape: vec![output_dim, input_dim],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
                 });
@@ -772,11 +791,24 @@ impl RoleMirBuilder {
                 // Backward-compatible: single linear, same as pre-Sprint-43 behavior
                 let weight_name = format!("{}_weight", spec.shard_name);
                 let weight_id = MirNodeId(weight_name.clone());
+                // T-125 (V-089): Replaced unwrap_or(32)/unwrap_or(64) with fail-closed errors.
+                // Missing shape specs produce incorrect weight tensors.
                 let output_dim = spec
                     .output_specs
                     .first()
-                    .map(|s| s.shape.get(1).copied().unwrap_or(32))
-                    .unwrap_or(32);
+                    .and_then(|s| s.shape.get(1).copied())
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "LinearOnly shard '{}' has no output_specs or shape[1] — cannot determine output_dim",
+                        spec.shard_name
+                    ))?;
+                let input_dim = spec
+                    .input_specs
+                    .first()
+                    .and_then(|s| s.shape.get(1).copied())
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "LinearOnly shard '{}' has no input_specs or shape[1] — cannot determine input_dim",
+                        spec.shard_name
+                    ))?;
 
                 nodes.push(MirNode {
                     id: weight_id.clone(),
@@ -786,13 +818,7 @@ impl RoleMirBuilder {
                         dtype: self.default_dtype.clone(),
                     },
                     dtype: self.default_dtype.clone(),
-                    shape: vec![
-                        output_dim,
-                        spec.input_specs
-                            .first()
-                            .map(|s| s.shape.get(1).copied().unwrap_or(64))
-                            .unwrap_or(64),
-                    ],
+                    shape: vec![output_dim, input_dim],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
                 });
@@ -1233,5 +1259,26 @@ mod tests {
                 node.compute_unit_hint
             );
         }
+    }
+
+    // T-125 (V-089): EntryLinear with empty input_specs/output_specs must error.
+    // Missing shape specs produce incorrect weight tensors; the builder
+    // now returns an error instead of silently defaulting dimensions.
+    #[test]
+    fn test_t125_entry_linear_missing_specs_errors() {
+        let spec = ShardSpec {
+            shard_name: "test_entry_missing".into(),
+            role: ShardRole::Entry,
+            input_specs: vec![],
+            output_specs: vec![],
+            compute_units: ComputeUnitHint::CPUAndNE,
+            op_profile: ShardOpProfile::EntryLinear {
+                needs_reshape: false,
+                reshape_target: None,
+            },
+        };
+        let builder = RoleMirBuilder::new();
+        let result = builder.build_mir(&spec);
+        assert!(result.is_err(), "EntryLinear with empty specs should return an error");
     }
 }

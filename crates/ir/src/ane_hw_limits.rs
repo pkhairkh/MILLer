@@ -150,7 +150,18 @@ impl AneHwLimits {
         Self { revision: AneRevision::V20, num_nes: 16, ..Self::a18_pro() }
     }
 
+    /// T-124 (V-031/V-088): V26 is a speculative/future revision.
+    /// These limits are fabricated (inherited from A18_max with num_nes=16)
+    /// and have NOT been verified on any real hardware. Any compilation
+    /// targeting V26 should be treated as speculative — the model may not
+    /// work correctly or at all on actual V26 hardware when it becomes
+    /// available.
     fn future() -> Self {
+        log::warn!(
+            "V26 (future) hardware limits are speculative — inherited from A18_max values \
+             with num_nes=16. These have NOT been verified on real hardware. \
+             Models compiled for V26 may not function correctly on actual hardware."
+        );
         Self { revision: AneRevision::V26, num_nes: 16, ..Self::a18_max() }
     }
 
@@ -321,5 +332,15 @@ mod tests {
         let limits = AneHwLimits::for_revision(AneRevision::V7);
         // Conv limit (32K) must be lower than general tensor channel limit
         assert!(limits.max_conv_channels < limits.max_tensor_channels);
+    }
+
+    // T-124: V26 (future) revision returns correct limits.
+    // V26 is speculative but must produce valid struct values:
+    // revision == V26, num_nes == 16 (inherited from A18_max).
+    #[test]
+    fn test_v26_future_limits() {
+        let limits = AneHwLimits::for_revision(AneRevision::V26);
+        assert_eq!(limits.revision, AneRevision::V26);
+        assert_eq!(limits.num_nes, 16);
     }
 }

@@ -1,18 +1,41 @@
-//! Staticize pass.
+//! Staticize pass — **REMOVED FROM PIPELINE** (T-107).
 //!
-//! Resolves dynamic constructs in SIR into static equivalents
-//! based on profiling knowledge and shape inference.
+//! This pass was originally intended to resolve dynamic constructs in SIR
+//! into static equivalents based on profiling knowledge and shape inference:
+//! - Replace symbolic dimensions with concrete values from the task spec
+//! - Replace runtime-computed indices with static lookup tables
+//! - Resolve variable-length sequences to fixed lengths
+//! - Record staticization decisions in SIR metadata
 //!
-//! Current implementation: pass-through for the linear projection vertical slice.
-//! The linear projection SIR from sir_from_linear_projection already has all
-//! shapes concrete and no dynamic constructs, so staticization is a no-op.
+//! However, none of these features were ever implemented. The pass was a
+//! pure pass-through (`Ok(input)`) that consumed a pipeline step while doing
+//! nothing, wasting developer trust and obscuring the actual pipeline.
+//!
+//! **Removal rationale** (T-107): A phantom pass that claims capabilities it
+//! doesn't have is worse than no pass at all — it misleads developers into
+//! thinking dynamic SIR constructs are being resolved when they are not.
+//! The pass has been removed from the compile pipeline in `main.rs`. If
+//! staticization is needed in the future, it should be implemented as a new
+//! pass with clear scope and tests before being wired into the pipeline.
+//!
+//! The module and its tests are preserved as a historical reference and to
+//! serve as a scaffold for a future implementation if one becomes necessary.
 
 use ane_ir::sir::SirGraph;
 use anyhow::Result;
 
-/// Staticize pass implementation.
+/// Staticize pass — **DEPRECATED, removed from pipeline** (T-107).
+///
+/// This struct is preserved for backward compatibility and as a scaffold
+/// for future implementation. It is NOT wired into the compile pipeline.
+/// See module-level documentation for removal rationale.
+#[deprecated(
+    since = "0.1.0",
+    note = "StaticizePass was a phantom no-op pass and has been removed from the pipeline. \
+           See module docs for rationale. If staticization is needed, implement a new pass."
+)]
 pub struct StaticizePass {
-    // No configuration needed for pass-through
+    // No configuration needed — pass is a no-op
 }
 
 impl Default for StaticizePass {
@@ -26,27 +49,21 @@ impl StaticizePass {
         Self {}
     }
 
-    /// Run the staticize pass.
+    /// Run the staticize pass — **DEPRECATED, no-op** (T-107).
     ///
-    /// For the current linear projection vertical slice, all shapes in the
-    /// SIR are already concrete (specified in the task spec), and there are
-    /// no dynamic constructs (no runtime-computed indices, no variable-length
-    /// sequences, no data-dependent branching). This is a pass-through.
-    ///
-    /// When more complex SIR graphs are supported (e.g., attention with
-    /// variable sequence lengths, decode steps with dynamic KV cache),
-    /// this pass will:
-    /// - Replace symbolic dimensions with concrete values from the task spec
-    /// - Replace runtime-computed indices with static lookup tables
-    /// - Resolve variable-length sequences to fixed lengths
-    /// - Record staticization decisions in the SIR metadata
+    /// This method returns the input graph unchanged. It is preserved for
+    /// backward compatibility but is no longer called from the pipeline.
+    /// See module-level documentation for the removal rationale.
+    #[allow(deprecated)]
     pub fn run(&self, input: SirGraph) -> Result<SirGraph> {
-        // Pass-through: the linear projection SIR is already fully static.
+        // Pass-through: this pass was never implemented. Removed from pipeline
+        // in T-107 because a phantom no-op pass misleads developers.
         Ok(input)
     }
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // T-107: StaticizePass is deprecated but tests preserve behavior
 mod tests {
     use super::*;
     use ane_ir::common::MilDtype;

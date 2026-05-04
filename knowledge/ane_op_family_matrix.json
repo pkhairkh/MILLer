@@ -949,7 +949,9 @@
       "key_constraints": [
         "rank_le_5",
         "axis_must_be_inner_dim"
-      ]
+      ],
+      "architecture_conditional": true,
+      "architecture_conditional_note": "ConvertSoftmax is family-agnostic (no MinimumFamily in binary) but ANEC has architecture-conditional rejection strings. Older variants (A11Legacy/A12/A13) may reject at compile time. T-105 adds soft-warning at placement for these families."
     },
     {
       "mil_name": "where",
@@ -1116,7 +1118,9 @@
       },
       "key_constraints": [
         "rank_le_5"
-      ]
+      ],
+      "architecture_conditional": true,
+      "architecture_conditional_note": "ConvertInstanceNorm is family-agnostic but architecture-conditional. A11Legacy is explicitly unsupported. Older variants (A12/A13) may reject at compile time. T-105 adds soft-warning at placement for these families."
     },
     {
       "mil_name": "reshape",

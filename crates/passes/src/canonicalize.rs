@@ -115,6 +115,17 @@ impl CanonicalizePass {
                 final_target = next.clone();
                 steps += 1;
                 if steps > 100 {
+                    // T-126 (V-090): Log warning when cycle limit is hit.
+                    // This indicates a possible circular substitution chain
+                    // in the SIR graph. The resolved target may be incorrect,
+                    // potentially leading to wrong node references in the
+                    // canonicalized graph.
+                    log::warn!(
+                        "CanonicalizePass: substitution chain resolution hit 100-step limit \
+                         for key {:?}. Possible circular substitution chain. The resolved \
+                         target {:?} may be incorrect.",
+                        key, final_target
+                    );
                     break;
                 }
             }
@@ -402,5 +413,35 @@ mod tests {
         } else {
             panic!("Expected LinearProjection");
         }
+    }
+
+    // T-126 (V-090): Circular substitution chain must not hang or panic.
+    // A→B→C→A creates a cycle. The resolve_subst_chain() method hits its
+    // 100-step limit and returns a result for each key rather than looping
+    // forever or panicking.
+    #[test]
+    fn test_t126_circular_substitution_chain_no_panic() {
+        // Build a circular chain of Identity nodes: a→b, b→c, c→a
+        // This creates a cycle in the substitution map that resolve_subst_chain
+        // must handle gracefully by hitting its step limit.
+        let graph = SirGraph {
+            nodes: vec![
+                make_node(
+                    "input",
+                    SirOp::Identity { input: SirNodeId("__placeholder__".to_string()) },
+                ),
+                // Circular identities: each points to the next, wrapping around
+                make_node("a", SirOp::Identity { input: SirNodeId("b".to_string()) }),
+                make_node("b", SirOp::Identity { input: SirNodeId("c".to_string()) }),
+                make_node("c", SirOp::Identity { input: SirNodeId("a".to_string()) }),
+            ],
+            inputs: vec![SirNodeId("input".to_string())],
+            outputs: vec![SirNodeId("input".to_string())],
+        };
+
+        let pass = CanonicalizePass::new();
+        // This must not panic or hang — it should complete with some result
+        let result = pass.run(graph);
+        assert!(result.is_ok(), "CanonicalizePass should not panic on circular substitution chains");
     }
 }

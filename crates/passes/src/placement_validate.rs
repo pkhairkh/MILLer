@@ -582,6 +582,46 @@ pub fn validate_placement_with_context(
             PlacementDecision::AneAllowed
         }
 
+        // T-105: Softmax — architecture-conditional rejection possible.
+        // ConvertSoftmax is a family-agnostic converter (no MinimumFamily
+        // trait in binary), but ANEC has architecture-conditional rejection
+        // strings. Some older architecture variants may reject the operation
+        // at compile time even though the converter exists. Emit a soft
+        // warning for older architectures so developers are aware.
+        MirOp::MILSoftmax { .. } => {
+            if matches!(
+                target_family,
+                AneFamily::A11Legacy | AneFamily::A12 | AneFamily::A13
+            ) {
+                log::warn!(
+                    "MILSoftmax: ConvertSoftmax is family-agnostic but architecture-conditional \
+                     rejection is possible on {:?}. The op will be placed on ANE but may fail \
+                     at ANEC compile time on specific architecture variants.",
+                    target_family
+                );
+            }
+            PlacementDecision::AneAllowed
+        }
+
+        // T-105: InstanceNorm — architecture-conditional rejection possible.
+        // ConvertInstanceNorm is family-agnostic but architecture-conditional.
+        // InstanceNorm is unsupported on A11Legacy in the knowledge matrix
+        // and may be rejected on other older variants at ANEC compile time.
+        MirOp::MILInstanceNorm { .. } => {
+            if matches!(
+                target_family,
+                AneFamily::A11Legacy | AneFamily::A12 | AneFamily::A13
+            ) {
+                log::warn!(
+                    "MILInstanceNorm: ConvertInstanceNorm is family-agnostic but \
+                     architecture-conditional rejection is possible on {:?}. The op will be \
+                     placed on ANE but may fail at ANEC compile time on specific architecture variants.",
+                    target_family
+                );
+            }
+            PlacementDecision::AneAllowed
+        }
+
         // Ops with no ANE engine — immediate CPU
         op => {
             // T-65: Use the unified CPU-only check (default_engine() == None)
@@ -1796,5 +1836,75 @@ mod tests {
         let (w, h, d, c) = extract_whdc(&[1, 896, 1, 896]);
         assert_eq!(c, 896, "channels should be 896, not 1");
         assert_eq!(d, 1, "depth should be 1 for NCHW rank-4");
+    }
+
+    // ─── T-105: Softmax and InstanceNorm placement tests ─────────────
+
+    #[test]
+    fn test_t105_softmax_a11_legacy_allowed() {
+        // MILSoftmax with A11Legacy should return AneAllowed (soft warning, not hard rejection)
+        let op = MirOp::MILSoftmax {
+            name: "test_softmax".into(),
+            x: MirNodeId("input".into()),
+            axis: -1,
+        };
+        let shapes: Vec<Vec<usize>> = vec![];
+        let ctx = PlacementContext::empty();
+        let decision = validate_placement_with_context(
+            &op, &shapes, AneFamily::A11Legacy, false, &ctx,
+        );
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_t105_softmax_a16_allowed() {
+        // MILSoftmax with A16 should return AneAllowed
+        let op = MirOp::MILSoftmax {
+            name: "test_softmax".into(),
+            x: MirNodeId("input".into()),
+            axis: -1,
+        };
+        let shapes: Vec<Vec<usize>> = vec![];
+        let ctx = PlacementContext::empty();
+        let decision = validate_placement_with_context(
+            &op, &shapes, AneFamily::A16, false, &ctx,
+        );
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_t105_instancenorm_a11_legacy_allowed() {
+        // MILInstanceNorm with A11Legacy should return AneAllowed (soft warning, not hard rejection)
+        let op = MirOp::MILInstanceNorm {
+            name: "test_instnorm".into(),
+            x: MirNodeId("input".into()),
+            gamma: Some("gamma".into()),
+            beta: Some("beta".into()),
+            epsilon: 1e-5,
+        };
+        let shapes: Vec<Vec<usize>> = vec![];
+        let ctx = PlacementContext::empty();
+        let decision = validate_placement_with_context(
+            &op, &shapes, AneFamily::A11Legacy, false, &ctx,
+        );
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_t105_instancenorm_a16_allowed() {
+        // MILInstanceNorm with A16 should return AneAllowed
+        let op = MirOp::MILInstanceNorm {
+            name: "test_instnorm".into(),
+            x: MirNodeId("input".into()),
+            gamma: Some("gamma".into()),
+            beta: Some("beta".into()),
+            epsilon: 1e-5,
+        };
+        let shapes: Vec<Vec<usize>> = vec![];
+        let ctx = PlacementContext::empty();
+        let decision = validate_placement_with_context(
+            &op, &shapes, AneFamily::A16, false, &ctx,
+        );
+        assert_eq!(decision, PlacementDecision::AneAllowed);
     }
 }

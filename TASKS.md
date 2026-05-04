@@ -258,16 +258,14 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-### T-105 · Resolve Softmax/InstanceNorm Family Gating Contradiction
+### T-105 · ~~Resolve Softmax/InstanceNorm Family Gating Contradiction~~
 
 - **ISSUES ref**: I-80
 - **AUDIT ref**: V-029, V-030, V-101 (ane-violations.md §III)
 - **Severity**: MEDIUM
 - **Effort**: M (1 day)
 
-**Intent**: ConvertSoftmax and ConvertInstanceNorm are family-agnostic converters (no MinimumFamily trait in binary), but ANEC has architecture-conditional rejection strings. Neither the per-family matrix nor MILLer's constraint model captures this nuance — converters exist for all families but specific architecture variants may reject the operation at compile time.
-
-**Definition of Done**: Documentation and constraint model updated to reflect "converter available for all families but architecture-conditional rejection possible". Add soft-warning at placement for Softmax/InstanceNorm on older architectures. Test verifies warning is emitted.
+**✅ RESOLVED** — Added architecture-conditional soft-warning at placement for Softmax/InstanceNorm on A11Legacy/A12/A13. Added `architecture_conditional` and `architecture_conditional_note` fields to ane_op_family_matrix.json entries. Tests verify warning behavior.
 
 ---
 
@@ -282,16 +280,14 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-### T-107 · Implement or Remove StaticizePass
+### T-107 · ~~Implement or Remove StaticizePass~~
 
 - **ISSUES ref**: I-82
 - **AUDIT ref**: V-014 (ane-violations.md §III)
 - **Severity**: MEDIUM
 - **Effort**: M (1 day)
 
-**Intent**: `StaticizePass::run()` is a pure pass-through — `Ok(input)`. Its documentation claims it replaces symbolic dimensions, resolves variable-length sequences, and records decisions. None of this is implemented. The phantom pass wastes developer trust and obscures the actual pipeline.
-
-**Definition of Done**: Either StaticizePass is implemented (resolves symbolic dims) or removed from the pipeline with documentation explaining its absence. If removed, all references to it in the pipeline are cleaned up.
+**✅ RESOLVED** — StaticizePass removed from compile pipeline — was a phantom no-op pass. Struct preserved with #[deprecated] for backward compatibility. All pipeline references and step numbering updated.
 
 ---
 
@@ -471,14 +467,17 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 ## 🟡 MEDIUM — Configuration / Documentation / Quality
-### T-124 · Add V26 Speculative Warning
-- **AUDIT ref**: V-031, V-088. Add explicit warning in `for_revision(V26)` that limits are speculative. **DoD**: Warning logged when V26 used.
+### T-124 · ~~Add V26 Speculative Warning~~
+- **AUDIT ref**: V-031, V-088
+**✅ RESOLVED** — Added log::warn!() in AneHwLimits::future() (V26 path) that limits are speculative. Follows same pattern as A12 warning.
 
-### T-125 · Replace Hardcoded Dimension Defaults
-- **AUDIT ref**: V-089. Replace `unwrap_or` defaults (64, 48, 32) with explicit config or fail-closed. **DoD**: No silent dimension defaults.
+### T-125 · ~~Replace Hardcoded Dimension Defaults~~
+- **AUDIT ref**: V-089
+**✅ RESOLVED** — Replaced 8 unwrap_or(64/48/32) dimension defaults in role_mir.rs with ok_or_else() error returns. Missing shape specs now produce explicit errors.
 
-### T-126 · Add Canonicalization Cycle Limit Diagnostic
-- **AUDIT ref**: V-090. Log warning when 100-step limit hit. **DoD**: Diagnostic output on limit hit.
+### T-126 · ~~Add Canonicalization Cycle Limit Diagnostic~~
+- **AUDIT ref**: V-090
+**✅ RESOLVED** — Added log::warn!() when canonicalization substitution chain resolution hits 100-step limit.
 
 ### T-127 · Document UInt16/Bool Limited Support
 - **AUDIT ref**: V-091, V-092. Specify which ops/families support UInt16 and Bool. **DoD**: Constraint docs updated.
@@ -489,8 +488,9 @@ Full resolution details are in `CHANGELOG.md`.
 ### T-129 · Fix Knowledge Schema/Seed Format Mismatch
 - **AUDIT ref**: V-071. Align seed JSON format with knowledge_schema.md. **DoD**: Seeds validate against schema.
 
-### T-130 · Wire --seed Parameter or Remove
-- **AUDIT ref**: V-087. Either wire through compile pipeline or remove from CLI. **DoD**: --seed either works or is removed.
+### T-130 · ~~Wire --seed Parameter or Remove~~
+- **AUDIT ref**: V-087
+**✅ RESOLVED** — Removed --seed from Compile and CompileFull CLI subcommands — was dead code. Retained for sharded/lab/generate commands where functional.
 
 ### T-131 · Emit Matmul Transpose Flags as Named Const Nodes
 - **AUDIT ref**: V-129. Per Orion #12, named const nodes instead of immediate bools. **DoD**: Transpose flags emitted as named const nodes.
@@ -505,8 +505,8 @@ Full resolution details are in `CHANGELOG.md`.
 | T-95 | I-70 | HIGH | M | ✅ Resolved |
 | T-96 | I-71 | HIGH | M | ✅ Resolved |
 | T-98 | I-73 | HIGH | L | 🟠 Open |
-| T-105 | I-80 | MEDIUM | M | 🟡 Open |
-| T-107 | I-82 | MEDIUM | M | 🟡 Open |
+| T-105 | I-80 | MEDIUM | M | ✅ Resolved |
+| T-107 | I-82 | MEDIUM | M | ✅ Resolved |
 | T-108 | I-83 | MEDIUM | L | 🟡 Open |
 | T-110 | I-85 | MEDIUM | M | ✅ Resolved |
 | T-112 | I-84, I-85 | MEDIUM | M | ✅ Resolved |
@@ -518,13 +518,13 @@ Full resolution details are in `CHANGELOG.md`.
 | T-120 | I-95 | MEDIUM | S | ✅ Resolved |
 | T-121 | I-96 | MEDIUM | S | ✅ Resolved |
 | T-122 | I-97 | MEDIUM | S | ✅ Resolved |
-| T-124 | — | LOW | S | 🔵 Open |
-| T-125 | — | LOW | S | 🔵 Open |
-| T-126 | — | LOW | S | 🔵 Open |
+| T-124 | — | LOW | S | ✅ Resolved |
+| T-125 | — | LOW | S | ✅ Resolved |
+| T-126 | — | LOW | S | ✅ Resolved |
 | T-127 | — | LOW | S | 🔵 Open |
 | T-128 | — | LOW | S | 🔵 Open |
 | T-129 | — | LOW | M | 🔵 Open |
-| T-130 | — | LOW | S | 🔵 Open |
+| T-130 | — | LOW | S | ✅ Resolved |
 | T-131 | — | LOW | S | 🔵 Open |
 | T-86 | I-61 | CRITICAL | S | ✅ Resolved |
 | T-87 | I-62 | CRITICAL | M | ✅ Resolved |
@@ -595,13 +595,13 @@ Tasks T-47 through T-57, T-60, T-62, T-63, T-64, T-65 resolved. T-61, T-66 remai
 |----------|-------|-------------|
 | 🔴 CRITICAL | 1 | ~2 days |
 | 🟠 HIGH | 1 | ~2 days |
-| 🟡 MEDIUM | 3 | ~4 days |
-| 🔵 LOW | 8 | ~4 days |
-| **Total** | **13** | **~12 days** |
+| 🟡 MEDIUM | 1 | ~2 days |
+| 🔵 LOW | 4 | ~2 days |
+| **Total** | **7** | **~8 days** |
 
 > **Priority guidance**: CRITICAL task T-90 must be resolved before any production compilation.
 > HIGH task T-98 should be addressed in the next sprint cycle.
-> MEDIUM/LOW tasks (T-105–T-131) are technical debt that should be chipped away at consistently.
+> MEDIUM/LOW tasks (T-108, T-127–T-129, T-131) are technical debt that should be chipped away at consistently.
 >
-> **Resolved**: 32 tasks (T-86, T-87, T-89, T-91–T-97, T-99–T-104, T-106, T-109–T-123).
+> **Resolved**: 38 tasks (T-86, T-87, T-89, T-91–T-97, T-99–T-107, T-109–T-126, T-130).
 > Tasks T-01 through T-85 are all resolved — see archive summary above and `CHANGELOG.md`.

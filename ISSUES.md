@@ -1313,16 +1313,14 @@ State declarations default to empty shape + Fp16 when only write op present. Cor
 
 ---
 
-### I-80 · Softmax/InstanceNorm Family Gating Contradiction
+### I-80 · ~~Softmax/InstanceNorm Family Gating Contradiction~~
 
-**Status:** ⬜ Open
-**Files:** `knowledge/ane_op_family_matrix.json:806-821,951-965`
-**AUDIT ref:** V-029, V-030, V-101 (ane-violations.md §III)
-**Severity:** MEDIUM
-**Effort:** M (1 day)
-**Task:** T-105
-
-Converters exist for all families (family-agnostic) but ANEC has architecture-conditional rejection strings. Neither MILLer's documentation nor its constraint model captures this nuance.
+~~**Status:** ⬜ Open~~
+~~**Files:** `knowledge/ane_op_family_matrix.json:806-821,951-965`~~
+~~**AUDIT ref:** V-029, V-030, V-101 (ane-violations.md §III)~~
+~~**Severity:** MEDIUM~~
+~~**Effort:** M (1 day)~~
+**✅ RESOLVED** — T-105: Added architecture-conditional soft-warning at placement for Softmax/InstanceNorm on A11Legacy/A12/A13. Added `architecture_conditional` and `architecture_conditional_note` fields to ane_op_family_matrix.json entries. Tests verify warning behavior.
 
 ---
 
@@ -1339,16 +1337,14 @@ Stride 3 only supported for Avg pooling mode. Large-stride Min/Max pool with pad
 
 ---
 
-### I-82 · StaticizePass Is Pure Pass-Through
+### I-82 · ~~StaticizePass Is Pure Pass-Through~~
 
-**Status:** ⬜ Open
-**Files:** `crates/passes/src/staticize.rs:43-46`
-**AUDIT ref:** V-014 (ane-violations.md §III)
-**Severity:** MEDIUM
-**Effort:** M (1 day)
-**Task:** T-107
-
-Entire `StaticizePass::run()` is `Ok(input)`. Doc claims it replaces symbolic dims, resolves variable-length sequences, records decisions. None implemented. Phantom pass wastes developer trust.
+~~**Status:** ⬜ Open~~
+~~**Files:** `crates/passes/src/staticize.rs:43-46`~~
+~~**AUDIT ref:** V-014 (ane-violations.md §III)~~
+~~**Severity:** MEDIUM~~
+~~**Effort:** M (1 day)~~
+**✅ RESOLVED** — T-107: StaticizePass removed from compile pipeline — was a phantom no-op pass. Struct preserved with `#[deprecated]` for backward compatibility and as scaffold for future implementation. All pipeline references updated.
 
 ---
 
