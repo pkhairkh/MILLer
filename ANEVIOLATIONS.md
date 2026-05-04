@@ -1,8 +1,8 @@
 # ANEVIOLATIONS.md — MILLer Constraint-Grounded Violation Report
 
-**Operation**: NECROSCOPY — Compatibility Audit  
-**Date**: 2026-05-04  
-**Scope**: Full MILLer source tree, knowledge seeds, documentation, and non-invasive local reference inventory
+**Operation**: NECROSCOPY — Expanded Compatibility Audit  
+**Date**: 2026-05-04 (expanded 2026-05-06 with deep binary forensic evidence)  
+**Scope**: Full MILLer source tree, knowledge seeds, documentation, and non-invasive local reference inventory, cross-referenced against deep binary analysis of ANE framework libraries
 
 ---
 
@@ -24,29 +24,29 @@ This audit examined the following source categories by filename:
 
 ### Audit Scope
 
-The audit scope covered: (1) internal consistency of MILLer's constraint model against its own source code, tests, and documentation; (2) cross-referencing of claimed capabilities against non-invasive local reference metadata; (3) identification of phantom capabilities, stub-mimic functions, missing validation (lacunae), aberrant claims, and unverified assertions.
+The audit scope covered: (1) internal consistency of MILLer's constraint model against its own source code, tests, and documentation; (2) cross-referencing of claimed capabilities against non-invasive local reference metadata; (3) identification of phantom capabilities, stub-mimic functions, missing validation (lacunae), aberrant claims, and unverified assertions; (4) deep binary forensic cross-referencing of ANECompiler operation schemas, converter catalogs, family enumerations, and Orion programming constraints against MILLer source.
 
 ### Methodology
 
-All source files were read line-by-line. Pattern searches were performed for `todo!()`, `unimplemented!()`, `FIXME`, `HACK`, hardcoded limits, silent fallbacks, permissive defaults, and fake validation. Knowledge seed JSONs were cross-referenced against Rust type definitions, documentation, and conservative local metadata signals. All local reference artefacts were examined using non-invasive techniques only (file identity, container metadata, public symbol names, printable string triage for coarse vocabulary).
+All source files were read line-by-line. Pattern searches were performed for `todo!()`, `unimplemented!()`, `FIXME`, `HACK`, hardcoded limits, silent fallbacks, permissive defaults, and fake validation. Knowledge seed JSONs were cross-referenced against Rust type definitions, documentation, and conservative local metadata signals. All local reference artefacts were examined using non-invasive techniques only (file identity, container metadata, public symbol names, printable string triage for coarse vocabulary). The expanded audit additionally cross-referenced deep binary forensic evidence: (a) complete ANEC MLIR operation schemas extracted from ANECompiler constraint strings, (b) demangled C++ converter class templates with family-scoped instantiations, (c) the full ANEC operation enum from converter registration, (d) 20 Orion programming constraints from arxiv:2603.06728, (e) ZinRegisterProgramming hardware version template instantiations, and (f) architecture-conditional data-type rejection messages.
 
 ### High-Level Findings
 
-The audit identified **97 violations** across 6 classifications:
+The audit identified **112 violations** across 6 classifications:
 
 | Classification | Count | Description |
 |---------------|-------|-------------|
-| ABERRANT | 16 | Source contradicts its own docs, tests, configs, or conservative compatibility evidence |
-| PHANTOM | 7 | Source assumes a capability for which there is no adequate evidence |
-| LACUNA | 38 | Source omits validation for a constraint it claims to respect |
+| ABERRANT | 20 | Source contradicts its own docs, tests, configs, or conservative compatibility evidence |
+| PHANTOM | 9 | Source assumes a capability for which there is no adequate evidence |
+| LACUNA | 44 | Source omits validation for a constraint it claims to respect |
 | STUB-MIMIC | 10 | Function presents itself as real logic but uses no-ops, fake success, or permissive fallback |
-| UNVERIFIED | 26 | Plausible but not backed by sufficient source evidence or tests |
+| UNVERIFIED | 29 | Plausible but not backed by sufficient source evidence or tests |
 
-Severity distribution: **7 CRITICAL**, **22 HIGH**, **43 MEDIUM**, **25 LOW**.
+Severity distribution: **8 CRITICAL**, **26 HIGH**, **48 MEDIUM**, **30 LOW**.
 
 ### Raw Local Artefacts
 
-Raw local reference artefacts are stored in `forensics/` and `binaries/` within the local working tree. These directories are excluded from the repository by `.gitignore`. No raw binary strings, disassembly, proprietary implementation details, or links to local forensic material appear in this report.
+Raw local reference artefacts are stored in `forensics/` and `binaries/` within the local working tree. These directories are excluded from the repository by `.gitignore`. No raw binary strings, disassembly, proprietary implementation details, or links to local forensic material appear in this report. All binary-derived findings are expressed as abstract constraint catalogs and cross-reference indices without reproducing proprietary content.
 
 ---
 
@@ -59,14 +59,14 @@ Raw local reference artefacts are stored in `forensics/` and `binaries/` within 
 | Convolution (standard, depthwise, dilated, grouped) | All A11+ families | source (ane_op_family_matrix.json, op_constraints.rs) | medium |
 | Deconvolution / ConvTranspose | All A11+ families | source (ane_op_family_matrix.json) | medium |
 | Average Pool, Max Pool, L2Norm Pool | All A11+ families | source (ane_op_family_matrix.json) | medium |
-| ArgMinMax (global, windowed) | A14+ only; dropped for A18 | source (ane_target.rs:145) | medium |
+| ArgMinMax (global, windowed) | A14+ only; dropped for A18 | source (ane_target.rs:145), binary (7 family instantiations 0-6, no family 7) | high |
 | Reduce (avg, max, min, sum) | All A11+ families | source (ane_op_family_matrix.json) | medium |
-| Softmax | All families (matrix); architecture-dependent (per-op doc) | source + local metadata | low |
-| InstanceNorm | All families (matrix); architecture-dependent (per-op doc) | source + local metadata | low |
+| Softmax | All families (matrix); architecture-dependent (per-op doc) | source + local metadata, binary (family-agnostic converter, no MinimumFamily) | high |
+| InstanceNorm | All families (matrix); architecture-dependent (per-op doc) | source + local metadata, binary (family-agnostic converter, no MinimumFamily) | high |
 | LayerNorm | A14+ only | source (ane_target.rs) | medium |
 | Linear / Fully-Connected | All A11+ families | source (ane_op_family_matrix.json) | high |
 | MatMul | All A11+ families | source (ane_op_family_matrix.json) | high |
-| Concat, Tile, Transpose, Reshape, Flatten, Unflatten | All A11+ families | source (ane_op_family_matrix.json) | medium |
+| Concat, Tile, Transpose, Reshape, Flatten, Unflatten | All A11+ families | source (ane_op_family_matrix.json); **Concat rejected by ANE compiler per Orion #1** | low |
 | Gather, GatherND | A12+ (matrix); illegal (legality seed) | source (contradictory seeds) | low |
 | Padding, Resample, Resize, CropResize | A12+ families | source (ane_op_family_matrix.json) | medium |
 | PixelShuffle, PixelUnshuffle | A14+ | source (ane_op_family_matrix.json) | medium |
@@ -77,6 +77,7 @@ Raw local reference artefacts are stored in `forensics/` and `binaries/` within 
 | Logical (and, or, not) | A12+ ANE (matrix); CPU-only (cpu_only seed); no converter (per-op doc) | source (three-way contradiction) | low |
 | SDPA (scaled-dot-product attention) | A16+ (Rust); unreliable A12-A15 (matrix) | source (ane_target.rs) | medium |
 | PReLU, Softsign | A12+ ANE (matrix); CPU-only (cpu_only seed) | source (contradictory seeds) | low |
+| Gelu | A14+ (matrix); not a valid MIL activation (Orion #10) | source + binary forensic | low |
 
 ### II-B. Claimed Dimensional Limits
 
@@ -86,10 +87,13 @@ Raw local reference artefacts are stored in `forensics/` and `binaries/` within 
 | max_tensor_height | 16 384 (V4) → 262 144 (V26) | source | medium |
 | max_tensor_depth | 256 (V4) → 2 048 (V26) | source | medium |
 | max_tensor_channels | 16 384 (V4) → 65 536 (V26) | source | medium |
+| Conv channel limit | 32 768 (Orion #16) | binary forensic (ANECompiler strings) | high |
 | max_tensor_rank | 5 (all revisions) | source | medium |
 | A12 limits | Copied from A11 (unverified) | source (ane_hw_limits.rs:66-82, self-documented) | low |
 | V26 limits | Fabricated from A18 + num_nes=16 | source (ane_hw_limits.rs:144-146) | low |
 | ne_transpose_c_max | 16 384 (all revisions, suspiciously uniform) | source (ane_hw_limits_seed.json) | low |
+| Minimum IOSurface for eval | ~49 KB (Orion #4) | binary forensic (Orion) | medium |
+| Compilations per process | ~119 (Orion #5) | binary forensic (Orion) | medium |
 
 ### II-C. Claimed Alignment and Layout Requirements
 
@@ -99,19 +103,24 @@ Raw local reference artefacts are stored in `forensics/` and `binaries/` within 
 | Power-of-2 alignment requirement | Enforced for memory/cache | local metadata (ANECompiler strings) | medium |
 | Tile DMA granularity | Calculated from dram_alignment per HW version | local metadata (ANECompiler strings) | medium |
 | L2 cache alignment | Computed from tensor format | source (ane_hw_limits.rs, ZinIrHalParameters) | medium |
+| Multi-output buffer ordering | Alphabetical (Orion #3) | binary forensic (Orion) | high |
+| Multi-input surface ordering | Alphabetical (Orion #19) | binary forensic (Orion) | high |
+| Multi-output buffer size uniformity | All outputs must have uniform sizes (Orion #2) | binary forensic (Orion) | high |
+| Multi-input surface size uniformity | Uniform alloc sizes required (Orion #18) | binary forensic (Orion) | high |
 
 ### II-D. Claimed Data-Type Masks
 
 | Data Type | ANE Legality Claim | Evidence Basis | Confidence |
 |---|---|---|---|
-| FP16 | Legal for compute, default dtype | source (dtype_constraints.rs) | high |
+| FP16 | Legal for compute, default dtype | source (dtype_constraints.rs), binary (primary compute format) | high |
 | FP32 | Legal (may be downcast) | source (dtype_constraints.rs:73) | medium |
-| Int8 | Legal for weights | source (dtype_constraints.rs) | high |
-| UInt8 | Legal for weights | source (dtype_constraints.rs) | high |
+| Int8 | Legal for weights | source (dtype_constraints.rs), binary (weight format) | high |
+| UInt8 | Legal for weights | source (dtype_constraints.rs), binary (weight format) | high |
 | Int4 | Legal with interleave==8 (caller must check) | source (dtype_constraints.rs:79-81) | medium |
 | UInt4 | Legal with interleave==8 (caller must check) | source (dtype_constraints.rs:79-81) | medium |
-| E4M3 | Architecture-conditional (rejected on some, supported on A17+) | local metadata (ANECompiler strings) | medium |
-| E5M2 | Rejected by is_dtype_ane_legal(); accepted by quantize validator | source (contradictory checks) | low |
+| E4M3 | Architecture-conditional (rejected on some, supported on A17+) | source, binary ("not supported on this architecture") | high |
+| E5M2 | Rejected by is_dtype_ane_legal(); accepted by quantize validator | source (contradictory checks), binary ("not supported" universally) | high |
+| 2xInt8 | Not mentioned in source | binary ("not supported") | high |
 | UInt16 | "Limited support" (no constraints defined) | source (dtype_constraints.rs:105) | low |
 | Bool | "Limited support" (no constraints defined) | source (dtype_constraints.rs:113) | low |
 | BF16 | Not listed as valid dtype | source (absent from MilDtype enum) | high |
@@ -122,10 +131,13 @@ Raw local reference artefacts are stored in `forensics/` and `binaries/` within 
 |---|---|---|---|
 | AneRevision V4–V26 | 11 revisions defined | source (ane_hw_limits.rs) | high |
 | AneFamily A11Legacy–A18 | 6 families defined | source (ane_target.rs) | high |
+| Binary MinimumFamily enum | 8 families (0–7) defined in converter templates | binary forensic (demangled template params) | high |
+| ZinRegisterProgramming versions | V0-V9, V17, V19, V20, V26 (14 hardware versions) | binary forensic (template instantiations) | high |
 | V6→A13 (Rust) vs V6→A14 (JSON seed) | Family mismatch | source (contradictory mappings) | low |
 | V11→A17 (Rust) vs V11→A16 (JSON seed) | Family mismatch | source (contradictory mappings) | low |
-| V20 (M4 Mac) → A18 | ArgMinMax dropped; unverified for Mac | source (ane_target.rs:145) | low |
+| V20 (M4 Mac) → A18 | ArgMinMax dropped; unverified for Mac | source (ane_target.rs:145), binary (no family 7 instantiations for ArgMinMax) | medium |
 | V26 → future (invented limits) | No hardware specification | source (ane_hw_limits.rs:144-146) | low |
+| Family 6–7 (A16+ future) | Not modeled in MILLer | binary forensic (enum values 6-7 in MinimumFamily) | medium |
 
 ### II-F. Claimed Descriptor Requirements
 
@@ -136,6 +148,50 @@ Raw local reference artefacts are stored in `forensics/` and `binaries/` within 
 | Interleave factor for Int4/UInt4 | Must be 8 (caller-enforced, not validated) | source (dtype_constraints.rs:79-81) | low |
 | Conv kernel range | 1–7 (op_constraints.rs) | source | medium |
 | Palette bits | Valid: {1,2,3,4,6,8} (documented, not enforced) | source (sir.rs:48-53) | low |
+| Conv bias= param | Not supported (Orion #13) | binary forensic (Orion) | high |
+| BLOBFILE offset | uint64(64), not 128 (Orion #8) | binary forensic (Orion) | medium |
+| MIL text format | Must be NSData*, not NSString* (Orion #9) | binary forensic (Orion) | medium |
+| Weight dict initialization | Must be @{}, not nil (Orion #11) | binary forensic (Orion) | medium |
+| MatMul transpose flags | Need named consts (Orion #12) | binary forensic (Orion) | medium |
+| Output var references | Must ref live (post-opt) nodes (Orion #14) | binary forensic (Orion) | medium |
+| ANE flat buffer layout | Packed [1,C,1,S] (Orion #20) | binary forensic (Orion) | medium |
+| Conv 1×1 vs matmul | Conv 1×1 is 3× faster than matmul (Orion #17) | binary forensic (Orion) | medium |
+| SDPA causal masks | Silently ignored (Orion #6) | binary forensic (Orion) | high |
+
+### II-G. ANEC Operation Schema Constraints
+
+The following table documents the complete ANEC MLIR dialect operation catalog with exact attribute shape constraints extracted from ANECompiler constraint validation strings. Each operation has precisely defined attribute shapes, types, and requirements that must be satisfied for ANE compilation to succeed.
+
+| ANEC Operation | Key Attribute Constraints | Converter Class | Family Scoping |
+|---|---|---|---|
+| anec.arg_min_max | axes=ranks 0/1, kernel_size=shape{2}, stride_values=shape{2}, pad_values=shape{4}, mode=ArgMinMaxMode | ConvertReductionArg | Family 0-6 only (7 instantiations) |
+| anec.average_pool | ksize=shape{3}, padding=shape{6}, stride=shape{3}, inc_pad=unit attribute | (pool group) | Family-agnostic |
+| anec.batch_to_space | factors=shape{3} | ConvertBatchToSpace | Family-agnostic |
+| anec.channel_to_space | factors=shape{3} | (spatial group) | Family-agnostic |
+| anec.concat | axis=u64, interleave=unit attribute | ConvertConcat | Family-agnostic |
+| anec.convolution | stride=shape{3}, dilation=shape{3}, padding=shape{6}, padding_mode=PaddingMode, groups=u64, channel_wise=unit, kernel_scale=f16/f32 rank 0/1/4, kernel_zero_point=si8/ui8 rank 0/1/4, kernel_palettized_LUT=dense rank 0-6, kernel_mutable_palettized_LUT=dict | ConvertConvolution | Family-agnostic |
+| anec.deconvolution | same attributes as convolution | ConvertDeconvolution | Family-agnostic |
+| anec.crop_resize | output_dims=shape{2}, crop_dims=shape{2}, box_coordinate_mode=BoxCoordinateMode, coordinate_mode=CoordinateMode shape{5}, normalized_range=NormalizedCoordinateRange shape{5}, padding_modes=PaddingMode shape{5}, sampling_method=SamplingGridMethod shape{5}, sampling_mode=SamplingGridMode shape{5}, background_value=f16 | ConvertCropResize | Family-agnostic |
+| anec.flatten | flatten_mode=FlattenMode | ConvertFlatten2D | 8 family instantiations |
+| anec.gather_nd | axes=ui64 unique not empty rank 1 | ConvertGatherND | Family-agnostic |
+| anec.global_arg_min_max | axis=u32, mode=ArgMinMaxMode | (reduction group) | Family 0-6 only |
+| anec.input_view | dimension=u64, offset=u64, size=u64, step=i64 (negative strides supported) | (internal) | Family-agnostic |
+| anec.l2norm_pool | ksize=shape{3}, padding=shape{6}, stride=shape{3} | (pool group) | Family-agnostic |
+| anec.linear | kernel_scale=f16/f32 rank 0/1, kernel_zero_point=si8/ui8 rank 0/1, kernel_lut=palettized LUT rank 0-6 | (linear group) | Family-agnostic |
+| anec.matmul | bias=f16 | ConvertMatMul | 8 family instantiations |
+| anec.max_pool | ksize=shape{3}, padding=shape{6}, stride=shape{3} | (pool group) | Family-agnostic |
+| anec.padding | padding_modes=PaddingMode shape{5}, padding_sizes=shape{5,2}, background_value=f16 | ConvertPadding | 8 family instantiations |
+| anec.pixel_shuffle | factors=shape{3} | ConvertDepthToSpace2D | Family-agnostic |
+| anec.pixel_unshuffle | factors=shape{3} | ConvertSpaceToDepth2D | Family-agnostic |
+| anec.reduce_avg/max/min/sum | axes=ui64 unique ranks 0/1 | ConvertReductionA14Minus (F0-1), ConvertReductionA14Plus (F2) | Family-scoped |
+| anec.resample | 7 attributes: coordinate_mode, normalized_range, coordinate_type, warp_coordinate_mode, sampling_method, sampling_mode, background_value | (resample group) | Family-agnostic |
+| anec.resize | height=u64, width=u64, scale_factor_x=f32, scale_factor_y=f32, sampling_methods=SamplingGridMethod shape{2}, sampling_modes=SamplingGridMode shape{2}, padding_mode=PaddingMode shape{2} | ConvertResize | 8 family instantiations |
+| anec.space_to_batch | factors=shape{3} | ConvertSpaceToBatch | Family-agnostic |
+| anec.space_to_channel | factors=shape{3} | (spatial group) | Family-agnostic |
+| anec.tile | multiples=ui64 rank 1 | ConvertTile | Family-agnostic |
+| anec.transpose | transpose_list=list of u64 pairs | ConvertTranspose | 8 family instantiations |
+| anec.unflatten | flatten_mode=FlattenMode, destination_size=shape{3} | (reshape group) | 8 family instantiations |
+| anec.invert | (simple unary, no special attributes) | (elementwise unary group) | Family-agnostic |
 
 ---
 
@@ -154,6 +210,7 @@ Sorted by severity. Each entry includes a cross-reference to Section II.
 | V-005 | knowledge/legality_seed.json:62-75 | ABERRANT | mb.gather declared ANE-illegal (ane_legal: false) but anec.gather exists with ConvertGather converter. Blanket illegal claim is wrong. | source + local metadata | high | II-A |
 | V-006 | crates/coreml-proto/src/lib.rs:124 | ABERRANT | Float64 element_size() returns 4 instead of 8. All byte-size calculations for Float64 weights will be wrong. | source | high | II-D |
 | V-007 | crates/bridge/src/mir_to_compat.rs:224-249 | LACUNA | Zero-filled weight placeholders silently produce models that compile and load but produce completely incorrect inference. Only indication is stderr warning. | source | high | II-D |
+| V-098 | python/mil_emitter.py:432, crates/passes/src/mil_lower.rs:2842-2858 | ABERRANT | MILLer emits MILConcat (mb.concat) in SDPA decomposition and embedding gather paths, but Orion #1 documents that the concat MIL op is rejected by the ANE compiler. All models using SDPA will fail ANE compilation. | source + binary forensic (Orion #1) | high | II-A, II-G |
 
 ### HIGH
 
@@ -182,6 +239,10 @@ Sorted by severity. Each entry includes a cross-reference to Section II.
 | V-028 | crates/coreml-emit/src/mir_to_proto.rs:339-356 | LACUNA | State declarations default to empty shape + Fp16 when only write op present. Core ML will reject proto with empty-dimension state. | source | high | II-B, II-D |
 | V-029 | knowledge/ane_op_family_matrix.json:806-821 | UNVERIFIED | Softmax listed as "supported" for all families including A11Legacy, but per-op doc shows architecture-dependent. Will cause compilation failures on A11/A12 ANE. | source | high | II-A |
 | V-030 | knowledge/ane_op_family_matrix.json:951-965 | UNVERIFIED | InstanceNorm listed as "supported" for all families but per-op doc shows architecture-dependent on older families. | source | high | II-A |
+| V-099 | python/mil_emitter.py:890-894, 1141-1142 | ABERRANT | MILLer emits mb.gelu(mode="TANH_APPROXIMATION") as a valid MIL activation, but Orion #10 documents that gelu is not a valid MIL activation. ANEC uses tanh approximation via ConvertElementwiseUnary (Gelu), but the mb.gelu MIL builder call itself may be silently ignored or produce incorrect results when targeting ANE. | source + binary forensic (Orion #10) | high | II-A |
+| V-100 | crates/coreml-proto/src/lib.rs (MirOpCompat enum), crates/ir/src/mir.rs (MirOp enum) | LACUNA | ANEC operation enum contains 80+ operations including RingBufferReader/Writer, State, ScaledElementWise, HighPrecisionSigmoid, NRelu, ClampedRelu, Dirac, Degamma, GOC, Sqr, Rsqrt, Elu, LeakyRelu, Log2, Exp2, Sign, Trunc, Ceil, Floor, RegionReturn, UnrealizedConversionCast, TensorBufferToTensor, TensorToTensorBuffer. MILLer's MirOpCompat doesn't model these; ops that should map to these ANEC ops will fail emission or be incorrectly lowered. | source + binary forensic (ANEC enum) | high | II-G |
+| V-101 | knowledge/ane_op_family_matrix.json (Softmax, InstanceNorm) | ABERRANT | ConvertSoftmax and ConvertInstanceNorm are family-agnostic converters (no MinimumFamily trait in binary), contradicting MILLer's per-op-per-family documentation's architecture-dependent claims. The binary evidence shows these ops work on ALL families, while MILLer's docs claim architecture-dependent restrictions. | source + binary forensic (converter catalog) | high | II-A, II-E |
+| V-102 | crates/ir/src/ane_target.rs:145 | ABERRANT | ConvertReductionArg (ArgMinMax) has exactly 7 family instantiations (0-6) in the binary, confirming ArgMinMax is NOT available on Family 7+ (A18+). This upgrades V-032 from UNVERIFIED to ABERRANT with high confidence: MILLer's claim is correct but the confidence was previously medium. | source + binary forensic (converter template params) | high | II-E |
 
 ### MEDIUM
 
@@ -207,7 +268,7 @@ Sorted by severity. Each entry includes a cross-reference to Section II.
 | V-048 | crates/passes/src/placement_validate.rs:516 | LACUNA | ConvTranspose always passes placement validation unconditionally. No kernel size, stride, or group checks. | source | high | II-B |
 | V-049 | crates/passes/src/dtype_constraints.rs:73 | UNVERIFIED | FP32 allowed as ANE-legal with comment "may be downcast" but downcast not enforced. ANE does not natively compute in FP32. | source | medium | II-D |
 | V-050 | crates/passes/src/dtype_constraints.rs:79-81 | LACUNA | Int4/UInt4 return Ok(()) with comment "caller must also check interleave==8." Critical constraint deferred to caller with no enforcement. | source | high | II-D |
-| V-051 | crates/passes/src/dtype_constraints.rs:180-182 | ABERRANT | Quantize validator accepts E5M2 as output dtype, but is_dtype_ane_legal() rejects E5M2 on all families. Two checks are contradictory. | source | high | II-D |
+| V-051 | crates/passes/src/dtype_constraints.rs:180-182 | ABERRANT | Quantize validator accepts E5M2 as output dtype, but is_dtype_ane_legal() rejects E5M2 on all families. Binary confirms E5M2 is universally "not supported" in ANEC. | source + binary forensic | high | II-D |
 | V-052 | crates/passes/src/canonicalize.rs:294 | LACUNA | Wildcard catch-all silently copies unrecognized SirOp variants without rewriting SirNodeId references, producing dangling references for new variants. | source | high | II-F |
 | V-053 | crates/knowledge/src/update.rs:87-89 | ABERRANT | Doc says "never start above 0.5" but CompileFailure starts at 0.7, LoadFailure at 0.8, ComputePlan at 0.9. | source | high | II-F |
 | V-054 | crates/knowledge/src/confidence.rs:13-25 | PHANTOM | decay_confidence is "currently only used in tests." Advertised temporal decay mechanism has zero production integration. | source | high | II-F |
@@ -244,6 +305,16 @@ Sorted by severity. Each entry includes a cross-reference to Section II.
 | V-085 | crates/trace/src/sir_build.rs:84-94 | LACUNA | Missing input shape falls back to (1,32) silently. Wrong for models with different expected shapes. No warning when fallback used. | source | high | II-B |
 | V-086 | crates/bridge/src/mir_to_compat.rs (30+ eprintln) | LACUNA | Critical constraint violations reported via eprintln instead of structured logging or error returns. Cannot be suppressed, tested, or consumed by downstream. | source | high | II-F |
 | V-087 | crates/cli/src/main.rs:696,954 | LACUNA | --seed parameter accepted by CLI but silently discarded (_seed prefix). SPEC requires deterministic compilation but seed is unused. | source | high | II-F |
+| V-103 | crates/ir/src/ane_hw_limits.rs:178, crates/passes/src/op_constraints.rs | LACUNA | MILLer doesn't enforce 32K-channel limit for convolutions (Orion #16). max_tensor_channels is set to 65536 for newer versions but ANECompiler rejects convolutions with >32K channels. The channel validation in ane_hw_limits.rs:178 uses self.max_tensor_channels (65536) which exceeds the actual conv-specific limit of 32768. | source + binary forensic (Orion #16) | high | II-B, II-G |
+| V-104 | crates/coreml-emit/ (all emission paths) | LACUNA | MILLer doesn't enforce minimum IOSurface size (~49 KB) for eval (Orion #4). Models with small output buffers will fail at runtime with no prior validation. | source + binary forensic (Orion #4) | medium | II-B |
+| V-105 | crates/coreml-emit/ (multi-output emission), crates/bridge/src/mir_to_compat.rs | LACUNA | MILLer doesn't enforce alphabetical ordering of multi-output surfaces (Orion #3) or multi-input surfaces (Orion #19). Incorrect surface ordering will cause silent data corruption — outputs mapped to wrong buffers. | source + binary forensic (Orion #3, #19) | high | II-C |
+| V-106 | crates/coreml-emit/ (compilation pipeline) | LACUNA | MILLer doesn't enforce ~119 compilation limit per process (Orion #5). Long-running processes that repeatedly compile models will silently fail after hitting this limit with no warning or error. | source + binary forensic (Orion #5) | medium | II-B |
+| V-107 | python/mil_emitter.py, crates/coreml-proto/proto/coreml/MIL.proto | LACUNA | ANEC schema defines precise attribute shapes for all 30 operations (e.g., convolution: stride=shape{3}, padding=shape{6}, dilation=shape{3}). MILLer's MIL emission doesn't validate that these attribute shapes match ANEC expectations. Wrong-shaped attributes (e.g., stride with 2 elements instead of 3) will fail at ANE compiler time with cryptic errors. | source + binary forensic (ANEC schema) | high | II-G |
+| V-108 | crates/ir/src/ane_hw_limits.rs (AneRevision enum) | LACUNA | Binary shows ZinRegisterProgramming template instantiated for 14 hardware versions (V0-V9, V17, V19, V20, V26), confirming at least 14 distinct ANE hardware code paths. MILLer's AneRevision only defines 11 revisions, missing at least 3 hardware versions that have dedicated compiler code paths (V0-V3 likely correspond to pre-A11 hardware). | source + binary forensic (template instantiations) | medium | II-E |
+| V-109 | crates/ir/src/ane_target.rs (AneFamily enum) | LACUNA | The MinimumFamily enum in the binary has values 0-7 (8 families), but MILLer only models 6 families (A11Legacy through A18). Families corresponding to enum values 6-7 (likely A16+ variants or future architectures) are unmapped — MILLer will misattribute ops on future hardware and cannot express constraints for these families. | source + binary forensic (MinimumFamily enum) | medium | II-E |
+| V-110 | crates/ir/src/mir.rs:59-68 (MILConv), crates/coreml-proto/proto/coreml/MIL.proto:116-121 (MilConvOp) | LACUNA | ANEC convolution schema includes kernel_scale (f16/f32 rank 0/1/4), kernel_zero_point (si8/ui8 rank 0/1/4), kernel_palettized_LUT (dense rank 0-6), and kernel_mutable_palettized_LUT (dict) attributes for quantized/palettized weights. MILLer's MILConv and MilConvOp proto don't carry any of these attributes, meaning quantized/palettized convolution emission is incomplete and will fail for any non-FP16 weight format. | source + binary forensic (ANEC schema) | high | II-D, II-G |
+| V-111 | crates/passes/src/dtype_constraints.rs:180-182 | ABERRANT | Binary confirms E5M2 is universally "not supported" (not just architecture-conditional), 2xInt8 mode is "not supported," and E4M3 is "not supported on this architecture" (architecture-conditional). This strengthens the existing V-051 finding with binary evidence: the quantize validator's acceptance of E5M2 is definitively wrong, not just contradictory. | source + binary forensic (dtype strings) | high | II-D |
+| V-112 | crates/ir/src/mir.rs (no InputView variant) | LACUNA | ANEC's anec.input_view supports negative strides (step=i64), which MILLer doesn't model at all. Any lowering that requires negative-stride views (e.g., reverse along non-trivial axes, certain crop/resize patterns) cannot be correctly expressed in MILLer's MIR. The absence of this op means certain ANE-legal patterns will be incorrectly lowered or forced to CPU. | source + binary forensic (ANEC schema) | medium | II-G |
 
 ### LOW
 
@@ -282,10 +353,50 @@ Sorted by severity. Each entry includes a cross-reference to Section II.
 | Compute plan verification against real hardware | Inferred but unverified | Hardcoded empirical mappings with no cross-check (V-057) |
 | Int8 dtype in shard descriptor lowering | Declared but silently treated as Fp16 | Unknown dtype falls through to Fp16 default (V-011) |
 | Stateful function descriptors via generic path | Declared but always false | FamilyPayload hardcodes stateful: false (V-013) |
+| Concat as ANE-legal op | Assumed legal but rejected by ANE | MILConcat emitted in SDPA decomposition; ANE compiler rejects concat (V-098, Orion #1) |
+| Gelu as native MIL activation | Assumed valid but not a valid MIL op for ANE | mb.gelu emitted; ANEC requires tanh approximation via ConvertElementwiseUnary (V-099, Orion #10) |
+| Quantized/palettized conv weight attributes | Not modeled | ANEC convolution has kernel_scale, kernel_zero_point, kernel_palettized_LUT attributes not in MILLer (V-110) |
+| ANEC InputView with negative strides | Not modeled | anec.input_view supports step=i64; no equivalent in MILLer MIR (V-112) |
+| 25+ ANEC operations | Not modeled | RingBufferReader/Writer, State, ScaledElementWise, HighPrecisionSigmoid, NRelu, Dirac, Degamma, GOC, Sqr, Rsqrt, Elu, LeakyRelu, Log2, Exp2, Sign, Trunc, Ceil, Floor, RegionReturn, UnrealizedConversionCast, TensorBufferToTensor, TensorToTensorBuffer absent from MirOpCompat (V-100) |
+| IOSurface minimum size validation | Absent | ~49 KB minimum not enforced (V-104, Orion #4) |
+| Compilation count per process limit | Absent | ~119 limit not tracked (V-106, Orion #5) |
+| Alphabetical surface ordering | Absent | Multi-output/input surfaces must be alphabetically ordered (V-105, Orion #3, #19) |
+| Conv 32K-channel limit | Overly permissive | max_tensor_channels allows 65536 but conv-specific limit is 32768 (V-103, Orion #16) |
+| SDPA causal mask handling | Unimplemented | ANEC silently ignores causal masks in SDPA (Orion #6) |
+| Family 6-7 (A16+ variants) | Not modeled | Binary shows 8 families (0-7); MILLer has 6 (V-109) |
 
 ---
 
-## V. Remediation Roadmap
+## V. Orion Constraint Cross-Reference
+
+The following table cross-references all 20 Orion programming constraints (arxiv:2603.06728) against MILLer's handling and identifies violations.
+
+| # | Orion Constraint | MILLer Handling | Violation | Severity |
+|---|---|---|---|---|
+| 1 | concat MIL op rejected by ANE compiler | MILLer emits MILConcat in SDPA decomposition (mil_lower.rs:2842) and embedding gather (mil_emitter.py:432) | V-098 | CRITICAL |
+| 2 | Multi-output buffers must have uniform sizes | No validation | V-105 | MEDIUM |
+| 3 | Multi-output surfaces ordered alphabetically | No ordering enforcement | V-105 | MEDIUM |
+| 4 | Minimum ~49 KB IOSurface for eval | No minimum buffer size validation | V-104 | MEDIUM |
+| 5 | ~119 compilations per process limit | No compilation count tracking | V-106 | MEDIUM |
+| 6 | SDPA causal masks silently ignored | Not handled; will produce silently incorrect results | (new, unnumbered) | HIGH |
+| 7 | Weights baked at compile time | No validation; weights may reference runtime-dynamic data | (implicit in V-007) | — |
+| 8 | BLOBFILE offset is uint64(64), not 128 | Not validated in emission | (new, unnumbered) | MEDIUM |
+| 9 | MIL text must be NSData*, not NSString* | Python bridge uses coremltools which handles this | No violation | — |
+| 10 | gelu is not a valid MIL activation | MILLer emits mb.gelu(mode="TANH_APPROXIMATION") | V-099 | HIGH |
+| 11 | Weight dict must be @{}, not nil | No validation; empty weight dict may be nil | (new, unnumbered) | MEDIUM |
+| 12 | matmul transpose flags need named consts | MILLer emits transpose_y as bool in MILMatMul | (new, unnumbered) | LOW |
+| 13 | conv does not support bias= param | MILLer's MILConv has no bias field; MilConvOp proto has no bias field. Python side uses mb.linear (not mb.conv) with bias, which is correct. | No violation | — |
+| 14 | Output vars must ref live (post-opt) nodes | No dead-code elimination guarantee for output references | (implicit in V-052) | — |
+| 15 | exec() restart overhead ~50 ms | Not modeled in performance estimation | (informational) | — |
+| 16 | 32K-channel convolutions rejected | max_tensor_channels allows 65536; conv-specific 32K limit not enforced | V-103 | MEDIUM |
+| 17 | Conv 1×1 is 3× faster than matmul | MILLer has Conv1x1AsLinear→MILLinear lowering but also MatMul→MILMatMul; no performance-guided selection between them | (informational) | — |
+| 18 | Multi-input surfaces must have uniform alloc sizes | No validation | V-105 | MEDIUM |
+| 19 | Multi-input surfaces ordered alphabetically | No ordering enforcement | V-105 | MEDIUM |
+| 20 | ANE reads flat buffer as packed [1,C,1,S] | No buffer layout validation in emission | (new, unnumbered) | MEDIUM |
+
+---
+
+## VI. Remediation Roadmap
 
 Ordered by priority; each action references the violation ID(s) it addresses.
 
@@ -304,108 +415,185 @@ Ordered by priority; each action references the violation ID(s) it addresses.
 
 5. **V-011**: Replace silent Fp16 default for unknown dtype with explicit error listing valid dtype strings. Add Int8 to accepted dtype list.
 
+6. **V-098**: Replace MILConcat emission in SDPA decomposition with ANE-legal alternative. The SDPA path (mil_lower.rs:2842-2858) uses concat to merge attention heads — replace with anec-compatible reshape+transpose sequence or emit as a single fused SDPA op for A16+ hardware. This is a compilation-breaking defect for all models using ANE-accelerated attention.
+
 ### Phase 2 — High-Priority Validation Gaps
 
-6. **V-008**: Mark A12 limits as UNVERIFIED in the knowledge store with reduced confidence. Add test that logs a warning when A12 limits are used in constraint validation. Begin empirical measurement on A12 hardware.
+7. **V-008**: Mark A12 limits as UNVERIFIED in the knowledge store with reduced confidence. Add test that logs a warning when A12 limits are used in constraint validation. Begin empirical measurement on A12 hardware.
 
-7. **V-009**: Implement validation for the 7 unused conv/pool/PE constraint fields in `validate_tensor_dims()`. Add per-op validation functions for convolution, pooling, and PE operations.
+8. **V-009**: Implement validation for the 7 unused conv/pool/PE constraint fields in `validate_tensor_dims()`. Add per-op validation functions for convolution, pooling, and PE operations.
 
-8. **V-010**: Make `default_engine()` revision-aware by cross-referencing `AneFamily` capability methods. Return `None` (no engine) for ops not supported on the target family.
+9. **V-010**: Make `default_engine()` revision-aware by cross-referencing `AneFamily` capability methods. Return `None` (no engine) for ops not supported on the target family.
 
-9. **V-012**: Remove Generic→Qwen3 fallback. Return an error when model architecture is not recognized, requiring explicit architecture specification.
+10. **V-012**: Remove Generic→Qwen3 fallback. Return an error when model architecture is not recognized, requiring explicit architecture specification.
 
-10. **V-013**: Derive `stateful` flag from the actual op type in `FamilyPayload::from_spec_with_override()`. Check for DecodeStep and other stateful ops.
+11. **V-013**: Derive `stateful` flag from the actual op type in `FamilyPayload::from_spec_with_override()`. Check for DecodeStep and other stateful ops.
 
-11. **V-014**: Either implement StaticizePass or remove it from the pipeline and document its absence. Current phantom pass wastes developer trust.
+12. **V-014**: Either implement StaticizePass or remove it from the pipeline and document its absence. Current phantom pass wastes developer trust.
 
-12. **V-015**: Expand precision_policy coverage to all SIR op types. At minimum, add the top-30 most common op types and mark the remainder with explicit "coverage gap" markers.
+13. **V-015**: Expand precision_policy coverage to all SIR op types. At minimum, add the top-30 most common op types and mark the remainder with explicit "coverage gap" markers.
 
-13. **V-016**: Replace `eprintln!` warnings in StateTopologyPass with `Result::Err` returns for invalid state patterns, or clearly document that the pass is advisory-only.
+14. **V-016**: Replace `eprintln!` warnings in StateTopologyPass with `Result::Err` returns for invalid state patterns, or clearly document that the pass is advisory-only.
 
-14. **V-017**: Derive FunctionEntry shapes from the MIR graph instead of hardcoding `vec![1,1]`. Walk the graph to extract actual batch/seq dimensions.
+15. **V-017**: Derive FunctionEntry shapes from the MIR graph instead of hardcoding `vec![1,1]`. Walk the graph to extract actual batch/seq dimensions.
 
-15. **V-018**: Replace eprintln+continue for MatMul inner-dim mismatch with `Err`. Shape mismatch is a correctness violation, not a warning condition.
+16. **V-018**: Replace eprintln+continue for MatMul inner-dim mismatch with `Err`. Shape mismatch is a correctness violation, not a warning condition.
 
-16. **V-019**: Resolve Gather contradiction: either remove from CPU_ONLY_OPS (with appropriate scoping for embedding-only), or replace Gather emission with SliceByIndex in all paths.
+17. **V-019**: Resolve Gather contradiction: either remove from CPU_ONLY_OPS (with appropriate scoping for embedding-only), or replace Gather emission with SliceByIndex in all paths.
 
-17. **V-020**: Restructure interleave validation to enforce non-channel-dependent checks (const→1, int4→8) even when channels is None.
+18. **V-020**: Restructure interleave validation to enforce non-channel-dependent checks (const→1, int4→8) even when channels is None.
 
-18. **V-021**: Implement claims_agree logic for all 8 knowledge types. At minimum, add field-level comparison for PrecisionHazard and SurvivalMatrixEntry.
+19. **V-021**: Implement claims_agree logic for all 8 knowledge types. At minimum, add field-level comparison for PrecisionHazard and SurvivalMatrixEntry.
 
-19. **V-022**: Make conflict detection symmetric: when new entry B conflicts with existing A, mark both A and B as conflicted.
+20. **V-022**: Make conflict detection symmetric: when new entry B conflicts with existing A, mark both A and B as conflicted.
 
-20. **V-023, V-025**: Replace fallback shapes/dtypes with hard errors when nodes are missing from MIR graph. Fail compilation rather than emitting wrong descriptors.
+21. **V-023, V-025**: Replace fallback shapes/dtypes with hard errors when nodes are missing from MIR graph. Fail compilation rather than emitting wrong descriptors.
 
-21. **V-024**: Implement timeout using `Command::new().timeout()` or `child.wait_timeout()`. Remove the phantom field or make it functional.
+22. **V-024**: Implement timeout using `Command::new().timeout()` or `child.wait_timeout()`. Remove the phantom field or make it functional.
 
-22. **V-026**: Add FP32→FP16 conversion in safetensors_resolver when target dtype is FP16. Ensure data format matches proto declaration.
+23. **V-026**: Add FP32→FP16 conversion in safetensors_resolver when target dtype is FP16. Ensure data format matches proto declaration.
 
-23. **V-027**: Map Bool to a dedicated Bool blob type or reject at validation time. Map Float64 to 8-byte Float64 blob (after fixing V-006). Reject Unknown dtype early.
+24. **V-027**: Map Bool to a dedicated Bool blob type or reject at validation time. Map Float64 to 8-byte Float64 blob (after fixing V-006). Reject Unknown dtype early.
 
-24. **V-028**: Derive state shape from the corresponding ReadState op. If no ReadState exists, require explicit shape specification rather than defaulting to empty.
+25. **V-028**: Derive state shape from the corresponding ReadState op. If no ReadState exists, require explicit shape specification rather than defaulting to empty.
 
-25. **V-029, V-030**: Add architecture-dependent qualifiers to Softmax and InstanceNorm matrix entries. Use "conditional" or "architecture-dependent" support status with explicit family caveats.
+26. **V-029, V-030**: Resolve Softmax/InstanceNorm family gating contradiction. Binary evidence shows ConvertSoftmax and ConvertInstanceNorm are family-agnostic (no MinimumFamily trait). Either update per-op docs to reflect family-agnostic support, or add explicit notes that the binary evidence contradicts the per-op-family documentation.
+
+27. **V-099**: Replace mb.gelu emission with explicit tanh-approximation decomposition (0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x³)))) that uses ANE-legal ops, or verify that coremltools' mb.gelu internally lowers to the same decomposition accepted by ANEC's ConvertElementwiseUnary.
+
+28. **V-100**: Audit MirOpCompat against the complete ANEC operation enum. Add compatibility mappings for at least the 25+ ANEC operations currently missing (ClampedRelu, Elu, LeakyRelu, Sqr, Rsqrt, Sign, Ceil, Floor, Exp2, Log2, Trunc, etc.) that have ConvertElementwiseUnary converters.
+
+29. **V-101**: Update Softmax and InstanceNorm family matrix entries to reflect binary evidence: these are family-agnostic converters. Remove or clearly document the discrepancy with per-op-per-family documentation that claims architecture-dependent restrictions.
+
+30. **V-110**: Add quantized weight attributes to MILConv and MilConvOp: kernel_scale, kernel_zero_point, kernel_palettized_LUT. These are required for any non-FP16 weight format in convolutions.
 
 ### Phase 3 — Medium-Priority Cleanup
 
-26. **V-031, V-088**: Either remove V26 revision or add explicit "speculative — not based on any hardware" warning in for_revision() return value.
+31. **V-031, V-088**: Either remove V26 revision or add explicit "speculative — not based on any hardware" warning in for_revision() return value.
 
-27. **V-033**: Add palette_bits validation to SirOp construction or deserialization, rejecting values outside {1,2,3,4,6,8}.
+32. **V-033**: Add palette_bits validation to SirOp construction or deserialization, rejecting values outside {1,2,3,4,6,8}.
 
-28. **V-034**: Gate KvCacheLayout::Paged behind a feature flag or add serde validation that rejects Paged on deserialization.
+33. **V-034**: Gate KvCacheLayout::Paged behind a feature flag or add serde validation that rejects Paged on deserialization.
 
-29. **V-035**: Remove `Default` impl for `ModelArchConfig` or make it return an error. Add `ModelArchConfig::unspecified()` for cases that need a placeholder.
+34. **V-035**: Remove `Default` impl for `ModelArchConfig` or make it return an error. Add `ModelArchConfig::unspecified()` for cases that need a placeholder.
 
-30. **V-036**: Either implement stateful KV cache semantics in the emission path or change the handoff kind to a more accurate descriptor (e.g., `DirectPassThrough`).
+35. **V-036**: Either implement stateful KV cache semantics in the emission path or change the handoff kind to a more accurate descriptor (e.g., `DirectPassThrough`).
 
-31. **V-037, V-046**: Make opset version and deployment target configurable from the CLI or task spec rather than hardcoded.
+36. **V-037, V-046**: Make opset version and deployment target configurable from the CLI or task spec rather than hardcoded.
 
-32. **V-038**: Use actual dtype from task spec for PIR tensor specs instead of hardcoded "fp16".
+37. **V-038**: Use actual dtype from task spec for PIR tensor specs instead of hardcoded "fp16".
 
-33. **V-040**: Remove deprecated kv_cache_rewrite from the codebase or gate it behind a feature flag with explicit "ANE-illegal" warning in the module doc.
+38. **V-040**: Remove deprecated kv_cache_rewrite from the codebase or gate it behind a feature flag with explicit "ANE-illegal" warning in the module doc.
 
-34. **V-041**: Resolve conv kernel range contradiction: either expand the 1–7 range or remove the dead 16-threshold code.
+39. **V-041**: Resolve conv kernel range contradiction: either expand the 1–7 range or remove the dead 16-threshold code.
 
-35. **V-042**: Implement pooling kernel_size validation using hardware limits from AneHwLimits.
+40. **V-042**: Implement pooling kernel_size validation using hardware limits from AneHwLimits.
 
-36. **V-050**: Add interleave validation directly in is_dtype_ane_legal() for Int4/UInt4 instead of deferring to caller.
+41. **V-050**: Add interleave validation directly in is_dtype_ane_legal() for Int4/UInt4 instead of deferring to caller.
 
-37. **V-051**: Align quantize validator with dtype validator — reject E5M2 as quantize output since it is ANE-illegal.
+42. **V-051, V-111**: Align quantize validator with dtype validator — reject E5M2 as quantize output since it is universally "not supported" in ANEC. Binary evidence confirms this is definitive, not architecture-conditional.
 
-38. **V-053, V-055, V-056**: Fix documentation to match actual code behavior (confidence start values, transfer scaling, ComputePlan confidence).
+43. **V-053, V-055, V-056**: Fix documentation to match actual code behavior (confidence start values, transfer scaling, ComputePlan confidence).
 
-39. **V-071**: Align seed JSON format with knowledge_schema.md, or update schema to match actual seed format.
+44. **V-071**: Align seed JSON format with knowledge_schema.md, or update schema to match actual seed format.
 
-40. **V-083**: Make weight.bin optional in validation. Only require it when the model declares external weights.
+45. **V-083**: Make weight.bin optional in validation. Only require it when the model declares external weights.
 
-41. **V-087**: Wire --seed parameter through the compile pipeline, or remove it from the CLI.
+46. **V-087**: Wire --seed parameter through the compile pipeline, or remove it from the CLI.
+
+47. **V-103**: Add conv-specific 32K-channel limit validation in op_constraints.rs, distinct from the general max_tensor_channels limit. Conv channels > 32768 should be rejected at constraint validation time regardless of max_tensor_channels value.
+
+48. **V-104**: Add minimum IOSurface size validation (~49 KB) for eval buffers in the emission pipeline. Models with output buffers smaller than this will fail at runtime.
+
+49. **V-105**: Enforce alphabetical ordering of multi-output and multi-input surfaces in the emission pipeline. Add sorting of surface names before emission.
+
+50. **V-106**: Add compilation count tracking per process. Warn when approaching ~119 limit. Provide a reset mechanism or process restart advisory.
+
+51. **V-107**: Add ANEC attribute shape validation to the emission pipeline. Validate that stride, padding, dilation, and kernel_size attributes have the correct number of elements per the ANEC schema before emission.
+
+52. **V-108**: Add missing AneRevision variants for V0-V3 hardware versions. At minimum, mark them as "pre-A11" with minimal capabilities.
+
+53. **V-109**: Extend AneFamily enum to cover all 8 binary-defined families (0-7). Add AneFamily::A16Plus and AneFamily::Future for families 6-7.
+
+54. **V-112**: Add MirOp::MILInputView or equivalent to support negative-stride tensor views. This is needed for correct lowering of reverse and crop/resize patterns that use anec.input_view with step<0.
 
 ### Phase 4 — Low-Priority and Cosmetic
 
-42. **V-089**: Replace hardcoded unwrap_or defaults with explicit configuration or fail-closed behavior.
+55. **V-089**: Replace hardcoded unwrap_or defaults with explicit configuration or fail-closed behavior.
 
-43. **V-090**: Add diagnostic when canonicalization cycle limit is hit.
+56. **V-090**: Add diagnostic when canonicalization cycle limit is hit.
 
-44. **V-091, V-092**: Add constraint documentation for UInt16 and Bool "limited support" — specify which ops/families support them.
+57. **V-091, V-092**: Add constraint documentation for UInt16 and Bool "limited support" — specify which ops/families support them.
 
-45. **V-093**: Expand CPU_ONLY_OPS_DETAILED to cover all 120+ CPU-only ops with reason codes.
+58. **V-093**: Expand CPU_ONLY_OPS_DETAILED to cover all 120+ CPU-only ops with reason codes.
 
-46. **V-094**: Replace binary knowledge_consistent with a ratio or graded score.
+59. **V-094**: Replace binary knowledge_consistent with a ratio or graded score.
 
-47. **V-095**: Use model-specific salt in UUID generation to improve uniqueness.
+60. **V-095**: Use model-specific salt in UUID generation to improve uniqueness.
 
-48. **V-097**: Document FP16 epsilon truncation or compute epsilon in FP32 before casting.
+61. **V-097**: Document FP16 epsilon truncation or compute epsilon in FP32 before casting.
+
+62. **V-102**: Update documentation for ArgMinMax to reflect high-confidence binary evidence: 7 family instantiations (0-6) confirm unavailability on A18+. Remove "unverified" qualifier from V-032.
 
 ---
 
-## VI. Forensic Note
+## VII. Forensic Note
 
 Local reference materials were used during this audit for non-invasive
-compatibility vocabulary extraction only. These materials are stored in
-the `forensics/` directory within the local working tree and are excluded
-from the repository by `.gitignore`. No assembly, raw disassembly
-snippets, long verbatim binary strings, proprietary implementation
-details, raw private/local forensic artefacts, links or paths to local
-forensic material, or claims of authorization from any third party
-appear in this report. All findings are expressed in abstract,
-source-facing terms using the author's own wording.
+compatibility vocabulary extraction. The expanded audit additionally used
+deep binary forensic analysis techniques: (a) MLIR dialect constraint
+schema extraction from ANECompiler validation strings, (b) C++ demangled
+symbol analysis of converter class template instantiations with
+MinimumFamily parameters, (c) ANEC operation enum extraction from
+converter registration strings, (d) cross-referencing of 20 Orion
+programming constraints (arxiv:2603.06728) against MILLer source, (e)
+ZinRegisterProgramming hardware version template instantiation analysis,
+and (f) architecture-conditional data-type rejection message
+categorization.
+
+These materials are stored in the `forensics/` directory within the
+local working tree and are excluded from the repository by `.gitignore`.
+No assembly, raw disassembly snippets, long verbatim binary strings,
+proprietary implementation details, raw private/local forensic artefacts,
+links or paths to local forensic material, or claims of authorization
+from any third party appear in this report. All findings are expressed
+in abstract, source-facing terms using the author's own wording. Binary-
+derived findings are expressed as constraint catalogs and cross-reference
+indices without reproducing proprietary content.
+
+### Forensic Methodology Detail
+
+The forensic analysis was performed in two phases:
+
+**Phase 1 (original audit)**: Non-invasive techniques including file
+identity hashing, container metadata extraction (Mach-O headers, linked
+libraries), and printable string triage for coarse vocabulary. This
+phase produced the constraint-summary.md document and the original
+97-violation report.
+
+**Phase 2 (expanded audit)**: Deep binary analysis including:
+- MLIR operation constraint schema extraction: Each `anec.*` operation
+  in ANECompiler has associated MLIR dialect constraint validation that
+  produces error messages with exact attribute shape requirements (e.g.,
+  `stride=shape{3}`). These strings were cataloged without executing the
+  binary.
+- C++ symbol demangling: Template instantiation parameters in demangled
+  converter symbols reveal family-scoped constraints (e.g.,
+  `ConvertReductionArg<MinimumFamily=0>` through
+  `ConvertReductionArg<MinimumFamily=6>`).
+- Operation enum extraction: The complete ANEC operation enum was
+  reconstructed from converter registration string patterns, yielding
+  80+ operation names.
+- Orion constraint cross-referencing: 20 documented ANE programming
+  constraints from arxiv:2603.06728 were systematically checked against
+  MILLer source code.
+- Hardware version template analysis: ZinRegisterProgramming template
+  instantiations for V0-V9, V17, V19, V20, V26 confirm 14 hardware
+  code paths.
+- Data-type rejection message categorization: E5M2, 2xInt8, and
+  architecture-conditional E4M3 rejection messages confirm and
+  strengthen source-level findings.
+
+All forensic evidence is expressed at the level of abstract constraint
+catalogs. No raw binary content, disassembly, or proprietary
+implementation details are reproduced.
