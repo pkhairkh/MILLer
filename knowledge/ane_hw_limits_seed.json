@@ -18,7 +18,8 @@
       "pe_max_tile_height": 2048,
       "pe_reduction_cout_limit": 16384,
       "num_nes": 1,
-      "ne_transpose_c_max": 16384
+      "ne_transpose_c_max": 16384,
+      "max_conv_channels": 32768
     },
     {
       "revision": "V5",
@@ -36,7 +37,8 @@
       "pe_max_tile_height": 2048,
       "pe_reduction_cout_limit": 16384,
       "num_nes": 1,
-      "ne_transpose_c_max": 16384
+      "ne_transpose_c_max": 16384,
+      "max_conv_channels": 32768
     },
     {
       "revision": "V6",
@@ -54,7 +56,8 @@
       "pe_max_tile_height": 2048,
       "pe_reduction_cout_limit": 16384,
       "num_nes": 1,
-      "ne_transpose_c_max": 16384
+      "ne_transpose_c_max": 16384,
+      "max_conv_channels": 32768
     },
     {
       "revision": "V7",
@@ -72,7 +75,8 @@
       "pe_max_tile_height": 2048,
       "pe_reduction_cout_limit": 16384,
       "num_nes": 2,
-      "ne_transpose_c_max": 16384
+      "ne_transpose_c_max": 16384,
+      "max_conv_channels": 32768
     },
     {
       "revision": "V8",
@@ -90,7 +94,8 @@
       "pe_max_tile_height": 2048,
       "pe_reduction_cout_limit": 16384,
       "num_nes": 2,
-      "ne_transpose_c_max": 16384
+      "ne_transpose_c_max": 16384,
+      "max_conv_channels": 32768
     },
     {
       "revision": "V10",
@@ -108,7 +113,8 @@
       "pe_max_tile_height": 2048,
       "pe_reduction_cout_limit": 16384,
       "num_nes": 4,
-      "ne_transpose_c_max": 16384
+      "ne_transpose_c_max": 16384,
+      "max_conv_channels": 32768
     },
     {
       "revision": "V11",
@@ -126,7 +132,8 @@
       "pe_max_tile_height": 2048,
       "pe_reduction_cout_limit": 16384,
       "num_nes": 4,
-      "ne_transpose_c_max": 16384
+      "ne_transpose_c_max": 16384,
+      "max_conv_channels": 32768
     },
     {
       "revision": "V17",
@@ -144,7 +151,8 @@
       "pe_max_tile_height": 2048,
       "pe_reduction_cout_limit": 16384,
       "num_nes": 6,
-      "ne_transpose_c_max": 16384
+      "ne_transpose_c_max": 16384,
+      "max_conv_channels": 32768
     },
     {
       "revision": "V19",
@@ -162,7 +170,8 @@
       "pe_max_tile_height": 2048,
       "pe_reduction_cout_limit": 16384,
       "num_nes": 8,
-      "ne_transpose_c_max": 16384
+      "ne_transpose_c_max": 16384,
+      "max_conv_channels": 32768
     },
     {
       "revision": "V20",
@@ -180,7 +189,8 @@
       "pe_max_tile_height": 2048,
       "pe_reduction_cout_limit": 16384,
       "num_nes": 16,
-      "ne_transpose_c_max": 16384
+      "ne_transpose_c_max": 16384,
+      "max_conv_channels": 32768
     },
     {
       "revision": "V26",
@@ -198,7 +208,8 @@
       "pe_max_tile_height": 2048,
       "pe_reduction_cout_limit": 16384,
       "num_nes": 16,
-      "ne_transpose_c_max": 16384
+      "ne_transpose_c_max": 16384,
+      "max_conv_channels": 32768
     }
   ]
 }
