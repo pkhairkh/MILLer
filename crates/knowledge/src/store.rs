@@ -343,8 +343,14 @@ impl KnowledgeStore {
     pub fn insert_observation(&mut self, unit: KnowledgeUnit) -> Result<()> {
         let id = unit.id.clone();
 
-        if let Some(existing) = self.index.get(&id) {
-            if existing.source == EntrySource::Seed {
+        // T-112: Extract existing entry data before mutating self, to avoid
+        // borrow conflicts with check_conflicts_for_entry(&mut self).
+        let existing_data = self.index.get(&id).map(|e| {
+            (e.source.clone(), e.provenance.inserted_at.clone(), e.provenance.source_path.clone(), e.conflict_status.clone(), e.revision, e.unit.knowledge_type, e.unit.evidence_source.to_string())
+        });
+
+        if let Some((source, inserted_at, source_path, conflict_status, revision, old_kt, old_src)) = existing_data {
+            if source == EntrySource::Seed {
                 bail!(
                     "Cannot overwrite seed entry '{}' with an observation. \
                      Seeds are immutable. Use a different ID for the observation.",
@@ -355,36 +361,34 @@ impl KnowledgeStore {
             let mut updated = KnowledgeEntry {
                 provenance: EntryProvenance {
                     origin: EntryOrigin::RunObservation,
-                    inserted_at: existing.provenance.inserted_at.clone(),
+                    inserted_at,
                     updated_at: Some(chrono::Utc::now().to_rfc3339()),
-                    source_path: existing.provenance.source_path.clone(),
+                    source_path,
                 },
                 source: EntrySource::Observation,
-                conflict_status: existing.conflict_status.clone(),
-                revision: existing.revision + 1,
+                conflict_status,
+                revision: revision + 1,
                 unit: Arc::new(unit),
             };
 
             // Check for conflicts: does this contradict an existing entry?
+            // T-112: This now also back-patches existing entries (symmetric).
             self.check_conflicts_for_entry(&mut updated);
 
             // Update secondary indexes if knowledge type or evidence source changed
-            if existing.unit.knowledge_type != updated.unit.knowledge_type {
-                if let Some(ids) = self.type_index.get_mut(&existing.unit.knowledge_type) {
+            let new_kt = updated.unit.knowledge_type;
+            let new_src = updated.unit.evidence_source.to_string();
+            if old_kt != new_kt {
+                if let Some(ids) = self.type_index.get_mut(&old_kt) {
                     ids.retain(|x| x != &id);
                 }
-                self.type_index.entry(updated.unit.knowledge_type).or_default().push(id.clone());
+                self.type_index.entry(new_kt).or_default().push(id.clone());
             }
-            if existing.unit.evidence_source.to_string() != updated.unit.evidence_source.to_string()
-            {
-                let old_src = existing.unit.evidence_source.to_string();
+            if old_src != new_src {
                 if let Some(ids) = self.source_index.get_mut(&old_src) {
                     ids.retain(|x| x != &id);
                 }
-                self.source_index
-                    .entry(updated.unit.evidence_source.to_string())
-                    .or_default()
-                    .push(id.clone());
+                self.source_index.entry(new_src).or_default().push(id.clone());
             }
 
             self.index.insert(id.clone(), updated);
@@ -521,11 +525,17 @@ impl KnowledgeStore {
     /// contradictory claims within overlapping scopes. For example:
     /// - One entry says mb.gather is ANE-legal, another says it is not,
     ///   and their scopes overlap.
-    fn check_conflicts_for_entry(&self, entry: &mut KnowledgeEntry) {
+    ///
+    /// T-112: Conflict detection is now **symmetric** — both the new entry
+    /// and any existing entries it conflicts with are marked as conflicted.
+    /// Previously, only the new entry was marked, which meant querying an
+    /// existing entry missed half of all conflicts.
+    fn check_conflicts_for_entry(&mut self, entry: &mut KnowledgeEntry) {
         let mut conflicts = Vec::new();
+        let new_id = entry.unit.id.clone();
 
-        for (existing_id, existing) in &self.index {
-            if existing_id == &entry.unit.id {
+        for (existing_id, existing) in self.index.iter() {
+            if existing_id == &new_id {
                 continue;
             }
             if existing.unit.knowledge_type != entry.unit.knowledge_type {
@@ -542,7 +552,28 @@ impl KnowledgeStore {
         }
 
         if !conflicts.is_empty() {
-            entry.conflict_status = ConflictStatus::ConflictedWith(conflicts);
+            entry.conflict_status = ConflictStatus::ConflictedWith(conflicts.clone());
+
+            // T-112: Back-patch existing entries to mark them as conflicted
+            // with the new entry. This makes conflict detection symmetric.
+            for existing_id in &conflicts {
+                if let Some(existing) = self.index.get_mut(existing_id) {
+                    match &mut existing.conflict_status {
+                        ConflictStatus::NoConflict => {
+                            existing.conflict_status =
+                                ConflictStatus::ConflictedWith(vec![new_id.clone()]);
+                        }
+                        ConflictStatus::ConflictedWith(ids) => {
+                            if !ids.contains(&new_id) {
+                                ids.push(new_id.clone());
+                            }
+                        }
+                        ConflictStatus::Resolved { .. } => {
+                            // Already resolved — don't re-introduce conflict
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -841,5 +872,107 @@ mod tests {
 
         // "unknown" scope should overlap with everything (conservative)
         assert!(scopes_overlap(&scope_with_unknown, &scope_specific));
+    }
+
+    // ─── T-112: Symmetric conflict detection tests ──────────────────
+
+    /// T-112: Verify that conflict detection is symmetric — both the new
+    /// entry AND the existing entry are marked as conflicted.
+    #[test]
+    fn test_t112_conflict_detection_symmetric() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store_path = tmp.path().join("test_store");
+
+        let mut store = KnowledgeStore::open(&store_path.to_string_lossy()).unwrap();
+
+        // Insert: matmul is legal on M2
+        let unit_a = make_unit("obs_a", KnowledgeType::LegalityRule, true, 0.8);
+        store.insert_observation(unit_a).unwrap();
+
+        // Insert: matmul is NOT legal on M2 (same scope, opposite claim)
+        let unit_b = make_unit("obs_b", KnowledgeType::LegalityRule, false, 0.7);
+        store.insert_observation(unit_b).unwrap();
+
+        // obs_b should be marked as conflicted with obs_a
+        let entry_b = store.get("obs_b").unwrap();
+        if let ConflictStatus::ConflictedWith(ids) = &entry_b.conflict_status {
+            assert!(ids.contains(&"obs_a".to_string()), "obs_b should conflict with obs_a");
+        } else {
+            panic!("Expected ConflictedWith status for obs_b");
+        }
+
+        // T-112: obs_a should ALSO be marked as conflicted with obs_b (symmetry)
+        let entry_a = store.get("obs_a").unwrap();
+        if let ConflictStatus::ConflictedWith(ids) = &entry_a.conflict_status {
+            assert!(ids.contains(&"obs_b".to_string()), "obs_a should conflict with obs_b (symmetric)");
+        } else {
+            panic!("Expected ConflictedWith status for obs_a (T-112 symmetry)");
+        }
+    }
+
+    /// T-112: Verify that non-conflicting entries don't get spurious conflict markers.
+    #[test]
+    fn test_t112_no_conflict_for_agreeing_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store_path = tmp.path().join("test_store");
+
+        let mut store = KnowledgeStore::open(&store_path.to_string_lossy()).unwrap();
+
+        // Insert: matmul is legal on M2
+        let unit_a = make_unit("obs_a", KnowledgeType::LegalityRule, true, 0.8);
+        store.insert_observation(unit_a).unwrap();
+
+        // Insert: another observation agreeing that matmul is legal
+        let unit_b = make_unit("obs_b", KnowledgeType::LegalityRule, true, 0.7);
+        store.insert_observation(unit_b).unwrap();
+
+        // Neither should be conflicted
+        let entry_a = store.get("obs_a").unwrap();
+        assert!(
+            matches!(entry_a.conflict_status, ConflictStatus::NoConflict),
+            "obs_a should have NoConflict when claims agree"
+        );
+        let entry_b = store.get("obs_b").unwrap();
+        assert!(
+            matches!(entry_b.conflict_status, ConflictStatus::NoConflict),
+            "obs_b should have NoConflict when claims agree"
+        );
+    }
+
+    /// T-112: Verify that resolved conflicts are not re-introduced by back-patching.
+    #[test]
+    fn test_t112_resolved_conflict_not_reintroduced() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store_path = tmp.path().join("test_store");
+
+        let mut store = KnowledgeStore::open(&store_path.to_string_lossy()).unwrap();
+
+        // Insert first entry
+        let unit_a = make_unit("obs_a", KnowledgeType::LegalityRule, true, 0.8);
+        store.insert_observation(unit_a).unwrap();
+
+        // Manually resolve the conflict on obs_a
+        if let Some(entry) = store.get_mut("obs_a") {
+            entry.conflict_status = ConflictStatus::Resolved {
+                note: "Manually resolved".to_string(),
+            };
+        }
+
+        // Insert contradictory entry
+        let unit_b = make_unit("obs_b", KnowledgeType::LegalityRule, false, 0.7);
+        store.insert_observation(unit_b).unwrap();
+
+        // obs_b should be conflicted, but obs_a's resolution should be preserved
+        let entry_b = store.get("obs_b").unwrap();
+        assert!(
+            matches!(&entry_b.conflict_status, ConflictStatus::ConflictedWith(ids) if ids.contains(&"obs_a".to_string())),
+            "obs_b should be conflicted with obs_a"
+        );
+
+        let entry_a = store.get("obs_a").unwrap();
+        assert!(
+            matches!(entry_a.conflict_status, ConflictStatus::Resolved { .. }),
+            "obs_a's resolved status should be preserved, not re-introduced"
+        );
     }
 }

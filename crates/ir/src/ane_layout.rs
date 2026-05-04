@@ -7,6 +7,25 @@
 //! Bit-widths 5 and 7 are **invalid** and will cause ANE runtime errors.
 //! [`validate_palette_bits()`] provides centralized validation used by
 //! `ane-passes`, `ane-lab`, and `ane-ir` (T-64 / I-38).
+//!
+//! ## Vector Palettization Constraints (T-121)
+//!
+//! In addition to bit-width validation, the ANE enforces three constraints
+//! on **vector palettized** ops that are validated in `ane-passes` (the
+//! `ane-passes` crate depends on `ane-ir`, so the validation function lives
+//! there and is re-exported via `ane_passes::palettize_weights`):
+//!
+//! 1. **Cout-only dimension**: Vector palettization is only supported at the
+//!    Cout (output channel) dimension for ANE. Palettizing at other
+//!    dimensions (Cin, H, W, etc.) fails at ANEC compile time.
+//! 2. **No zero point**: Zero point is not supported for vector palettized
+//!    kernels — the zero_point must be None/0.
+//! 3. **No palette size 256**: Quantized kernels with palettize size=256
+//!    (8-bit full LUT) are not supported for vector palettized ops.
+//!
+//! See `ane_passes::op_constraints::validate_vector_palettization_constraints()`
+//! for the validation function, re-exported as
+//! `ane_passes::palettize_weights::validate_vector_palettization_constraints()`.
 
 use serde::{Deserialize, Serialize};
 

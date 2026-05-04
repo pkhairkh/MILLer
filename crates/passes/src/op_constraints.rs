@@ -395,6 +395,110 @@ pub fn validate_deconv_constraints(
     Ok(())
 }
 
+/// T-121: Validate vector palettization at-Cout constraints.
+///
+/// ANEC enforces three constraints on vector palettized ops that are not
+/// validated elsewhere. Violating any of these causes ANEC compile-time
+/// failures with opaque error messages. This function catches them early
+/// with clear diagnostics:
+///
+/// 1. **Cout-only dimension**: Vector palettization is only supported at
+///    the Cout (output channel) dimension for ANE. Palettizing along any
+///    other dimension (Cin, H, W, etc.) will fail at ANEC compile time
+///    with: "vector palettization is only supported at Cout for ANE".
+///    The `palettize_dimension` must be `Some("Cout")` for vector
+///    palettized ops; `None` is also rejected because the dimension
+///    must be explicitly specified.
+///
+/// 2. **No zero point**: Vector palettized kernels must not have a
+///    zero_point set. The ANE does not support non-zero zero_point
+///    values for vector palettized ops. The ANEC error message is:
+///    "zero point is not supported for vector palettized kernel".
+///    Scalar palettized ops may use zero_point freely.
+///
+/// 3. **No palette size 256**: Quantized kernels with a palette size
+///    of 256 (i.e., 8-bit palettization with a full 256-entry LUT)
+///    are not supported for vector palettized ops. The ANEC rejects
+///    this with: "Quantized kernel with palettize size=256 is not
+///    supported". This constraint only applies to vector palettized
+///    ops; scalar palettized ops may use palette size 256.
+///
+/// # Parameters
+///
+/// - `is_vector_palettized`: Whether this op uses vector palettization.
+///   When `false`, only the zero_point and palette_size checks are
+///   relaxed (scalar palettization is unconstrained for those).
+/// - `palettize_dimension`: Which dimension is palettized ("Cout",
+///   "Cin", etc.). Must be `Some("Cout")` when `is_vector_palettized`
+///   is true. `None` is rejected for vector palettized ops because
+///   the dimension must be explicitly specified.
+/// - `has_zero_point`: Whether the op has a zero_point set (non-zero).
+/// - `palette_size`: The number of palette entries (e.g., 256 for
+///   8-bit, 16 for 4-bit).
+///
+/// # Returns
+///
+/// `Ok(())` if all constraints are satisfied, or
+/// `Err(OpConstraintViolation)` with a descriptive message.
+pub fn validate_vector_palettization_constraints(
+    is_vector_palettized: bool,
+    palettize_dimension: Option<&str>,
+    has_zero_point: bool,
+    palette_size: usize,
+) -> Result<(), OpConstraintViolation> {
+    // ─── 1. Vector palettization must be at Cout dimension ──────────
+    // ANEC rejects vector palettization at non-Cout dimensions.
+    // "vector palettization is only supported at Cout for ANE"
+    if is_vector_palettized {
+        match palettize_dimension {
+            Some("Cout") => { /* valid */ }
+            Some(dim) => {
+                return Err(OpConstraintViolation {
+                    op_name: "vector_palettize".into(),
+                    constraint: "vector_palettize_at_cout_only".into(),
+                    message: format!(
+                        "Vector palettization is only supported at Cout for ANE, got dimension '{}'",
+                        dim
+                    ),
+                });
+            }
+            None => {
+                return Err(OpConstraintViolation {
+                    op_name: "vector_palettize".into(),
+                    constraint: "vector_palettize_dimension_required".into(),
+                    message: "Vector palettization requires a palettize dimension to be specified \
+                              (must be \"Cout\" for ANE)"
+                        .into(),
+                });
+            }
+        }
+    }
+
+    // ─── 2. Zero point not supported for vector palettized kernel ──
+    // "zero point is not supported for vector palettized kernel"
+    if is_vector_palettized && has_zero_point {
+        return Err(OpConstraintViolation {
+            op_name: "vector_palettize".into(),
+            constraint: "no_zero_point_for_vector_palettize".into(),
+            message: "Zero point is not supported for vector palettized kernel".into(),
+        });
+    }
+
+    // ─── 3. Palette size 256 not supported for vector palettized ───
+    // "Quantized kernel with palettize size=256 is not supported"
+    if is_vector_palettized && palette_size == 256 {
+        return Err(OpConstraintViolation {
+            op_name: "vector_palettize".into(),
+            constraint: "no_palette_size_256_for_vector_palettize".into(),
+            message: "Quantized kernel with palettize size=256 is not supported for vector \
+                      palettization on ANE"
+                .into(),
+        });
+    }
+
+    Ok(())
+}
+
 /// Validate linear constraints.
 /// Source: ane-constraints-docs Section 4.9
 pub fn validate_linear_constraints(
@@ -1432,5 +1536,127 @@ mod tests {
         // Asymmetric spatial padding (different before/after on spatial axes) is legal
         // [0,0, 0,0, 1,2, 0,3] — different padding amounts on spatial axes
         assert!(validate_pad_constraints("constant", &[0, 0, 0, 0, 1, 2, 0, 3], 4).is_ok());
+    }
+
+    // ─── T-121: Vector palettization constraint tests ─────────────────
+
+    #[test]
+    fn test_vector_palettize_at_cout_ok() {
+        // Vector palettization at Cout is the only supported dimension
+        assert!(validate_vector_palettization_constraints(
+            true,
+            Some("Cout"),
+            false,
+            16
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn test_vector_palettize_at_non_cout_rejected() {
+        // Vector palettization at non-Cout dimension is rejected
+        let result = validate_vector_palettization_constraints(
+            true,
+            Some("Cin"),
+            false,
+            16,
+        );
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().constraint,
+            "vector_palettize_at_cout_only"
+        );
+    }
+
+    #[test]
+    fn test_vector_palettize_none_dimension_rejected() {
+        // Vector palettization with None dimension is rejected — dimension must be specified
+        let result = validate_vector_palettization_constraints(
+            true,
+            None,
+            false,
+            16,
+        );
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().constraint,
+            "vector_palettize_dimension_required"
+        );
+    }
+
+    #[test]
+    fn test_scalar_palettize_dimension_always_ok() {
+        // Scalar palettization (is_vector_palettized=false) always passes dimension check
+        assert!(validate_vector_palettization_constraints(
+            false,
+            Some("Cin"),
+            false,
+            16
+        )
+        .is_ok());
+        // Even None dimension is fine for scalar palettization
+        assert!(validate_vector_palettization_constraints(
+            false,
+            None,
+            false,
+            16
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn test_vector_palettize_zero_point_rejected() {
+        // Zero point is not supported for vector palettized kernel
+        let result = validate_vector_palettization_constraints(
+            true,
+            Some("Cout"),
+            true,
+            16,
+        );
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().constraint,
+            "no_zero_point_for_vector_palettize"
+        );
+    }
+
+    #[test]
+    fn test_scalar_palettize_zero_point_ok() {
+        // Zero point is fine for scalar palettized ops
+        assert!(validate_vector_palettization_constraints(
+            false,
+            Some("Cout"),
+            true,
+            256
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn test_vector_palettize_palette_size_256_rejected() {
+        // Palette size 256 (8-bit full LUT) is not supported for vector palettized ops
+        let result = validate_vector_palettization_constraints(
+            true,
+            Some("Cout"),
+            false,
+            256,
+        );
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().constraint,
+            "no_palette_size_256_for_vector_palettize"
+        );
+    }
+
+    #[test]
+    fn test_vector_palettize_palette_size_16_ok() {
+        // Palette size 16 (4-bit) is fine for vector palettized ops
+        assert!(validate_vector_palettization_constraints(
+            true,
+            Some("Cout"),
+            false,
+            16
+        )
+        .is_ok());
     }
 }

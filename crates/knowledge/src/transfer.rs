@@ -11,7 +11,7 @@ use ane_ir::kir::{EvidenceSource, KnowledgeType, KnowledgeUnit};
 use anyhow::{bail, Result};
 
 use crate::store::KnowledgeEntry;
-use crate::util::payload_ane_legal;
+use crate::util::{payload_ane_legal, payload_ane_placed, payload_fallback_engine, payload_num_partitions, payload_quality_impact, payload_survival_rate};
 
 /// Synthetic transfer annotation and validation.
 pub struct SyntheticTransfer {
@@ -141,15 +141,78 @@ impl SyntheticTransfer {
     }
 
     /// Check if two knowledge units make agreeing claims (using typed accessors).
+    ///
+    /// T-112: Previously defaulted to `true` for 7/8 knowledge types, preventing
+    /// contradiction detection. Now implements field-level comparison for all
+    /// knowledge types using typed payload accessors. Returns `true` if claims
+    /// agree (or if insufficient data to determine disagreement), `false` if
+    /// claims explicitly contradict.
     fn claims_agree(&self, a: &KnowledgeUnit, b: &KnowledgeUnit) -> bool {
         match a.knowledge_type {
             KnowledgeType::LegalityRule => {
+                // Legality: ane_legal must agree
                 match (payload_ane_legal(&a.payload), payload_ane_legal(&b.payload)) {
                     (Some(av), Some(bv)) => av == bv,
                     _ => true, // Can't determine disagreement
                 }
             }
-            _ => true, // For other types, assume agreement unless contradicted
+            KnowledgeType::PrecisionHazard => {
+                // PrecisionHazard: quality_impact must not be opposite
+                let a_impact = payload_quality_impact(&a.payload);
+                let b_impact = payload_quality_impact(&b.payload);
+                match (a_impact, b_impact) {
+                    (Some("negligible"), Some("severe"))
+                    | (Some("severe"), Some("negligible")) => false,
+                    _ => true,
+                }
+            }
+            KnowledgeType::SurvivalMatrixEntry => {
+                // SurvivalMatrix: survival_rate should not diverge significantly.
+                // If both entries specify a rate and they differ by more than 0.5,
+                // they disagree. A survival rate of 0.1 vs 0.9 is a contradiction.
+                match (payload_survival_rate(&a.payload), payload_survival_rate(&b.payload)) {
+                    (Some(av), Some(bv)) => (av - bv).abs() <= 0.5,
+                    _ => true,
+                }
+            }
+            KnowledgeType::FallbackSignature => {
+                // FallbackSignature: fallback_engine must agree if both specify one.
+                match (payload_fallback_engine(&a.payload), payload_fallback_engine(&b.payload)) {
+                    (Some(av), Some(bv)) => av == bv,
+                    _ => true,
+                }
+            }
+            KnowledgeType::ShardTemplateKnowledge => {
+                // ShardTemplate: num_partitions must agree if both specify it.
+                match (payload_num_partitions(&a.payload), payload_num_partitions(&b.payload)) {
+                    (Some(av), Some(bv)) => av == bv,
+                    _ => true,
+                }
+            }
+            KnowledgeType::StateTopologyOutcome => {
+                // StateTopology: ane_placed must agree (whether ops were placed on ANE).
+                match (payload_ane_placed(&a.payload), payload_ane_placed(&b.payload)) {
+                    (Some(av), Some(bv)) => av == bv,
+                    _ => true,
+                }
+            }
+            KnowledgeType::MotifCatalog => {
+                // MotifCatalog: motifs are additive (catalog entries), so they
+                // agree by default unless they contradict on op_pattern scope.
+                // Two motif entries for different patterns don't conflict.
+                true
+            }
+            KnowledgeType::DeviceFingerprint => {
+                // DeviceFingerprint: entries describe device capabilities and
+                // don't contradict each other (different devices have different
+                // fingerprints, but that's additive not contradictory).
+                true
+            }
+            KnowledgeType::SyntheticTransferAnnotation => {
+                // Transfer annotations are metadata about transfer decisions,
+                // not claims about model behavior. They can't contradict.
+                true
+            }
         }
     }
 }
@@ -294,5 +357,149 @@ mod tests {
         let result = transfer.validate_against_real(&synthetic, &real).unwrap();
         assert!(!result.is_consistent);
         assert_eq!(result.recommendation, TransferRecommendation::EscalateForReview);
+    }
+
+    // ─── T-112: claims_agree field-level comparison tests ────────────
+
+    /// T-112: Verify that SurvivalMatrixEntry claims_agree detects
+    /// diverging survival_rate values.
+    #[test]
+    fn test_t112_claims_agree_survival_matrix_diverging() {
+        let transfer = SyntheticTransfer::new();
+        let mut payload_a = HashMap::new();
+        payload_a.insert("op_pattern".to_string(), serde_json::json!("mb.matmul"));
+        payload_a.insert("survival_rate".to_string(), serde_json::json!(0.9));
+        let mut payload_b = HashMap::new();
+        payload_b.insert("op_pattern".to_string(), serde_json::json!("mb.matmul"));
+        payload_b.insert("survival_rate".to_string(), serde_json::json!(0.1));
+
+        let unit_a = KnowledgeUnit {
+            id: "surv_a".to_string(),
+            version: 1,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            knowledge_type: KnowledgeType::SurvivalMatrixEntry,
+            confidence: 0.8,
+            evidence_source: EvidenceSource::SyntheticRun,
+            evidence_count: 5,
+            scope: KnowledgeScope {
+                device_classes: vec!["M2".to_string()],
+                os_versions: vec!["macOS_15".to_string()],
+                opset_versions: vec!["iOS18".to_string()],
+            },
+            conflict_priority: 0,
+            payload: payload_a,
+        };
+        let unit_b = KnowledgeUnit {
+            id: "surv_b".to_string(),
+            version: 1,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            knowledge_type: KnowledgeType::SurvivalMatrixEntry,
+            confidence: 0.7,
+            evidence_source: EvidenceSource::SyntheticRun,
+            evidence_count: 5,
+            scope: KnowledgeScope {
+                device_classes: vec!["M2".to_string()],
+                os_versions: vec!["macOS_15".to_string()],
+                opset_versions: vec!["iOS18".to_string()],
+            },
+            conflict_priority: 0,
+            payload: payload_b,
+        };
+        // 0.9 vs 0.1 — differ by 0.8 > 0.5 threshold → disagree
+        assert!(!transfer.claims_agree(&unit_a, &unit_b));
+    }
+
+    /// T-112: Verify that FallbackSignature claims_agree detects
+    /// different fallback_engine values.
+    #[test]
+    fn test_t112_claims_agree_fallback_signature_disagree() {
+        let transfer = SyntheticTransfer::new();
+        let mut payload_a = HashMap::new();
+        payload_a.insert("op_pattern".to_string(), serde_json::json!("mb.matmul"));
+        payload_a.insert("fallback_engine".to_string(), serde_json::json!("GPU"));
+        let mut payload_b = HashMap::new();
+        payload_b.insert("op_pattern".to_string(), serde_json::json!("mb.matmul"));
+        payload_b.insert("fallback_engine".to_string(), serde_json::json!("CPU"));
+
+        let unit_a = KnowledgeUnit {
+            id: "fb_a".to_string(),
+            version: 1,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            knowledge_type: KnowledgeType::FallbackSignature,
+            confidence: 0.8,
+            evidence_source: EvidenceSource::SyntheticRun,
+            evidence_count: 5,
+            scope: KnowledgeScope {
+                device_classes: vec!["M2".to_string()],
+                os_versions: vec!["macOS_15".to_string()],
+                opset_versions: vec!["iOS18".to_string()],
+            },
+            conflict_priority: 0,
+            payload: payload_a,
+        };
+        let unit_b = KnowledgeUnit {
+            id: "fb_b".to_string(),
+            version: 1,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            knowledge_type: KnowledgeType::FallbackSignature,
+            confidence: 0.7,
+            evidence_source: EvidenceSource::SyntheticRun,
+            evidence_count: 5,
+            scope: KnowledgeScope {
+                device_classes: vec!["M2".to_string()],
+                os_versions: vec!["macOS_15".to_string()],
+                opset_versions: vec!["iOS18".to_string()],
+            },
+            conflict_priority: 0,
+            payload: payload_b,
+        };
+        assert!(!transfer.claims_agree(&unit_a, &unit_b));
+    }
+
+    /// T-112: Verify that ShardTemplateKnowledge claims_agree detects
+    /// different num_partitions values.
+    #[test]
+    fn test_t112_claims_agree_shard_template_disagree() {
+        let transfer = SyntheticTransfer::new();
+        let mut payload_a = HashMap::new();
+        payload_a.insert("op_pattern".to_string(), serde_json::json!("mb.matmul"));
+        payload_a.insert("num_partitions".to_string(), serde_json::json!(3));
+        let mut payload_b = HashMap::new();
+        payload_b.insert("op_pattern".to_string(), serde_json::json!("mb.matmul"));
+        payload_b.insert("num_partitions".to_string(), serde_json::json!(5));
+
+        let unit_a = KnowledgeUnit {
+            id: "tmpl_a".to_string(),
+            version: 1,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            knowledge_type: KnowledgeType::ShardTemplateKnowledge,
+            confidence: 0.8,
+            evidence_source: EvidenceSource::SyntheticRun,
+            evidence_count: 5,
+            scope: KnowledgeScope {
+                device_classes: vec!["M2".to_string()],
+                os_versions: vec!["macOS_15".to_string()],
+                opset_versions: vec!["iOS18".to_string()],
+            },
+            conflict_priority: 0,
+            payload: payload_a,
+        };
+        let unit_b = KnowledgeUnit {
+            id: "tmpl_b".to_string(),
+            version: 1,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            knowledge_type: KnowledgeType::ShardTemplateKnowledge,
+            confidence: 0.7,
+            evidence_source: EvidenceSource::SyntheticRun,
+            evidence_count: 5,
+            scope: KnowledgeScope {
+                device_classes: vec!["M2".to_string()],
+                os_versions: vec!["macOS_15".to_string()],
+                opset_versions: vec!["iOS18".to_string()],
+            },
+            conflict_priority: 0,
+            payload: payload_b,
+        };
+        assert!(!transfer.claims_agree(&unit_a, &unit_b));
     }
 }

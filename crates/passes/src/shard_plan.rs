@@ -114,6 +114,27 @@ impl Default for ShardPlan {
     }
 }
 
+/// T-110: Derived shape information from the SIR graph.
+///
+/// Scans StateRead ops (KV cache shapes) and other shape-bearing ops
+/// to extract batch, seq, embed, and vocab dimensions. These dimensions
+/// are used for FunctionEntry TensorSpec shapes and Handoff shapes
+/// instead of the previous hardcoded `vec![1, 1]`.
+///
+/// Derivation strategy:
+/// 1. KV cache StateRead shapes are typically `[2, num_heads, seq, head_dim]`
+///    → batch is always 1 for decode-step KV cache
+///    → seq from 3rd dimension (index 2)
+///    → embed = num_heads × head_dim
+/// 2. If no KV cache shapes, scan all StateRead ops for the largest shape
+/// 3. Fall back to `1` for each dimension with an explicit warning
+struct DerivedShapes {
+    batch: usize,
+    seq: usize,
+    embed: usize,
+    vocab: usize,
+}
+
 /// Shard Plan pass implementation.
 ///
 /// This is the second pass in the pipeline that materially changes a
@@ -170,6 +191,59 @@ impl ShardPlanPass {
         }
         // Default: if no specific op found, use the generic matmul pattern
         "mb.matmul"
+    }
+
+    /// T-110: Derive shape information from the SIR graph.
+    ///
+    /// Scans StateRead ops (KV cache shapes) and other shape-bearing ops
+    /// to extract batch, seq, embed, and vocab dimensions. These dimensions
+    /// are used for FunctionEntry TensorSpec shapes and Handoff shapes
+    /// instead of the previous hardcoded `vec![1, 1]`.
+    ///
+    /// Derivation strategy:
+    /// 1. KV cache StateRead shapes are typically `[2, num_heads, seq, head_dim]`
+    ///    → batch is always 1 for decode-step KV cache
+    ///    → seq from 3rd dimension (index 2)
+    ///    → embed = num_heads × head_dim
+    /// 2. If no KV cache shapes, scan all StateRead ops for the largest shape
+    /// 3. Fall back to `1` for each dimension with an explicit warning
+    fn derive_primary_shapes(
+        input: &SirGraph,
+        kv_cache_shapes: &std::collections::HashMap<String, Vec<usize>>,
+    ) -> DerivedShapes {
+        use ane_ir::sir::SirOp;
+
+        // Try KV cache shapes first — they are the most reliable source
+        if let Some((_, shape)) = kv_cache_shapes.iter().next() {
+            if shape.len() >= 4 {
+                let num_heads = shape[1].max(1);
+                let seq = shape[2].max(1);
+                let head_dim = shape[3].max(1);
+                let embed = num_heads * head_dim;
+                return DerivedShapes { batch: 1, seq, embed, vocab: 1 };
+            }
+        }
+
+        // Try other StateRead ops for shape information
+        for node in &input.nodes {
+            if let SirOp::StateRead { shape, .. } = &node.op {
+                if shape.len() >= 2 {
+                    let batch = shape[0].max(1);
+                    let seq = if shape.len() >= 3 { shape[1].max(1) } else { 1 };
+                    let embed = if shape.len() >= 3 { shape[2].max(1) } else { shape[1].max(1) };
+                    return DerivedShapes { batch, seq, embed, vocab: 1 };
+                }
+            }
+        }
+
+        // No shape-bearing op found — fall back to [1, 1] with warning
+        log::warn!(
+            "T-110: No shape information found in SIR graph. \
+             Defaulting to [1, 1] for FunctionEntry shapes. \
+             This is likely incorrect for models with batch > 1 or seq > 1. \
+             Add StateRead ops or explicit shape annotations to avoid this fallback."
+        );
+        DerivedShapes { batch: 1, seq: 1, embed: 1, vocab: 1 }
     }
 
     /// T-114: Derive the primary dtype from the SIR graph.
@@ -331,6 +405,13 @@ impl ShardPlanPass {
             }
         }
 
+        // T-110: Derive primary shapes from the graph instead of hardcoding vec![1, 1].
+        // Scan StateRead ops (KV cache) for shape information.
+        // Fall back to vec![1, 1] only with an explicit warning.
+        // NOTE: This must be called AFTER the classification loop above
+        // so that kv_cache_shapes is populated.
+        let shapes = Self::derive_primary_shapes(input, &kv_cache_shapes);
+
         // ─── Phase 2: Derive layer assignment from classified nodes ──────
         //
         // Assign each node to a shard:
@@ -413,12 +494,12 @@ impl ShardPlanPass {
                     name: "main".into(),
                     inputs: vec![TensorSpec {
                         name: "input_ids".into(),
-                        shape: vec![1, 1], // batch, seq — derived from graph
+                        shape: vec![shapes.batch, shapes.seq], // T-110: derived from graph
                         dtype: primary_dtype.clone().into(), // T-114: derived from graph
                     }],
                     outputs: vec![TensorSpec {
                         name: "logits".into(),
-                        shape: vec![1, 1], // batch, vocab — derived from graph
+                        shape: vec![shapes.batch, shapes.embed], // T-110: derived from graph
                         dtype: primary_dtype.clone().into(), // T-114: derived from graph
                     }],
                     stateful: false,
@@ -464,12 +545,12 @@ impl ShardPlanPass {
                     name: "main".into(),
                     inputs: vec![TensorSpec {
                         name: "hidden_states".into(),
-                        shape: vec![1, 1], // batch, embed — derived from graph
+                        shape: vec![shapes.batch, shapes.embed], // T-110: derived from graph
                         dtype: primary_dtype.clone().into(), // T-114: derived from graph
                     }],
                     outputs: vec![TensorSpec {
                         name: "logits".into(),
-                        shape: vec![1, 1], // batch, vocab — derived from graph
+                        shape: vec![shapes.batch, shapes.vocab], // T-110: derived from graph
                         dtype: primary_dtype.clone().into(), // T-114: derived from graph
                     }],
                     stateful: is_stateful,
@@ -498,7 +579,7 @@ impl ShardPlanPass {
                     name: "main".into(),
                     inputs: vec![TensorSpec {
                         name: "logits".into(),
-                        shape: vec![1, 1], // batch, vocab
+                        shape: vec![shapes.batch, shapes.vocab], // T-110: derived from graph
                         dtype: primary_dtype.clone().into(), // T-114: derived from graph
                     }],
                     outputs: vec![TensorSpec {
@@ -530,7 +611,7 @@ impl ShardPlanPass {
                     from_package: "io_model".to_string(),
                     to_package: dec.name.clone(),
                     tensor_name: "hidden_states".into(),
-                    shape: vec![1, 1],
+                    shape: vec![shapes.batch, shapes.embed], // T-110: derived from graph
                     dtype: primary_dtype.clone().into(), // T-114: derived from graph
                     handoff_kind: HandoffKind::TensorPassThrough,
                     execution_order: order,
@@ -550,7 +631,7 @@ impl ShardPlanPass {
                     from_package: dec.name.clone(),
                     to_package: "sampler".to_string(),
                     tensor_name: "logits".into(),
-                    shape: vec![1, 1],
+                    shape: vec![shapes.batch, shapes.vocab], // T-110: derived from graph
                     dtype: primary_dtype.clone().into(), // T-114: derived from graph
                     handoff_kind: HandoffKind::TensorPassThrough,
                     execution_order: order,
@@ -1707,5 +1788,233 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ─── T-110: Shape derivation tests ──────────────────────────────
+
+    /// T-110: Verify that derive_primary_shapes falls back to [1,1] when
+    /// no shape-bearing ops exist in the graph.
+    #[test]
+    fn test_t110_derive_shapes_fallback() {
+        let graph = SirGraph {
+            nodes: vec![SirNode {
+                id: SirNodeId("mul_0".into()),
+                op: SirOp::Mul { x: SirNodeId("a".into()), y: SirNodeId("b".into()) },
+                name: "mul_0".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
+            inputs: vec![],
+            outputs: vec![],
+        };
+        let kv_cache_shapes = std::collections::HashMap::new();
+        let shapes = ShardPlanPass::derive_primary_shapes(&graph, &kv_cache_shapes);
+        assert_eq!(shapes.batch, 1, "Fallback batch should be 1");
+        assert_eq!(shapes.seq, 1, "Fallback seq should be 1");
+        assert_eq!(shapes.embed, 1, "Fallback embed should be 1");
+        assert_eq!(shapes.vocab, 1, "Fallback vocab should be 1");
+    }
+
+    /// T-110: Verify that derive_primary_shapes extracts shapes from KV cache
+    /// StateRead ops.
+    #[test]
+    fn test_t110_derive_shapes_from_kv_cache() {
+        let graph = SirGraph {
+            nodes: vec![
+                SirNode {
+                    id: SirNodeId("state_read_0".into()),
+                    op: SirOp::StateRead {
+                        state_id: "kv_cache_k".into(),
+                        offset: 0,
+                        shape: vec![2, 32, 128, 64], // [2, num_heads, seq, head_dim]
+                    },
+                    name: "kv_read_k".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("state_write_0".into()),
+                    op: SirOp::StateWrite {
+                        state_id: "kv_cache_k".into(),
+                        offset: 0,
+                        value: SirNodeId("updated_kv".into()),
+                    },
+                    name: "kv_write_k".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+            ],
+            inputs: vec![],
+            outputs: vec![],
+        };
+        let mut kv_cache_shapes = std::collections::HashMap::new();
+        kv_cache_shapes.insert("kv_cache_k".into(), vec![2, 32, 128, 64]);
+        let shapes = ShardPlanPass::derive_primary_shapes(&graph, &kv_cache_shapes);
+        assert_eq!(shapes.batch, 1, "Batch should be 1 for decode step");
+        assert_eq!(shapes.seq, 128, "Seq should be 128 from KV cache shape");
+        assert_eq!(shapes.embed, 32 * 64, "Embed should be num_heads * head_dim = 2048");
+        assert_eq!(shapes.vocab, 1, "Vocab should fallback to 1");
+    }
+
+    /// T-110: Verify that derive_primary_shapes uses non-KV StateRead shapes
+    /// when no KV cache shapes are available.
+    #[test]
+    fn test_t110_derive_shapes_from_state_read() {
+        let graph = SirGraph {
+            nodes: vec![SirNode {
+                id: SirNodeId("state_read_0".into()),
+                op: SirOp::StateRead {
+                    state_id: "running_mean".into(),
+                    offset: 0,
+                    shape: vec![4, 512], // [batch, embed_dim]
+                },
+                name: "state_read_mean".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
+            inputs: vec![],
+            outputs: vec![],
+        };
+        let kv_cache_shapes = std::collections::HashMap::new();
+        let shapes = ShardPlanPass::derive_primary_shapes(&graph, &kv_cache_shapes);
+        assert_eq!(shapes.batch, 4, "Batch should be 4 from StateRead shape");
+        assert_eq!(shapes.seq, 1, "Seq should default to 1 for 2D shape (no seq dimension)");
+        assert_eq!(shapes.embed, 512, "Embed should be 512 from 2D shape");
+    }
+
+    /// T-110: Verify that run() uses derived shapes in FunctionEntry TensorSpecs
+    /// when the graph has KV cache StateRead ops.
+    #[test]
+    fn test_t110_run_derives_shapes_from_graph() {
+        let graph = SirGraph {
+            nodes: vec![
+                SirNode {
+                    id: SirNodeId("gather_0".into()),
+                    op: SirOp::Gather {
+                        input: SirNodeId("input".into()),
+                        indices: SirNodeId("idx".into()),
+                        axis: 0,
+                    },
+                    name: "embedding_gather".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("state_read_0".into()),
+                    op: SirOp::StateRead {
+                        state_id: "kv_cache_k".into(),
+                        offset: 0,
+                        shape: vec![2, 16, 64, 48], // [2, 16_heads, 64_seq, 48_head_dim]
+                        
+                    },
+                    name: "kv_read".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("state_write_0".into()),
+                    op: SirOp::StateWrite {
+                        state_id: "kv_cache_k".into(),
+                        offset: 0,
+                        value: SirNodeId("updated_kv".into()),
+                    },
+                    name: "kv_write".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+                SirNode {
+                    id: SirNodeId("sampler_0".into()),
+                    op: SirOp::Sampler {
+                        logits: SirNodeId("logits".into()),
+                        temperature: 1.0,
+                        top_p: 0.9,
+                        rep_penalty: 1.0,
+                        min_p: 0.0,
+                        top_k: 50,
+                        gumbel_noise: false,
+                    },
+                    name: "sampler".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
+            ],
+            inputs: vec![],
+            outputs: vec![],
+        };
+
+        let mut pass = ShardPlanPass::new();
+        let (_plan, pir) = pass.run(&graph, &NoKnowledge).unwrap();
+
+        // IO package should have derived shapes
+        let io_pkg = pir.packages.iter().find(|p| matches!(p.role, PackageRole::IO));
+        assert!(io_pkg.is_some(), "Should have IO package");
+        let io_func = &io_pkg.unwrap().functions[0];
+        assert_eq!(
+            io_func.inputs[0].shape,
+            vec![1, 64],
+            "IO input_ids shape should be [batch=1, seq=64]"
+        );
+        assert_eq!(
+            io_func.outputs[0].shape,
+            vec![1, 768],
+            "IO output shape should be [batch=1, embed=16*48=768]"
+        );
+
+        // Decoder package should have derived shapes
+        let dec_pkg = pir
+            .packages
+            .iter()
+            .find(|p| matches!(p.role, PackageRole::DecoderShard(_)));
+        assert!(dec_pkg.is_some(), "Should have Decoder package");
+        let dec_func = &dec_pkg.unwrap().functions[0];
+        assert_eq!(
+            dec_func.inputs[0].shape,
+            vec![1, 768],
+            "Decoder input shape should be [batch=1, embed=768]"
+        );
+
+        // Handoff shapes should be derived
+        let io_to_dec_handoff = pir
+            .handoffs
+            .iter()
+            .find(|h| h.from_package == "io_model" && h.handoff_kind == HandoffKind::TensorPassThrough);
+        assert!(io_to_dec_handoff.is_some(), "Should have IO→Decoder handoff");
+        assert_eq!(
+            io_to_dec_handoff.unwrap().shape,
+            vec![1, 768],
+            "Handoff shape should be [batch=1, embed=768]"
+        );
     }
 }

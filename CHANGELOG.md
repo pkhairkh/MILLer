@@ -2,14 +2,101 @@
 
 ## Current Status — 2026-05-04
 
-- **1561 tests passing**, 0 failures
+- **1586 tests passing**, 0 failures
 - IR Cleanliness Score: 89%
 - 0 clippy warnings, 0 errors
-- **20 open tasks** (1 CRITICAL, 3 HIGH, 8 MEDIUM, 8 LOW) — see [TASKS.md](TASKS.md)
-- **24 tasks resolved** across sprint cycles
+- **16 open tasks** (1 CRITICAL, 3 HIGH, 5 MEDIUM, 7 LOW) — see [TASKS.md](TASKS.md)
+- **28 tasks resolved** across sprint cycles
 
 Audit details: [docs/audit/tabula-rasa-v3.md](docs/audit/tabula-rasa-v3.md)
 Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
+
+---
+
+## [sprint-constraint-knowledge-integrity] — 2026-05-04
+
+### Sprint: Constraint & Knowledge Model Integrity (T-110, T-112, T-113, T-121)
+
+Resolved 4 tasks (all MEDIUM) from the NECROSCOPY forensic audit
+(ane-violations.md). All changes close gaps in the constraint and
+knowledge model where incorrect or incomplete information silently
+passed through to produce broken models.
+
+#### Tasks Resolved
+
+| Task | Description | Issues Fixed |
+|------|-------------|--------------|
+| T-110 | Derive FunctionEntry Shapes from Graph | I-85 |
+| T-112 | Fix Knowledge Conflict Detection Symmetry | I-84, I-85 |
+| T-113 | Make default_engine() Revision-Aware | I-88 |
+| T-121 | Add Vector Palettization At-Cout Constraint | I-96 |
+
+#### Added
+
+- T-110: `DerivedShapes` struct and `derive_primary_shapes()` method on
+  `ShardPlanPass`. Scans StateRead ops (KV cache shapes) to extract
+  batch, seq, embed dimensions. Replaced all 7 hardcoded `vec![1, 1]`
+  values in shard_plan.rs. Fallback to vec![1, 1] with explicit
+  `log::warn!` when no shape info found. 4 new tests.
+- T-112: Symmetric conflict detection — `check_conflicts_for_entry()`
+  now back-patches existing entries when a new entry conflicts with
+  them. `claims_agree()` now implements field-level comparison for all
+  9 knowledge types (previously only 1/8 had comparison). Added
+  `payload_survival_rate()`, `payload_fallback_engine()`,
+  `payload_num_partitions()` accessors in util.rs. 6 new tests.
+- T-113: `default_engine_for_revision(Option<AneRevision>)` method
+  on MirOp that cross-references family capabilities. ReduceArgmax/
+  ReduceArgmin return None on A18. ReduceL2Norm returns None on
+  A11Legacy/A12/A13. MILSquare returns None on A14Minus families.
+  SDPA returns None pre-A16. Existing `default_engine()` preserved
+  for backward compat (delegates to `default_engine_for_revision(None)`).
+  7 new tests.
+- T-121: `validate_vector_palettization_constraints()` in
+  op_constraints.rs enforcing three ANEC constraints: vector
+  palettization only at Cout dimension, zero point rejected for
+  vector palettized kernel, palette size 256 rejected. Re-exported
+  from palettize_weights.rs. 8 new tests.
+
+#### Changed
+
+- `shard_plan.rs`: All FunctionEntry TensorSpec shapes and Handoff
+  shapes now use `DerivedShapes` values instead of hardcoded
+  `vec![1, 1]`. `derive_primary_shapes()` called after KV cache
+  scan loop (so kv_cache_shapes is populated).
+- `store.rs`: `check_conflicts_for_entry()` takes `&mut self` and
+  back-patches existing entries with ConflictedWith status. Extracted
+  existing entry data before mutation to avoid borrow conflicts.
+- `transfer.rs`: `claims_agree()` expanded from 1/8 to 9/9 knowledge
+  types with field-level comparison. Imports added for new payload
+  accessors.
+- `util.rs`: Added `payload_survival_rate()`,
+  `payload_fallback_engine()`, `payload_num_partitions()` accessors.
+- `mir.rs`: New `default_engine_for_revision()` method. Renamed
+  internal helper to `base_engine()`. `default_engine()` delegates.
+- `op_constraints.rs`: New `validate_vector_palettization_constraints()`
+  function following existing validator patterns.
+- `palettize_weights.rs`: Re-export of
+  `validate_vector_palettization_constraints`.
+- `ane_layout.rs`: Documentation addition for T-121 constraints.
+
+#### Tests
+
+- T-110: 4 tests covering shape fallback, KV cache derivation, non-KV
+  StateRead derivation, and run() integration with derived shapes.
+- T-112: 6 tests covering symmetric conflict detection, no false
+  positives for agreeing entries, resolved conflicts preserved, and
+  claims_agree field-level comparison for SurvivalMatrixEntry,
+  FallbackSignature, and ShardTemplateKnowledge.
+- T-113: 7 tests covering backward compatibility, A18 ReduceArgmax/
+  Argmin, A14Minus ReduceL2Norm/Square, Conv for all revisions,
+  and SDPA revision awareness.
+- T-121: 8 tests covering Cout OK, non-Cout rejection, None dimension
+  rejection, scalar pass-through, zero point for vector rejected,
+  zero point for scalar OK, palette 256 rejected, palette 16 OK.
+
+#### Issues Closed (4 issues)
+
+I-84, I-85, I-88, I-96
 
 ---
 

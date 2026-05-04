@@ -1049,16 +1049,10 @@ pub enum MirOp {
 }
 
 impl MirOp {
-    /// Returns the default ANE execution engine for this op.
-    ///
-    /// Based on observed ANE fusion boundaries:
-    /// - **NE**: conv/pool/matmul/attention pipeline
-    /// - **PE**: elementwise/reduction/scaled-EW pipeline
-    /// - **TransposeEngine**: data rearrangement
-    /// - **None**: CPU-only ops (control flow, random, scatter, state, constexpr, etc.)
-    ///
-    /// Source: ane-constraints-docs/03-placement-and-compiler/fusion-boundaries-and-resource-allocation.md
-    pub fn default_engine(&self) -> Option<super::ane_engine::AneEngine> {
+    /// Returns the base ANE engine assignment for this op, ignoring revision-specific
+    /// constraints. This is the static per-op engine mapping used before applying
+    /// family capability overrides.
+    fn base_engine(&self) -> Option<super::ane_engine::AneEngine> {
         use super::ane_engine::AneEngine;
         match self {
             // ─── NE pipeline: conv/pool/matmul/attention ────────────
@@ -1316,6 +1310,114 @@ impl MirOp {
             // "negative" instead of "neg" (I-42).
             | MirOp::MILNeg { .. } => None,
         }
+    }
+
+    /// Returns the revision-aware default ANE engine for this op.
+    ///
+    /// This method extends the static engine assignment with family-specific
+    /// capability checks. When a revision is provided, it resolves the
+    /// corresponding [`AneFamily`] and overrides the base engine assignment
+    /// for ops that lack an ANEC converter on that family.
+    ///
+    /// # Family-specific overrides
+    ///
+    /// | Op | Family | Base engine | Override | Reason |
+    /// |----|--------|-------------|----------|--------|
+    /// | `ReduceArgmax` | A18 | `PE` | `None` | No LSE_7 converter |
+    /// | `ReduceArgmin` | A18 | `PE` | `None` | No LSE_7 converter |
+    /// | `ReduceL2Norm` | A11Legacy, A12 | `PE` | `None` | No converter on these families |
+    /// | `MILSquare` | A11Legacy, A12, A13 | `PE` | `None` | A14Minus converters; split at A13Minus/A14Plus boundary |
+    /// | `ScaledDotProductAttention` | A16+ | `NE` | `NE` (unchanged) | Reliable SDPA converter on A16+ |
+    ///
+    /// When `revision` is `None`, the base engine assignment is returned
+    /// without any family-specific overrides (backward-compatible behavior).
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use ane_ir::mir::MirOp;
+    /// use ane_ir::ane_target::AneRevision;
+    /// // On A18, ReduceArgmax has no ANEC converter → None
+    /// let op = MirOp::MILReduceArgmax { name: "argmax".into(), x: "x".into(), axis: 1, keep_dims: false };
+    /// assert_eq!(op.default_engine_for_revision(Some(AneRevision::V19)), None);
+    /// ```
+    pub fn default_engine_for_revision(
+        &self,
+        revision: Option<super::ane_target::AneRevision>,
+    ) -> Option<super::ane_engine::AneEngine> {
+        let base = self.base_engine();
+
+        // Without a revision, return the base engine (backward-compatible).
+        let family = match revision {
+            Some(rev) => rev.family(),
+            None => return base,
+        };
+
+        // Apply family-specific overrides for ops that lack ANEC converters
+        // on certain families. These overrides demote the engine from Some(PE)
+        // to None when no converter exists for the target family.
+        match self {
+            // A18 family: ReduceArgmax/ReduceArgmin have no LSE_7 converter.
+            // The ANEC has ConvertReductionArg for LSE_0–LSE_6 (A11Legacy–A17)
+            // but there is NO LSE_7 converter. Placement validation that passes
+            // on A18 will silently fail at emission time.
+            MirOp::MILReduceArgmax { .. } | MirOp::MILReduceArgmin { .. } => {
+                if !family.supports_argminmax() {
+                    return None;
+                }
+            }
+
+            // A11Legacy/A12 families: ReduceL2Norm has no converter.
+            // The per-op support matrix shows reduce_l2_norm is only available
+            // on A14+ families that use A14Plus reduction converters.
+            MirOp::MILReduceL2Norm { .. } => {
+                if family.uses_a14minus_converters() {
+                    return None;
+                }
+            }
+
+            // A11Legacy/A12/A13 families (uses_a14minus_converters):
+            // MILSquare has no converter on these families. Per-op matrix row 19
+            // shows the A13Minus/A14Plus split — square uses ConvertSquareA13Minus
+            // which is not available on A14Minus converter families.
+            MirOp::MILSquare { .. } => {
+                if family.uses_a14minus_converters() {
+                    return None;
+                }
+            }
+
+            // ScaledDotProductAttention is only reliable on A16+ families.
+            // On older families, there is no reliable ANEC converter for SDPA.
+            // Note: In the base engine assignment, SDPA is already mapped to NE.
+            // On A16+ (supports_sdpa()), it stays NE. On older families without
+            // SDPA support, it should return None since there's no converter.
+            MirOp::MILScaledDotProductAttention { .. } => {
+                if !family.supports_sdpa() {
+                    return None;
+                }
+            }
+
+            _ => {}
+        }
+
+        base
+    }
+
+    /// Returns the default ANE execution engine for this op (revision-agnostic).
+    ///
+    /// Based on observed ANE fusion boundaries:
+    /// - **NE**: conv/pool/matmul/attention pipeline
+    /// - **PE**: elementwise/reduction/scaled-EW pipeline
+    /// - **TransposeEngine**: data rearrangement
+    /// - **None**: CPU-only ops (control flow, random, scatter, state, constexpr, etc.)
+    ///
+    /// This method delegates to [`Self::default_engine_for_revision`] with `None`,
+    /// preserving backward compatibility. For revision-aware engine assignment,
+    /// use [`Self::default_engine_for_revision`] instead.
+    ///
+    /// Source: ane-constraints-docs/03-placement-and-compiler/fusion-boundaries-and-resource-allocation.md
+    pub fn default_engine(&self) -> Option<super::ane_engine::AneEngine> {
+        self.default_engine_for_revision(None)
     }
 
     /// Returns the canonical lowercase MIL op name for this variant.
@@ -2143,4 +2245,210 @@ pub struct MirGraph {
     /// shape inference.
     #[serde(default)]
     pub input_shapes: std::collections::HashMap<MirNodeId, Vec<usize>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::ane_engine::AneEngine;
+    use super::super::ane_target::AneRevision;
+    use super::{MirNodeId, MirOp};
+
+    fn nid(s: &str) -> MirNodeId {
+        MirNodeId(s.to_string())
+    }
+
+    // ─── T-113: default_engine_for_revision tests ──────────────────
+
+    /// Test that default_engine() still returns the same results as before
+    /// (backward compatibility). With None revision, no overrides are applied.
+    #[test]
+    fn test_default_engine_backward_compat() {
+        // NE pipeline ops
+        let conv = MirOp::MILConv {
+            name: "c".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
+        };
+        assert_eq!(conv.default_engine(), Some(AneEngine::NE));
+
+        // PE pipeline ops
+        let add = MirOp::MILAdd { name: "a".into(), x: nid("x"), y: nid("y") };
+        assert_eq!(add.default_engine(), Some(AneEngine::PE));
+
+        let relu = MirOp::MILRelu { name: "r".into(), x: nid("x") };
+        assert_eq!(relu.default_engine(), Some(AneEngine::PE));
+
+        // TransposeEngine
+        let transpose = MirOp::MILTranspose { name: "t".into(), x: nid("x"), perm: vec![1, 0] };
+        assert_eq!(transpose.default_engine(), Some(AneEngine::TransposeEngine));
+
+        // CPU-only ops
+        let const_op = MirOp::MILConst { name: "c".into(), value_path: "v".into(), dtype: super::MilDtype::Fp16 };
+        assert_eq!(const_op.default_engine(), None);
+
+        // ReduceArgmax returns PE when revision is None (backward compat)
+        let argmax = MirOp::MILReduceArgmax { name: "am".into(), x: nid("x"), axis: 1, keep_dims: false };
+        assert_eq!(argmax.default_engine(), Some(AneEngine::PE));
+
+        // ReduceL2Norm returns PE when revision is None
+        let l2 = MirOp::MILReduceL2Norm { name: "l2".into(), x: nid("x"), axes: vec![1], keep_dims: false };
+        assert_eq!(l2.default_engine(), Some(AneEngine::PE));
+
+        // MILSquare returns PE when revision is None
+        let square = MirOp::MILSquare { name: "sq".into(), x: nid("x") };
+        assert_eq!(square.default_engine(), Some(AneEngine::PE));
+
+        // ScaledDotProductAttention returns NE when revision is None
+        let sdpa = MirOp::MILScaledDotProductAttention {
+            name: "sdpa".into(),
+            query: nid("q"),
+            key: nid("k"),
+            value: nid("v"),
+            attention_mask: None,
+            scale: None,
+        };
+        assert_eq!(sdpa.default_engine(), Some(AneEngine::NE));
+    }
+
+    /// Test that ReduceArgmax returns None on A18 (V19 — no LSE_7 converter).
+    #[test]
+    fn test_reduce_argmax_none_on_a18() {
+        let argmax = MirOp::MILReduceArgmax { name: "am".into(), x: nid("x"), axis: 1, keep_dims: false };
+
+        // A18 revisions: V19, V20, V26
+        assert_eq!(argmax.default_engine_for_revision(Some(AneRevision::V19)), None);
+        assert_eq!(argmax.default_engine_for_revision(Some(AneRevision::V20)), None);
+        assert_eq!(argmax.default_engine_for_revision(Some(AneRevision::V26)), None);
+
+        // Non-A18 revisions should still return PE (they have converters)
+        assert_eq!(argmax.default_engine_for_revision(Some(AneRevision::V4)), Some(AneEngine::PE));
+        assert_eq!(argmax.default_engine_for_revision(Some(AneRevision::V7)), Some(AneEngine::PE));
+        assert_eq!(argmax.default_engine_for_revision(Some(AneRevision::V10)), Some(AneEngine::PE));
+        assert_eq!(argmax.default_engine_for_revision(Some(AneRevision::V11)), Some(AneEngine::PE));
+    }
+
+    /// Test that ReduceArgmin returns None on A18 (V19 — no LSE_7 converter).
+    #[test]
+    fn test_reduce_argmin_none_on_a18() {
+        let argmin = MirOp::MILReduceArgmin { name: "amin".into(), x: nid("x"), axis: 1, keep_dims: false };
+
+        // A18 revisions
+        assert_eq!(argmin.default_engine_for_revision(Some(AneRevision::V19)), None);
+        assert_eq!(argmin.default_engine_for_revision(Some(AneRevision::V20)), None);
+        assert_eq!(argmin.default_engine_for_revision(Some(AneRevision::V26)), None);
+
+        // Non-A18 revisions should still return PE
+        assert_eq!(argmin.default_engine_for_revision(Some(AneRevision::V5)), Some(AneEngine::PE));
+        assert_eq!(argmin.default_engine_for_revision(Some(AneRevision::V8)), Some(AneEngine::PE));
+    }
+
+    /// Test that ReduceL2Norm returns None on A11Legacy/A12 families
+    /// (uses_a14minus_converters — no reduce_l2_norm converter).
+    #[test]
+    fn test_reduce_l2norm_none_on_a11legacy_a12() {
+        let l2 = MirOp::MILReduceL2Norm { name: "l2".into(), x: nid("x"), axes: vec![1], keep_dims: false };
+
+        // A11Legacy (V4) and A12 (V5) — uses_a14minus_converters
+        assert_eq!(l2.default_engine_for_revision(Some(AneRevision::V4)), None);
+        assert_eq!(l2.default_engine_for_revision(Some(AneRevision::V5)), None);
+
+        // A13 (V6) also uses A14Minus converters
+        assert_eq!(l2.default_engine_for_revision(Some(AneRevision::V6)), None);
+
+        // A14+ should return PE (A14Plus converters have reduce_l2_norm)
+        assert_eq!(l2.default_engine_for_revision(Some(AneRevision::V7)), Some(AneEngine::PE));
+        assert_eq!(l2.default_engine_for_revision(Some(AneRevision::V10)), Some(AneEngine::PE));
+        assert_eq!(l2.default_engine_for_revision(Some(AneRevision::V19)), Some(AneEngine::PE));
+    }
+
+    /// Test that MILSquare returns None on A11Legacy/A12/A13 families
+    /// (uses_a14minus_converters — per-op matrix row 19 A13Minus/A14Plus split).
+    #[test]
+    fn test_square_none_on_a14minus_families() {
+        let square = MirOp::MILSquare { name: "sq".into(), x: nid("x") };
+
+        // A14Minus converter families: A11Legacy, A12, A13
+        assert_eq!(square.default_engine_for_revision(Some(AneRevision::V4)), None); // A11Legacy
+        assert_eq!(square.default_engine_for_revision(Some(AneRevision::V5)), None); // A12
+        assert_eq!(square.default_engine_for_revision(Some(AneRevision::V6)), None); // A13
+
+        // A14+ should return PE (A14Plus converters have square)
+        assert_eq!(square.default_engine_for_revision(Some(AneRevision::V7)), Some(AneEngine::PE)); // A14
+        assert_eq!(square.default_engine_for_revision(Some(AneRevision::V8)), Some(AneEngine::PE)); // A15
+        assert_eq!(square.default_engine_for_revision(Some(AneRevision::V19)), Some(AneEngine::PE)); // A18
+    }
+
+    /// Test that MILConv returns Some(NE) for all revisions.
+    /// Conv is a core NE pipeline op with converters on every family.
+    #[test]
+    fn test_conv_ne_for_all_revisions() {
+        let conv = MirOp::MILConv {
+            name: "c".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
+        };
+
+        // Conv should always return NE regardless of revision
+        for rev in [
+            AneRevision::V4,
+            AneRevision::V5,
+            AneRevision::V6,
+            AneRevision::V7,
+            AneRevision::V8,
+            AneRevision::V10,
+            AneRevision::V11,
+            AneRevision::V17,
+            AneRevision::V19,
+            AneRevision::V20,
+            AneRevision::V26,
+        ] {
+            assert_eq!(
+                conv.default_engine_for_revision(Some(rev)),
+                Some(AneEngine::NE),
+                "Conv should be NE on revision {:?}",
+                rev
+            );
+        }
+
+        // Also test with None (backward compat)
+        assert_eq!(conv.default_engine_for_revision(None), Some(AneEngine::NE));
+    }
+
+    /// Test that ScaledDotProductAttention returns NE on A16+ but None on older families.
+    #[test]
+    fn test_sdpa_revision_aware() {
+        let sdpa = MirOp::MILScaledDotProductAttention {
+            name: "sdpa".into(),
+            query: nid("q"),
+            key: nid("k"),
+            value: nid("v"),
+            attention_mask: None,
+            scale: None,
+        };
+
+        // Pre-A16 families: no reliable SDPA converter → None
+        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V4)), None);  // A11Legacy
+        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V5)), None);  // A12
+        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V6)), None);  // A13
+        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V7)), None);  // A14
+        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V8)), None);  // A15
+
+        // A16+ families: reliable SDPA converter → NE
+        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V10)), Some(AneEngine::NE)); // A16
+        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V11)), Some(AneEngine::NE)); // A17
+        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V19)), Some(AneEngine::NE)); // A18
+
+        // With None revision: backward compat returns base engine (NE)
+        assert_eq!(sdpa.default_engine_for_revision(None), Some(AneEngine::NE));
+    }
 }

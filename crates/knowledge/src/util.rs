@@ -71,6 +71,30 @@ pub fn payload_ane_placed(payload: &HashMap<String, serde_json::Value>) -> Optio
     payload.get("ane_placed").and_then(|v| v.as_bool())
 }
 
+/// Retrieve the `survival_rate` float from a knowledge unit payload.
+///
+/// Returns `None` if the key is absent or the value is not a number.
+/// T-112: Used for SurvivalMatrixEntry field-level comparison in claims_agree.
+pub fn payload_survival_rate(payload: &HashMap<String, serde_json::Value>) -> Option<f64> {
+    payload.get("survival_rate").and_then(|v| v.as_f64())
+}
+
+/// Retrieve the `fallback_engine` string from a knowledge unit payload.
+///
+/// Returns `None` if the key is absent or the value is not a string.
+/// T-112: Used for FallbackSignature field-level comparison in claims_agree.
+pub fn payload_fallback_engine(payload: &HashMap<String, serde_json::Value>) -> Option<&str> {
+    payload.get("fallback_engine").and_then(|v| v.as_str())
+}
+
+/// Retrieve the `num_partitions` integer from a knowledge unit payload.
+///
+/// Returns `None` if the key is absent or the value is not an integer.
+/// T-112: Used for ShardTemplateKnowledge field-level comparison in claims_agree.
+pub fn payload_num_partitions(payload: &HashMap<String, serde_json::Value>) -> Option<u64> {
+    payload.get("num_partitions").and_then(|v| v.as_u64())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

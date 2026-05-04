@@ -32,6 +32,19 @@ use ane_ir::sir::{SirGraph, SirOp};
 /// version-conditional palette bit-width validation.
 pub use ane_ir::ane_layout::{validate_palette_bits, validate_palette_bits_for_family, VALID_PALETTE_BITS};
 
+/// T-121: Re-export vector palettization constraint validation from
+/// `op_constraints`.
+///
+/// Vector palettization has three ANEC-enforced constraints:
+/// 1. Palettization dimension must be Cout (not Cin, etc.)
+/// 2. Zero point is not supported for vector palettized kernels
+/// 3. Palette size 256 (8-bit full LUT) is not supported
+///
+/// Re-exporting from this module makes the validation accessible alongside
+/// other palette-related utilities, so consumers don't need to import from
+/// the `op_constraints` module directly.
+pub use crate::op_constraints::validate_vector_palettization_constraints;
+
 /// Result of the palettize weights pass.
 #[derive(Debug, Clone)]
 pub struct PalettizeResult {

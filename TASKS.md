@@ -351,16 +351,14 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-### T-110 · Derive FunctionEntry Shapes from Graph
+### T-110 · ~~Derive FunctionEntry Shapes from Graph~~
 
 - **ISSUES ref**: I-85
 - **AUDIT ref**: V-017 (ane-violations.md §III)
 - **Severity**: MEDIUM
 - **Effort**: M (1 day)
 
-**Intent**: FunctionEntry TensorSpec shapes are hardcoded as `vec![1,1]` throughout `shard_plan.rs`. Comments say "derived from graph" but derivation is not implemented. This produces wrong PIR shapes for any model with batch > 1 or sequence length > 1.
-
-**Definition of Done**: Shapes derived from MIR graph by walking node dimensions. Fallback to vec![1,1] only with explicit warning. Test verifies correct shapes for known models.
+**✅ RESOLVED** — Added `derive_primary_shapes()` method that scans StateRead ops (KV cache shapes) to extract batch, seq, embed dimensions. Replaced all 7 hardcoded `vec![1, 1]` values in shard_plan.rs with derived shapes. Fallback to vec![1, 1] only with explicit warning when no shape info found. 4 new tests.
 
 ---
 
@@ -375,29 +373,25 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-### T-112 · Fix Knowledge Conflict Detection Symmetry
+### T-112 · ~~Fix Knowledge Conflict Detection Symmetry~~
 
-- **ISSUES ref**: I-87
+- **ISSUES ref**: I-84, I-85
 - **AUDIT ref**: V-021, V-022 (ane-violations.md §III)
 - **Severity**: MEDIUM
 - **Effort**: M (1 day)
 
-**Intent**: Knowledge conflict detection marks new entry as `ConflictedWith(existing)` but never back-patches the existing entry. Querying only existing entries misses mutual conflicts. Additionally, `claims_agree` defaults to `true` for 7/8 knowledge types, preventing contradiction detection for PrecisionHazard, SurvivalMatrixEntry, etc.
-
-**Definition of Done**: Conflict detection is symmetric (both entries marked). `claims_agree` has field-level comparison for all 8 types. Tests verify symmetry and field-level comparison.
+**✅ RESOLVED** — `check_conflicts_for_entry()` now back-patches existing entries when a new entry conflicts with them, making conflict detection symmetric. `claims_agree()` now implements field-level comparison for all 9 knowledge types (was only 1/8 before). Added payload accessors: `payload_survival_rate()`, `payload_fallback_engine()`, `payload_num_partitions()`. 6 new tests.
 
 ---
 
-### T-113 · Make default_engine() Revision-Aware
+### T-113 · ~~Make default_engine() Revision-Aware~~
 
 - **ISSUES ref**: I-88
 - **AUDIT ref**: V-010 (ane-violations.md §III)
 - **Severity**: MEDIUM
 - **Effort**: M (1 day)
 
-**Intent**: `default_engine()` returns static engine assignment per op regardless of AneRevision. Ops assigned to PE may be placed on families that don't support them (e.g., ArgMinMax on A18 has no converter but default_engine() returns Some(PE)).
-
-**Definition of Done**: `default_engine()` takes `Option<AneRevision>` parameter and cross-references family capabilities. Returns `None` for ops not supported on the target family. Test verifies revision-aware behavior for all ops.
+**✅ RESOLVED** — Added `default_engine_for_revision(Option<AneRevision>)` method that cross-references family capabilities. ReduceArgmax/ReduceArgmin return None on A18 (no LSE_7 converter). ReduceL2Norm returns None on A11Legacy/A12/A13. MILSquare returns None on A14Minus families. SDPA returns None pre-A16. Existing `default_engine()` preserved for backward compat. 7 new tests.
 
 ---
 
@@ -482,16 +476,14 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-### T-121 · Add Vector Palettization At-Cout Constraint
+### T-121 · ~~Add Vector Palettization At-Cout Constraint~~
 
 - **ISSUES ref**: I-96
 - **AUDIT ref**: V-133 (ane-violations.md §III)
 - **Severity**: MEDIUM
 - **Effort**: S (0.5 day)
 
-**Intent**: Vector palettization is only supported at Cout dimension for ANE. No enforcement exists — vector palettization at other dimensions will fail at ANEC compile time. Additionally, "zero point is not supported for vector palettized kernel" and "Quantized kernel with palettize size=256 is not supported" are unenforced.
-
-**Definition of Done**: Vector palettization rejected at non-Cout dimensions. Zero point rejected for vector palettized kernel. Size=256 rejected. Tests for each constraint.
+**✅ RESOLVED** — Added `validate_vector_palettization_constraints()` in op_constraints.rs enforcing three ANEC constraints: vector palettization only at Cout dimension, zero point rejected for vector palettized kernel, palette size 256 rejected. Re-exported from palettize_weights.rs. 8 new tests.
 
 ---
 
@@ -554,15 +546,15 @@ Full resolution details are in `CHANGELOG.md`.
 | T-105 | I-80 | MEDIUM | M | 🟡 Open |
 | T-107 | I-82 | MEDIUM | M | 🟡 Open |
 | T-108 | I-83 | MEDIUM | L | 🟡 Open |
-| T-110 | I-85 | MEDIUM | M | 🟡 Open |
-| T-112 | I-84, I-85 | MEDIUM | M | 🟡 Open |
-| T-113 | I-88 | MEDIUM | M | 🟡 Open |
+| T-110 | I-85 | MEDIUM | M | ✅ Resolved |
+| T-112 | I-84, I-85 | MEDIUM | M | ✅ Resolved |
+| T-113 | I-88 | MEDIUM | M | ✅ Resolved |
 | T-116 | I-91 | MEDIUM | M | 🟡 Open |
 | T-117 | I-92 | MEDIUM | M | 🟡 Open |
 | T-118 | I-93 | MEDIUM | S | ✅ Resolved |
 | T-119 | I-94 | MEDIUM | S | ✅ Resolved |
 | T-120 | I-95 | MEDIUM | S | ✅ Resolved |
-| T-121 | I-96 | MEDIUM | S | 🟡 Open |
+| T-121 | I-96 | MEDIUM | S | ✅ Resolved |
 | T-122 | I-97 | MEDIUM | S | ✅ Resolved |
 | T-124 | — | LOW | S | 🔵 Open |
 | T-125 | — | LOW | S | 🔵 Open |
@@ -641,13 +633,13 @@ Tasks T-47 through T-57, T-60, T-62, T-63, T-64, T-65 resolved. T-61, T-66 remai
 |----------|-------|-------------|
 | 🔴 CRITICAL | 1 | ~2 days |
 | 🟠 HIGH | 3 | ~7.5 days |
-| 🟡 MEDIUM | 8 | ~6.5 days |
-| 🔵 LOW | 8 | ~4.5 days |
-| **Total** | **20** | **~20.5 days** |
+| 🟡 MEDIUM | 5 | ~6 days |
+| 🔵 LOW | 7 | ~4 days |
+| **Total** | **16** | **~19.5 days** |
 
 > **Priority guidance**: CRITICAL task T-90 must be resolved before any production compilation.
 > HIGH tasks (T-95, T-96, T-98) should be addressed in the next 2–3 sprint cycles.
 > MEDIUM/LOW tasks (T-105–T-131) are technical debt that should be chipped away at consistently.
 >
-> **Resolved**: 24 tasks (T-86, T-87, T-89, T-91–T-94, T-97, T-99–T-104, T-106, T-109, T-111, T-114, T-115, T-118–T-120, T-122, T-123).
+> **Resolved**: 28 tasks (T-86, T-87, T-89, T-91–T-94, T-97, T-99–T-104, T-106, T-109–T-115, T-118–T-123).
 > Tasks T-01 through T-85 are all resolved — see archive summary above and `CHANGELOG.md`.
