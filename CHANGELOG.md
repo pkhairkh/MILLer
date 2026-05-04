@@ -2,14 +2,94 @@
 
 ## Current Status — 2026-05-05
 
-- **1627 tests passing**, 0 failures
+- **1645 tests passing**, 0 failures
 - IR Cleanliness Score: 89%
-- 0 clippy warnings, 0 errors
-- **5 open tasks** (1 CRITICAL, 1 MEDIUM, 3 LOW) — see [TASKS.md](TASKS.md)
-- **40 tasks resolved** across sprint cycles
+- 0 clippy errors, pre-existing warnings only
+- **1 open task** (1 CRITICAL) — see [TASKS.md](TASKS.md)
+- **44 tasks resolved** across sprint cycles
 
 Audit details: [docs/audit/tabula-rasa-v3.md](docs/audit/tabula-rasa-v3.md)
 Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
+
+---
+
+## [sprint-knowledge-precision-coverage] — 2026-05-05
+
+### Sprint: Knowledge & Precision Coverage (T-108, T-127, T-128, T-129)
+
+Resolved 4 tasks (1 MEDIUM, 3 LOW) from the NECROSCOPY forensic audit
+(ane-violations.md). All changes close knowledge, precision, and
+documentation gaps where incomplete or missing information silently
+passed through the compiler pipeline.
+
+#### Tasks Resolved
+
+| Task | Description | Issues Fixed |
+|------|-------------|--------------|
+| T-108 | Expand Precision Policy Coverage | — |
+| T-127 | Document UInt16/Bool Limited Support | — |
+| T-128 | Expand CPU_ONLY_OPS_DETAILED | — |
+| T-129 | Fix Knowledge Schema/Seed Format Mismatch | — |
+
+#### Added
+
+- T-108: 53 new match arms in `op_pattern_for_node()` covering all
+  previously-uncategorized `SirOp` variants. Coverage expanded from ~33%
+  to 100%. Categories added: Comparison (6), Logical (4), Activation (12),
+  Trigonometric (9), Reduction (8), Tensor Transform (21), Image Resize (8),
+  Scatter/Gather (4), Constexpr (7), Recurrent (3), Control Flow (8),
+  Random (4), Topk/Classify (2), Rounding (3), Mathematical (4),
+  Conditional (2). Dynamic `Misc_{VariantName}` catch-all for future
+  variants. Return type changed from `&str` to `String`.
+- T-127: `validate_uint16_constraints()` — UInt16 only valid as output of
+  TopK/Sort/ReduceArgmax/ReduceArgmin indices. `validate_bool_constraints()`
+  — Bool only valid as mask input for Select/Where, never as compute output.
+  `UInt16ConstraintViolation` and `BoolConstraintViolation` error variants
+  with V-091/V-092 references. Module-level documentation for both dtype
+  constraints.
+- T-128: Expanded `CPU_ONLY_OPS_DETAILED` from 38 to 154 entries (100%
+  coverage of `CPU_ONLY_OPS`). Added 116 new entries with reason codes:
+  NoConverter (56), ControlFlow (18), Gradient (11), Logical (10),
+  TrigInverse (1), ComplexNumber (1), Fft (2), Rnn (3), Cumulative (3),
+  Random (3), Scatter (1), Sparse (3), ShapeQuery (1).
+- T-129: 4 missing `KnowledgeType` variants added to schema and Rust enum
+  (CpuOnlyOps, AneHwLimits, PalettizationConstraints, AneOpFamilyMatrix).
+  `claims_agree()` updated for new types. `precision_hazard_seed.json`
+  field rename `op` → `op_pattern`. "Seed File Formats (Current)" section
+  added to `knowledge_schema.md` documenting actual seed formats and
+  migration path. Integration tests for seed file validation.
+
+#### Changed
+
+- `precision_policy.rs`: `op_pattern_for_node()` return type changed from
+  `&str` to `String`. All existing patterns preserved with `.to_string()`.
+  Catch-all changed from `_ => "Other"` to dynamic `Misc_{VariantName}`.
+- `dtype_constraints.rs`: UInt16 and Bool arms in `is_dtype_ane_legal()`
+  now reference V-091/V-092 and note "caller must also validate op context".
+  New `validate_uint16_constraints()` and `validate_bool_constraints()`
+  functions for op-context validation.
+- `cpu_only_ops.rs`: `CPU_ONLY_OPS_DETAILED` expanded from 38 to 154
+  entries. No changes to `CPU_ONLY_OPS` set.
+- `kir.rs`: 4 new `KnowledgeType` enum variants.
+- `transfer.rs`: `claims_agree()` match arms for 4 new knowledge types.
+- `precision_hazard_seed.json`: `op` → `op_pattern` field rename.
+- `knowledge_schema.md`: 4 new knowledge types and "Seed File Formats"
+  section added.
+
+#### Tests Added (18 new tests)
+
+- T-108: 2 tests — `test_at_least_30_specific_op_patterns` (50+ specific
+  patterns verified), `test_no_sir_op_maps_to_bare_other` (no bare
+  "Other" mapping)
+- T-127: 6 tests — UInt16 TopK output ok, Conv output rejected, Argmax
+  output ok; Bool Select input ok, MatMul output rejected, Conv input
+  rejected
+- T-128: 3 tests — `test_cpu_only_detailed_covers_all_ops`,
+  `test_no_duplicate_entries_in_cpu_only_ops`,
+  `test_cpu_only_reason_codes_by_category`
+- T-129: 7 tests — seed file JSON validity, entries pattern structure,
+  flat format structure, shard template loading, store loading, expected
+  seed files present, precision hazard op_pattern field name
 
 ---
 

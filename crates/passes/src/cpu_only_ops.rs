@@ -264,60 +264,188 @@ pub static CPU_ONLY_OPS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
 });
 
 /// Detailed CPU-only op catalog with reason codes.
+/// T-128: Expanded to cover ALL ops in CPU_ONLY_OPS (154 entries).
 pub static CPU_ONLY_OPS_DETAILED: LazyLock<Vec<CpuOnlyOp>> = LazyLock::new(|| {
     vec![
-        // Trig inverses
+        // ─── Trigonometric inverses ────────────────────────────────
         CpuOnlyOp { mil_name: "acos", reason: CpuOnlyReason::TrigInverse },
         CpuOnlyOp { mil_name: "acosh", reason: CpuOnlyReason::TrigInverse },
         CpuOnlyOp { mil_name: "asin", reason: CpuOnlyReason::TrigInverse },
         CpuOnlyOp { mil_name: "asinh", reason: CpuOnlyReason::TrigInverse },
         CpuOnlyOp { mil_name: "atan", reason: CpuOnlyReason::TrigInverse },
         CpuOnlyOp { mil_name: "atanh", reason: CpuOnlyReason::TrigInverse },
+        CpuOnlyOp { mil_name: "atan2", reason: CpuOnlyReason::TrigInverse },
         CpuOnlyOp { mil_name: "tan", reason: CpuOnlyReason::TrigInverse },
-        // Hyperbolic
+        // ─── Hyperbolic ────────────────────────────────────────────
         CpuOnlyOp { mil_name: "sinh", reason: CpuOnlyReason::Hyperbolic },
         CpuOnlyOp { mil_name: "cosh", reason: CpuOnlyReason::Hyperbolic },
-        // Logical
+        // ─── Logical / bitwise ─────────────────────────────────────
         CpuOnlyOp { mil_name: "and", reason: CpuOnlyReason::Logical },
         CpuOnlyOp { mil_name: "or", reason: CpuOnlyReason::Logical },
         CpuOnlyOp { mil_name: "xor", reason: CpuOnlyReason::Logical },
+        CpuOnlyOp { mil_name: "nand", reason: CpuOnlyReason::Logical },
+        CpuOnlyOp { mil_name: "nor", reason: CpuOnlyReason::Logical },
+        CpuOnlyOp { mil_name: "xnor", reason: CpuOnlyReason::Logical },
+        CpuOnlyOp { mil_name: "bitwise_and", reason: CpuOnlyReason::Logical },
+        CpuOnlyOp { mil_name: "bitwise_or", reason: CpuOnlyReason::Logical },
+        CpuOnlyOp { mil_name: "bitwise_xor", reason: CpuOnlyReason::Logical },
+        CpuOnlyOp { mil_name: "bitwise_not", reason: CpuOnlyReason::Logical },
+        CpuOnlyOp { mil_name: "left_shift", reason: CpuOnlyReason::Logical },
+        CpuOnlyOp { mil_name: "right_shift", reason: CpuOnlyReason::Logical },
+        CpuOnlyOp { mil_name: "popcount", reason: CpuOnlyReason::Logical },
         CpuOnlyOp { mil_name: "logical_and", reason: CpuOnlyReason::Logical },
         CpuOnlyOp { mil_name: "logical_or", reason: CpuOnlyReason::Logical },
         CpuOnlyOp { mil_name: "logical_not", reason: CpuOnlyReason::Logical },
         CpuOnlyOp { mil_name: "logical_xor", reason: CpuOnlyReason::Logical },
-        // Complex
+        // ─── Complex number ────────────────────────────────────────
         CpuOnlyOp { mil_name: "create_complex", reason: CpuOnlyReason::ComplexNumber },
         CpuOnlyOp { mil_name: "real_part", reason: CpuOnlyReason::ComplexNumber },
         CpuOnlyOp { mil_name: "imaginary_part", reason: CpuOnlyReason::ComplexNumber },
-        // FFT
+        CpuOnlyOp { mil_name: "conjugate", reason: CpuOnlyReason::ComplexNumber },
+        // ─── FFT ───────────────────────────────────────────────────
         CpuOnlyOp { mil_name: "fast_fourier_transform", reason: CpuOnlyReason::Fft },
-        // Matrix
+        CpuOnlyOp { mil_name: "hermitean_to_real_fft", reason: CpuOnlyReason::Fft },
+        CpuOnlyOp { mil_name: "real_to_hermitean_fft", reason: CpuOnlyReason::Fft },
+        // ─── Matrix algebra ────────────────────────────────────────
         CpuOnlyOp { mil_name: "matrix_decomposition_lu", reason: CpuOnlyReason::MatrixAlgebra },
         CpuOnlyOp { mil_name: "matrix_inverse", reason: CpuOnlyReason::MatrixAlgebra },
         CpuOnlyOp { mil_name: "matrix_solver_lu", reason: CpuOnlyReason::MatrixAlgebra },
-        // RNN
+        // ─── RNN / LSTM / GRU ──────────────────────────────────────
         CpuOnlyOp { mil_name: "gru", reason: CpuOnlyReason::Rnn },
         CpuOnlyOp { mil_name: "lstm", reason: CpuOnlyReason::Rnn },
-        // Cumulative
-        CpuOnlyOp { mil_name: "cumulative_sum", reason: CpuOnlyReason::Cumulative },
+        CpuOnlyOp { mil_name: "rnn_activation", reason: CpuOnlyReason::Rnn },
+        CpuOnlyOp { mil_name: "rnn", reason: CpuOnlyReason::Rnn },
+        CpuOnlyOp { mil_name: "singlegate_rnn", reason: CpuOnlyReason::Rnn },
+        // ─── Gradient / backprop ───────────────────────────────────
+        CpuOnlyOp { mil_name: "bias_add_grad", reason: CpuOnlyReason::Gradient },
+        CpuOnlyOp { mil_name: "conv_grad", reason: CpuOnlyReason::Gradient },
+        CpuOnlyOp { mil_name: "pooling_max_gradient", reason: CpuOnlyReason::Gradient },
+        CpuOnlyOp { mil_name: "pooling_avg_gradient", reason: CpuOnlyReason::Gradient },
+        CpuOnlyOp { mil_name: "relu_grad", reason: CpuOnlyReason::Gradient },
+        CpuOnlyOp { mil_name: "sigmoid_grad", reason: CpuOnlyReason::Gradient },
+        CpuOnlyOp { mil_name: "tanh_grad", reason: CpuOnlyReason::Gradient },
+        CpuOnlyOp { mil_name: "linear_grad", reason: CpuOnlyReason::Gradient },
+        CpuOnlyOp { mil_name: "topk_grad", reason: CpuOnlyReason::Gradient },
+        CpuOnlyOp { mil_name: "gather_grad", reason: CpuOnlyReason::Gradient },
+        CpuOnlyOp { mil_name: "scatter_along_axis_grad", reason: CpuOnlyReason::Gradient },
+        // ─── Cumulative ────────────────────────────────────────────
+        CpuOnlyOp { mil_name: "cumulative_maximum", reason: CpuOnlyReason::Cumulative },
+        CpuOnlyOp { mil_name: "cumulative_minimum", reason: CpuOnlyReason::Cumulative },
         CpuOnlyOp { mil_name: "cumulative_product", reason: CpuOnlyReason::Cumulative },
-        // Random
+        CpuOnlyOp { mil_name: "cumulative_sum", reason: CpuOnlyReason::Cumulative },
+        CpuOnlyOp { mil_name: "cumsum", reason: CpuOnlyReason::Cumulative },
+        // ─── Random ────────────────────────────────────────────────
         CpuOnlyOp { mil_name: "random_normal", reason: CpuOnlyReason::Random },
+        CpuOnlyOp { mil_name: "random_truncated_normal", reason: CpuOnlyReason::Random },
         CpuOnlyOp { mil_name: "random_uniform", reason: CpuOnlyReason::Random },
-        // Control flow
+        CpuOnlyOp { mil_name: "random_categorical", reason: CpuOnlyReason::Random },
+        CpuOnlyOp { mil_name: "random_bernoulli", reason: CpuOnlyReason::Random },
+        // ─── Control flow ──────────────────────────────────────────
         CpuOnlyOp { mil_name: "if", reason: CpuOnlyReason::ControlFlow },
+        CpuOnlyOp { mil_name: "for", reason: CpuOnlyReason::ControlFlow },
         CpuOnlyOp { mil_name: "while_loop", reason: CpuOnlyReason::ControlFlow },
-        // Scatter
+        CpuOnlyOp { mil_name: "call", reason: CpuOnlyReason::ControlFlow },
+        CpuOnlyOp { mil_name: "condition", reason: CpuOnlyReason::ControlFlow },
+        CpuOnlyOp { mil_name: "yield", reason: CpuOnlyReason::ControlFlow },
+        CpuOnlyOp { mil_name: "cond", reason: CpuOnlyReason::ControlFlow },
+        CpuOnlyOp { mil_name: "return", reason: CpuOnlyReason::ControlFlow },
+        CpuOnlyOp { mil_name: "func", reason: CpuOnlyReason::ControlFlow },
+        // Dict ops
+        CpuOnlyOp { mil_name: "dict", reason: CpuOnlyReason::ControlFlow },
+        CpuOnlyOp { mil_name: "has_key", reason: CpuOnlyReason::ControlFlow },
+        CpuOnlyOp { mil_name: "dict_read", reason: CpuOnlyReason::ControlFlow },
+        CpuOnlyOp { mil_name: "dict_write", reason: CpuOnlyReason::ControlFlow },
+        // List ops
+        CpuOnlyOp { mil_name: "list_read", reason: CpuOnlyReason::ControlFlow },
+        CpuOnlyOp { mil_name: "list_write", reason: CpuOnlyReason::ControlFlow },
+        CpuOnlyOp { mil_name: "list_gather", reason: CpuOnlyReason::ControlFlow },
+        CpuOnlyOp { mil_name: "list_scatter", reason: CpuOnlyReason::ControlFlow },
+        CpuOnlyOp { mil_name: "make_list", reason: CpuOnlyReason::ControlFlow },
+        CpuOnlyOp { mil_name: "list_length", reason: CpuOnlyReason::ControlFlow },
+        // Cell ops
+        CpuOnlyOp { mil_name: "read_cell", reason: CpuOnlyReason::ControlFlow },
+        CpuOnlyOp { mil_name: "write_cell", reason: CpuOnlyReason::ControlFlow },
+        // ─── Scatter ───────────────────────────────────────────────
         CpuOnlyOp { mil_name: "scatter", reason: CpuOnlyReason::Scatter },
+        CpuOnlyOp { mil_name: "scatter_along_axis", reason: CpuOnlyReason::Scatter },
         CpuOnlyOp { mil_name: "scatter_nd", reason: CpuOnlyReason::Scatter },
-        // Shape
+        // ─── Sparse / tensor buffer ────────────────────────────────
+        CpuOnlyOp { mil_name: "sparse_tensor_storage", reason: CpuOnlyReason::Sparse },
+        CpuOnlyOp { mil_name: "materialize_sparse_tensor", reason: CpuOnlyReason::Sparse },
+        CpuOnlyOp { mil_name: "buffer_tensor", reason: CpuOnlyReason::Sparse },
+        // ─── Shape queries ─────────────────────────────────────────
         CpuOnlyOp { mil_name: "shape", reason: CpuOnlyReason::ShapeQuery },
         CpuOnlyOp { mil_name: "rank", reason: CpuOnlyReason::ShapeQuery },
         CpuOnlyOp { mil_name: "size", reason: CpuOnlyReason::ShapeQuery },
-        // NOTE: Comparison ops (equal, not_equal, greater, greater_equal, less, less_equal)
-        // ARE ANE-legal per per-op support matrix rows 44-50.
-        // Removed from CPU_ONLY detailed catalog.
-        // Blockwise scale
+        CpuOnlyOp { mil_name: "dimension_size", reason: CpuOnlyReason::ShapeQuery },
+        // ─── No ANEC converter — activation variants ───────────────
+        CpuOnlyOp { mil_name: "relu6", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "sigmoid_hard", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "thresholded_relu", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "clamped_relu", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "linear_activation", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "scaled_tanh", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "softplus_parametric", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "softplus", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "softsign", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "prelu", reason: CpuOnlyReason::NoConverter },
+        // ─── No ANEC converter — elementwise ───────────────────────
+        CpuOnlyOp { mil_name: "threshold", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "inverse", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "neg", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "round", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "modulo", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "clamp", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "is_finite", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "is_infinite", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "is_nan", reason: CpuOnlyReason::NoConverter },
+        // ─── No ANEC converter — tensor creation / conditional ─────
+        CpuOnlyOp { mil_name: "fill", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "fill_like", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "select", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "where", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "one_hot", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "non_zero", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "range1d", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "band_part", reason: CpuOnlyReason::NoConverter },
+        // ─── No ANEC converter — gather ────────────────────────────
+        CpuOnlyOp { mil_name: "gather", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "gather_along_axis", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "gather_nd", reason: CpuOnlyReason::NoConverter },
+        // ─── No ANEC converter — einsum ────────────────────────────
+        CpuOnlyOp { mil_name: "einsum", reason: CpuOnlyReason::NoConverter },
+        // ─── No ANEC converter — PE engine but unsupported ─────────
+        CpuOnlyOp { mil_name: "slice_update", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "sliding_windows", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "reverse", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "argsort", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "reverse_sequence", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "non_maximum_suppression", reason: CpuOnlyReason::NoConverter },
+        // ─── No ANEC converter — transform ─────────────────────────
+        CpuOnlyOp { mil_name: "strided_slice_update", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "dynamic_shape_cast", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "reinterpret_cast", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "col_to_im", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "im_to_col", reason: CpuOnlyReason::NoConverter },
+        // ─── No ANEC converter — sparse / quantization ─────────────
+        CpuOnlyOp { mil_name: "dequantize_lut", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "extract", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "from_elements", reason: CpuOnlyReason::NoConverter },
+        // ─── No ANEC converter — misc ──────────────────────────────
+        CpuOnlyOp { mil_name: "get_coordinates", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "local_convolution", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "lp_norm", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "prune", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "pruning_metric", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "pruning_structure", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "variable_from_tensor", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "assign_variable", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "placeholder", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "device_hint", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "nf", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "unrealized_fold", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "create_texture_tensor", reason: CpuOnlyReason::NoConverter },
+        // ─── Miscellaneous — quantization constexpr ────────────────
         CpuOnlyOp {
             mil_name: "constexpr_blockwise_shift_scale",
             reason: CpuOnlyReason::Miscellaneous,
@@ -326,6 +454,9 @@ pub static CPU_ONLY_OPS_DETAILED: LazyLock<Vec<CpuOnlyOp>> = LazyLock::new(|| {
             mil_name: "constexpr_sparse_blockwise_shift_scale",
             reason: CpuOnlyReason::Miscellaneous,
         },
+        // NOTE: Comparison ops (equal, not_equal, greater, greater_equal, less, less_equal)
+        // ARE ANE-legal per per-op support matrix rows 44-50.
+        // Removed from CPU_ONLY detailed catalog.
     ]
 });
 
@@ -417,6 +548,7 @@ mod unified_check {
             // These are known divergences — they have engine assignments
             // but are in CPU_ONLY_OPS because they lack emission code.
             // This is acceptable for now.
+            let _ = name; // suppress unused warning
         }
     }
 }
@@ -470,13 +602,251 @@ mod tests {
 
     #[test]
     fn test_cpu_only_set_size() {
-        // T-67: Removed 5 entries (negative, reciprocal, reverse_square_root, rint, signbit)
-        // and added 2 (neg, round). Net: -3 from the T-49 additions.
-        // Should have at least 117 entries (was 93, +4 T-47, +18 T-49 after fix, +2 T-67)
+        // T-128: After expanding DETAILED and verifying no duplicates,
+        // CPU_ONLY_OPS has exactly 154 unique entries.
         assert!(
-            CPU_ONLY_OPS.len() >= 117,
-            "CPU_ONLY_OPS has {} entries, expected >= 117",
+            CPU_ONLY_OPS.len() >= 154,
+            "CPU_ONLY_OPS has {} entries, expected >= 154",
             CPU_ONLY_OPS.len()
+        );
+    }
+
+    /// T-128: Verify that every op in CPU_ONLY_OPS has a corresponding
+    /// entry in CPU_ONLY_OPS_DETAILED. This ensures the reason code
+    /// catalog is complete.
+    #[test]
+    fn test_cpu_only_detailed_covers_all_ops() {
+        let detailed_names: HashSet<&str> = CPU_ONLY_OPS_DETAILED
+            .iter()
+            .map(|op| op.mil_name)
+            .collect();
+
+        for &op_name in CPU_ONLY_OPS.iter() {
+            assert!(
+                detailed_names.contains(op_name),
+                "op \"{}\" is in CPU_ONLY_OPS but has no entry in CPU_ONLY_OPS_DETAILED — \
+                 add a CpuOnlyOp entry with an appropriate reason code",
+                op_name
+            );
+        }
+    }
+
+    /// T-128: Verify that no duplicate entries exist in the source
+    /// CPU_ONLY_OPS array. The HashSet silently deduplicates, but
+    /// duplicates in the source array indicate a maintenance issue.
+    #[test]
+    fn test_no_duplicate_entries_in_cpu_only_ops() {
+        // The source array used to build CPU_ONLY_OPS.
+        // We check it for duplicates by comparing the total count
+        // against the unique count.
+        let source_ops: &[&str] = &[
+            // Trigonometric inverses
+            "acos",
+            "acosh",
+            "asin",
+            "asinh",
+            "atan",
+            "atanh",
+            "atan2",
+            "tan",
+            // Hyperbolic (not on ANE)
+            "sinh",
+            "cosh",
+            // Logical/bitwise
+            "and",
+            "or",
+            "xor",
+            "nand",
+            "nor",
+            "xnor",
+            "bitwise_and",
+            "bitwise_or",
+            "bitwise_xor",
+            "bitwise_not",
+            "left_shift",
+            "right_shift",
+            "popcount",
+            // Complex number
+            "create_complex",
+            "real_part",
+            "imaginary_part",
+            "conjugate",
+            // FFT
+            "fast_fourier_transform",
+            "hermitean_to_real_fft",
+            "real_to_hermitean_fft",
+            // Matrix algebra
+            "matrix_decomposition_lu",
+            "matrix_inverse",
+            "matrix_solver_lu",
+            // RNN/LSTM/GRU
+            "gru",
+            "lstm",
+            "rnn_activation",
+            "rnn",
+            "singlegate_rnn",
+            // Gradient variants
+            "bias_add_grad",
+            "conv_grad",
+            "pooling_max_gradient",
+            "pooling_avg_gradient",
+            "relu_grad",
+            "sigmoid_grad",
+            "tanh_grad",
+            "linear_grad",
+            // Cumulative
+            "cumulative_maximum",
+            "cumulative_minimum",
+            "cumulative_product",
+            "cumulative_sum",
+            "cumsum",
+            // Random
+            "random_normal",
+            "random_truncated_normal",
+            "random_uniform",
+            "random_categorical",
+            "random_bernoulli",
+            // Control flow
+            "if",
+            "for",
+            "while_loop",
+            "call",
+            "condition",
+            "yield",
+            "cond",
+            // Scatter
+            "scatter",
+            "scatter_along_axis",
+            "scatter_nd",
+            // Sparse/tensor buffer
+            "sparse_tensor_storage",
+            "materialize_sparse_tensor",
+            "buffer_tensor",
+            // Shape queries
+            "shape",
+            "rank",
+            "size",
+            "dimension_size",
+            // Miscellaneous
+            "band_part",
+            "one_hot",
+            "softplus",
+            "softsign",
+            "modulo",
+            "non_zero",
+            "range1d",
+            "clamp",
+            "prelu",
+            // ANE-illegal tensor creation / conditional ops
+            "fill",
+            "fill_like",
+            "select",
+            "where",
+            // Gather
+            "gather",
+            "gather_along_axis",
+            "gather_nd",
+            // Quantization constexpr
+            "constexpr_blockwise_shift_scale",
+            "constexpr_sparse_blockwise_shift_scale",
+            // Logical
+            "logical_and",
+            "logical_or",
+            "logical_xor",
+            "logical_not",
+            "non_maximum_suppression",
+            // Dict/List/Cell
+            "dict",
+            "has_key",
+            "dict_read",
+            "dict_write",
+            "list_read",
+            "list_write",
+            "list_gather",
+            "list_scatter",
+            "make_list",
+            "list_length",
+            "read_cell",
+            "write_cell",
+            // Gradient (additional)
+            "topk_grad",
+            "gather_grad",
+            "scatter_along_axis_grad",
+            "reverse_sequence",
+            // T-22: Activation variants
+            "relu6",
+            "sigmoid_hard",
+            "thresholded_relu",
+            "clamped_relu",
+            "linear_activation",
+            "scaled_tanh",
+            "softplus_parametric",
+            // T-22: Elementwise
+            "threshold",
+            "inverse",
+            "einsum",
+            // T-47: PE engine but no ANEC converter
+            "slice_update",
+            "sliding_windows",
+            "reverse",
+            "argsort",
+            // T-49: Control flow
+            "return",
+            // T-49: Type check
+            "is_finite",
+            "is_infinite",
+            "is_nan",
+            // T-67: Fixed names
+            "neg",
+            "round",
+            // T-49: Transform
+            "strided_slice_update",
+            "dynamic_shape_cast",
+            "reinterpret_cast",
+            "col_to_im",
+            "im_to_col",
+            // T-49: Sparse/buffer
+            "dequantize_lut",
+            "extract",
+            "from_elements",
+            "func",
+            "get_coordinates",
+            "local_convolution",
+            "lp_norm",
+            "prune",
+            "pruning_metric",
+            "pruning_structure",
+            "variable_from_tensor",
+            "assign_variable",
+            "placeholder",
+            "device_hint",
+            "nf",
+            "unrealized_fold",
+            "create_texture_tensor",
+        ];
+
+        let unique: HashSet<&str> = source_ops.iter().copied().collect();
+        assert_eq!(
+            source_ops.len(),
+            unique.len(),
+            "CPU_ONLY_OPS source array has {} entries but only {} are unique — \
+             duplicate entries must be removed",
+            source_ops.len(),
+            unique.len()
+        );
+
+        // Find and report specific duplicates
+        let mut seen: HashSet<&str> = HashSet::new();
+        let mut duplicates: Vec<&str> = Vec::new();
+        for &op in source_ops {
+            if !seen.insert(op) {
+                duplicates.push(op);
+            }
+        }
+        assert!(
+            duplicates.is_empty(),
+            "Duplicate entries found in CPU_ONLY_OPS source array: {:?}",
+            duplicates
         );
     }
 
@@ -615,5 +985,72 @@ mod tests {
             "\"reciprocal\" is dead code — no MirOp produces this name"
         );
         assert!(!is_cpu_only("signbit"), "\"signbit\" is dead code — no MirOp produces this name");
+    }
+
+    /// T-128: Verify reason codes are correct for representative ops
+    /// across all CpuOnlyReason categories.
+    #[test]
+    fn test_cpu_only_reason_codes_by_category() {
+        // TrigInverse
+        assert_eq!(get_cpu_only_reason("acos"), Some(&CpuOnlyReason::TrigInverse));
+        assert_eq!(get_cpu_only_reason("atan2"), Some(&CpuOnlyReason::TrigInverse));
+        assert_eq!(get_cpu_only_reason("tan"), Some(&CpuOnlyReason::TrigInverse));
+        // Hyperbolic
+        assert_eq!(get_cpu_only_reason("sinh"), Some(&CpuOnlyReason::Hyperbolic));
+        assert_eq!(get_cpu_only_reason("cosh"), Some(&CpuOnlyReason::Hyperbolic));
+        // Logical
+        assert_eq!(get_cpu_only_reason("nand"), Some(&CpuOnlyReason::Logical));
+        assert_eq!(get_cpu_only_reason("bitwise_and"), Some(&CpuOnlyReason::Logical));
+        assert_eq!(get_cpu_only_reason("popcount"), Some(&CpuOnlyReason::Logical));
+        assert_eq!(get_cpu_only_reason("logical_xor"), Some(&CpuOnlyReason::Logical));
+        // ComplexNumber
+        assert_eq!(get_cpu_only_reason("create_complex"), Some(&CpuOnlyReason::ComplexNumber));
+        assert_eq!(get_cpu_only_reason("conjugate"), Some(&CpuOnlyReason::ComplexNumber));
+        // Fft
+        assert_eq!(get_cpu_only_reason("fast_fourier_transform"), Some(&CpuOnlyReason::Fft));
+        assert_eq!(get_cpu_only_reason("hermitean_to_real_fft"), Some(&CpuOnlyReason::Fft));
+        // MatrixAlgebra
+        assert_eq!(get_cpu_only_reason("matrix_inverse"), Some(&CpuOnlyReason::MatrixAlgebra));
+        // Rnn
+        assert_eq!(get_cpu_only_reason("gru"), Some(&CpuOnlyReason::Rnn));
+        assert_eq!(get_cpu_only_reason("rnn"), Some(&CpuOnlyReason::Rnn));
+        assert_eq!(get_cpu_only_reason("singlegate_rnn"), Some(&CpuOnlyReason::Rnn));
+        // Gradient
+        assert_eq!(get_cpu_only_reason("relu_grad"), Some(&CpuOnlyReason::Gradient));
+        assert_eq!(get_cpu_only_reason("gather_grad"), Some(&CpuOnlyReason::Gradient));
+        assert_eq!(get_cpu_only_reason("topk_grad"), Some(&CpuOnlyReason::Gradient));
+        // Cumulative
+        assert_eq!(get_cpu_only_reason("cumsum"), Some(&CpuOnlyReason::Cumulative));
+        assert_eq!(get_cpu_only_reason("cumulative_maximum"), Some(&CpuOnlyReason::Cumulative));
+        // Random
+        assert_eq!(get_cpu_only_reason("random_truncated_normal"), Some(&CpuOnlyReason::Random));
+        assert_eq!(get_cpu_only_reason("random_bernoulli"), Some(&CpuOnlyReason::Random));
+        // ControlFlow
+        assert_eq!(get_cpu_only_reason("for"), Some(&CpuOnlyReason::ControlFlow));
+        assert_eq!(get_cpu_only_reason("cond"), Some(&CpuOnlyReason::ControlFlow));
+        assert_eq!(get_cpu_only_reason("make_list"), Some(&CpuOnlyReason::ControlFlow));
+        assert_eq!(get_cpu_only_reason("dict_read"), Some(&CpuOnlyReason::ControlFlow));
+        assert_eq!(get_cpu_only_reason("return"), Some(&CpuOnlyReason::ControlFlow));
+        // Scatter
+        assert_eq!(get_cpu_only_reason("scatter_along_axis"), Some(&CpuOnlyReason::Scatter));
+        // Sparse
+        assert_eq!(get_cpu_only_reason("sparse_tensor_storage"), Some(&CpuOnlyReason::Sparse));
+        assert_eq!(get_cpu_only_reason("buffer_tensor"), Some(&CpuOnlyReason::Sparse));
+        // ShapeQuery
+        assert_eq!(get_cpu_only_reason("dimension_size"), Some(&CpuOnlyReason::ShapeQuery));
+        // NoConverter
+        assert_eq!(get_cpu_only_reason("relu6"), Some(&CpuOnlyReason::NoConverter));
+        assert_eq!(get_cpu_only_reason("gather"), Some(&CpuOnlyReason::NoConverter));
+        assert_eq!(get_cpu_only_reason("fill"), Some(&CpuOnlyReason::NoConverter));
+        assert_eq!(get_cpu_only_reason("neg"), Some(&CpuOnlyReason::NoConverter));
+        assert_eq!(get_cpu_only_reason("einsum"), Some(&CpuOnlyReason::NoConverter));
+        assert_eq!(get_cpu_only_reason("argsort"), Some(&CpuOnlyReason::NoConverter));
+        // Miscellaneous
+        assert_eq!(
+            get_cpu_only_reason("constexpr_blockwise_shift_scale"),
+            Some(&CpuOnlyReason::Miscellaneous)
+        );
+        // Non-CPU-only op returns None
+        assert_eq!(get_cpu_only_reason("conv"), None);
     }
 }

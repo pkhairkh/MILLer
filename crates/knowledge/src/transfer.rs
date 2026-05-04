@@ -213,6 +213,26 @@ impl SyntheticTransfer {
                 // not claims about model behavior. They can't contradict.
                 true
             }
+            KnowledgeType::CpuOnlyOps => {
+                // CPU-only op catalog entries are additive — different ops
+                // are catalogued independently and don't contradict.
+                true
+            }
+            KnowledgeType::AneHwLimits => {
+                // Hardware limit entries are per-revision and additive.
+                // Different revisions have different limits by design.
+                true
+            }
+            KnowledgeType::PalettizationConstraints => {
+                // Palettization constraints are additive — multiple constraint
+                // entries for different scenarios don't contradict.
+                true
+            }
+            KnowledgeType::AneOpFamilyMatrix => {
+                // Per-family op matrix entries are additive — different ops
+                // or different families have independent support status.
+                true
+            }
         }
     }
 }

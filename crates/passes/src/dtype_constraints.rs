@@ -3,6 +3,31 @@
 //!
 //! T-35 (I-14): Expanded with Int4, UInt4, E4M3, E5M2, UInt16 dtype
 //! variants and their ANE constraint enforcement.
+//!
+//! ## UInt16 ANE Constraints (V-091)
+//!
+//! UInt16 has extremely limited ANE support. From ANEC binary forensic evidence:
+//! - UInt16 is ONLY valid as the output of: TopK (indices), Sort (indices),
+//!   ReduceArgmax (indices), ReduceArgmin (indices)
+//! - UInt16 may also appear as a single DMA source in the PEEW (Primary
+//!   Element Execution Window) data path, but this is not a compute use case.
+//! - Argmax/Argmin indices output as UInt16 requires iOS17+ (A17+ family).
+//! - Any other op producing or consuming UInt16 on the ANE will be rejected
+//!   by ANEC at runtime.
+//!
+//! ## Bool ANE Constraints (V-092)
+//!
+//! Bool has no ANE compute support whatsoever:
+//! - Bool is NOT supported as a weight blob dtype.
+//! - Bool is NOT supported as an ANE compute output — the ANE cannot produce
+//!   Bool-typed results from any compute operation.
+//! - Bool can ONLY appear as a mask-like input tensor for Select and Where
+//!   operations (condition operand). Even then, Select/Where are currently
+//!   decomposed to arithmetic on the ANE path, so Bool is effectively
+//!   CPU-only for all practical purposes.
+//! - Comparison ops (Equal, NotEqual, Greater, Less) produce Bool output
+//!   but are handled internally by the ANE as FP16 0/1 values, not as
+//!   true Bool-typed tensors.
 
 use ane_ir::ane_target::AneFamily;
 use ane_ir::mir::MilDtype;
@@ -24,6 +49,10 @@ pub enum DtypeConstraintError {
     CrossTypeViolation { input_dtype: String, output_dtype: String, message: String },
     /// Asymmetric quantization not supported on ANE (T-97/V-134/I-102).
     AsymmetricQuantViolation { message: String },
+    /// UInt16 constraint violation (V-091).
+    UInt16ConstraintViolation { message: String },
+    /// Bool constraint violation (V-092).
+    BoolConstraintViolation { message: String },
 }
 
 impl std::fmt::Display for DtypeConstraintError {
@@ -51,6 +80,12 @@ impl std::fmt::Display for DtypeConstraintError {
             }
             Self::AsymmetricQuantViolation { message } => {
                 write!(f, "Asymmetric quantization violation: {}", message)
+            }
+            Self::UInt16ConstraintViolation { message } => {
+                write!(f, "UInt16 constraint violation (V-091): {}", message)
+            }
+            Self::BoolConstraintViolation { message } => {
+                write!(f, "Bool constraint violation (V-092): {}", message)
             }
         }
     }
@@ -114,16 +149,16 @@ pub fn is_dtype_ane_legal(
             family: format!("{:?}", family),
             message: "E4M3 or E5M2 format not supported on ANE".into(),
         }),
-        // UInt16 — limited support
-        MilDtype::UInt16 => Ok(()),
+        // UInt16 — limited support (V-091): only valid as output of TopK/Sort/Argmax/Argmin
+        MilDtype::UInt16 => Ok(()), // constrained: caller must also validate op context
         // Int32 — NOT supported for compute on ANE
         MilDtype::Int32 => Err(DtypeConstraintError::RejectedDtype {
             dtype: "Int32".into(),
             family: format!("{:?}", family),
             message: "32 bit format not supported for ANE compute".into(),
         }),
-        // Bool — limited support
-        MilDtype::Bool => Ok(()),
+        // Bool — limited support (V-092): only valid as mask input for Select/Where
+        MilDtype::Bool => Ok(()), // constrained: caller must also validate op context
         // FP64 — NOT supported on ANE
         MilDtype::Fp64 => Err(DtypeConstraintError::RejectedDtype {
             dtype: "Fp64".into(),
@@ -171,6 +206,94 @@ pub fn validate_uint4_interleave(interleave: usize) -> Result<(), DtypeConstrain
         });
     }
     Ok(())
+}
+
+/// Validate UInt16 dtype constraints for ANE operations.
+///
+/// V-091: UInt16 is ONLY valid as the output dtype of specific ops:
+/// - TopK (indices output)
+/// - Sort (indices output)  [note: Argsort is CPU-only in current MILLer]
+/// - ReduceArgmax (indices output, iOS17+/A17+)
+/// - ReduceArgmin (indices output, iOS17+/A17+)
+///
+/// For any other op using UInt16 on the ANE, this function returns an error.
+/// The `is_output` parameter distinguishes between UInt16 being used as an
+/// output dtype (legal for the ops above) vs. an input dtype (always illegal
+/// for ANE compute except the limited DMA source PEEW case, which is not
+/// a compiler-level concern).
+///
+/// # Arguments
+/// * `op_name` - The MIL op name (e.g., "topk", "reduce_argmax")
+/// * `is_output` - True if UInt16 is the output dtype of this op
+pub fn validate_uint16_constraints(op_name: &str, is_output: bool) -> Result<(), DtypeConstraintError> {
+    const UINT16_ALLOWED_OPS: &[&str] = &[
+        "topk",
+        "sort",
+        "reduce_argmax",
+        "reduce_argmin",
+    ];
+
+    if is_output && UINT16_ALLOWED_OPS.contains(&op_name) {
+        Ok(())
+    } else if is_output {
+        Err(DtypeConstraintError::UInt16ConstraintViolation {
+            message: format!(
+                "UInt16 dtype is only supported for TopK/Sort indices output and \
+                 ReduceArgmax/ReduceArgmin on ANE (iOS17+), got op '{}'",
+                op_name
+            ),
+        })
+    } else {
+        Err(DtypeConstraintError::UInt16ConstraintViolation {
+            message: format!(
+                "UInt16 dtype is only supported for TopK/Sort indices output and \
+                 ReduceArgmax/ReduceArgmin on ANE (iOS17+); UInt16 as input to '{}' is not supported",
+                op_name
+            ),
+        })
+    }
+}
+
+/// Validate Bool dtype constraints for ANE operations.
+///
+/// V-092: Bool is NOT supported as an ANE compute dtype:
+/// - Bool cannot be produced as output by any ANE compute op.
+/// - Bool can ONLY appear as a mask input (condition operand) for Select and
+///   Where operations. Note: Select/Where are currently decomposed to
+///   arithmetic on the ANE path, so Bool is effectively CPU-only.
+/// - Bool is NOT supported in weight blobs.
+///
+/// For ops that produce Bool output on the ANE, this returns an error.
+/// For ops where Bool is a mask/condition input (Select, Where), this is OK.
+///
+/// # Arguments
+/// * `op_name` - The MIL op name (e.g., "select", "where", "conv")
+/// * `is_output` - True if Bool is the output dtype of this op
+pub fn validate_bool_constraints(op_name: &str, is_output: bool) -> Result<(), DtypeConstraintError> {
+    const BOOL_MASK_INPUT_OPS: &[&str] = &["select", "where"];
+
+    if is_output {
+        // Bool as ANE compute output is never supported
+        Err(DtypeConstraintError::BoolConstraintViolation {
+            message: format!(
+                "Bool dtype is not supported as ANE compute output — \
+                 only valid as mask input for Select/Where operations, got op '{}' producing Bool output",
+                op_name
+            ),
+        })
+    } else if BOOL_MASK_INPUT_OPS.contains(&op_name) {
+        // Bool as mask input for Select/Where is acceptable
+        Ok(())
+    } else {
+        // Bool used as input to any other op is not supported on ANE
+        Err(DtypeConstraintError::BoolConstraintViolation {
+            message: format!(
+                "Bool dtype is not supported as ANE compute input for '{}' — \
+                 only valid as mask input for Select/Where operations",
+                op_name
+            ),
+        })
+    }
 }
 
 /// Validate quantization format constraints.
@@ -759,6 +882,71 @@ mod tests {
         assert!(
             msg.contains("E5M2") || msg.contains("V-051"),
             "Error should mention E5M2 or violation ID: {}", msg
+        );
+    }
+
+    // ─── T-127: UInt16 and Bool constraint tests (V-091, V-092) ──────────
+
+    #[test]
+    fn test_uint16_topk_output_ok() {
+        // V-091: UInt16 is valid as TopK indices output
+        assert!(
+            validate_uint16_constraints("topk", true).is_ok(),
+            "UInt16 should be valid as TopK output"
+        );
+    }
+
+    #[test]
+    fn test_uint16_conv_output_rejected() {
+        // V-091: UInt16 is NOT valid as Conv output
+        let err = validate_uint16_constraints("conv", true);
+        assert!(err.is_err(), "UInt16 should be rejected as Conv output");
+        let msg = format!("{}", err.unwrap_err());
+        assert!(
+            msg.contains("UInt16") && msg.contains("TopK/Sort"),
+            "Error should mention UInt16 constraint: {}", msg
+        );
+    }
+
+    #[test]
+    fn test_uint16_argmax_output_ok() {
+        // V-091: UInt16 is valid as ReduceArgmax indices output
+        assert!(
+            validate_uint16_constraints("reduce_argmax", true).is_ok(),
+            "UInt16 should be valid as ReduceArgmax output"
+        );
+    }
+
+    #[test]
+    fn test_bool_select_input_ok() {
+        // V-092: Bool is valid as mask input for Select
+        assert!(
+            validate_bool_constraints("select", false).is_ok(),
+            "Bool should be valid as mask input for Select"
+        );
+    }
+
+    #[test]
+    fn test_bool_matmul_output_rejected() {
+        // V-092: Bool is NOT valid as MatMul output (or any ANE compute output)
+        let err = validate_bool_constraints("matmul", true);
+        assert!(err.is_err(), "Bool should be rejected as MatMul output");
+        let msg = format!("{}", err.unwrap_err());
+        assert!(
+            msg.contains("Bool") && msg.contains("Select/Where"),
+            "Error should mention Bool constraint: {}", msg
+        );
+    }
+
+    #[test]
+    fn test_bool_conv_input_rejected() {
+        // V-092: Bool is NOT valid as input to Conv (only Select/Where accept Bool input)
+        let err = validate_bool_constraints("conv", false);
+        assert!(err.is_err(), "Bool should be rejected as Conv input");
+        let msg = format!("{}", err.unwrap_err());
+        assert!(
+            msg.contains("Bool") && msg.contains("Select/Where"),
+            "Error should mention Bool Select/Where constraint: {}", msg
         );
     }
 }

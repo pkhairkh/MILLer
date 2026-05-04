@@ -17,6 +17,18 @@ pub enum KnowledgeType {
     DeviceFingerprint,
     StateTopologyOutcome,
     SyntheticTransferAnnotation,
+    /// CPU-only op catalog — ops that never land on ANE.
+    /// Seed source: knowledge/cpu_only_ops_seed.json
+    CpuOnlyOps,
+    /// Per-revision ANE hardware limit parameters.
+    /// Seed source: knowledge/ane_hw_limits_seed.json
+    AneHwLimits,
+    /// Palettization (LUT compression) constraints for ANE execution.
+    /// Seed source: knowledge/palettization_constraints_seed.json
+    PalettizationConstraints,
+    /// Per-family ANE op legality matrix.
+    /// Seed source: knowledge/ane_op_family_matrix.json
+    AneOpFamilyMatrix,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

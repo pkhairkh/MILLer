@@ -277,16 +277,14 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-### T-108 · Expand Precision Policy Coverage
+### T-108 · ~~Expand Precision Policy Coverage~~
 
 - **ISSUES ref**: I-83
 - **AUDIT ref**: V-015 (ane-violations.md §III)
 - **Severity**: MEDIUM
 - **Effort**: L (2 days)
 
-**Intent**: Only 14 of ~167 SIR op types query precision hazards. All others silently use default fp16 even if stored knowledge indicates a hazard. This means precision-sensitive ops like attention projections and normalization layers may get wrong dtype assignments.
-
-**Definition of Done**: Top-30 most common op types covered by precision policy; remainder marked with explicit "coverage gap" log warnings. Test verifies coverage for top-30 ops.
+**✅ RESOLVED** — Expanded `op_pattern_for_node()` from ~33% to 100% SirOp variant coverage. Added 53 new match arms covering all previously-uncategorized ops: Comparison (6), Logical (4), Activation (12), Trigonometric (9), Reduction (8), Tensor Transform (21), Image Resize (8), Scatter/Gather (4), Constexpr (7), Recurrent (3), Control Flow (8), Random (4), Topk/Classify (2), Rounding (3), Mathematical (4), Conditional (2). Replaced `_ => "Other"` with `Misc_{VariantName}` catch-all. Changed return type from `&str` to `String`. 2 new tests verify 50+ specific patterns and no bare "Other" mappings.
 
 ---
 
@@ -465,14 +463,14 @@ Full resolution details are in `CHANGELOG.md`.
 - **AUDIT ref**: V-090
 **✅ RESOLVED** — Added log::warn!() when canonicalization substitution chain resolution hits 100-step limit.
 
-### T-127 · Document UInt16/Bool Limited Support
-- **AUDIT ref**: V-091, V-092. Specify which ops/families support UInt16 and Bool. **DoD**: Constraint docs updated.
+### T-127 · ~~Document UInt16/Bool Limited Support~~
+- **AUDIT ref**: V-091, V-092. **✅ RESOLVED** — Added `validate_uint16_constraints()` and `validate_bool_constraints()` in dtype_constraints.rs. UInt16 only valid as output of TopK/Sort/ReduceArgmax/ReduceArgmin. Bool only valid as mask input for Select/Where. Added `UInt16ConstraintViolation` and `BoolConstraintViolation` error variants. Module-level documentation added for V-091/V-092 constraints. 6 new tests.
 
-### T-128 · Expand CPU_ONLY_OPS_DETAILED
-- **AUDIT ref**: V-093. Cover all 120+ CPU-only ops with reason codes. **DoD**: All CPU-only ops have documented reasons.
+### T-128 · ~~Expand CPU_ONLY_OPS_DETAILED~~
+- **AUDIT ref**: V-093. **✅ RESOLVED** — Expanded `CPU_ONLY_OPS_DETAILED` from 38 to 154 entries (100% coverage of CPU_ONLY_OPS set). Added 116 new entries with reason codes: NoConverter (56), ControlFlow (18), Gradient (11), Logical (10), TrigInverse (1), ComplexNumber (1), Fft (2), Rnn (3), Cumulative (3), Random (3), Scatter (1), Sparse (3), ShapeQuery (1). Verified no duplicate entries. 3 new tests.
 
-### T-129 · Fix Knowledge Schema/Seed Format Mismatch
-- **AUDIT ref**: V-071. Align seed JSON format with knowledge_schema.md. **DoD**: Seeds validate against schema.
+### T-129 · ~~Fix Knowledge Schema/Seed Format Mismatch~~
+- **AUDIT ref**: V-071. **✅ RESOLVED** — Added 4 missing `KnowledgeType` variants (CpuOnlyOps, AneHwLimits, PalettizationConstraints, AneOpFamilyMatrix) to schema and Rust enum. Updated `claims_agree()` for new types. Fixed `precision_hazard_seed.json` field rename `op` → `op_pattern`. Added "Seed File Formats (Current)" section to knowledge_schema.md documenting actual seed formats and migration path. 7 new seed validation integration tests.
 
 ### T-130 · ~~Wire --seed Parameter or Remove~~
 - **AUDIT ref**: V-087
@@ -495,7 +493,7 @@ Full resolution details are in `CHANGELOG.md`.
 | T-98 | I-73, I-94 | HIGH | L | ✅ Resolved |
 | T-105 | I-80 | MEDIUM | M | ✅ Resolved |
 | T-107 | I-82 | MEDIUM | M | ✅ Resolved |
-| T-108 | I-83 | MEDIUM | L | 🟡 Open |
+| T-108 | I-83 | MEDIUM | L | ✅ Resolved |
 | T-110 | I-85 | MEDIUM | M | ✅ Resolved |
 | T-112 | I-84, I-85 | MEDIUM | M | ✅ Resolved |
 | T-113 | I-88 | MEDIUM | M | ✅ Resolved |
@@ -509,9 +507,9 @@ Full resolution details are in `CHANGELOG.md`.
 | T-124 | — | LOW | S | ✅ Resolved |
 | T-125 | — | LOW | S | ✅ Resolved |
 | T-126 | — | LOW | S | ✅ Resolved |
-| T-127 | — | LOW | S | 🔵 Open |
-| T-128 | — | LOW | S | 🔵 Open |
-| T-129 | — | LOW | M | 🔵 Open |
+| T-127 | — | LOW | S | ✅ Resolved |
+| T-128 | — | LOW | S | ✅ Resolved |
+| T-129 | — | LOW | M | ✅ Resolved |
 | T-130 | — | LOW | S | ✅ Resolved |
 | T-131 | — | LOW | S | ✅ Resolved |
 | T-86 | I-61 | CRITICAL | S | ✅ Resolved |
@@ -582,12 +580,10 @@ Tasks T-47 through T-57, T-60, T-62, T-63, T-64, T-65 resolved. T-61, T-66 remai
 | Severity | Count | Total Effort |
 |----------|-------|-------------|
 | 🔴 CRITICAL | 1 | ~2 days |
-| 🟡 MEDIUM | 1 | ~2 days |
-| 🔵 LOW | 3 | ~1.5 days |
-| **Total** | **5** | **~5.5 days** |
+| **Total** | **1** | **~2 days** |
 
 > **Priority guidance**: CRITICAL task T-90 must be resolved before any production compilation.
-> MEDIUM/LOW tasks (T-108, T-127–T-129) are technical debt that should be chipped away at consistently.
+> All MEDIUM and LOW tasks are now resolved.
 >
-> **Resolved**: 40 tasks (T-86, T-87, T-89, T-91–T-99, T-100–T-107, T-109–T-126, T-130–T-131).
+> **Resolved**: 44 tasks (T-86, T-87, T-89, T-91–T-99, T-100–T-108, T-109–T-131).
 > Tasks T-01 through T-85 are all resolved — see archive summary above and `CHANGELOG.md`.

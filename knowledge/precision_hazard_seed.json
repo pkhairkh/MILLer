@@ -5,7 +5,7 @@
     {
       "id": "hazard_wq_4bit_deep_layers",
       "knowledge_type": "PrecisionHazard",
-      "op": "LinearProjection",
+      "op_pattern": "LinearProjection",
       "weight_type": "W_Q",
       "bitwidth": 4,
       "granularity": "per_grouped_channel",
@@ -24,7 +24,7 @@
     {
       "id": "hazard_wk_4bit_deep_layers",
       "knowledge_type": "PrecisionHazard",
-      "op": "LinearProjection",
+      "op_pattern": "LinearProjection",
       "weight_type": "W_K",
       "bitwidth": 4,
       "granularity": "per_grouped_channel",
@@ -43,7 +43,7 @@
     {
       "id": "safe_wd_6bit_all_layers",
       "knowledge_type": "PrecisionHazard",
-      "op": "LinearProjection",
+      "op_pattern": "LinearProjection",
       "weight_type": "W_D",
       "bitwidth": 6,
       "granularity": "per_grouped_channel",
@@ -62,7 +62,7 @@
     {
       "id": "safe_gate_up_4bit_early_layers",
       "knowledge_type": "PrecisionHazard",
-      "op": "LinearProjection",
+      "op_pattern": "LinearProjection",
       "weight_type": "W_G",
       "bitwidth": 4,
       "granularity": "per_grouped_channel",
