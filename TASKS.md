@@ -80,13 +80,13 @@ _No open CRITICAL tasks — T-67 resolved._
 
 ## 🟡 MEDIUM — Do These Soon
 
-### T-60 · Fix Tile Decomposition Placeholder Zeros
+### T-60 · ~~Fix Tile Decomposition Placeholder Zeros~~
 
-- **ISSUES ref**: I-34
-- **AUDIT ref**: §IV (B-9)
-- **Severity**: MEDIUM
-- **Effort**: S (0.5 day)
-- **Detail**: Tile decomposition in `legality_rewrite.rs:542-543` generates reshape_shape with `0` placeholders. `resolve_reshape_zeros()` uses batch=1 heuristic for multi-zero resolution, which is incorrect for general Tile patterns. Use ctx dimensions when available; document that ctx is required for correct Tile decomposition.
+~~**ISSUES ref**: I-34~~
+~~**AUDIT ref**: §IV (B-9)~~
+~~**Severity**: MEDIUM~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Added `tile_input_dim()` method to `DecompositionContext` for concrete shape resolution from ctx fields. Tile decomposition now uses ctx dimensions when available, producing concrete reshape/final shapes and avoiding the batch=1 heuristic in `resolve_reshape_zeros()`. Fixed `final_shape` to be at the original input rank (4D) instead of expanded rank (5D). Logs warning when ctx is unavailable; falls back to 0 placeholders preserving backward compatibility.
 
 ### T-61 · Add Cross-Validation Test for Python vs Rust Emission
 
@@ -96,13 +96,13 @@ _No open CRITICAL tasks — T-67 resolved._
 - **Effort**: M (1 day)
 - **Detail**: Python bridge (coremltools subprocess) and Rust proto-direct path exist independently with no cross-validation. Create a structural equivalence test that emits the same MIR graph through both paths and verifies identical MIL topology. Document which ops are supported by each path.
 
-### T-64 · Centralize Palette Bit-Width Validation
+### T-64 · ~~Centralize Palette Bit-Width Validation~~
 
-- **ISSUES ref**: I-38
-- **AUDIT ref**: §II-E (A-13)
-- **Severity**: MEDIUM
-- **Effort**: S (0.5 day)
-- **Detail**: Palette bit-width validation {1,2,3,4,6,8} appears in 3 places: `lut_projection.rs:151`, `task_spec.rs:937`, and `sir.rs:1087` (doc comment). Create `ane_ir::ane_layout::validate_palette_bits()` and call from all sites.
+~~**ISSUES ref**: I-38~~
+~~**AUDIT ref**: §II-E (A-13)~~
+~~**Severity**: MEDIUM~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Moved `validate_palette_bits()`, `VALID_PALETTE_BITS`, and `clamp_to_valid_palette_bits()` to `ane-ir::ane_layout`. Updated 3 call sites: `palettize_weights.rs` (re-exports from `ane-ir`), `lut_projection.rs` (uses `ane-ir::ane_layout::validate_palette_bits`), `task_spec.rs` (uses `crate::ane_layout::validate_palette_bits`). Fixed doc comments in `sir.rs` to list correct valid set {1,2,3,4,6,8}.
 
 ### T-65 · ~~Unify CPU-Only Classification~~
 
@@ -172,13 +172,13 @@ _No open CRITICAL tasks — T-67 resolved._
 
 ## 🔵 LOW — Do These Eventually
 
-### T-81 · Fix `compat_input_dtype` String Matching
+### T-81 · ~~Fix `compat_input_dtype` String Matching~~
 
-- **ISSUES ref**: I-56
-- **AUDIT ref**: §III (CQ-25)
-- **Severity**: LOW
-- **Effort**: S (0.5 day)
-- **Detail**: Use MIR node's declared dtype instead of name-based heuristics for input_ids detection.
+~~**ISSUES ref**: I-56~~
+~~**AUDIT ref**: §III (CQ-25)~~
+~~**Severity**: LOW~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Removed `name.contains("input_ids")` heuristic that could misfire on tensors with "input_ids" in their name. Now trusts the MIR node's declared `dtype` field directly via `mil_dtype_to_compat()`, since the MIR builder correctly assigns `MilDtype::Int32` to input_ids tensors during graph construction.
 
 ### T-82 · ~~Remove Dead-Code `mir_node_to_compat`~~
 
@@ -228,9 +228,9 @@ _No open CRITICAL tasks — T-67 resolved._
 | T-74 | I-49 | HIGH | S | ✅ Fixed |
 | T-58 | I-32 | HIGH | L | ⬜ |
 | T-59 | I-33 | HIGH | L | ⬜ |
-| T-60 | I-34 | MEDIUM | S | ⬜ |
+| T-60 | I-34 | MEDIUM | S | ✅ Fixed |
 | T-61 | I-35 | MEDIUM | M | ⬜ |
-| T-64 | I-38 | MEDIUM | S | ⬜ |
+| T-64 | I-38 | MEDIUM | S | ✅ Fixed |
 | T-65 | I-39 | MEDIUM | M | ✅ Fixed |
 | T-66 | I-40 | MEDIUM | M | ⬜ |
 | T-75 | I-50 | MEDIUM | S | ✅ Fixed |
@@ -239,7 +239,7 @@ _No open CRITICAL tasks — T-67 resolved._
 | T-78 | I-53 | MEDIUM | S | ✅ Fixed |
 | T-79 | I-54 | MEDIUM | S | ✅ Fixed |
 | T-80 | I-55 | MEDIUM | S | ✅ Fixed |
-| T-81 | I-56 | LOW | S | ⬜ |
+| T-81 | I-56 | LOW | S | ✅ Fixed |
 | T-82 | I-57 | LOW | S | ✅ Fixed |
 | T-83 | I-58 | LOW | S | ✅ Fixed |
 | T-84 | I-59 | LOW | S | ✅ Fixed |

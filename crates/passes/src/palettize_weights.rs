@@ -18,27 +18,16 @@
 //! The pass validates all computed bit-widths and rejects invalid values
 //! with a clear error message.
 
+use ane_ir::ane_layout::clamp_to_valid_palette_bits;
 use ane_ir::common::ModelArchitecture;
 use ane_ir::sir::{SirGraph, SirOp};
 
-/// Valid palette bit-widths supported by the ANE hardware.
-/// Values 5 and 7 are NOT supported and will cause runtime errors.
-pub const VALID_PALETTE_BITS: &[usize] = &[1, 2, 3, 4, 6, 8];
-
-/// Validate that a palette bit-width is in the ANE-supported set.
+/// Re-export centralized palette bit-width validation from `ane_ir::ane_layout`.
 ///
-/// Returns `Ok(())` if valid, or an error message describing the issue.
-pub fn validate_palette_bits(bits: usize) -> Result<(), String> {
-    if VALID_PALETTE_BITS.contains(&bits) {
-        Ok(())
-    } else {
-        Err(format!(
-            "Invalid palette bit-width {}: must be one of {:?}. \
-             ANE hardware does not support {}-bit palettization.",
-            bits, VALID_PALETTE_BITS, bits
-        ))
-    }
-}
+/// T-64 (I-38): Previously defined locally in this module. Now centralized
+/// in `ane_ir::ane_layout` so that `ane-lab` and `ane-ir` can also use it
+/// without depending on `ane-passes`.
+pub use ane_ir::ane_layout::{validate_palette_bits, VALID_PALETTE_BITS};
 
 /// Result of the palettize weights pass.
 #[derive(Debug, Clone)]
@@ -82,15 +71,10 @@ impl Default for PalettizeConfig {
 
 /// Clamp a bit-width to the nearest valid ANE palette bit-width.
 ///
-/// For bit-widths between valid values, rounds down to the nearest
-/// supported bit-width (e.g., 5 → 4, 7 → 6). This preserves
-/// quantization benefit while ensuring ANE compatibility.
+/// Delegates to [`ane_ir::ane_layout::clamp_to_valid_palette_bits`].
+/// T-64 (I-38): Previously defined locally. Now centralized in `ane-ir`.
 fn clamp_to_valid_bits(bits: usize) -> usize {
-    if VALID_PALETTE_BITS.contains(&bits) {
-        return bits;
-    }
-    // Round down to nearest valid bit-width
-    *VALID_PALETTE_BITS.iter().filter(|&&b| b <= bits).last().unwrap_or(&1)
+    clamp_to_valid_palette_bits(bits)
 }
 
 /// Run the palettize weights pass on a SIR graph.

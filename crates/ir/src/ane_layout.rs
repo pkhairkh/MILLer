@@ -1,5 +1,12 @@
-//! ANE memory layout and interleave constraint types.
+//! ANE memory layout, interleave constraint types, and palette bit-width validation.
 //! Source: ane-constraints-docs/03-placement-and-compiler/mil-to-ane-placement-constraint-system.md Section 6
+//!
+//! ## Palette Bit-Width Validation
+//!
+//! The ANE only supports palette bit-widths in the set {1, 2, 3, 4, 6, 8}.
+//! Bit-widths 5 and 7 are **invalid** and will cause ANE runtime errors.
+//! [`validate_palette_bits()`] provides centralized validation used by
+//! `ane-passes`, `ane-lab`, and `ane-ir` (T-64 / I-38).
 
 use serde::{Deserialize, Serialize};
 
@@ -126,9 +133,94 @@ pub fn validate_channellast_constraints(
     Ok(())
 }
 
+/// Valid palette bit-widths supported by the ANE hardware.
+///
+/// The ANE supports LUT-based palettization at these specific bit-widths.
+/// Values 5 and 7 are NOT supported and will cause runtime errors.
+///
+/// T-64 (I-38): Centralized definition — all palette bit-width validation
+/// sites should reference this constant instead of duplicating the set.
+/// Previously, {1, 2, 3, 4, 6, 8} was duplicated in `palettize_weights.rs`,
+/// `lut_projection.rs`, and `task_spec.rs`.
+pub const VALID_PALETTE_BITS: &[usize] = &[1, 2, 3, 4, 6, 8];
+
+/// Validate that a palette bit-width is in the ANE-supported set.
+///
+/// Returns `Ok(())` if valid, or a descriptive error message if not.
+///
+/// # Examples
+///
+/// ```
+/// use ane_ir::ane_layout::validate_palette_bits;
+/// assert!(validate_palette_bits(4).is_ok());
+/// assert!(validate_palette_bits(5).is_err());
+/// ```
+///
+/// T-64 (I-38): Centralized validation — previously duplicated in 3 places.
+pub fn validate_palette_bits(bits: usize) -> Result<(), String> {
+    if VALID_PALETTE_BITS.contains(&bits) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Invalid palette bit-width {}: must be one of {:?}. \
+             ANE hardware does not support {}-bit palettization.",
+            bits, VALID_PALETTE_BITS, bits
+        ))
+    }
+}
+
+/// Clamp a bit-width to the nearest valid ANE palette bit-width.
+///
+/// For bit-widths between valid values, rounds down to the nearest
+/// supported bit-width (e.g., 5 → 4, 7 → 6). This preserves
+/// quantization benefit while ensuring ANE compatibility.
+///
+/// # Examples
+///
+/// ```
+/// use ane_ir::ane_layout::clamp_to_valid_palette_bits;
+/// assert_eq!(clamp_to_valid_palette_bits(5), 4);
+/// assert_eq!(clamp_to_valid_palette_bits(7), 6);
+/// assert_eq!(clamp_to_valid_palette_bits(4), 4);
+/// ```
+pub fn clamp_to_valid_palette_bits(bits: usize) -> usize {
+    if VALID_PALETTE_BITS.contains(&bits) {
+        return bits;
+    }
+    // Round down to nearest valid bit-width
+    *VALID_PALETTE_BITS.iter().filter(|&&b| b <= bits).last().unwrap_or(&1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_validate_palette_bits_valid() {
+        for &bits in VALID_PALETTE_BITS {
+            assert!(validate_palette_bits(bits).is_ok(), "{} should be valid", bits);
+        }
+    }
+
+    #[test]
+    fn test_validate_palette_bits_invalid() {
+        assert!(validate_palette_bits(5).is_err(), "5-bit is not ANE-supported");
+        assert!(validate_palette_bits(7).is_err(), "7-bit is not ANE-supported");
+        assert!(validate_palette_bits(9).is_err(), "9-bit is not ANE-supported");
+        assert!(validate_palette_bits(0).is_err(), "0-bit is not ANE-supported");
+    }
+
+    #[test]
+    fn test_clamp_to_valid_palette_bits() {
+        assert_eq!(clamp_to_valid_palette_bits(1), 1);
+        assert_eq!(clamp_to_valid_palette_bits(4), 4);
+        assert_eq!(clamp_to_valid_palette_bits(5), 4); // 5 → 4 (round down)
+        assert_eq!(clamp_to_valid_palette_bits(6), 6);
+        assert_eq!(clamp_to_valid_palette_bits(7), 6); // 7 → 6 (round down)
+        assert_eq!(clamp_to_valid_palette_bits(8), 8);
+        assert_eq!(clamp_to_valid_palette_bits(10), 8); // 10 → 8 (round down)
+        assert_eq!(clamp_to_valid_palette_bits(0), 1); // 0 → 1 (minimum)
+    }
 
     #[test]
     fn test_interleave_from_u8() {

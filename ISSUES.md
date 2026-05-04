@@ -209,14 +209,16 @@ Three 0%-coverage critical modules: `session.rs` (7 pub fn — task hashing, kno
 
 ### I-34 · Tile Decomposition Placeholder Zeros
 
-**Status:** ⬜ Open
-**Files:** `crates/passes/src/legality_rewrite.rs:542-543`
+**Status:** ✅ Fixed (T-60)
+**Files:** `crates/passes/src/legality_rewrite.rs:542-623`, `crates/passes/src/legality_rewrite.rs:267-310`
 **AUDIT ref:** §IV (B-9)
 **Severity:** MEDIUM
 **Effort:** S (0.5 day)
 **Task:** T-60
 
-Tile decomposition generates `reshape_shape.push(0)` and `final_shape.push(0)` as placeholder dimensions. `resolve_reshape_zeros()` uses batch=1 heuristic for multi-zero resolution, semantically incorrect for general Tile patterns. When ctx is None, shapes are resolved with wrong heuristics.
+Tile decomposition generates `reshape_shape.push(0)` and `final_shape.push(0)` as placeholder dimensions. `resolve_reshape_zeros()` uses batch=1 heuristic for multi-zero resolution, semantically incorrect for general Tile patterns.
+
+**Fix:** Added `tile_input_dim()` method to `DecompositionContext` that resolves concrete input dimensions from ctx fields for 4D Tile patterns. Tile decomposition now uses ctx dimensions when available, producing concrete reshape/final shapes. Fixed `final_shape` to be at the original input rank (4D) instead of expanded rank (5D). Logs warning when ctx is unavailable; falls back to 0 placeholders.
 
 ---
 
@@ -235,14 +237,16 @@ Python bridge (coremltools subprocess) and Rust proto-direct path exist independ
 
 ### I-38 · Palette Bit-Width Validation Scattered
 
-**Status:** ⬜ Open
-**Files:** `crates/lab/src/families/lut_projection.rs:151`, `crates/ir/src/task_spec.rs:937`
+**Status:** ✅ Fixed (T-64)
+**Files:** `crates/ir/src/ane_layout.rs:136-192`, `crates/passes/src/palettize_weights.rs:21-30`, `crates/lab/src/families/lut_projection.rs:151-154`, `crates/ir/src/task_spec.rs:936-940`
 **AUDIT ref:** §II-E (A-13)
 **Severity:** MEDIUM
 **Effort:** S (0.5 day)
 **Task:** T-64
 
 {1,2,3,4,6,8} validation appears in 3 places with no central validator. Create `ane_ir::ane_layout::validate_palette_bits()` and call from all sites.
+
+**Fix:** Moved `validate_palette_bits()`, `VALID_PALETTE_BITS`, and `clamp_to_valid_palette_bits()` to `ane-ir::ane_layout`. Updated 3 call sites to use centralized versions. Fixed doc comments in `sir.rs` to list correct valid set {1,2,3,4,6,8}.
 
 ---
 
@@ -370,8 +374,8 @@ MirOpCompat::Fill { .. } => vec![],
 
 ### I-56 · `compat_input_dtype` Uses String Matching for `input_ids` Detection
 
-**Status:** ⬜ Open
-**Files:** `crates/bridge/src/shape_inference.rs:33-38`
+**Status:** ✅ Fixed (T-81)
+**Files:** `crates/bridge/src/shape_inference.rs:29-40`
 **AUDIT ref:** §III (CQ-25)
 **Severity:** LOW
 **Effort:** S (0.5 day)
@@ -382,6 +386,8 @@ if name.contains("input_ids") { MilDtypeCompat::Int32 } else { ... }
 ```
 
 Uses string contains to detect input_ids tensors. If a tensor is named e.g. `my_input_ids_special`, it would be incorrectly typed as Int32 even if it's actually FP16. The correct approach would be to use the MIR node's declared dtype directly.
+
+**Fix:** Removed `name.contains("input_ids")` heuristic. Now trusts the MIR node's declared `dtype` field directly via `mil_dtype_to_compat()`, since the MIR builder correctly assigns `MilDtype::Int32` to input_ids tensors during graph construction.
 
 ---
 
@@ -498,7 +504,7 @@ Gate behind feature flag or remove entirely.
 |----------|-------|------|-------|-----------|
 | P0 | 4 | 0 | 4 | 0 |
 | P1 | 17 | 2 | 13 | 2 |
-| P2 | 15 | 2 | 11 | 0 |
-| P3 | 5 | 1 | 3 | 0 |
+| P2 | 15 | 1 | 12 | 0 |
+| P3 | 5 | 0 | 4 | 0 |
 | Resolved (v1+v2) | 33 | 0 | 31 | 2 |
-| **Total** | **74** | **2** | **68** | **4** |
+| **Total** | **74** | **3** | **64** | **4** |

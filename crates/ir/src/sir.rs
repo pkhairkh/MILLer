@@ -1077,7 +1077,8 @@ pub enum QuantizationStrategy {
     Blockwise {
         /// Block group size (e.g., 128).
         group_size: usize,
-        /// Bits per weight element (4, 6, or 8).
+        /// Bits per weight element. Valid ANE values: {1, 2, 3, 4, 6, 8}.
+        /// T-64 (I-38): Updated to include full valid set.
         bits: usize,
     },
     /// Grouped look-up table (LUT) quantization.
@@ -1086,7 +1087,8 @@ pub enum QuantizationStrategy {
     GroupedLut {
         /// Block group size (typically 128).
         group_size: usize,
-        /// Bits per index (4, 6, or 8).
+        /// Bits per palette index. Valid ANE values: {1, 2, 3, 4, 6, 8}.
+        /// T-64 (I-38): Updated to include full valid set.
         bits: usize,
         /// Number of LUT groups.
         num_groups: usize,
@@ -1096,7 +1098,8 @@ pub enum QuantizationStrategy {
     Palettized {
         /// Palettization mode (e.g., "kmeans").
         mode: String,
-        /// Bits per palette index (1, 2, 4, or 8).
+        /// Bits per palette index. Valid ANE values: {1, 2, 3, 4, 6, 8}.
+        /// T-64 (I-38): Updated to include full valid set.
         nbits: usize,
         /// Group size for grouped channel palettization.
         group_size: usize,

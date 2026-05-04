@@ -933,12 +933,10 @@ fn parse_lut_projection(
         task_section.get("batch_size").and_then(|v| v.as_integer()).unwrap_or(1) as usize;
     let dtype = task_section.get("dtype").and_then(|v| v.as_str()).unwrap_or("fp16").to_string();
 
-    // Validate lut_bitwidth: only 1, 2, 3, 4, 6, 8 are valid per Core ML Tools
-    if !matches!(lut_bitwidth, 1 | 2 | 3 | 4 | 6 | 8) {
-        return Err(format!(
-            "Invalid lut_bitwidth {}: must be one of 1, 2, 3, 4, 6, 8",
-            lut_bitwidth
-        ));
+    // T-64 (I-38): Use centralized palette bit-width validation
+    // from ane_ir::ane_layout instead of inline matches! pattern.
+    if let Err(e) = crate::ane_layout::validate_palette_bits(lut_bitwidth) {
+        return Err(e);
     }
 
     let op = TaskOp::LutProjection {

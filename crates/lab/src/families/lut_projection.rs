@@ -17,6 +17,7 @@
 //! inference in production models like Qwen3.
 
 use super::TaskFamilyTrait;
+use ane_ir::ane_layout::validate_palette_bits;
 use ane_ir::task_spec::{MeasurementConfig, SyntheticTaskSpec, TaskOp};
 use anyhow::Result;
 
@@ -147,9 +148,10 @@ impl LutProjectionFamily {
         let mut tasks = Vec::new();
 
         for bitwidth in &self.config.bitwidth_variants {
-            // Validate bitwidth
-            if !matches!(bitwidth, 1 | 2 | 3 | 4 | 6 | 8) {
-                anyhow::bail!("Invalid lut_bitwidth {}: must be one of 1, 2, 3, 4, 6, 8", bitwidth);
+            // T-64 (I-38): Use centralized palette bit-width validation
+            // from ane_ir::ane_layout instead of inline matches! pattern.
+            if let Err(e) = validate_palette_bits(*bitwidth) {
+                anyhow::bail!("{}", e);
             }
 
             let vocab_size = self.config.resolve_vocab_size(*bitwidth);

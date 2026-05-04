@@ -28,14 +28,15 @@ use std::collections::HashMap;
 
 /// Infer the output dtype for a compat graph input node.
 ///
-/// Special-cases `input_ids` (which is `Int32`) and falls back to
-/// the MIR node's declared dtype for everything else.
-pub fn compat_input_dtype(name: &str, dtype: &MilDtype) -> MilDtypeCompat {
-    if name.contains("input_ids") {
-        MilDtypeCompat::Int32
-    } else {
-        crate::mir_to_compat::mil_dtype_to_compat(dtype)
-    }
+/// T-81 (I-56): Previously, this function used `name.contains("input_ids")`
+/// to force `Int32` dtype, which is a string-heuristic that can misfire on
+/// tensors with "input_ids" in their name that are not actually Int32.
+/// Now, the function trusts the MIR node's declared `dtype` field directly,
+/// since the MIR builder correctly assigns `MilDtype::Int32` to input_ids
+/// tensors during graph construction. The `name` parameter is retained for
+/// API compatibility but is no longer used for dtype override decisions.
+pub fn compat_input_dtype(_name: &str, dtype: &MilDtype) -> MilDtypeCompat {
+    crate::mir_to_compat::mil_dtype_to_compat(dtype)
 }
 
 /// Infer the shape for a compat graph input node.
@@ -599,17 +600,24 @@ mod tests {
     }
 
     // ─── compat_input_dtype ───────────────────────────────────────────────
+    // T-81 (I-56): Tests updated to reflect that compat_input_dtype now
+    // trusts the MIR node's declared dtype directly instead of using
+    // name-based string heuristics.
 
     #[test]
-    fn test_compat_input_dtype_input_ids_returns_int32() {
-        let result = compat_input_dtype("input_ids", &MilDtype::Fp16);
+    fn test_compat_input_dtype_uses_declared_dtype() {
+        // T-81: The function now uses the declared MilDtype directly,
+        // regardless of the tensor name. input_ids with Int32 dtype → Int32.
+        let result = compat_input_dtype("input_ids", &MilDtype::Int32);
         assert_eq!(result, MilDtypeCompat::Int32);
     }
 
     #[test]
-    fn test_compat_input_dtype_input_ids_prefix_returns_int32() {
-        let result = compat_input_dtype("model_input_ids_seq", &MilDtype::Fp16);
-        assert_eq!(result, MilDtypeCompat::Int32);
+    fn test_compat_input_dtype_input_ids_with_fp16_returns_fp16() {
+        // T-81: Previously, name.contains("input_ids") would override to Int32
+        // even when the declared dtype was Fp16. Now the declared dtype is used.
+        let result = compat_input_dtype("input_ids", &MilDtype::Fp16);
+        assert_eq!(result, MilDtypeCompat::Fp16);
     }
 
     #[test]
@@ -621,6 +629,22 @@ mod tests {
     #[test]
     fn test_compat_input_dtype_fp32_passthrough() {
         let result = compat_input_dtype("weights", &MilDtype::Fp32);
+        assert_eq!(result, MilDtypeCompat::Fp32);
+    }
+
+    #[test]
+    fn test_compat_input_dtype_int32_passthrough() {
+        // T-81: Verify Int32 tensors are correctly mapped regardless of name.
+        let result = compat_input_dtype("my_input_ids_special", &MilDtype::Int32);
+        assert_eq!(result, MilDtypeCompat::Int32);
+    }
+
+    #[test]
+    fn test_compat_input_dtype_no_name_based_override() {
+        // T-81: Verify that name heuristics no longer override dtype.
+        // A tensor named "something_input_ids_something" with Fp32 dtype
+        // should return Fp32, not Int32.
+        let result = compat_input_dtype("my_input_ids_special", &MilDtype::Fp32);
         assert_eq!(result, MilDtypeCompat::Fp32);
     }
 

@@ -2,14 +2,40 @@
 
 ## Current Status — 2026-05-04
 
-- **1288 tests passing**, 0 failures
+- **1297 tests passing**, 0 failures
 - IR Cleanliness Score: 89%
 - 0 clippy warnings, 0 errors
-- **7 open issues** (0 CRITICAL, 2 HIGH, 3 MEDIUM, 2 LOW) — see [ISSUES.md](ISSUES.md)
-- **7 open tasks** (T-58, T-59, T-60, T-61, T-64, T-66, T-81) — see [TASKS.md](TASKS.md)
+- **4 open issues** (0 CRITICAL, 2 HIGH, 1 MEDIUM, 1 LOW) — see [ISSUES.md](ISSUES.md)
+- **4 open tasks** (T-58, T-59, T-61, T-66) — see [TASKS.md](TASKS.md)
 
 Audit details: [docs/audit/tabula-rasa-v3.md](docs/audit/tabula-rasa-v3.md)
 Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
+
+---
+
+## 2026-05-04 — Validation & Code Quality Sprint
+
+### Resolved (T-64, T-60, T-81)
+
+| Task | Description | Key Change |
+|------|-------------|------------|
+| T-64 | Centralize Palette Bit-Width Validation | Moved `validate_palette_bits()`, `VALID_PALETTE_BITS`, and `clamp_to_valid_palette_bits()` to `ane-ir::ane_layout`; updated 3 call sites (`palettize_weights.rs`, `lut_projection.rs`, `task_spec.rs`) to use centralized versions; fixed doc comments in `sir.rs` to list correct valid set {1,2,3,4,6,8} |
+| T-60 | Fix Tile Decomposition Placeholder Zeros | Added `tile_input_dim()` method to `DecompositionContext` for concrete shape resolution; Tile decomposition now uses ctx dimensions when available, avoiding the batch=1 heuristic in `resolve_reshape_zeros()`; fixed final_shape to be at the original input rank (4D) instead of expanded rank (5D); logs warning when ctx is unavailable |
+| T-81 | Fix `compat_input_dtype` String Matching | Removed `name.contains("input_ids")` heuristic that could misfire; now trusts the MIR node's declared `dtype` field directly via `mil_dtype_to_compat()`, since the MIR builder correctly assigns `MilDtype::Int32` to input_ids tensors |
+
+### New Tests Added (9 tests)
+
+- `test_validate_palette_bits_valid` — all valid ANE bit-widths accepted (T-64)
+- `test_validate_palette_bits_invalid` — invalid bit-widths rejected (T-64)
+- `test_clamp_to_valid_palette_bits` — clamping rounds down correctly (T-64)
+- `test_tile_decomposition_with_ctx_uses_concrete_shapes` — ctx produces concrete reshape/final shapes (T-60)
+- `test_tile_decomposition_without_ctx_uses_placeholders` — no-ctx falls back to 0 placeholders (T-60)
+- `test_tile_input_dim_4d` — `DecompositionContext.tile_input_dim()` resolves 4D Tile dims (T-60)
+- `test_tile_input_dim_non_4d` — non-4D ranks return None (T-60)
+- `test_tile_input_dim_default_ctx` — zero ctx returns None for all dims (T-60)
+- `test_compat_input_dtype_no_name_based_override` — name heuristics no longer override dtype (T-81)
+- `test_compat_input_dtype_input_ids_with_fp16_returns_fp16` — declared dtype is respected (T-81)
+- `test_compat_input_dtype_int32_passthrough` — Int32 dtype maps correctly regardless of name (T-81)
 
 ---
 
