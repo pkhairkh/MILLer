@@ -2,7 +2,7 @@
 
 *Last updated: 2026-05-04 (v3 audit — I-41 through I-60 added from deep source re-audit)*
 *Reference implementation: https://huggingface.co/pkhairkh/qwen3-coreml-palettized*
-*Audit source: `AUDIT.md` (v3, generated 2026-05-04)*
+*Audit source: `docs/audit/tabula-rasa-v3.md` (v3, generated 2026-05-04)*
 
 ---
 

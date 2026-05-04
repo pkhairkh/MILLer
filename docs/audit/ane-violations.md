@@ -1,4 +1,4 @@
-# ANEVIOLATIONS.md — MILLer Constraint-Grounded Violation Report
+# ANE Violations — MILLer Constraint-Grounded Violation Report
 
 **Operation**: NECROSCOPY — Expanded Compatibility Audit
 **Date**: 2026-05-04 (expanded 2026-05-06 with deep binary forensic evidence; re-expanded 2026-05-08 with research-grade forensic methodology)
@@ -18,7 +18,7 @@ This audit examined the following source categories by filename:
 
 **Knowledge seeds (8)**: `legality_seed.json`, `ane_hw_limits_seed.json`, `ane_op_family_matrix.json`, `precision_hazard_seed.json`, `palettization_constraints_seed.json`, `shard_template_seed.json`, `decode_step_shard_template_seed.json`, `cpu_only_ops_seed.json`.
 
-**Documentation (16)**: `SPEC.md`, `STATUS.md`, `README.md`, `ISSUES.md`, `AUDIT.md`, `CHANGELOG.md`, `docs/architecture.md`, `docs/ir_reference.md`, `docs/bridge_protocol.md`, `docs/knowledge_schema.md`, `docs/profiling_methodology.md`, and 5 files under `ane-constraints-docs/`.
+**Documentation (14)**: `SPEC.md`, `README.md`, `ISSUES.md`, `CHANGELOG.md`, `docs/audit/tabula-rasa-v3.md`, `docs/audit/ane-violations.md`, `docs/architecture.md`, `docs/ir_reference.md`, `docs/bridge_protocol.md`, `docs/knowledge_schema.md`, `docs/profiling_methodology.md`, and 5 files under `ane-constraints-docs/`.
 
 **Configuration (6)**: `Cargo.toml`, `pyproject.toml`, `rust-toolchain.toml`, `clippy.toml`, `rustfmt.toml`, `requirements-dev.txt`.
 

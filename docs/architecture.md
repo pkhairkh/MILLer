@@ -8,7 +8,7 @@ One end-to-end path: TOML task spec → Rust IR → JSON bridge → Python MIL e
 
 The Python bridge now wires converter.py, palettize.py, and compute_plan.py as proper bridge commands, not standalone scripts.
 
-See [STATUS.md](../STATUS.md) for what is implemented, what is verified, and what is not.
+See [CHANGELOG.md](../CHANGELOG.md) for implementation history and verification status.
 
 ### Key Files
 

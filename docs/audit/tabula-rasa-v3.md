@@ -1,4 +1,4 @@
-# ♉ AUDIT.md — TABULA RASA Full-Spectrum Diagnostic (v3)
+# Tabula Rasa v3 — Full-Spectrum Diagnostic
 
 **Date:** 2026-05-04
 **Scope:** Full repository sweep — 12 crates, ~1252 tests, 9 constraint documents

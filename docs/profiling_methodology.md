@@ -144,8 +144,8 @@ Drift evidence is included in knowledge update artifacts (version 3) as:
 
 ## Lab Run Directory
 
-See [STATUS.md](../STATUS.md) "Lab Run Directory Layout" section for the
-canonical directory structure produced by each lab run.
+The canonical directory structure produced by each lab run is defined in
+`crates/lab/src/run_dir.rs`.
 
 ## Task Generation
 

@@ -2,7 +2,7 @@
 
 ## TABULA RASA v3 Audit — 2026-05-04
 
-Full-spectrum diagnostic sweep performed. See `AUDIT.md` for complete findings.
+Full-spectrum diagnostic sweep performed. See `docs/audit/tabula-rasa-v3.md` for complete findings.
 
 **Key metrics:**
 - 1252 tests passing, 0 failures
@@ -198,7 +198,7 @@ These tasks (T-01 through T-21) were completed before the TABULA RASA audit on 2
 
 ## TABULA RASA Audit — 2026-05-03
 
-Full-spectrum diagnostic sweep performed. See `AUDIT.md` for complete findings.
+Full-spectrum diagnostic sweep performed. See `docs/audit/tabula-rasa-v3.md` for complete findings.
 
 **Key metrics:**
 - 660 tests passing, 0 failures

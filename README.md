@@ -332,7 +332,7 @@ This project is explicit about what it can and cannot verify:
 | Actual ANE placement matches predicted | — | Requires macOS + MLComputePlan |
 | Compute plan harvest from real device | — | Requires macOS + MLComputePlan |
 
-See [STATUS.md](STATUS.md) for exhaustive verification status of every component.
+See [CHANGELOG.md](CHANGELOG.md) for implementation history; see [docs/audit/](docs/audit/) for audit reports.
 
 ## Directory Layout
 
@@ -365,9 +365,11 @@ MILLer/
 ├── benchmarks/          # Synthetic task specifications
 ├── scripts/
 │   └── smoke_test.sh    # Honest smoke test with limitation reporting
-├── docs/                # Architecture, IR reference, bridge protocol, knowledge schema
+├── docs/                # Architecture, IR reference, bridge protocol, knowledge schema, audit reports
+├── ane-constraints-docs/ # ANE constraint research notes (hardware, placement, ops, palettization)
 ├── SPEC.md              # Full project specification
-├── STATUS.md            # Exhaustive verification status
+├── CHANGELOG.md         # Implementation history and verification status
+├── ISSUES.md            # Issue tracker (P0–P3)
 └── TASKS.md             # Sprint tracker with task-level detail
 ```
 
@@ -387,4 +389,4 @@ MILLer/
 
 ## Residuals
 
-On-device profiling, fallback detection with real timing, numerical drift measurement with actual model output, and compute plan harvesting from real hardware all require Apple hardware and are **not exercised** on the active path in this host. The system is honest about what it cannot verify without a real device. Baseline reference computation and drift detection infrastructure are implemented and will produce real metrics when run on Apple hardware. See [STATUS.md](STATUS.md) for complete details.
+On-device profiling, fallback detection with real timing, numerical drift measurement with actual model output, and compute plan harvesting from real hardware all require Apple hardware and are **not exercised** on the active path in this host. The system is honest about what it cannot verify without a real device. Baseline reference computation and drift detection infrastructure are implemented and will produce real metrics when run on Apple hardware.
