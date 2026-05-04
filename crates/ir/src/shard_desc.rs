@@ -446,3 +446,331 @@ pub fn build_sharded_pipeline_pir(spec: &SyntheticTaskSpec) -> Result<PirGraph, 
         io_model_spec: None,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pir::HandoffKind;
+    use crate::task_spec::{MeasurementConfig, SyntheticTaskSpec, TaskOp};
+
+    // ─── Helpers ──────────────────────────────────────────────────────
+
+    fn measurement() -> MeasurementConfig {
+        MeasurementConfig {
+            warmup_iterations: 5,
+            measured_iterations: 20,
+            metrics: vec!["Latency".into()],
+        }
+    }
+
+    fn sharded_linear_spec() -> SyntheticTaskSpec {
+        SyntheticTaskSpec {
+            name: "test_sharded".into(),
+            family: "ShardedLinearPipeline".into(),
+            description: None,
+            op: TaskOp::ShardedLinearPipeline {
+                input_dim: 64,
+                hidden_dim: 48,
+                output_dim: 32,
+                batch_size: 1,
+                dtype: "fp16".into(),
+            },
+            measurement: measurement(),
+        }
+    }
+
+    fn entry_shard() -> ShardDesc {
+        ShardDesc {
+            role: ShardRole::Entry,
+            shard_name: "test_entry".into(),
+            input_dim: 64,
+            output_dim: 48,
+            compute_units: ComputeUnitHint::CPUAndNE,
+        }
+    }
+
+    // ─── sharded_pipeline_shards ──────────────────────────────────────
+
+    #[test]
+    fn test_sharded_pipeline_shards_structure() {
+        let spec = sharded_linear_spec();
+        let shards = sharded_pipeline_shards(&spec).unwrap();
+        assert_eq!(shards.len(), 3);
+
+        // Entry shard
+        assert_eq!(shards[0].role, ShardRole::Entry);
+        assert_eq!(shards[0].shard_name, "test_sharded_entry");
+        assert_eq!(shards[0].input_dim, 64);
+        assert_eq!(shards[0].output_dim, 48); // hidden_dim
+
+        // Interior shard
+        assert_eq!(shards[1].role, ShardRole::Interior);
+        assert_eq!(shards[1].shard_name, "test_sharded_interior");
+        assert_eq!(shards[1].input_dim, 48); // hidden_dim
+        assert_eq!(shards[1].output_dim, 48); // hidden_dim
+
+        // Exit shard
+        assert_eq!(shards[2].role, ShardRole::Exit);
+        assert_eq!(shards[2].shard_name, "test_sharded_exit");
+        assert_eq!(shards[2].input_dim, 48); // hidden_dim
+        assert_eq!(shards[2].output_dim, 32); // output_dim
+    }
+
+    #[test]
+    fn test_sharded_pipeline_shards_wrong_op_type() {
+        let wrong_spec = SyntheticTaskSpec {
+            name: "bad".into(),
+            family: "LinearProjection".into(),
+            description: None,
+            op: TaskOp::LinearProjection {
+                input_dim: 64,
+                output_dim: 128,
+                batch_size: 1,
+                has_bias: true,
+                dtype: "fp16".into(),
+            },
+            measurement: measurement(),
+        };
+        let result = sharded_pipeline_shards(&wrong_spec);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("ShardedLinearPipeline"));
+    }
+
+    // ─── ShardDesc serialization ──────────────────────────────────────
+
+    #[test]
+    fn test_shard_desc_serialization() {
+        let shard = entry_shard();
+        let json = serde_json::to_string(&shard).unwrap();
+        let de: ShardDesc = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.role, ShardRole::Entry);
+        assert_eq!(de.shard_name, "test_entry");
+        assert_eq!(de.input_dim, 64);
+        assert_eq!(de.output_dim, 48);
+        assert_eq!(de.compute_units, ComputeUnitHint::CPUAndNE);
+    }
+
+    // ─── lower_shard_to_mir ───────────────────────────────────────────
+
+    #[test]
+    fn test_lower_shard_to_mir_structure() {
+        let shard = entry_shard();
+        let mir = lower_shard_to_mir(&shard, 1, "fp16").unwrap();
+
+        // Should have 4 nodes: weight, bias, matmul, add
+        assert_eq!(mir.nodes.len(), 4);
+        assert_eq!(mir.nodes[0].id.0, "weight");
+        assert_eq!(mir.nodes[1].id.0, "bias");
+        assert_eq!(mir.nodes[2].id.0, "matmul");
+        assert_eq!(mir.nodes[3].id.0, "add");
+
+        // Inputs reference "input" node (not in nodes list)
+        assert_eq!(mir.inputs.len(), 1);
+        assert_eq!(mir.inputs[0].0, "input");
+
+        // Output is the "add" node
+        assert_eq!(mir.outputs.len(), 1);
+        assert_eq!(mir.outputs[0].0, "add");
+
+        // Shard name is preserved
+        assert_eq!(mir.shard_name, "test_entry");
+    }
+
+    #[test]
+    fn test_lower_shard_to_mir_dtypes() {
+        let shard = entry_shard();
+
+        // Test fp16
+        let mir = lower_shard_to_mir(&shard, 1, "fp16").unwrap();
+        assert_eq!(mir.nodes[0].dtype, MilDtype::Fp16);
+
+        // Test fp32
+        let mir = lower_shard_to_mir(&shard, 1, "fp32").unwrap();
+        assert_eq!(mir.nodes[0].dtype, MilDtype::Fp32);
+
+        // Test int4
+        let mir = lower_shard_to_mir(&shard, 1, "int4").unwrap();
+        assert_eq!(mir.nodes[0].dtype, MilDtype::Int4);
+
+        // Test e4m3
+        let mir = lower_shard_to_mir(&shard, 1, "e4m3").unwrap();
+        assert_eq!(mir.nodes[0].dtype, MilDtype::E4M3);
+
+        // Test e5m2
+        let mir = lower_shard_to_mir(&shard, 1, "e5m2").unwrap();
+        assert_eq!(mir.nodes[0].dtype, MilDtype::E5M2);
+    }
+
+    #[test]
+    fn test_lower_shard_to_mir_default_dtype() {
+        let shard = entry_shard();
+        // Unknown dtype defaults to fp16
+        let mir = lower_shard_to_mir(&shard, 1, "unknown_dtype").unwrap();
+        assert_eq!(mir.nodes[0].dtype, MilDtype::Fp16);
+    }
+
+    // ─── ShardedShardPayload ──────────────────────────────────────────
+
+    #[test]
+    fn test_sharded_shard_payload_from_shard() {
+        let shard = entry_shard();
+        let payload = ShardedShardPayload::from_shard(
+            &shard,
+            "task",
+            "ShardedLinearPipeline",
+            1,
+            "fp16",
+            "/out",
+            42,
+        );
+        assert_eq!(payload.bridge_version, BRIDGE_VERSION);
+        assert_eq!(payload.command, "emit_linear_projection");
+        assert_eq!(payload.task_name, "task");
+        assert_eq!(payload.family, "ShardedLinearPipeline");
+        assert_eq!(payload.shard_name, "test_entry");
+        assert_eq!(payload.shard_role, "Entry");
+        assert_eq!(payload.input_dim, 64);
+        assert_eq!(payload.output_dim, 48);
+        assert_eq!(payload.batch_size, 1);
+        assert_eq!(payload.dtype, "fp16");
+        assert_eq!(payload.seed, 42);
+        assert_eq!(payload.functions[0].stateful, false);
+    }
+
+    #[test]
+    fn test_sharded_shard_payload_dtype_override() {
+        let shard = entry_shard();
+        let payload = ShardedShardPayload::from_shard_with_override(
+            &shard,
+            "task",
+            "family",
+            1,
+            "fp16",
+            "/out",
+            42,
+            Some("fp32"),
+        );
+        assert_eq!(payload.dtype, "fp32");
+        assert_eq!(payload.functions[0].inputs[0].dtype, "fp32");
+        assert_eq!(payload.functions[0].outputs[0].dtype, "fp32");
+    }
+
+    #[test]
+    fn test_sharded_shard_payload_decode_step() {
+        let shard = entry_shard();
+        let payload = ShardedShardPayload::from_shard_decode_step(
+            &shard,
+            "task",
+            "ShardedDecodeStep",
+            1,
+            "fp16",
+            "/out",
+            42,
+            None,
+            128, // embed_dim
+            4,   // num_heads
+            32,  // head_dim
+            64,  // kv_len
+        );
+        assert_eq!(payload.command, "emit_shard_decode_step");
+        assert_eq!(payload.shard_role, "Entry");
+        // Decode step has 3 inputs: x, k_state, v_state
+        assert_eq!(payload.functions[0].inputs.len(), 3);
+        assert_eq!(payload.functions[0].inputs[0].name, "x");
+        assert_eq!(payload.functions[0].inputs[1].name, "k_state");
+        assert_eq!(payload.functions[0].inputs[2].name, "v_state");
+        // k_state shape: [1, num_heads, kv_len, head_dim]
+        assert_eq!(payload.functions[0].inputs[1].shape, vec![1, 4, 64, 32]);
+        // Decode step is stateful
+        assert_eq!(payload.functions[0].stateful, true);
+    }
+
+    #[test]
+    fn test_sharded_shard_payload_serialization() {
+        let shard = entry_shard();
+        let payload =
+            ShardedShardPayload::from_shard(&shard, "task", "family", 1, "fp16", "/out", 42);
+        let json = serde_json::to_string(&payload).unwrap();
+        let de: ShardedShardPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.bridge_version, payload.bridge_version);
+        assert_eq!(de.command, payload.command);
+        assert_eq!(de.shard_name, payload.shard_name);
+        assert_eq!(de.shard_role, payload.shard_role);
+        assert_eq!(de.input_dim, payload.input_dim);
+        assert_eq!(de.output_dim, payload.output_dim);
+        assert_eq!(de.dtype, payload.dtype);
+    }
+
+    // ─── build_sharded_pipeline_pir ───────────────────────────────────
+
+    #[test]
+    fn test_build_sharded_pipeline_pir_structure() {
+        let spec = sharded_linear_spec();
+        let pir = build_sharded_pipeline_pir(&spec).unwrap();
+
+        // 3 packages
+        assert_eq!(pir.packages.len(), 3);
+        assert_eq!(pir.packages[0].name, "test_sharded_entry");
+        assert_eq!(pir.packages[1].name, "test_sharded_interior");
+        assert_eq!(pir.packages[2].name, "test_sharded_exit");
+
+        // Shard template is present
+        assert!(pir.shard_template.is_some());
+        let template = pir.shard_template.unwrap();
+        assert_eq!(template.partition_spec.len(), 3);
+    }
+
+    #[test]
+    fn test_build_sharded_pipeline_pir_wrong_op_type() {
+        let wrong_spec = SyntheticTaskSpec {
+            name: "bad".into(),
+            family: "LinearProjection".into(),
+            description: None,
+            op: TaskOp::LinearProjection {
+                input_dim: 64,
+                output_dim: 128,
+                batch_size: 1,
+                has_bias: true,
+                dtype: "fp16".into(),
+            },
+            measurement: measurement(),
+        };
+        let result = build_sharded_pipeline_pir(&wrong_spec);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("ShardedLinearPipeline"));
+    }
+
+    #[test]
+    fn test_build_sharded_pipeline_pir_handoffs() {
+        let spec = sharded_linear_spec();
+        let pir = build_sharded_pipeline_pir(&spec).unwrap();
+
+        // 2 handoffs
+        assert_eq!(pir.handoffs.len(), 2);
+
+        // Entry → Interior
+        assert_eq!(pir.handoffs[0].from_package, "test_sharded_entry");
+        assert_eq!(pir.handoffs[0].to_package, "test_sharded_interior");
+        assert_eq!(pir.handoffs[0].handoff_kind, HandoffKind::TensorPassThrough);
+        assert_eq!(pir.handoffs[0].execution_order, 0);
+        assert_eq!(pir.handoffs[0].source_output_name, "output");
+        assert_eq!(pir.handoffs[0].target_input_name, "x");
+
+        // Interior → Exit
+        assert_eq!(pir.handoffs[1].from_package, "test_sharded_interior");
+        assert_eq!(pir.handoffs[1].to_package, "test_sharded_exit");
+        assert_eq!(pir.handoffs[1].handoff_kind, HandoffKind::TensorPassThrough);
+        assert_eq!(pir.handoffs[1].execution_order, 1);
+    }
+
+    #[test]
+    fn test_build_sharded_pipeline_pir_serialization() {
+        let spec = sharded_linear_spec();
+        let pir = build_sharded_pipeline_pir(&spec).unwrap();
+        let bytes = crate::serialize::serialize_pir(&pir).unwrap();
+        let de = crate::serialize::deserialize_pir(&bytes).unwrap();
+        assert_eq!(de.packages.len(), pir.packages.len());
+        assert_eq!(de.handoffs.len(), pir.handoffs.len());
+        assert_eq!(de.packages[0].name, "test_sharded_entry");
+    }
+}

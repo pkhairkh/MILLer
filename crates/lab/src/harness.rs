@@ -465,3 +465,369 @@ impl LabRun {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_env() -> EnvironmentSummary {
+        EnvironmentSummary::detect(1)
+    }
+
+    fn make_builder() -> LabRunBuilder {
+        LabRunBuilder::new(
+            "run_123".to_string(),
+            "sha256:abc".to_string(),
+            "test_task".to_string(),
+            VerificationScope::HostOnlyInspection,
+            make_env(),
+        )
+    }
+
+    #[test]
+    fn test_lab_run_builder_minimal() {
+        let run = make_builder().build();
+        assert_eq!(run.run_id, "run_123");
+        assert_eq!(run.task_id, "sha256:abc");
+        assert_eq!(run.task_name, "test_task");
+        assert_eq!(run.verification_scope, VerificationScope::HostOnlyInspection);
+        assert!(run.payload_hash.is_none());
+        assert!(run.timing.is_none());
+        assert!(run.fallback_suspicion.is_none());
+        assert!(run.artifact_directory.is_none());
+        assert!(run.generator_provenance.is_none());
+        assert!(run.adaptation_readiness.is_none());
+        assert!(run.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_lab_run_builder_all_fields() {
+        let run = make_builder()
+            .payload_hash("hash123".to_string())
+            .compile_result(CompileStepResult {
+                success: true,
+                error: None,
+                output_path: Some("/tmp/out".to_string()),
+                content_hash: Some("sha256:xxx".to_string()),
+                file_count: Some(5),
+                coremltools_version: Some("9.0".to_string()),
+            })
+            .inspect_result(InspectionStepResult {
+                package_present: true,
+                manifest_readable: true,
+                model_loadable: false,
+                model_load_failure_reason: Some("no runtime".to_string()),
+                function_count: Some(1),
+                input_specs: vec![],
+                output_specs: vec![],
+                warnings: vec![],
+                structure_inspection_available: None,
+                structure_inspection_failure_reason: None,
+                structure_op_names: vec![],
+                structure_op_count: None,
+                structure_function_count: None,
+                structure_state_declarations: vec![],
+                op_fidelity_score: None,
+                missing_ops: vec![],
+                extra_ops: vec![],
+                inspection_method: "none".to_string(),
+            })
+            .timing(TimingResult {
+                warmup_iterations: 3,
+                measured_iterations: 10,
+                p50_ms: 1.0,
+                p90_ms: 1.5,
+                p99_ms: 2.0,
+                min_ms: 0.8,
+                max_ms: 2.5,
+                mean_ms: 1.1,
+                std_dev_ms: 0.3,
+                compute_units: "CPU_AND_NE".to_string(),
+                scope_note: "test".to_string(),
+            })
+            .fallback_suspicion(FallbackSuspicionResult {
+                suspicion_level: FallbackSuspicionLevel::NoConclusion,
+                explanation: "no evidence".to_string(),
+                evidence: vec![],
+            })
+            .warning("watch out".to_string())
+            .warning("another warning".to_string())
+            .artifact_directory("/tmp/artifacts".to_string())
+            .generator_provenance(GeneratorProvenance {
+                generator_version: "1.0".to_string(),
+                family: "LinearProjection".to_string(),
+                seed: 42,
+                task_name: "gen_task".to_string(),
+            })
+            .adaptation_readiness("artifacts_and_observation".to_string())
+            .build();
+        assert_eq!(run.payload_hash, Some("hash123".to_string()));
+        assert!(run.compile_result.success);
+        assert!(run.timing.is_some());
+        assert!(run.fallback_suspicion.is_some());
+        assert_eq!(run.warnings.len(), 2);
+        assert_eq!(run.artifact_directory, Some("/tmp/artifacts".to_string()));
+        assert!(run.generator_provenance.is_some());
+        assert_eq!(run.adaptation_readiness, Some("artifacts_and_observation".to_string()));
+    }
+
+    #[test]
+    fn test_lab_run_builder_payload_hash() {
+        let run = make_builder().payload_hash("phash".to_string()).build();
+        assert_eq!(run.payload_hash, Some("phash".to_string()));
+    }
+
+    #[test]
+    fn test_lab_run_builder_compile_result() {
+        let cr = CompileStepResult {
+            success: true, error: None, output_path: None,
+            content_hash: None, file_count: None, coremltools_version: None,
+        };
+        let run = make_builder().compile_result(cr.clone()).build();
+        assert!(run.compile_result.success);
+    }
+
+    #[test]
+    fn test_lab_run_builder_inspect_result() {
+        let ir = InspectionStepResult {
+            package_present: true, manifest_readable: false, model_loadable: false,
+            model_load_failure_reason: None, function_count: None,
+            input_specs: vec![], output_specs: vec![], warnings: vec!["w1".to_string()],
+            structure_inspection_available: None,
+            structure_inspection_failure_reason: None,
+            structure_op_names: vec![], structure_op_count: None,
+            structure_function_count: None, structure_state_declarations: vec![],
+            op_fidelity_score: None, missing_ops: vec![], extra_ops: vec![],
+            inspection_method: "none".to_string(),
+        };
+        let run = make_builder().inspect_result(ir).build();
+        assert!(run.inspect_result.package_present);
+    }
+
+    #[test]
+    fn test_lab_run_builder_timing() {
+        let t = TimingResult {
+            warmup_iterations: 1, measured_iterations: 5,
+            p50_ms: 1.0, p90_ms: 1.0, p99_ms: 1.0,
+            min_ms: 1.0, max_ms: 1.0, mean_ms: 1.0, std_dev_ms: 0.0,
+            compute_units: "CPU_ONLY".to_string(),
+            scope_note: "test".to_string(),
+        };
+        let run = make_builder().timing(t).build();
+        assert!(run.timing.is_some());
+        assert_eq!(run.timing.as_ref().unwrap().p50_ms, 1.0);
+    }
+
+    #[test]
+    fn test_lab_run_builder_fallback_suspicion() {
+        let fs = FallbackSuspicionResult {
+            suspicion_level: FallbackSuspicionLevel::LowConfidenceSuspicion,
+            explanation: "slow".to_string(),
+            evidence: vec![],
+        };
+        let run = make_builder().fallback_suspicion(fs).build();
+        assert!(run.fallback_suspicion.is_some());
+        assert_eq!(run.fallback_suspicion.as_ref().unwrap().suspicion_level,
+            FallbackSuspicionLevel::LowConfidenceSuspicion);
+    }
+
+    #[test]
+    fn test_lab_run_builder_warnings() {
+        let run = make_builder()
+            .warning("w1".to_string())
+            .warning("w2".to_string())
+            .warning("w3".to_string())
+            .build();
+        assert_eq!(run.warnings, vec!["w1", "w2", "w3"]);
+    }
+
+    #[test]
+    fn test_lab_run_builder_generator_provenance() {
+        let gp = GeneratorProvenance {
+            generator_version: "2.0".to_string(),
+            family: "MlpBlock".to_string(),
+            seed: 99,
+            task_name: "gen_mlp".to_string(),
+        };
+        let run = make_builder().generator_provenance(gp).build();
+        let prov = run.generator_provenance.unwrap();
+        assert_eq!(prov.generator_version, "2.0");
+        assert_eq!(prov.family, "MlpBlock");
+        assert_eq!(prov.seed, 99);
+        assert_eq!(prov.task_name, "gen_mlp");
+    }
+
+    #[test]
+    fn test_lab_run_builder_adaptation_readiness() {
+        let run = make_builder().adaptation_readiness("artifacts_only".to_string()).build();
+        assert_eq!(run.adaptation_readiness, Some("artifacts_only".to_string()));
+    }
+
+    #[test]
+    fn test_lab_run_completed_at_set() {
+        let run = make_builder().build();
+        assert!(run.completed_at.is_some(), "build() must set completed_at");
+        assert!(!run.completed_at.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_lab_run_to_json() {
+        let run = make_builder().build();
+        let json = run.to_json().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["run_id"], "run_123");
+        assert_eq!(parsed["task_name"], "test_task");
+    }
+
+    #[test]
+    fn test_lab_run_json_roundtrip() {
+        let run = make_builder()
+            .payload_hash("ph".to_string())
+            .warning("test warning".to_string())
+            .build();
+        let json = run.to_json().unwrap();
+        let back: LabRun = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.run_id, run.run_id);
+        assert_eq!(back.task_id, run.task_id);
+        assert_eq!(back.task_name, run.task_name);
+        assert_eq!(back.verification_scope, run.verification_scope);
+        assert_eq!(back.payload_hash, run.payload_hash);
+        assert_eq!(back.warnings, run.warnings);
+    }
+
+    #[test]
+    fn test_lab_run_write_to_file() {
+        let run = make_builder().build();
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("run.json");
+        run.write_to_file(&path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["run_id"], "run_123");
+    }
+
+    #[test]
+    fn test_verification_scope_serialization() {
+        for scope in [
+            VerificationScope::HostOnlyInspection,
+            VerificationScope::HostRuntimeExecution,
+            VerificationScope::DeviceBackedExecution,
+        ] {
+            let json = serde_json::to_string(&scope).unwrap();
+            let back: VerificationScope = serde_json::from_str(&json).unwrap();
+            assert_eq!(scope, back);
+        }
+    }
+
+    #[test]
+    fn test_environment_summary_detect() {
+        let env = EnvironmentSummary::detect(1);
+        assert!(!env.host_os.is_empty());
+        // On non-Apple CI, coreml_runtime_available should be false
+        assert!(!env.coreml_runtime_available || cfg!(target_vendor = "apple"));
+    }
+
+    #[test]
+    fn test_environment_summary_bridge_version() {
+        let env = EnvironmentSummary::detect(42);
+        assert_eq!(env.bridge_version, 42);
+    }
+
+    #[test]
+    fn test_compile_step_result_serialization() {
+        let r = CompileStepResult {
+            success: true, error: Some("err".to_string()),
+            output_path: Some("/tmp/out".to_string()),
+            content_hash: Some("sha256:ab".to_string()),
+            file_count: Some(3), coremltools_version: Some("8.0".to_string()),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: CompileStepResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.success, r.success);
+        assert_eq!(back.error, r.error);
+        assert_eq!(back.file_count, r.file_count);
+    }
+
+    #[test]
+    fn test_inspection_step_result_serialization() {
+        let r = InspectionStepResult {
+            package_present: true, manifest_readable: true, model_loadable: false,
+            model_load_failure_reason: None, function_count: Some(2),
+            input_specs: vec![], output_specs: vec![], warnings: vec!["w".to_string()],
+            structure_inspection_available: Some(true),
+            structure_inspection_failure_reason: None,
+            structure_op_names: vec!["linear".to_string()],
+            structure_op_count: Some(1), structure_function_count: Some(1),
+            structure_state_declarations: vec![], op_fidelity_score: Some(0.95),
+            missing_ops: vec![], extra_ops: vec![], inspection_method: "mlmodel_structure".to_string(),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: InspectionStepResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.package_present, r.package_present);
+        assert_eq!(back.structure_op_count, r.structure_op_count);
+    }
+
+    #[test]
+    fn test_timing_result_serialization() {
+        let r = TimingResult {
+            warmup_iterations: 5, measured_iterations: 20,
+            p50_ms: 1.0, p90_ms: 1.5, p99_ms: 2.0,
+            min_ms: 0.8, max_ms: 2.5, mean_ms: 1.1, std_dev_ms: 0.3,
+            compute_units: "CPU_AND_NE".to_string(),
+            scope_note: "test timing".to_string(),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: TimingResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.p50_ms, r.p50_ms);
+        assert_eq!(back.compute_units, r.compute_units);
+    }
+
+    #[test]
+    fn test_fallback_suspicion_result_serialization() {
+        let r = FallbackSuspicionResult {
+            suspicion_level: FallbackSuspicionLevel::LowConfidenceSuspicion,
+            explanation: "slow".to_string(),
+            evidence: vec![SuspicionEvidence {
+                kind: "latency_anomaly".to_string(),
+                description: "observed 5x expected".to_string(),
+                strength: 0.4,
+            }],
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: FallbackSuspicionResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.suspicion_level, r.suspicion_level);
+        assert_eq!(back.evidence.len(), 1);
+        assert_eq!(back.evidence[0].kind, "latency_anomaly");
+    }
+
+    #[test]
+    fn test_generator_provenance_serialization() {
+        let gp = GeneratorProvenance {
+            generator_version: "1.0".to_string(),
+            family: "Attention".to_string(),
+            seed: 7,
+            task_name: "attn_7".to_string(),
+        };
+        let json = serde_json::to_string(&gp).unwrap();
+        let back: GeneratorProvenance = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.generator_version, gp.generator_version);
+        assert_eq!(back.seed, gp.seed);
+    }
+
+    #[test]
+    fn test_lab_run_schema_version() {
+        assert_eq!(LAB_RUN_SCHEMA_VERSION, "1.0.0");
+    }
+
+    #[test]
+    fn test_lab_run_builder_chained() {
+        let run = make_builder()
+            .payload_hash("a".to_string())
+            .warning("b".to_string())
+            .adaptation_readiness("c".to_string())
+            .build();
+        assert_eq!(run.payload_hash, Some("a".to_string()));
+        assert_eq!(run.warnings, vec!["b"]);
+        assert_eq!(run.adaptation_readiness, Some("c".to_string()));
+    }
+}

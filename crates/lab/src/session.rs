@@ -1501,3 +1501,355 @@ impl LabLoopSession {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ane_bridge::subprocess::{BridgeResult, EmissionPath};
+    use ane_ir::task_spec::{MeasurementConfig, SyntheticTaskSpec, TaskOp};
+
+    fn make_test_spec() -> SyntheticTaskSpec {
+        SyntheticTaskSpec {
+            name: "test_task".to_string(),
+            family: "LinearProjection".to_string(),
+            description: Some("test description".to_string()),
+            op: TaskOp::LinearProjection {
+                input_dim: 64,
+                output_dim: 32,
+                batch_size: 1,
+                has_bias: true,
+                dtype: "fp16".to_string(),
+            },
+            measurement: MeasurementConfig {
+                warmup_iterations: 5,
+                measured_iterations: 20,
+                metrics: vec!["Latency".to_string()],
+            },
+        }
+    }
+
+    fn make_other_spec() -> SyntheticTaskSpec {
+        SyntheticTaskSpec {
+            name: "other_task".to_string(),
+            family: "LinearProjection".to_string(),
+            description: None,
+            op: TaskOp::LinearProjection {
+                input_dim: 128,
+                output_dim: 64,
+                batch_size: 2,
+                has_bias: false,
+                dtype: "fp32".to_string(),
+            },
+            measurement: MeasurementConfig {
+                warmup_iterations: 5,
+                measured_iterations: 20,
+                metrics: vec!["Latency".to_string()],
+            },
+        }
+    }
+
+    fn make_success_bridge_result() -> BridgeResult {
+        BridgeResult {
+            status: "success".to_string(),
+            error_message: None,
+            output_path: Some("/tmp/test.mlpackage".to_string()),
+            coremltools_version: Some("9.0".to_string()),
+            content_hash: Some("sha256:abc123".to_string()),
+            package_files: vec![],
+            compute_plan: None,
+            function_descriptors: vec![],
+            metadata: serde_json::Value::Null,
+            stderr: String::new(),
+            emission_path: EmissionPath::PythonBridge,
+        }
+    }
+
+    fn make_failure_bridge_result() -> BridgeResult {
+        BridgeResult {
+            status: "error".to_string(),
+            error_message: Some("compilation failed".to_string()),
+            output_path: None,
+            coremltools_version: None,
+            content_hash: None,
+            package_files: vec![],
+            compute_plan: None,
+            function_descriptors: vec![],
+            metadata: serde_json::Value::Null,
+            stderr: String::new(),
+            emission_path: EmissionPath::PythonBridge,
+        }
+    }
+
+    #[test]
+    fn test_compute_task_hash_deterministic() {
+        let spec = make_test_spec();
+        let hash1 = compute_task_hash(&spec);
+        let hash2 = compute_task_hash(&spec);
+        assert_eq!(hash1, hash2, "Same spec must produce the same hash");
+    }
+
+    #[test]
+    fn test_compute_task_hash_different_specs() {
+        let spec1 = make_test_spec();
+        let spec2 = make_other_spec();
+        let hash1 = compute_task_hash(&spec1);
+        let hash2 = compute_task_hash(&spec2);
+        assert_ne!(hash1, hash2, "Different specs must produce different hashes");
+    }
+
+    #[test]
+    fn test_compute_task_hash_format() {
+        let spec = make_test_spec();
+        let hash = compute_task_hash(&spec);
+        assert!(hash.starts_with("sha256:"), "Hash must start with 'sha256:' prefix, got: {}", hash);
+        let hex_part = &hash[7..];
+        assert_eq!(hex_part.len(), 64, "SHA-256 hex digest must be 64 chars");
+        assert!(hex_part.chars().all(|c| c.is_ascii_hexdigit()), "Hex portion must be valid hex");
+    }
+
+    #[test]
+    fn test_compute_task_hash_uses_identity_string() {
+        let mut spec_a = make_test_spec();
+        let mut spec_b = make_test_spec();
+        spec_a.op = TaskOp::LinearProjection {
+            input_dim: 64, output_dim: 32, batch_size: 1, has_bias: true, dtype: "fp16".to_string(),
+        };
+        spec_b.op = TaskOp::LinearProjection {
+            input_dim: 64, output_dim: 32, batch_size: 1, has_bias: false, dtype: "fp16".to_string(),
+        };
+        assert_ne!(compute_task_hash(&spec_a), compute_task_hash(&spec_b),
+            "Hash must incorporate the op identity string (has_bias differs)");
+    }
+
+    #[test]
+    fn test_build_artifact_manifest_success() {
+        let spec = make_test_spec();
+        let bridge_result = make_success_bridge_result();
+        let task_hash = "sha256:abcdef1234567890";
+        let manifest = build_artifact_manifest(&spec, &bridge_result, task_hash, "0.1.0");
+        assert_eq!(manifest["version"], "0.3.0");
+        assert_eq!(manifest["model_id"], "test_task");
+        assert_eq!(manifest["task_hash"], task_hash);
+        assert_eq!(manifest["compiler_version"], "0.1.0");
+        assert_eq!(manifest["implementation_status"], "host_compiled");
+        assert_eq!(manifest["verification_scope"], "host_compile_only");
+        let packages = manifest["packages"].as_array().unwrap();
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0]["name"], "test_task");
+        assert_eq!(packages[0]["role"], "synthetic_microkernel");
+        assert_eq!(packages[0]["path"], "/tmp/test.mlpackage");
+        assert_eq!(packages[0]["content_hash"], "sha256:abc123");
+    }
+
+    #[test]
+    fn test_build_artifact_manifest_failure() {
+        let spec = make_test_spec();
+        let bridge_result = make_failure_bridge_result();
+        let manifest = build_artifact_manifest(&spec, &bridge_result, "sha256:abc", "0.1.0");
+        let packages = manifest["packages"].as_array().unwrap();
+        assert!(packages.is_empty(), "Failure should produce no packages");
+        assert_eq!(manifest["model_id"], "test_task");
+    }
+
+    #[test]
+    fn test_build_artifact_manifest_has_environment_limitations() {
+        let spec = make_test_spec();
+        let bridge_result = make_success_bridge_result();
+        let manifest = build_artifact_manifest(&spec, &bridge_result, "sha256:test", "0.1.0");
+        let limitations = manifest["environment_limitations"].as_array().unwrap();
+        assert_eq!(limitations.len(), 3);
+        let strs: Vec<&str> = limitations.iter().filter_map(|v| v.as_str()).collect();
+        assert!(strs.contains(&"no_apple_hardware"));
+        assert!(strs.contains(&"ane_placement_not_verified"));
+        assert!(strs.contains(&"no_on_device_predict"));
+    }
+
+    #[test]
+    fn test_build_knowledge_update_success() {
+        let spec = make_test_spec();
+        let bridge_result = make_success_bridge_result();
+        let task_hash = "sha256:testhash";
+        let update = build_knowledge_update(&spec, &bridge_result, task_hash);
+        assert_eq!(update["version"], 2);
+        assert_eq!(update["source"], "vertical_slice_compile");
+        assert_eq!(update["task_hash"], task_hash);
+        assert_eq!(update["task_name"], "test_task");
+        assert_eq!(update["task_family"], "LinearProjection");
+        let observations = update["observations"].as_array().unwrap();
+        assert_eq!(observations.len(), 2);
+        assert_eq!(observations[0]["knowledge_type"], "LegalityRule");
+        assert_eq!(observations[0]["op_pattern"], "mb.matmul");
+        assert_eq!(observations[0]["ane_legal"], true);
+        assert_eq!(observations[0]["confidence"], 0.3);
+        assert_eq!(observations[0]["evidence_source"], "SyntheticRun");
+        assert_eq!(observations[1]["op_pattern"], "mb.add");
+        assert_eq!(observations[1]["ane_legal"], true);
+        assert_eq!(observations[1]["confidence"], 0.3);
+    }
+
+    #[test]
+    fn test_build_knowledge_update_failure() {
+        let spec = make_test_spec();
+        let bridge_result = make_failure_bridge_result();
+        let update = build_knowledge_update(&spec, &bridge_result, "sha256:testhash");
+        let observations = update["observations"].as_array().unwrap();
+        assert_eq!(observations[0]["ane_legal"], false);
+        assert_eq!(observations[0]["confidence"], 0.7);
+        assert_eq!(observations[1]["ane_legal"], false);
+        assert_eq!(observations[1]["confidence"], 0.7);
+    }
+
+    #[test]
+    fn test_build_knowledge_update_has_residuals() {
+        let spec = make_test_spec();
+        let bridge_result = make_success_bridge_result();
+        let update = build_knowledge_update(&spec, &bridge_result, "sha256:testhash");
+        let residuals = update["residuals"].as_array().unwrap();
+        assert_eq!(residuals.len(), 3);
+        let strs: Vec<&str> = residuals.iter().filter_map(|v| v.as_str()).collect();
+        assert!(strs[0].contains("ANE placement not verified"));
+        assert!(strs[1].contains("Numerical drift not measured"));
+        assert!(strs[2].contains("Fallback suspicion not assessed"));
+    }
+
+    #[test]
+    fn test_build_knowledge_update_with_drift_computed() {
+        let spec = make_test_spec();
+        let bridge_result = make_success_bridge_result();
+        let task_hash = "sha256:drifttest";
+        let baseline = crate::baseline::BaselineResult {
+            baseline_schema_version: "1.0.0".to_string(),
+            task_id: "test_task".to_string(),
+            task_hash: Some(task_hash.to_string()),
+            input_dim: 64, output_dim: 32, batch_size: 1, seed: 42,
+            precision: "fp32".to_string(),
+            output_tensor: vec![0.0; 32],
+            output_shape: vec![1, 32],
+            compute_time_ms: 1.0,
+        };
+        let drift = crate::drift::DriftDetector::new().detect(&[1.0f32, 2.0, 3.0], &[1.01, 2.01, 3.01]);
+        assert!(drift.is_computed());
+        let update = build_knowledge_update_with_drift(&spec, &bridge_result, task_hash, &baseline, &drift);
+        assert_eq!(update["version"], 3);
+        assert_eq!(update["source"], "lab_run_with_drift");
+        let observations = update["observations"].as_array().unwrap();
+        assert_eq!(observations.len(), 3);
+        let drift_obs = &observations[2];
+        assert_eq!(drift_obs["knowledge_type"], "PrecisionHazard");
+        assert_eq!(drift_obs["op_pattern"], "linear_projection_fp16_vs_fp32");
+        assert!(drift_obs.get("max_absolute_error").is_some());
+        assert!(drift_obs.get("mean_absolute_error").is_some());
+        assert!(drift_obs.get("rmse").is_some());
+        assert!(drift_obs.get("cosine_distance").is_some());
+        assert!(drift_obs.get("relative_error_p99").is_some());
+        assert_eq!(drift_obs["confidence"], 0.3);
+        assert_eq!(drift_obs["evidence_source"], "SyntheticRun");
+        assert_eq!(drift_obs["evidence_count"], 1);
+    }
+
+    #[test]
+    fn test_build_knowledge_update_with_drift_unavailable() {
+        let spec = make_test_spec();
+        let bridge_result = make_success_bridge_result();
+        let task_hash = "sha256:driftunavail";
+        let baseline = crate::baseline::BaselineResult {
+            baseline_schema_version: "1.0.0".to_string(),
+            task_id: "test_task".to_string(),
+            task_hash: Some(task_hash.to_string()),
+            input_dim: 64, output_dim: 32, batch_size: 1, seed: 42,
+            precision: "fp32".to_string(),
+            output_tensor: vec![0.0; 32],
+            output_shape: vec![1, 32],
+            compute_time_ms: 1.0,
+        };
+        let drift = crate::drift::DriftDetector::unavailable("no Apple hardware");
+        let update = build_knowledge_update_with_drift(&spec, &bridge_result, task_hash, &baseline, &drift);
+        let observations = update["observations"].as_array().unwrap();
+        let drift_obs = &observations[2];
+        assert_eq!(drift_obs["knowledge_type"], "PrecisionHazard");
+        assert_eq!(drift_obs["computation_status"], "unavailable");
+        assert_eq!(drift_obs["reason"], "no Apple hardware");
+        assert_eq!(drift_obs["confidence"], 0.0);
+    }
+
+    #[test]
+    fn test_build_knowledge_update_with_drift_version() {
+        let spec = make_test_spec();
+        let bridge_result = make_success_bridge_result();
+        let task_hash = "sha256:versiontest";
+        let baseline = crate::baseline::BaselineResult {
+            baseline_schema_version: "1.0.0".to_string(),
+            task_id: "test_task".to_string(),
+            task_hash: None,
+            input_dim: 64, output_dim: 32, batch_size: 1, seed: 42,
+            precision: "fp32".to_string(),
+            output_tensor: vec![0.0; 32],
+            output_shape: vec![1, 32],
+            compute_time_ms: 1.0,
+        };
+        let drift = crate::drift::DriftDetector::unavailable("test");
+        let update = build_knowledge_update_with_drift(&spec, &bridge_result, task_hash, &baseline, &drift);
+        assert_eq!(update["version"], 3, "Drift variant must use version 3");
+    }
+
+    #[test]
+    fn test_ingest_knowledge_observations_valid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store_path = tmp.path().join("store").to_string_lossy().to_string();
+        let mut store = ane_knowledge::store::KnowledgeStore::open(&store_path).unwrap();
+        let knowledge_update = serde_json::json!({
+            "observations": [
+                {
+                    "knowledge_type": "LegalityRule",
+                    "op_pattern": "mb.matmul",
+                    "ane_legal": true,
+                    "confidence": 0.3,
+                    "evidence_source": "SyntheticRun",
+                    "evidence_count": 1,
+                    "scope": {
+                        "device_classes": ["unknown"],
+                        "os_versions": ["unknown"],
+                        "opset_versions": ["iOS18"],
+                    },
+                },
+                {
+                    "knowledge_type": "LegalityRule",
+                    "op_pattern": "mb.add",
+                    "ane_legal": true,
+                    "confidence": 0.3,
+                    "evidence_source": "SyntheticRun",
+                    "evidence_count": 1,
+                    "scope": {
+                        "device_classes": ["unknown"],
+                        "os_versions": ["unknown"],
+                        "opset_versions": ["iOS18"],
+                    },
+                },
+            ],
+        });
+        let count = ingest_knowledge_observations(&mut store, &knowledge_update, "sha256:abc").unwrap();
+        assert_eq!(count, 2, "Should ingest 2 valid observations");
+    }
+
+    #[test]
+    fn test_ingest_knowledge_observations_empty_observations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store_path = tmp.path().join("store").to_string_lossy().to_string();
+        let mut store = ane_knowledge::store::KnowledgeStore::open(&store_path).unwrap();
+        let knowledge_update = serde_json::json!({"observations": []});
+        let count = ingest_knowledge_observations(&mut store, &knowledge_update, "sha256:abc").unwrap();
+        assert_eq!(count, 0, "Empty observations array should ingest 0");
+    }
+
+    #[test]
+    fn test_ingest_knowledge_observations_missing_observations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store_path = tmp.path().join("store").to_string_lossy().to_string();
+        let mut store = ane_knowledge::store::KnowledgeStore::open(&store_path).unwrap();
+        let knowledge_update = serde_json::json!({"version": 2, "source": "test"});
+        let result = ingest_knowledge_observations(&mut store, &knowledge_update, "sha256:abc");
+        assert!(result.is_err(), "Missing observations field should return Err");
+        assert!(result.unwrap_err().contains("No observations found"),
+            "Error message should mention missing observations");
+    }
+}

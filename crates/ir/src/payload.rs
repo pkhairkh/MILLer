@@ -710,3 +710,447 @@ impl FamilyPayload {
             .map_err(|e| format!("Failed to serialize FamilyPayload: {}", e))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::task_spec::{MeasurementConfig, SyntheticTaskSpec, TaskOp};
+
+    // ─── Helpers ──────────────────────────────────────────────────────
+
+    fn measurement() -> MeasurementConfig {
+        MeasurementConfig {
+            warmup_iterations: 5,
+            measured_iterations: 20,
+            metrics: vec!["Latency".into()],
+        }
+    }
+
+    fn linear_spec() -> SyntheticTaskSpec {
+        SyntheticTaskSpec {
+            name: "test_linear".into(),
+            family: "LinearProjection".into(),
+            description: None,
+            op: TaskOp::LinearProjection {
+                input_dim: 64,
+                output_dim: 128,
+                batch_size: 1,
+                has_bias: true,
+                dtype: "fp16".into(),
+            },
+            measurement: measurement(),
+        }
+    }
+
+    fn lut_spec() -> SyntheticTaskSpec {
+        SyntheticTaskSpec {
+            name: "test_lut".into(),
+            family: "LutProjection".into(),
+            description: None,
+            op: TaskOp::LutProjection {
+                vocab_size: 32000,
+                embed_dim: 512,
+                num_groups: 64,
+                lut_bitwidth: 4,
+                batch_size: 1,
+                dtype: "fp16".into(),
+            },
+            measurement: measurement(),
+        }
+    }
+
+    fn decode_step_spec() -> SyntheticTaskSpec {
+        SyntheticTaskSpec {
+            name: "test_decode".into(),
+            family: "DecodeStep".into(),
+            description: None,
+            op: TaskOp::DecodeStep {
+                embed_dim: 128,
+                num_heads: 4,
+                head_dim: 32,
+                kv_len: 64,
+                batch_size: 1,
+                kv_heads: 4,
+                intermediate_size: 512,
+                vocab_size: 32000,
+                dtype: "fp16".into(),
+                uses_rope: true,
+                has_qk_norm: false,
+            },
+            measurement: measurement(),
+        }
+    }
+
+    fn mlp_block_spec() -> SyntheticTaskSpec {
+        SyntheticTaskSpec {
+            name: "test_mlp".into(),
+            family: "MlpBlock".into(),
+            description: None,
+            op: TaskOp::MlpBlock {
+                input_dim: 128,
+                hidden_dim: 512,
+                output_dim: 128,
+                activation: "gelu".into(),
+                batch_size: 1,
+                dtype: "fp16".into(),
+            },
+            measurement: measurement(),
+        }
+    }
+
+    fn attention_spec() -> SyntheticTaskSpec {
+        SyntheticTaskSpec {
+            name: "test_attn".into(),
+            family: "Attention".into(),
+            description: None,
+            op: TaskOp::Attention {
+                embed_dim: 128,
+                num_heads: 4,
+                head_dim: 32,
+                seq_len: 16,
+                batch_size: 1,
+                dtype: "fp16".into(),
+            },
+            measurement: measurement(),
+        }
+    }
+
+    // ─── LinearProjectionPayload ──────────────────────────────────────
+
+    #[test]
+    fn test_linear_projection_payload_from_spec() {
+        let spec = linear_spec();
+        let payload = LinearProjectionPayload::from_spec(&spec, "/out/model").unwrap();
+        assert_eq!(payload.bridge_version, BRIDGE_VERSION);
+        assert_eq!(payload.command, "emit_linear_projection");
+        assert_eq!(payload.task_name, "test_linear");
+        assert_eq!(payload.family, "LinearProjection");
+        assert_eq!(payload.input_dim, 64);
+        assert_eq!(payload.output_dim, 128);
+        assert_eq!(payload.batch_size, 1);
+        assert_eq!(payload.dtype, "fp16");
+        assert_eq!(payload.opset_version, crate::DEFAULT_OPSET_VERSION);
+        assert_eq!(payload.compute_units, "CPU_AND_NE");
+        assert_eq!(payload.output_path, "/out/model");
+        assert_eq!(payload.seed, DEFAULT_SEED);
+        assert_eq!(payload.functions.len(), 1);
+        assert_eq!(payload.functions[0].name, "main");
+        assert_eq!(payload.functions[0].stateful, false);
+    }
+
+    #[test]
+    fn test_linear_projection_payload_dtype_override() {
+        let spec = linear_spec();
+        let payload =
+            LinearProjectionPayload::from_spec_with_override(&spec, "/out", Some("fp32")).unwrap();
+        assert_eq!(payload.dtype, "fp32");
+        // Verify dtype propagates to function descriptors
+        assert_eq!(payload.functions[0].inputs[0].dtype, "fp32");
+        assert_eq!(payload.functions[0].outputs[0].dtype, "fp32");
+    }
+
+    #[test]
+    fn test_linear_projection_payload_wrong_op_type() {
+        let spec = lut_spec(); // LUT is wrong for LinearProjectionPayload
+        let result = LinearProjectionPayload::from_spec(&spec, "/out");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("LutProjection"));
+    }
+
+    // ─── LutProjectionPayload ─────────────────────────────────────────
+
+    #[test]
+    fn test_lut_projection_payload_from_spec() {
+        let spec = lut_spec();
+        let payload = LutProjectionPayload::from_spec(&spec, "/out/model").unwrap();
+        assert_eq!(payload.bridge_version, BRIDGE_VERSION);
+        assert_eq!(payload.command, "emit_lut_projection");
+        assert_eq!(payload.task_name, "test_lut");
+        assert_eq!(payload.family, "LutProjection");
+        assert_eq!(payload.vocab_size, 32000);
+        assert_eq!(payload.embed_dim, 512);
+        assert_eq!(payload.num_groups, 64);
+        assert_eq!(payload.lut_bitwidth, 4);
+        assert_eq!(payload.batch_size, 1);
+        assert_eq!(payload.dtype, "fp16");
+        // LUT uses "indices" as input name and "int32" as input dtype
+        assert_eq!(payload.functions[0].inputs[0].name, "indices");
+        assert_eq!(payload.functions[0].inputs[0].dtype, "int32");
+    }
+
+    #[test]
+    fn test_lut_projection_payload_dtype_override() {
+        let spec = lut_spec();
+        let payload =
+            LutProjectionPayload::from_spec_with_override(&spec, "/out", Some("fp32")).unwrap();
+        assert_eq!(payload.dtype, "fp32");
+        // Input dtype stays int32 (indices), output dtype is overridden
+        assert_eq!(payload.functions[0].inputs[0].dtype, "int32");
+        assert_eq!(payload.functions[0].outputs[0].dtype, "fp32");
+    }
+
+    #[test]
+    fn test_lut_projection_payload_wrong_op_type() {
+        let spec = linear_spec(); // Linear is wrong for LutProjectionPayload
+        let result = LutProjectionPayload::from_spec(&spec, "/out");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("LutProjection"));
+    }
+
+    // ─── DecodeStepPayload ────────────────────────────────────────────
+
+    #[test]
+    fn test_decode_step_payload_from_spec() {
+        let spec = decode_step_spec();
+        let payload = DecodeStepPayload::from_spec(&spec, "/out/model").unwrap();
+        assert_eq!(payload.bridge_version, BRIDGE_VERSION);
+        assert_eq!(payload.command, "emit_stateful_decode_step");
+        assert_eq!(payload.embed_dim, 128);
+        assert_eq!(payload.num_heads, 4);
+        assert_eq!(payload.head_dim, 32);
+        assert_eq!(payload.kv_len, 64);
+        assert_eq!(payload.batch_size, 1);
+        // DecodeStep is stateful
+        assert_eq!(payload.functions[0].stateful, true);
+    }
+
+    #[test]
+    fn test_decode_step_payload_dtype_override() {
+        let spec = decode_step_spec();
+        let payload =
+            DecodeStepPayload::from_spec_with_override(&spec, "/out", Some("fp32")).unwrap();
+        assert_eq!(payload.dtype, "fp32");
+        assert_eq!(payload.functions[0].inputs[0].dtype, "fp32");
+        assert_eq!(payload.functions[0].outputs[0].dtype, "fp32");
+    }
+
+    #[test]
+    fn test_decode_step_payload_wrong_op_type() {
+        let spec = linear_spec();
+        let result = DecodeStepPayload::from_spec(&spec, "/out");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("DecodeStep"));
+    }
+
+    // ─── MlpBlockPayload ──────────────────────────────────────────────
+
+    #[test]
+    fn test_mlp_block_payload_from_spec() {
+        let spec = mlp_block_spec();
+        let payload = MlpBlockPayload::from_spec(&spec, "/out/model").unwrap();
+        assert_eq!(payload.bridge_version, BRIDGE_VERSION);
+        assert_eq!(payload.command, "emit_mlp_block");
+        assert_eq!(payload.input_dim, 128);
+        assert_eq!(payload.hidden_dim, 512);
+        assert_eq!(payload.output_dim, 128);
+        assert_eq!(payload.activation, "gelu");
+        assert_eq!(payload.batch_size, 1);
+        assert_eq!(payload.functions[0].stateful, false);
+    }
+
+    #[test]
+    fn test_mlp_block_payload_dtype_override() {
+        let spec = mlp_block_spec();
+        let payload =
+            MlpBlockPayload::from_spec_with_override(&spec, "/out", Some("fp32")).unwrap();
+        assert_eq!(payload.dtype, "fp32");
+    }
+
+    #[test]
+    fn test_mlp_block_payload_wrong_op_type() {
+        let spec = linear_spec();
+        let result = MlpBlockPayload::from_spec(&spec, "/out");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("MlpBlock"));
+    }
+
+    // ─── AttentionPayload ─────────────────────────────────────────────
+
+    #[test]
+    fn test_attention_payload_from_spec() {
+        let spec = attention_spec();
+        let payload = AttentionPayload::from_spec(&spec, "/out/model").unwrap();
+        assert_eq!(payload.bridge_version, BRIDGE_VERSION);
+        assert_eq!(payload.command, "emit_attention");
+        assert_eq!(payload.embed_dim, 128);
+        assert_eq!(payload.num_heads, 4);
+        assert_eq!(payload.head_dim, 32);
+        assert_eq!(payload.seq_len, 16);
+        assert_eq!(payload.batch_size, 1);
+        // Attention has 3D input: [batch, seq_len, embed_dim]
+        assert_eq!(payload.functions[0].inputs[0].shape, vec![1, 16, 128]);
+        assert_eq!(payload.functions[0].outputs[0].shape, vec![1, 16, 128]);
+    }
+
+    #[test]
+    fn test_attention_payload_dtype_override() {
+        let spec = attention_spec();
+        let payload =
+            AttentionPayload::from_spec_with_override(&spec, "/out", Some("fp32")).unwrap();
+        assert_eq!(payload.dtype, "fp32");
+    }
+
+    #[test]
+    fn test_attention_payload_wrong_op_type() {
+        let spec = linear_spec();
+        let result = AttentionPayload::from_spec(&spec, "/out");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Attention"));
+    }
+
+    // ─── FamilyPayload ────────────────────────────────────────────────
+
+    #[test]
+    fn test_family_payload_from_spec_linear() {
+        let spec = linear_spec();
+        let payload = FamilyPayload::from_spec(&spec, "/out").unwrap();
+        assert_eq!(payload.command, "emit_linear_projection");
+        assert_eq!(payload.family, "LinearProjection");
+        assert_eq!(payload.params["input_dim"], 64);
+        assert_eq!(payload.params["output_dim"], 128);
+    }
+
+    #[test]
+    fn test_family_payload_from_spec_lut() {
+        let spec = lut_spec();
+        let payload = FamilyPayload::from_spec(&spec, "/out").unwrap();
+        assert_eq!(payload.command, "emit_lut_projection");
+        assert_eq!(payload.family, "LutProjection");
+        assert_eq!(payload.params["vocab_size"], 32000);
+        assert_eq!(payload.params["lut_bitwidth"], 4);
+    }
+
+    #[test]
+    fn test_family_payload_from_spec_decode_step() {
+        let spec = decode_step_spec();
+        let payload = FamilyPayload::from_spec(&spec, "/out").unwrap();
+        assert_eq!(payload.command, "emit_stateful_decode_step");
+        assert_eq!(payload.family, "DecodeStep");
+        assert_eq!(payload.params["embed_dim"], 128);
+        assert_eq!(payload.params["num_heads"], 4);
+    }
+
+    #[test]
+    fn test_family_payload_from_spec_mlp_block() {
+        let spec = mlp_block_spec();
+        let payload = FamilyPayload::from_spec(&spec, "/out").unwrap();
+        assert_eq!(payload.command, "emit_mlp_block");
+        assert_eq!(payload.family, "MlpBlock");
+        assert_eq!(payload.params["input_dim"], 128);
+        assert_eq!(payload.params["hidden_dim"], 512);
+        assert_eq!(payload.params["activation"], "gelu");
+    }
+
+    #[test]
+    fn test_family_payload_from_spec_attention() {
+        let spec = attention_spec();
+        let payload = FamilyPayload::from_spec(&spec, "/out").unwrap();
+        assert_eq!(payload.command, "emit_attention");
+        assert_eq!(payload.family, "Attention");
+        assert_eq!(payload.params["embed_dim"], 128);
+        assert_eq!(payload.params["seq_len"], 16);
+    }
+
+    #[test]
+    fn test_family_payload_dtype_override() {
+        let spec = linear_spec();
+        let payload =
+            FamilyPayload::from_spec_with_override(&spec, "/out", Some("fp32")).unwrap();
+        assert_eq!(payload.params["dtype"], "fp32");
+    }
+
+    #[test]
+    fn test_family_payload_to_json() {
+        let spec = linear_spec();
+        let payload = FamilyPayload::from_spec(&spec, "/out").unwrap();
+        let json = payload.to_json().unwrap();
+        // Verify it's valid JSON by parsing it
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["command"], "emit_linear_projection");
+        assert_eq!(parsed["bridge_version"], BRIDGE_VERSION);
+    }
+
+    #[test]
+    fn test_family_payload_to_json_pretty() {
+        let spec = linear_spec();
+        let payload = FamilyPayload::from_spec(&spec, "/out").unwrap();
+        let json = payload.to_json_pretty().unwrap();
+        // Pretty JSON should contain newlines
+        assert!(json.contains('\n'));
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["command"], "emit_linear_projection");
+    }
+
+    #[test]
+    fn test_family_payload_json_roundtrip() {
+        let spec = linear_spec();
+        let payload = FamilyPayload::from_spec(&spec, "/out").unwrap();
+        let json = payload.to_json().unwrap();
+        let deserialized: FamilyPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.bridge_version, payload.bridge_version);
+        assert_eq!(deserialized.command, payload.command);
+        assert_eq!(deserialized.task_name, payload.task_name);
+        assert_eq!(deserialized.family, payload.family);
+        assert_eq!(deserialized.opset_version, payload.opset_version);
+        assert_eq!(deserialized.compute_units, payload.compute_units);
+        assert_eq!(deserialized.output_path, payload.output_path);
+        assert_eq!(deserialized.seed, payload.seed);
+        assert_eq!(deserialized.functions.len(), payload.functions.len());
+    }
+
+    // ─── Constants ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_bridge_version_constant() {
+        assert_eq!(BRIDGE_VERSION, 1);
+    }
+
+    #[test]
+    fn test_default_seed_constant() {
+        assert_eq!(DEFAULT_SEED, 42);
+    }
+
+    // ─── Descriptor serialization ─────────────────────────────────────
+
+    #[test]
+    fn test_function_descriptor_serialization() {
+        let fd = FunctionDescriptor {
+            name: "main".into(),
+            inputs: vec![TensorDescriptor {
+                name: "x".into(),
+                shape: vec![1, 64],
+                dtype: "fp16".into(),
+            }],
+            outputs: vec![TensorDescriptor {
+                name: "output".into(),
+                shape: vec![1, 128],
+                dtype: "fp16".into(),
+            }],
+            stateful: false,
+        };
+        let json = serde_json::to_string(&fd).unwrap();
+        let de: FunctionDescriptor = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.name, "main");
+        assert_eq!(de.inputs.len(), 1);
+        assert_eq!(de.inputs[0].name, "x");
+        assert_eq!(de.inputs[0].shape, vec![1, 64]);
+        assert_eq!(de.inputs[0].dtype, "fp16");
+        assert_eq!(de.outputs[0].name, "output");
+        assert_eq!(de.outputs[0].shape, vec![1, 128]);
+        assert_eq!(de.stateful, false);
+    }
+
+    #[test]
+    fn test_tensor_descriptor_serialization() {
+        let td = TensorDescriptor {
+            name: "k_state".into(),
+            shape: vec![1, 4, 64, 32],
+            dtype: "fp16".into(),
+        };
+        let json = serde_json::to_string(&td).unwrap();
+        let de: TensorDescriptor = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.name, "k_state");
+        assert_eq!(de.shape, vec![1, 4, 64, 32]);
+        assert_eq!(de.dtype, "fp16");
+    }
+}

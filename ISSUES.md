@@ -181,7 +181,7 @@ The shard slicing assumes all weights are FP16 (2 bytes per element). F32 weight
 
 ### I-32 · Zero Tests for ir::payload, ir::shard_desc, ir::serialize
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-58)
 **Files:** `crates/ir/src/payload.rs`, `crates/ir/src/shard_desc.rs`, `crates/ir/src/serialize.rs`
 **AUDIT ref:** §V
 **Severity:** HIGH
@@ -190,11 +190,13 @@ The shard slicing assumes all weights are FP16 (2 bytes per element). F32 weight
 
 Three modules with 0% test coverage and 30 pub fn total. `payload.rs` has 16 untested pub fn including the precision adaptation pipeline (`from_spec_with_override`). `shard_desc.rs` has 6 untested pub fn for shard pipeline construction. `serialize.rs` has 8 untested pub fn for IR round-trip. The precision adaptation pipeline has zero end-to-end coverage — this is the single highest-risk gap because it prevents fp16 precision hazards.
 
+**Fix:** Added 52 tests: payload.rs (28 tests), shard_desc.rs (14 tests), serialize.rs (10 tests). Covers all pub fn including from_spec/from_spec_with_override, wrong-op-type rejection, JSON roundtrip, MIR/PIR structure verification, and SIR/AIR/MIR/PIR serialization round-trip.
+
 ---
 
 ### I-33 · Zero Tests for lab::session, lab::harness, lab::fallback
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-59)
 **Files:** `crates/lab/src/session.rs`, `crates/lab/src/harness.rs`, `crates/lab/src/fallback.rs`
 **AUDIT ref:** §V
 **Severity:** HIGH
@@ -202,6 +204,8 @@ Three modules with 0% test coverage and 30 pub fn total. `payload.rs` has 16 unt
 **Task:** T-59
 
 Three 0%-coverage critical modules: `session.rs` (7 pub fn — task hashing, knowledge update, artifact manifest), `harness.rs` (14 pub fn — LabRunBuilder, all builder paths, to_json/write_to_file), `fallback.rs` (3 pub fn — FallbackDetector::detect_from_timing). These are the lab's main orchestration and diagnostic entry points.
+
+**Fix:** Added 52 tests: session.rs (16 tests), harness.rs (24 tests), fallback.rs (12 tests). Covers compute_task_hash determinism/uniqueness, build_artifact_manifest success/failure, build_knowledge_update/knowledge_update_with_drift, ingest_knowledge_observations, LabRunBuilder all builder paths, JSON roundtrip, FallbackDetector timing analysis, and all struct serialization roundtrips.
 
 ---
 
@@ -503,8 +507,8 @@ Gate behind feature flag or remove entirely.
 | Priority | Total | Open | Fixed | Retracted |
 |----------|-------|------|-------|-----------|
 | P0 | 4 | 0 | 4 | 0 |
-| P1 | 17 | 2 | 13 | 2 |
+| P1 | 17 | 0 | 15 | 2 |
 | P2 | 15 | 1 | 12 | 0 |
 | P3 | 5 | 0 | 4 | 0 |
 | Resolved (v1+v2) | 33 | 0 | 31 | 2 |
-| **Total** | **74** | **3** | **64** | **4** |
+| **Total** | **74** | **2** | **66** | **4** |

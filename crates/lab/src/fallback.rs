@@ -179,3 +179,139 @@ pub struct FallbackLogEvidence {
     /// Source of this evidence (e.g., "coreml_diagnostics_log").
     pub source: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::device_meta::{DeviceMetadata, MetadataSource};
+
+    fn make_device_backed_meta() -> DeviceMetadata {
+        DeviceMetadata {
+            source: MetadataSource::DeviceBacked,
+            host_os: "macOS arm64".to_string(),
+            device_class: Some("Apple M2".to_string()),
+            chip_name: Some("t6020".to_string()),
+            os_version: "macOS 14.3.1".to_string(),
+            core_ml_version: Some("7.2".to_string()),
+            total_memory_gb: Some(16.0),
+            ane_core_count: Some(16),
+            coreml_runtime_available: true,
+            compute_plan_available: true,
+        }
+    }
+
+    #[test]
+    fn test_fallback_detector_default_threshold() {
+        let detector = FallbackDetector::new();
+        assert!((detector.latency_threshold_ratio - 3.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_fallback_detector_custom_threshold() {
+        let detector = FallbackDetector::with_threshold_ratio(5.0);
+        assert!((detector.latency_threshold_ratio - 5.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_detect_from_timing_host_only_returns_unavailable() {
+        let detector = FallbackDetector::new();
+        let meta = DeviceMetadata::host_only();
+        let result = detector.detect_from_timing(10.0, Some(1.0), &meta);
+        assert_eq!(result.suspicion_level, FallbackSuspicionLevel::Unavailable);
+    }
+
+    #[test]
+    fn test_detect_from_timing_no_baseline_returns_unavailable() {
+        let detector = FallbackDetector::new();
+        let meta = DeviceMetadata::host_only();
+        let result = detector.detect_from_timing(10.0, None, &meta);
+        assert_eq!(result.suspicion_level, FallbackSuspicionLevel::Unavailable);
+    }
+
+    #[test]
+    fn test_detect_from_timing_latency_anomaly() {
+        let detector = FallbackDetector::new();
+        let meta = make_device_backed_meta();
+        // observed=10ms, expected=1ms → ratio=10x > threshold(3.0)
+        let result = detector.detect_from_timing(10.0, Some(1.0), &meta);
+        assert_eq!(result.suspicion_level, FallbackSuspicionLevel::LowConfidenceSuspicion);
+    }
+
+    #[test]
+    fn test_detect_from_timing_latency_normal() {
+        let detector = FallbackDetector::new();
+        let meta = make_device_backed_meta();
+        // observed=1.5ms, expected=1.0ms → ratio=1.5x < threshold(3.0)
+        let result = detector.detect_from_timing(1.5, Some(1.0), &meta);
+        assert_eq!(result.suspicion_level, FallbackSuspicionLevel::NoConclusion);
+    }
+
+    #[test]
+    fn test_detect_from_timing_no_compute_plan_evidence() {
+        let detector = FallbackDetector::new();
+        let mut meta = make_device_backed_meta();
+        meta.compute_plan_available = false;
+        let result = detector.detect_from_timing(1.0, Some(1.0), &meta);
+        let kinds: Vec<&str> = result.evidence.iter().map(|e| e.kind.as_str()).collect();
+        assert!(kinds.contains(&"compute_plan_unavailable"),
+            "Expected compute_plan_unavailable evidence, got: {:?}", kinds);
+    }
+
+    #[test]
+    fn test_detect_from_timing_evidence_kinds() {
+        let detector = FallbackDetector::new();
+        let meta = make_device_backed_meta();
+        let result = detector.detect_from_timing(10.0, Some(1.0), &meta);
+        let kinds: Vec<&str> = result.evidence.iter().map(|e| e.kind.as_str()).collect();
+        // Should have latency_anomaly since ratio > threshold
+        assert!(kinds.contains(&"latency_anomaly"),
+            "Expected latency_anomaly evidence, got: {:?}", kinds);
+    }
+
+    #[test]
+    fn test_detect_from_timing_suspicion_explanation_not_empty() {
+        let detector = FallbackDetector::new();
+        let meta = make_device_backed_meta();
+        let result = detector.detect_from_timing(10.0, Some(1.0), &meta);
+        assert!(!result.explanation.is_empty(), "Explanation should not be empty");
+    }
+
+    #[test]
+    fn test_fallback_log_evidence_serialization() {
+        let evidence = FallbackLogEvidence {
+            op_name: "linear_1".to_string(),
+            expected_compute_unit: "NeuralEngine".to_string(),
+            actual_compute_unit: "CPU".to_string(),
+            source: "coreml_diagnostics_log".to_string(),
+        };
+        let json = serde_json::to_string(&evidence).unwrap();
+        let back: FallbackLogEvidence = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.op_name, "linear_1");
+        assert_eq!(back.actual_compute_unit, "CPU");
+        assert_eq!(back.source, "coreml_diagnostics_log");
+    }
+
+    #[test]
+    fn test_assess_overall_level_latency_anomaly() {
+        let detector = FallbackDetector::new();
+        let evidence = vec![SuspicionEvidence {
+            kind: "latency_anomaly".to_string(),
+            description: "slow".to_string(),
+            strength: 0.4,
+        }];
+        let level = detector.assess_overall_level(&evidence);
+        assert_eq!(level, FallbackSuspicionLevel::LowConfidenceSuspicion);
+    }
+
+    #[test]
+    fn test_assess_overall_level_no_anomaly() {
+        let detector = FallbackDetector::new();
+        let evidence = vec![SuspicionEvidence {
+            kind: "latency_normal".to_string(),
+            description: "normal".to_string(),
+            strength: 0.3,
+        }];
+        let level = detector.assess_overall_level(&evidence);
+        assert_eq!(level, FallbackSuspicionLevel::NoConclusion);
+    }
+}

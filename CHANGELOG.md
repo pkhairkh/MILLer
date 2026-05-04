@@ -2,14 +2,143 @@
 
 ## Current Status — 2026-05-04
 
-- **1297 tests passing**, 0 failures
+- **1401 tests passing**, 0 failures
 - IR Cleanliness Score: 89%
 - 0 clippy warnings, 0 errors
-- **4 open issues** (0 CRITICAL, 2 HIGH, 1 MEDIUM, 1 LOW) — see [ISSUES.md](ISSUES.md)
-- **4 open tasks** (T-58, T-59, T-61, T-66) — see [TASKS.md](TASKS.md)
+- **2 open issues** (0 CRITICAL, 0 HIGH, 1 MEDIUM, 1 LOW) — see [ISSUES.md](ISSUES.md)
+- **2 open tasks** (T-61, T-66) — see [TASKS.md](TASKS.md)
 
 Audit details: [docs/audit/tabula-rasa-v3.md](docs/audit/tabula-rasa-v3.md)
 Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
+
+---
+
+## 2026-05-04 — Test Coverage Sprint
+
+### Resolved (T-58, T-59)
+
+| Task | Description | Key Change |
+|------|-------------|------------|
+| T-58 | Add Tests for ir::payload, ir::shard_desc, ir::serialize | Added 52 tests: payload.rs (28 tests covering all 5 family payload types, from_spec/from_spec_with_override, wrong-op-type rejection, FamilyPayload JSON roundtrip, constants, descriptor serialization), shard_desc.rs (14 tests covering sharded_pipeline_shards structure/roles/dims, lower_shard_to_mir node/dtype verification, ShardedShardPayload construction/override/decode-step, build_sharded_pipeline_pir packages/handoffs/template), serialize.rs (10 tests covering SIR/AIR/MIR/PIR round-trip, corrupt/empty bytes errors, generic serialize/deserialize_graph, node preservation) |
+| T-59 | Add Tests for lab::session, lab::harness, lab::fallback | Added 52 tests: session.rs (16 tests covering compute_task_hash determinism/uniqueness/format, build_artifact_manifest success/failure/limitations, build_knowledge_update success/failure/residuals, build_knowledge_update_with_drift computed/unavailable, ingest_knowledge_observations valid/empty/missing), harness.rs (24 tests covering LabRunBuilder all builder paths, LabRun JSON roundtrip/write_to_file, VerificationScope/EnvironmentSummary/CompileStepResult/InspectionStepResult/TimingResult/FallbackSuspicionResult/GeneratorProvenance serialization, schema version), fallback.rs (12 tests covering FallbackDetector default/custom threshold, detect_from_timing host-only/no-baseline/anomaly/normal, evidence kinds, assess_overall_level, FallbackLogEvidence serialization) |
+
+### New Tests Added (104 tests)
+
+**payload.rs (28 tests):**
+- `test_linear_projection_payload_from_spec` — field verification for LinearProjection payload
+- `test_linear_projection_payload_dtype_override` — fp32 override propagation
+- `test_linear_projection_payload_wrong_op_type` — wrong TaskOp returns Err
+- `test_lut_projection_payload_from_spec` — LUT-specific fields (vocab_size, embed_dim, num_groups, lut_bitwidth)
+- `test_lut_projection_payload_dtype_override` — dtype override for LUT
+- `test_lut_projection_payload_wrong_op_type` — wrong TaskOp returns Err
+- `test_decode_step_payload_from_spec` — decode-step fields (embed_dim, num_heads, head_dim, kv_len, stateful=true)
+- `test_decode_step_payload_dtype_override` — dtype override for decode-step
+- `test_decode_step_payload_wrong_op_type` — wrong TaskOp returns Err
+- `test_mlp_block_payload_from_spec` — MLP fields (input_dim, hidden_dim, output_dim, activation)
+- `test_mlp_block_payload_dtype_override` — dtype override for MLP
+- `test_mlp_block_payload_wrong_op_type` — wrong TaskOp returns Err
+- `test_attention_payload_from_spec` — attention fields (embed_dim, num_heads, head_dim, seq_len)
+- `test_attention_payload_dtype_override` — dtype override for attention
+- `test_attention_payload_wrong_op_type` — wrong TaskOp returns Err
+- `test_family_payload_from_spec_linear` — FamilyPayload from LinearProjection
+- `test_family_payload_from_spec_lut` — FamilyPayload from LutProjection
+- `test_family_payload_from_spec_decode_step` — FamilyPayload from DecodeStep
+- `test_family_payload_from_spec_mlp_block` — FamilyPayload from MlpBlock
+- `test_family_payload_from_spec_attention` — FamilyPayload from Attention
+- `test_family_payload_dtype_override` — dtype override propagation
+- `test_family_payload_to_json` — valid JSON output
+- `test_family_payload_to_json_pretty` — valid pretty JSON output
+- `test_family_payload_json_roundtrip` — serialize/deserialize preserves fields
+- `test_bridge_version_constant` — BRIDGE_VERSION == 1
+- `test_default_seed_constant` — DEFAULT_SEED == 42
+- `test_function_descriptor_serialization` — FunctionDescriptor roundtrip
+- `test_tensor_descriptor_serialization` — TensorDescriptor roundtrip
+
+**shard_desc.rs (14 tests):**
+- `test_sharded_pipeline_shards_structure` — 3 shards with correct roles/dims
+- `test_sharded_pipeline_shards_wrong_op_type` — wrong TaskOp returns Err
+- `test_shard_desc_serialization` — ShardDesc roundtrip
+- `test_lower_shard_to_mir_structure` — 4 MIR nodes (weight, bias, matmul, add)
+- `test_lower_shard_to_mir_dtypes` — fp16/fp32/int4/e4m3/e5m2 dtype mapping
+- `test_lower_shard_to_mir_default_dtype` — unknown dtype defaults to fp16
+- `test_sharded_shard_payload_from_shard` — all fields verified
+- `test_sharded_shard_payload_dtype_override` — override propagation
+- `test_sharded_shard_payload_decode_step` — decode-step command, 3 inputs, stateful=true
+- `test_sharded_shard_payload_serialization` — roundtrip
+- `test_build_sharded_pipeline_pir_structure` — 3 packages + shard template
+- `test_build_sharded_pipeline_pir_wrong_op_type` — wrong TaskOp returns Err
+- `test_build_sharded_pipeline_pir_handoffs` — entry→interior→exit handoff structure
+- `test_build_sharded_pipeline_pir_serialization` — PirGraph roundtrip
+
+**serialize.rs (10 tests):**
+- `test_serialize_deserialize_sir_roundtrip` — SirGraph round-trip
+- `test_serialize_deserialize_air_roundtrip` — AirGraph round-trip
+- `test_serialize_deserialize_mir_roundtrip` — MirGraph round-trip
+- `test_serialize_deserialize_pir_roundtrip` — PirGraph round-trip
+- `test_deserialize_corrupt_bytes_returns_error` — invalid bytes → Err
+- `test_deserialize_empty_bytes_returns_error` — empty bytes → Err
+- `test_serialize_graph_generic` — generic serialize_graph function
+- `test_deserialize_graph_generic` — generic deserialize_graph function
+- `test_sir_roundtrip_preserves_nodes` — node count and op types preserved
+- `test_mir_roundtrip_preserves_nodes` — node count and dtypes preserved
+
+**session.rs (16 tests):**
+- `test_compute_task_hash_deterministic` — same spec → same hash
+- `test_compute_task_hash_different_specs` — different specs → different hashes
+- `test_compute_task_hash_format` — "sha256:" prefix + 64 hex chars
+- `test_compute_task_hash_uses_identity_string` — identity_string difference changes hash
+- `test_build_artifact_manifest_success` — 1 package with correct fields
+- `test_build_artifact_manifest_failure` — failed bridge → no packages
+- `test_build_artifact_manifest_has_environment_limitations` — 3 limitations present
+- `test_build_knowledge_update_success` — version 2, 2 observations, confidence values
+- `test_build_knowledge_update_failure` — ane_legal=false, confidence=0.7
+- `test_build_knowledge_update_has_residuals` — 3 residuals with expected content
+- `test_build_knowledge_update_with_drift_computed` — version 3, drift metrics present
+- `test_build_knowledge_update_with_drift_unavailable` — computation_status="unavailable"
+- `test_build_knowledge_update_with_drift_version` — drift variant uses version 3
+- `test_ingest_knowledge_observations_valid` — 2 observations ingested
+- `test_ingest_knowledge_observations_empty_observations` — 0 ingested
+- `test_ingest_knowledge_observations_missing_observations` — returns Err
+
+**harness.rs (24 tests):**
+- `test_lab_run_builder_minimal` — required fields only, defaults verified
+- `test_lab_run_builder_all_fields` — all optional fields set
+- `test_lab_run_builder_payload_hash` — payload_hash propagation
+- `test_lab_run_builder_compile_result` — compile_result propagation
+- `test_lab_run_builder_inspect_result` — inspect_result propagation
+- `test_lab_run_builder_timing` — timing Some after set
+- `test_lab_run_builder_fallback_suspicion` — fallback_suspicion Some after set
+- `test_lab_run_builder_warnings` — multiple warnings accumulated
+- `test_lab_run_builder_generator_provenance` — provenance propagation
+- `test_lab_run_builder_adaptation_readiness` — readiness propagation
+- `test_lab_run_completed_at_set` — build() sets completed_at
+- `test_lab_run_to_json` — valid JSON output
+- `test_lab_run_json_roundtrip` — serialize/deserialize preserves fields
+- `test_lab_run_write_to_file` — file write and read back
+- `test_verification_scope_serialization` — all 3 variants roundtrip
+- `test_environment_summary_detect` — reasonable host values
+- `test_environment_summary_bridge_version` — bridge_version set
+- `test_compile_step_result_serialization` — roundtrip
+- `test_inspection_step_result_serialization` — roundtrip
+- `test_timing_result_serialization` — roundtrip
+- `test_fallback_suspicion_result_serialization` — roundtrip
+- `test_generator_provenance_serialization` — roundtrip
+- `test_lab_run_schema_version` — schema version constant
+- `test_lab_run_builder_chained` — builder method chaining
+
+**fallback.rs (12 tests):**
+- `test_fallback_detector_default_threshold` — latency_threshold_ratio = 3.0
+- `test_fallback_detector_custom_threshold` — with_threshold_ratio(5.0)
+- `test_detect_from_timing_host_only_returns_unavailable` — host-only → Unavailable
+- `test_detect_from_timing_no_baseline_returns_unavailable` — no expected latency → Unavailable
+- `test_detect_from_timing_latency_anomaly` — observed >> expected → LowConfidenceSuspicion
+- `test_detect_from_timing_latency_normal` — observed ≈ expected → NoConclusion
+- `test_detect_from_timing_no_compute_plan_evidence` — compute_plan_unavailable evidence
+- `test_detect_from_timing_evidence_kinds` — correct evidence kind strings
+- `test_detect_from_timing_suspicion_explanation_not_empty` — non-empty explanation
+- `test_fallback_log_evidence_serialization` — roundtrip
+- `test_assess_overall_level_latency_anomaly` — internal: anomaly → LowConfidenceSuspicion
+- `test_assess_overall_level_no_anomaly` — internal: no anomaly → NoConclusion
 
 ---
 
