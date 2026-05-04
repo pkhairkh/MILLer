@@ -118,59 +118,6 @@ impl ProtoEmitter {
         })
     }
 
-    /// Compare proto-direct emission with Python bridge emission.
-    ///
-    /// This emits the same model both ways and compares:
-    /// - weight.bin size (proto-direct should be smaller with shared weights)
-    /// - Structural equivalence (both should produce valid mlpackages)
-    /// - Function count and op counts
-    ///
-    /// Returns a comparison report.
-    pub fn compare_with_python_bridge(
-        &self,
-        graph: &MirGraphCompat,
-        proto_output_path: &str,
-        _python_output_path: &str,
-    ) -> Result<ComparisonReport> {
-        // Emit via proto-direct
-        let proto_result = self.emit_mir_graph(graph, proto_output_path)?;
-
-        // Python bridge comparison would go here when the bridge is available.
-        // For now, we report the proto-direct result only.
-
-        Ok(ComparisonReport {
-            proto_direct_result: proto_result,
-            python_bridge_result: None,
-            weight_bin_comparison: None,
-            structural_equivalence: None,
-        })
-    }
-}
-
-/// Report comparing proto-direct and Python bridge emission.
-#[derive(Debug, Clone)]
-pub struct ComparisonReport {
-    /// Proto-direct emission result.
-    pub proto_direct_result: ProtoEmitResult,
-    /// Python bridge emission result (if available).
-    pub python_bridge_result: Option<ProtoEmitResult>,
-    /// Weight.bin size comparison.
-    pub weight_bin_comparison: Option<WeightBinComparison>,
-    /// Whether both paths produce structurally equivalent mlpackages.
-    pub structural_equivalence: Option<bool>,
-}
-
-/// Comparison of weight.bin sizes between emission paths.
-#[derive(Debug, Clone)]
-pub struct WeightBinComparison {
-    /// Size of proto-direct weight.bin.
-    pub proto_direct_size: u64,
-    /// Size of Python bridge weight.bin.
-    pub python_bridge_size: u64,
-    /// Whether proto-direct is smaller.
-    pub proto_direct_is_smaller: bool,
-    /// Bytes saved.
-    pub bytes_saved: u64,
 }
 
 #[cfg(test)]

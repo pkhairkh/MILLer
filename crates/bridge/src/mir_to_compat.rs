@@ -576,7 +576,18 @@ fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
     compat.rename_output(new_name)
 }
 
-#[allow(dead_code)]
+/// Convert a MIR node to compat without access to a graph-wide shape map.
+///
+/// This is the simpler version that relies solely on the node's own shape
+/// field. It cannot resolve reshape zero placeholders from the full graph,
+/// so it should only be used in:
+/// - **Tests**: where the full shape map isn't available or necessary
+/// - **Debugging**: as a simpler conversion path for single-node inspection
+///
+/// Production code should use [`mir_node_to_compat_with_shapes`] instead,
+/// which can resolve reshape zero placeholders by consulting the full MIR
+/// graph shape map. See T-82 (I-57) for details on the migration.
+#[cfg(test)]
 fn mir_node_to_compat(node: &MirNode, resolver: &dyn WeightResolver) -> Result<MirOpCompat> {
     let compat = mir_op_to_compat(&node.op, &node.shape, resolver)?;
 

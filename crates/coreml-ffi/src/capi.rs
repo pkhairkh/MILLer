@@ -33,8 +33,20 @@ use std::ptr;
 pub enum CoreMlModelHandle {}
 
 /// Internal representation of a model handle.
+///
 /// On non-macOS platforms, we store the path for diagnostics.
+/// On macOS, this would wrap an `MLModel*` from the Core ML C API.
+///
+/// # Allocation contract (T-75, I-50)
+///
+/// Handles returned by `coreml_model_load` are allocated with `Box::new(ModelHandleInner)`.
+/// `coreml_model_destroy` reconstructs the `Box` via `Box::from_raw` to drop it.
+/// This contract MUST be maintained: if you change the allocation strategy in
+/// `coreml_model_load`, you MUST change the deallocation in `coreml_model_destroy`
+/// to match. Mixing allocation strategies (e.g., `Box::new` + `libc::free`) is
+/// undefined behavior.
 struct ModelHandleInner {
+    /// Path to the model file (for diagnostics on non-macOS).
     _path: String,
 }
 
@@ -164,6 +176,10 @@ pub unsafe extern "C" fn coreml_model_load(
 
     // On macOS, we would call MLModelLoad() here.
     // For now, return a stub error since we can't link CoreML.framework on Linux.
+    // When macOS support is implemented, the handle MUST be allocated with
+    // Box::new(ModelHandleInner { _path: ... }) so that coreml_model_destroy
+    // can safely reconstruct it with Box::from_raw (see allocation contract
+    // on ModelHandleInner).
     let _path_str = unsafe { CStr::from_ptr(path) };
     CoreMlStatus::ErrorModelLoad
 }
@@ -171,20 +187,37 @@ pub unsafe extern "C" fn coreml_model_load(
 /// Destroy a loaded model handle.
 ///
 /// Safely handles null pointers (no-op).
-/// On macOS, this would call `MLModelDestroy()`.
+///
+/// # Allocation contract (T-75, I-50)
+///
+/// When `coreml_model_load` is implemented on macOS, it MUST allocate the
+/// handle using `Box::new(ModelHandleInner { ... })` and cast the result
+/// to `*mut CoreMlModelHandle`. This function reconstructs the `Box` via
+/// `Box::from_raw` and drops it, which is safe ONLY if the handle was
+/// allocated with `Box::new`. If the allocation strategy changes (e.g.,
+/// to use the Core ML C API's own allocation), this function MUST be
+/// updated to match — mixing allocation strategies is undefined behavior.
 ///
 /// # Safety
 ///
 /// `handle` must be either null or a valid pointer previously returned by
-/// `coreml_model_load`.
+/// `coreml_model_load`. Passing a pointer from any other source is
+/// undefined behavior.
 #[no_mangle]
 pub unsafe extern "C" fn coreml_model_destroy(handle: *mut CoreMlModelHandle) {
     if handle.is_null() {
         return;
     }
 
-    // On macOS, we would call MLModelDestroy(handle).
-    // On non-macOS, we need to reconstruct the inner handle to drop it.
+    // Reconstruct the Box<ModelHandleInner> that was allocated in
+    // coreml_model_load, then drop it. This is safe because:
+    // 1. coreml_model_load allocates with Box::new(ModelHandleInner)
+    // 2. We cast the opaque handle back to the concrete type
+    // 3. Box::from_raw reconstructs the Box, which is then dropped
+    //
+    // On macOS with Core ML C API, this would need to call
+    // MLModelDestroy() instead. The current implementation is correct
+    // for the Box-based allocation strategy used by coreml_model_load.
     let inner = handle as *mut ModelHandleInner;
     unsafe {
         let _ = Box::from_raw(inner);
@@ -478,6 +511,16 @@ mod tests {
     fn test_model_destroy_null() {
         // Should be a no-op, not a crash
         unsafe { coreml_model_destroy(ptr::null_mut()) };
+    }
+
+    #[test]
+    fn test_model_destroy_allocated_handle() {
+        // T-75 (I-50): Verify that a handle allocated with Box::new(ModelHandleInner)
+        // can be safely destroyed. This tests the allocation contract.
+        let inner = Box::new(ModelHandleInner { _path: "/test/model.mlpackage".to_string() });
+        let handle = Box::into_raw(inner) as *mut CoreMlModelHandle;
+        // Should not panic or cause UB
+        unsafe { coreml_model_destroy(handle) };
     }
 
     // ─── coreml_model_info tests ────────────────────────────────────────

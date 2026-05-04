@@ -572,6 +572,135 @@ mod tests {
         }
     }
 
+    // ─── T-83 (I-58): BF16→FP16 Edge-Case Tests ──────────────────────────
+    //
+    // These tests exercise the convert_bf16_to_fp16() function through the
+    // same conversion path used by the safetensors loader: BF16 bits → F32
+    // → half::f16::from_f32(). The `half` crate handles subnormals and NaN
+    // payloads correctly, but we verify that the full pipeline preserves
+    // these special values.
+
+    /// Helper: convert a single BF16 value (as u16) to FP16 (as u16 bits)
+    /// using the same pipeline as `convert_bf16_to_fp16()`.
+    fn bf16_to_fp16_bits(bf16_bits: u16) -> u16 {
+        let f32_bits = (bf16_bits as u32) << 16;
+        let f32_val = f32::from_bits(f32_bits);
+        half::f16::from_f32(f32_val).to_bits()
+    }
+
+    #[test]
+    fn test_bf16_to_fp16_nan_preservation() {
+        // BF16 quiet NaN: exponent=0xFF, mantissa MSB=1 → 0x7FC0
+        // BF16 signaling NaN: exponent=0xFF, mantissa MSB=0, rest≠0 → 0x7F81
+        let qnan_bf16 = 0x7FC0u16;
+        let snan_bf16 = 0x7F81u16;
+
+        let qnan_fp16 = half::f16::from_bits(bf16_to_fp16_bits(qnan_bf16));
+        let snan_fp16 = half::f16::from_bits(bf16_to_fp16_bits(snan_bf16));
+
+        assert!(qnan_fp16.is_nan(), "BF16 quiet NaN should produce FP16 NaN");
+        assert!(snan_fp16.is_nan(), "BF16 signaling NaN should produce FP16 NaN");
+    }
+
+    #[test]
+    fn test_bf16_to_fp16_infinity_preservation() {
+        // BF16 +Inf: 0x7F80, -Inf: 0xFF80
+        let pos_inf_bf16 = 0x7F80u16;
+        let neg_inf_bf16 = 0xFF80u16;
+
+        let pos_inf_fp16 = half::f16::from_bits(bf16_to_fp16_bits(pos_inf_bf16));
+        let neg_inf_fp16 = half::f16::from_bits(bf16_to_fp16_bits(neg_inf_bf16));
+
+        assert!(pos_inf_fp16.is_infinite() && pos_inf_fp16.is_sign_positive(),
+            "BF16 +Inf should produce FP16 +Inf");
+        assert!(neg_inf_fp16.is_infinite() && neg_inf_fp16.is_sign_negative(),
+            "BF16 -Inf should produce FP16 -Inf");
+    }
+
+    #[test]
+    fn test_bf16_to_fp16_negative_zero() {
+        // BF16 -0.0: sign=1, exponent=0, mantissa=0 → 0x8000
+        let neg_zero_bf16 = 0x8000u16;
+        let pos_zero_bf16 = 0x0000u16;
+
+        let neg_zero_fp16 = half::f16::from_bits(bf16_to_fp16_bits(neg_zero_bf16));
+        let pos_zero_fp16 = half::f16::from_bits(bf16_to_fp16_bits(pos_zero_bf16));
+
+        // Both should be zero
+        assert_eq!(neg_zero_fp16.to_bits(), 0x8000u16, "BF16 -0 should produce FP16 -0");
+        assert_eq!(pos_zero_fp16.to_bits(), 0x0000u16, "BF16 +0 should produce FP16 +0");
+
+        // -0 should be signed
+        assert!(neg_zero_fp16.is_sign_negative(), "FP16 -0 should be sign negative");
+        assert!(pos_zero_fp16.is_sign_positive(), "FP16 +0 should be sign positive");
+    }
+
+    #[test]
+    fn test_bf16_to_fp16_subnormal_handling() {
+        // BF16 has no subnormals — its smallest positive normal is 2^-126 ≈ 1.175e-38.
+        // FP16's smallest positive normal is 2^-14 ≈ 6.104e-5, and its smallest
+        // subnormal is 2^-24 ≈ 5.96e-8. Values between these map to FP16 subnormals.
+        //
+        // BF16 value 2^-126 → F32 = 1.175494e-38 → FP16 subnormal
+        // BF16 bits: sign=0, exponent=1 (bias 127 → true exp = -126), mantissa=0
+        let small_normal_bf16 = 0x0080u16; // 2^-126
+        let fp16_result = half::f16::from_bits(bf16_to_fp16_bits(small_normal_bf16));
+
+        // This BF16 value is far below FP16's normal range, so it becomes
+        // a subnormal or flushes to zero. The `half` crate handles this correctly.
+        assert!(fp16_result.is_normal() == false || fp16_result.to_bits() == 0x0000,
+            "BF16 small normal should map to FP16 subnormal or zero, got {:?}",
+            fp16_result);
+    }
+
+    #[test]
+    fn test_bf16_to_fp16_max_finite_value() {
+        // BF16 max finite: sign=0, exponent=0xFE (254), mantissa=0x7F → 0x7F7F
+        // Value = (2 - 2^-7) * 2^127 ≈ 3.389e+38
+        // This overflows FP16 max (65504) and should produce +Inf
+        let max_bf16 = 0x7F7Fu16;
+        let fp16_result = half::f16::from_bits(bf16_to_fp16_bits(max_bf16));
+
+        assert!(fp16_result.is_infinite() && fp16_result.is_sign_positive(),
+            "BF16 max finite should overflow FP16 to +Inf, got {:?}", fp16_result);
+    }
+
+    #[test]
+    fn test_bf16_to_fp16_bulk_conversion() {
+        // Test the full convert_bf16_to_fp16 function with a multi-element buffer
+        // Construct a BF16 buffer with: [1.0, -1.0, +0.0, -0.0]
+        let bf16_values: Vec<u16> = vec![
+            0x3F80, // 1.0
+            0xBF80, // -1.0
+            0x0000, // +0.0
+            0x8000, // -0.0
+        ];
+
+        // Serialize as little-endian bytes
+        let mut bf16_bytes = Vec::new();
+        for &val in &bf16_values {
+            bf16_bytes.extend_from_slice(&val.to_le_bytes());
+        }
+
+        let fp16_bytes = convert_bf16_to_fp16(&bf16_bytes);
+        let num_elements = fp16_bytes.len() / 2;
+        assert_eq!(num_elements, 4, "Should have 4 FP16 elements");
+
+        // Decode the results
+        let fp16_values: Vec<u16> = (0..num_elements)
+            .map(|i| {
+                let offset = i * 2;
+                u16::from_le_bytes([fp16_bytes[offset], fp16_bytes[offset + 1]])
+            })
+            .collect();
+
+        // Verify: 1.0 → 0x3C00, -1.0 → 0xBC00, +0.0 → 0x0000, -0.0 → 0x8000
+        assert_eq!(fp16_values[0], 0x3C00, "1.0 BF16→FP16");
+        assert_eq!(fp16_values[1], 0xBC00, "-1.0 BF16→FP16");
+        assert_eq!(fp16_values[2], 0x0000, "+0.0 BF16→FP16");
+        assert_eq!(fp16_values[3], 0x8000, "-0.0 BF16→FP16");
+    }
+
     #[test]
     fn test_empty_resolver() {
         let resolver = SafetensorsWeightResolver::empty();

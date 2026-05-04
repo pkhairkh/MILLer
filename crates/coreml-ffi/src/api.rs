@@ -238,6 +238,8 @@ mod c_api {
 mod tests {
     use super::*;
 
+    // ─── CoreMlApi::is_available ──────────────────────────────────────────
+
     #[test]
     fn test_coreml_api_availability() {
         // On Linux, should be unavailable
@@ -246,27 +248,194 @@ mod tests {
         }
     }
 
+    // ─── CoreMlApi::version ───────────────────────────────────────────────
+
     #[test]
-    fn test_coreml_api_version() {
+    fn test_coreml_api_version_unavailable() {
         let result = CoreMlApi::version();
         if !cfg!(target_os = "macos") {
             assert!(result.is_err());
+            match result.unwrap_err() {
+                FfiError::PlatformUnavailable { platform, reason } => {
+                    assert_eq!(platform, std::env::consts::OS);
+                    assert!(reason.contains("macOS"), "reason should mention macOS");
+                }
+                other => panic!("Expected PlatformUnavailable, got: {}", other),
+            }
         }
     }
 
+    // ─── CoreMlApi::compile_model ─────────────────────────────────────────
+
     #[test]
-    fn test_inspect_model_structure() {
+    fn test_coreml_api_compile_model_unavailable() {
+        let result = CoreMlApi::compile_model("/test/model.mlpackage", "/tmp");
+        if !cfg!(target_os = "macos") {
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                FfiError::PlatformUnavailable { platform, reason } => {
+                    assert_eq!(platform, std::env::consts::OS);
+                    assert!(reason.contains("macOS") || reason.contains("CoreML"));
+                }
+                other => panic!("Expected PlatformUnavailable, got: {}", other),
+            }
+        }
+    }
+
+    // ─── CoreMlApi::inspect_model_structure ───────────────────────────────
+
+    #[test]
+    fn test_inspect_model_structure_unavailable() {
         let result = CoreMlApi::inspect_model_structure("/test/model.mlpackage");
         if !cfg!(target_os = "macos") {
             assert!(result.is_err());
+            match result.unwrap_err() {
+                FfiError::PlatformUnavailable { reason, .. } => {
+                    assert!(reason.contains("macOS") || reason.contains("Core ML"));
+                }
+                other => panic!("Expected PlatformUnavailable, got: {}", other),
+            }
+        }
+    }
+
+    // ─── CoreMlApi::inspect_compute_plan ──────────────────────────────────
+
+    #[test]
+    fn test_inspect_compute_plan_unavailable() {
+        let result = CoreMlApi::inspect_compute_plan("/test/model.mlpackage", "CPU_AND_NE");
+        if !cfg!(target_os = "macos") {
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                FfiError::PlatformUnavailable { reason, .. } => {
+                    assert!(reason.contains("macOS") || reason.contains("Core ML"));
+                }
+                other => panic!("Expected PlatformUnavailable, got: {}", other),
+            }
+        }
+    }
+
+    // ─── Result type structure tests (T-76, I-51) ─────────────────────────
+
+    #[test]
+    fn test_model_structure_result_serialization() {
+        let result = ModelStructureResult {
+            available: true,
+            functions: vec![FunctionStructure {
+                name: "main".to_string(),
+                op_count: 5,
+                input_names: vec!["input_ids".to_string()],
+                output_names: vec!["logits".to_string()],
+            }],
+            operations: vec![OpStructure {
+                op_type: "linear".to_string(),
+                name: "op_0".to_string(),
+                inputs: vec!["x".to_string()],
+                outputs: vec!["y".to_string()],
+            }],
+            state_declarations: vec![StateDeclaration {
+                name: "kv_cache".to_string(),
+                shape: vec![1, 64, 128],
+                dtype: "fp16".to_string(),
+            }],
+        };
+
+        // Verify JSON serialization roundtrip
+        let json = serde_json::to_string(&result).expect("should serialize");
+        let deserialized: ModelStructureResult =
+            serde_json::from_str(&json).expect("should deserialize");
+
+        assert_eq!(deserialized.available, true);
+        assert_eq!(deserialized.functions.len(), 1);
+        assert_eq!(deserialized.functions[0].name, "main");
+        assert_eq!(deserialized.operations[0].op_type, "linear");
+        assert_eq!(deserialized.state_declarations[0].shape, vec![1, 64, 128]);
+    }
+
+    #[test]
+    fn test_compute_plan_result_serialization() {
+        let result = ComputePlanResult {
+            available: true,
+            reason: String::new(),
+            operations: vec![OpPlacement {
+                name: "linear_0".to_string(),
+                compute_unit: "ANE".to_string(),
+                estimated_latency_us: Some(150.0),
+            }],
+        };
+
+        let json = serde_json::to_string(&result).expect("should serialize");
+        let deserialized: ComputePlanResult =
+            serde_json::from_str(&json).expect("should deserialize");
+
+        assert!(deserialized.available);
+        assert_eq!(deserialized.operations.len(), 1);
+        assert_eq!(deserialized.operations[0].compute_unit, "ANE");
+        assert_eq!(deserialized.operations[0].estimated_latency_us, Some(150.0));
+    }
+
+    #[test]
+    fn test_model_structure_result_empty() {
+        let result = ModelStructureResult {
+            available: false,
+            functions: vec![],
+            operations: vec![],
+            state_declarations: vec![],
+        };
+
+        assert!(!result.available);
+        assert!(result.functions.is_empty());
+        assert!(result.operations.is_empty());
+    }
+
+    #[test]
+    fn test_compute_plan_result_unavailable() {
+        let result = ComputePlanResult {
+            available: false,
+            reason: "Core ML C API not linked".to_string(),
+            operations: vec![],
+        };
+
+        assert!(!result.available);
+        assert!(!result.reason.is_empty());
+    }
+
+    #[test]
+    fn test_op_placement_all_compute_units() {
+        let units = vec!["CPU", "GPU", "ANE"];
+        for unit in units {
+            let placement = OpPlacement {
+                name: "test_op".to_string(),
+                compute_unit: unit.to_string(),
+                estimated_latency_us: None,
+            };
+            assert_eq!(placement.compute_unit, unit);
         }
     }
 
     #[test]
-    fn test_inspect_compute_plan() {
-        let result = CoreMlApi::inspect_compute_plan("/test/model.mlpackage", "CPU_AND_NE");
-        if !cfg!(target_os = "macos") {
-            assert!(result.is_err());
-        }
+    fn test_function_structure_fields() {
+        let func = FunctionStructure {
+            name: "encode".to_string(),
+            op_count: 42,
+            input_names: vec!["input_ids".to_string(), "attention_mask".to_string()],
+            output_names: vec!["hidden_states".to_string()],
+        };
+
+        assert_eq!(func.name, "encode");
+        assert_eq!(func.op_count, 42);
+        assert_eq!(func.input_names.len(), 2);
+        assert_eq!(func.output_names.len(), 1);
+    }
+
+    #[test]
+    fn test_state_declaration_dtype_field() {
+        let state = StateDeclaration {
+            name: "k_cache".to_string(),
+            shape: vec![1, 32, 128, 64],
+            dtype: "fp16".to_string(),
+        };
+
+        assert_eq!(state.dtype, "fp16");
+        assert_eq!(state.shape.len(), 4);
     }
 }

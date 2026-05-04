@@ -8,6 +8,7 @@
 > Tasks T-58, T-59, T-60, T-61, T-64, T-66 remain open from v2 audit.
 > Tasks T-67, T-65, T-68, T-69, T-71 resolved in Placement & Classification Integrity Sprint.
 > Tasks T-70, T-72, T-73, T-74, T-79, T-80, T-84, T-85 resolved in Bridge Model Leakage & Code Quality Sprint.
+> Tasks T-75, T-76, T-77, T-78, T-82, T-83 resolved in Bridge, FFI & Code Quality Sprint.
 
 ---
 
@@ -119,37 +120,37 @@ _No open CRITICAL tasks — T-67 resolved._
 - **Effort**: M (2 days)
 - **Detail**: Ops with real ANEC converters that still map to `MirOpCompat::Unsupported`: BatchNorm, InstanceNorm, L2Norm, MaxPool, AvgPool, L2Pool, Quantize, Dequantize, Resize/Resample variants, CropResize, DepthToSpace, SpaceToDepth, PixelShuffle, PixelUnshuffle, BatchToSpace, SpaceToBatch, and others. These have ANE hardware support but lack proto emission code.
 
-### T-75 · Fix FFI `coreml_model_destroy` Unsoundness
+### T-75 · ~~Fix FFI `coreml_model_destroy` Unsoundness~~
 
-- **ISSUES ref**: I-50
-- **AUDIT ref**: §III (CQ-22)
-- **Severity**: MEDIUM
-- **Effort**: S (0.5 day)
-- **Detail**: `Box::from_raw(inner)` on a handle that was never allocated with `Box::new(ModelHandleInner)`. Latent UB if `coreml_model_load` is ever implemented. Fix: Align allocation and deallocation contracts.
+~~**ISSUES ref**: I-50~~
+~~**AUDIT ref**: §III (CQ-22)~~
+~~**Severity**: MEDIUM~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Documented allocation contract on `ModelHandleInner`; `coreml_model_load` must use `Box::new(ModelHandleInner)` so `coreml_model_destroy` can safely reconstruct with `Box::from_raw`. Added contract test.
 
-### T-76 · Add Tests for coreml-ffi::api Module
+### T-76 · ~~Add Tests for coreml-ffi::api Module~~
 
-- **ISSUES ref**: I-51
-- **AUDIT ref**: §V
-- **Severity**: MEDIUM
-- **Effort**: M (1 day)
-- **Detail**: The `api.rs` module has 5 pub fn methods with zero test coverage. Add tests for error handling, result construction, and platform detection logic.
+~~**ISSUES ref**: I-51~~
+~~**AUDIT ref**: §V~~
+~~**Severity**: MEDIUM~~
+~~**Effort**: M (1 day)~~
+**✅ RESOLVED** — Added 11 new tests: error type verification for all 5 `CoreMlApi` methods on non-macOS, JSON serialization roundtrips for `ModelStructureResult` and `ComputePlanResult`, result structure tests, and field-level validation.
 
-### T-77 · Enforce PythonBridge Timeout
+### T-77 · ~~Enforce PythonBridge Timeout~~
 
-- **ISSUES ref**: I-52
-- **AUDIT ref**: §III (CQ-19)
-- **Severity**: MEDIUM
-- **Effort**: S (0.5 day)
-- **Detail**: `timeout_secs` field exists (default 300) but is never used. `execute_raw_payload` calls `.output()` without timeout. A hung Python subprocess blocks the compiler indefinitely. Fix: Use spawn with timeout loop or `wait-timeout` crate.
+~~**ISSUES ref**: I-52~~
+~~**AUDIT ref**: §III (CQ-19)~~
+~~**Severity**: MEDIUM~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Replaced `Command::output()` with `spawn` + poll-based timeout loop. On timeout, the child process is killed and a timeout error is returned. No new dependencies required.
 
-### T-78 · Remove Dead-Code `compare_with_python_bridge` Stub
+### T-78 · ~~Remove Dead-Code `compare_with_python_bridge` Stub~~
 
-- **ISSUES ref**: I-53
-- **AUDIT ref**: §III (CQ-20)
-- **Severity**: MEDIUM
-- **Effort**: S (0.5 day)
-- **Detail**: `compare_with_python_bridge()` always returns `None` for all fields. Never called. Implement or remove.
+~~**ISSUES ref**: I-53~~
+~~**AUDIT ref**: §III (CQ-20)~~
+~~**Severity**: MEDIUM~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Removed `compare_with_python_bridge()` method, `ComparisonReport`, and `WeightBinComparison` types. Dead code eliminated.
 
 ### T-79 · ~~Log Warning When SafetensorsResolver Is Empty~~
 
@@ -179,21 +180,21 @@ _No open CRITICAL tasks — T-67 resolved._
 - **Effort**: S (0.5 day)
 - **Detail**: Use MIR node's declared dtype instead of name-based heuristics for input_ids detection.
 
-### T-82 · Remove Dead-Code `mir_node_to_compat`
+### T-82 · ~~Remove Dead-Code `mir_node_to_compat`~~
 
-- **ISSUES ref**: I-57
-- **AUDIT ref**: §III (CQ-26)
-- **Severity**: LOW
-- **Effort**: S (0.5 day)
-- **Detail**: Function marked `#[allow(dead_code)]` — shape-aware version is used instead. Remove or document why kept.
+~~**ISSUES ref**: I-57~~
+~~**AUDIT ref**: §III (CQ-26)~~
+~~**Severity**: LOW~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Removed `#[allow(dead_code)]` and gated with `#[cfg(test)]` since the function is only used in tests. Added documentation explaining when to use it vs. `mir_node_to_compat_with_shapes`.
 
-### T-83 · Add BF16→FP16 Edge-Case Tests
+### T-83 · ~~Add BF16→FP16 Edge-Case Tests~~
 
-- **ISSUES ref**: I-58
-- **AUDIT ref**: §III (CQ-27)
-- **Severity**: LOW
-- **Effort**: S (0.5 day)
-- **Detail**: Add tests for NaN, Inf, subnormals, negative zero in BF16→FP16 conversion.
+~~**ISSUES ref**: I-58~~
+~~**AUDIT ref**: §III (CQ-27)~~
+~~**Severity**: LOW~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Added 7 new edge-case tests: NaN preservation (quiet + signaling), infinity preservation (+/-), negative zero, subnormal handling, max finite overflow, and bulk conversion pipeline test.
 
 ### T-84 · ~~Replace `eprintln!` With `log::warn!`~~
 
@@ -232,15 +233,15 @@ _No open CRITICAL tasks — T-67 resolved._
 | T-64 | I-38 | MEDIUM | S | ⬜ |
 | T-65 | I-39 | MEDIUM | M | ✅ Fixed |
 | T-66 | I-40 | MEDIUM | M | ⬜ |
-| T-75 | I-50 | MEDIUM | S | ⬜ |
-| T-76 | I-51 | MEDIUM | M | ⬜ |
-| T-77 | I-52 | MEDIUM | S | ⬜ |
-| T-78 | I-53 | MEDIUM | S | ⬜ |
+| T-75 | I-50 | MEDIUM | S | ✅ Fixed |
+| T-76 | I-51 | MEDIUM | M | ✅ Fixed |
+| T-77 | I-52 | MEDIUM | S | ✅ Fixed |
+| T-78 | I-53 | MEDIUM | S | ✅ Fixed |
 | T-79 | I-54 | MEDIUM | S | ✅ Fixed |
 | T-80 | I-55 | MEDIUM | S | ✅ Fixed |
 | T-81 | I-56 | LOW | S | ⬜ |
-| T-82 | I-57 | LOW | S | ⬜ |
-| T-83 | I-58 | LOW | S | ⬜ |
+| T-82 | I-57 | LOW | S | ✅ Fixed |
+| T-83 | I-58 | LOW | S | ✅ Fixed |
 | T-84 | I-59 | LOW | S | ✅ Fixed |
 | T-85 | I-60 | LOW | S | ✅ Fixed |
 

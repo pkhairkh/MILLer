@@ -2,14 +2,50 @@
 
 ## Current Status — 2026-05-04
 
-- **1270 tests passing**, 0 failures
+- **1288 tests passing**, 0 failures
 - IR Cleanliness Score: 89%
 - 0 clippy warnings, 0 errors
-- **8 open issues** (0 CRITICAL, 2 HIGH, 4 MEDIUM, 2 LOW) — see [ISSUES.md](ISSUES.md)
-- **6 open tasks** (T-58, T-59, T-60, T-61, T-64, T-66) — see [TASKS.md](TASKS.md)
+- **7 open issues** (0 CRITICAL, 2 HIGH, 3 MEDIUM, 2 LOW) — see [ISSUES.md](ISSUES.md)
+- **7 open tasks** (T-58, T-59, T-60, T-61, T-64, T-66, T-81) — see [TASKS.md](TASKS.md)
 
 Audit details: [docs/audit/tabula-rasa-v3.md](docs/audit/tabula-rasa-v3.md)
 Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
+
+---
+
+## 2026-05-04 — Bridge, FFI & Code Quality Sprint
+
+### Resolved (T-75, T-76, T-77, T-78, T-82, T-83)
+
+| Task | Description | Key Change |
+|------|-------------|------------|
+| T-75 | Fix FFI `coreml_model_destroy` Unsoundness | Documented allocation contract on `ModelHandleInner`; `coreml_model_load` MUST use `Box::new` so `destroy` can safely call `Box::from_raw`; added contract test |
+| T-76 | Add Tests for coreml-ffi::api Module | Added 11 new tests: error type verification for all 5 `CoreMlApi` methods, JSON serialization roundtrips for result types, field-level validation |
+| T-77 | Enforce PythonBridge Timeout | Replaced `Command::output()` with `spawn` + poll-based timeout loop; on timeout the child is killed and a timeout error is returned; no new dependencies |
+| T-78 | Remove Dead-Code `compare_with_python_bridge` | Removed method, `ComparisonReport`, and `WeightBinComparison` types — all were dead code |
+| T-82 | Remove Dead-Code `mir_node_to_compat` | Removed `#[allow(dead_code)]`, gated with `#[cfg(test)]`, added documentation explaining when to use it vs. shape-aware version |
+| T-83 | Add BF16→FP16 Edge-Case Tests | Added 7 edge-case tests: NaN, infinity, negative zero, subnormals, max overflow, bulk conversion |
+
+### New Tests Added (19 tests)
+
+- `test_model_destroy_allocated_handle` — verifies Box-allocated handle can be destroyed without UB (T-75)
+- `test_coreml_api_version_unavailable` — error type verification for `CoreMlApi::version()` (T-76)
+- `test_coreml_api_compile_model_unavailable` — error type verification for `CoreMlApi::compile_model()` (T-76)
+- `test_inspect_model_structure_unavailable` — error type verification for `inspect_model_structure()` (T-76)
+- `test_inspect_compute_plan_unavailable` — error type verification for `inspect_compute_plan()` (T-76)
+- `test_model_structure_result_serialization` — JSON roundtrip for `ModelStructureResult` (T-76)
+- `test_compute_plan_result_serialization` — JSON roundtrip for `ComputePlanResult` (T-76)
+- `test_model_structure_result_empty` — empty result structure validation (T-76)
+- `test_compute_plan_result_unavailable` — unavailable result structure validation (T-76)
+- `test_op_placement_all_compute_units` — CPU/GPU/ANE compute unit coverage (T-76)
+- `test_function_structure_fields` — `FunctionStructure` field validation (T-76)
+- `test_state_declaration_dtype_field` — `StateDeclaration` dtype field validation (T-76)
+- `test_bf16_to_fp16_nan_preservation` — quiet + signaling NaN (T-83)
+- `test_bf16_to_fp16_infinity_preservation` — +Inf and -Inf (T-83)
+- `test_bf16_to_fp16_negative_zero` — signed zero preservation (T-83)
+- `test_bf16_to_fp16_subnormal_handling` — subnormal/flush-to-zero behavior (T-83)
+- `test_bf16_to_fp16_max_finite_value` — overflow to +Inf (T-83)
+- `test_bf16_to_fp16_bulk_conversion` — full `convert_bf16_to_fp16` pipeline test (T-83)
 
 ---
 

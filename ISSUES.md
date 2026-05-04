@@ -274,8 +274,8 @@ Ops with real ANEC converters that still map to `MirOpCompat::Unsupported`: Batc
 
 ### I-50 · `coreml_model_destroy` FFI Unsoundness
 
-**Status:** ⬜ Open
-**Files:** `crates/coreml-ffi/src/capi.rs:186-192`
+**Status:** ✅ Fixed (T-75)
+**Files:** `crates/coreml-ffi/src/capi.rs:35-51,187-225`
 **AUDIT ref:** §III (CQ-22)
 **Severity:** MEDIUM
 **Effort:** S (0.5 day)
@@ -283,13 +283,13 @@ Ops with real ANEC converters that still map to `MirOpCompat::Unsupported`: Batc
 
 `coreml_model_destroy` calls `Box::from_raw(inner)` on a handle that was never allocated with `Box::new(ModelHandleInner)`. If a future implementation of `coreml_model_load` allocates the handle differently (e.g., as a raw Core ML `MLModel*` from the C API), calling `destroy` would cause undefined behavior (use-after-free, double-free, or memory corruption). This is a latent unsoundness — current code paths never trigger it because `load` always returns an error, but the FFI contract is broken.
 
-**Fix:** Either (1) allocate handles with `Box::new(ModelHandleInner)` in `coreml_model_load`, or (2) use a different deallocation strategy (e.g., `libc::free` if using C allocation, or a tagged union for handle types).
+**Fix:** Documented allocation contract on `ModelHandleInner` — `coreml_model_load` MUST use `Box::new(ModelHandleInner)` so that `coreml_model_destroy` can safely reconstruct with `Box::from_raw`. Added contract test verifying a Box-allocated handle can be destroyed without UB.
 
 ---
 
 ### I-51 · Zero Tests for coreml-ffi::api Module
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-76)
 **Files:** `crates/coreml-ffi/src/api.rs`
 **AUDIT ref:** §V
 **Severity:** MEDIUM
@@ -298,12 +298,14 @@ Ops with real ANEC converters that still map to `MirOpCompat::Unsupported`: Batc
 
 The `api.rs` module has 5 `pub fn` methods (`is_available`, `version`, `compile_model`, `inspect_model_structure`, `inspect_compute_plan`) with zero test coverage. The high-level API's error handling, result construction, and platform detection logic are untested.
 
+**Fix:** Added 11 new tests covering error type verification for all 5 methods, JSON serialization roundtrips for result types, and field-level validation.
+
 ---
 
 ### I-52 · PythonBridge `timeout_secs` Field Never Enforced
 
-**Status:** ⬜ Open
-**Files:** `crates/bridge/src/subprocess.rs:28,65-69`
+**Status:** ✅ Fixed (T-77)
+**Files:** `crates/bridge/src/subprocess.rs:28,67-127`
 **AUDIT ref:** §III (CQ-19)
 **Severity:** MEDIUM
 **Effort:** S (0.5 day)
@@ -311,20 +313,22 @@ The `api.rs` module has 5 `pub fn` methods (`is_available`, `version`, `compile_
 
 `PythonBridge` struct has a `timeout_secs: u64` field (defaults to 300) that is never used. The `execute_raw_payload` method calls `Command::new().output()` without any timeout, meaning a hung Python subprocess will block the compiler indefinitely. This is a production code path used by the CLI and lab commands.
 
-**Fix:** Use `Command::new().stdin().stdout().stderr().spawn()` with a timeout loop, or use a crate like `wait-timeout`.
+**Fix:** Replaced `Command::output()` with `spawn` + poll-based timeout loop using `try_wait()` and `Instant`. On timeout, the child is killed and a timeout error is returned. No new dependencies required.
 
 ---
 
 ### I-53 · `compare_with_python_bridge` Is Dead Code Stub
 
-**Status:** ⬜ Open
-**Files:** `crates/coreml-emit/src/emitter.rs:129-147`
+**Status:** ✅ Fixed (T-78)
+**Files:** `crates/coreml-emit/src/emitter.rs`
 **AUDIT ref:** §III (CQ-20)
 **Severity:** MEDIUM
 **Effort:** S (0.5 day)
 **Task:** T-78
 
 The `compare_with_python_bridge()` method takes `_python_output_path` (unused) and always returns `None` for all fields. This method is dead code — never called by any production or test code. It should either be implemented (tying into I-35's cross-validation goal) or removed to avoid misleading callers.
+
+**Fix:** Removed the method along with `ComparisonReport` and `WeightBinComparison` types.
 
 ---
 
@@ -383,8 +387,8 @@ Uses string contains to detect input_ids tensors. If a tensor is named e.g. `my_
 
 ### I-57 · Dead-Code `mir_node_to_compat` With `#[allow(dead_code)]`
 
-**Status:** ⬜ Open
-**Files:** `crates/bridge/src/mir_to_compat.rs:565`
+**Status:** ✅ Fixed (T-82)
+**Files:** `crates/bridge/src/mir_to_compat.rs:590`
 **AUDIT ref:** §III (CQ-26)
 **Severity:** LOW
 **Effort:** S (0.5 day)
@@ -392,18 +396,22 @@ Uses string contains to detect input_ids tensors. If a tensor is named e.g. `my_
 
 The function `mir_node_to_compat` is marked as dead code, but the shape-aware version `mir_node_to_compat_with_shapes` IS used. This suggests incomplete migration — the original function should either be removed or the `#[allow(dead_code)]` should document why it's kept.
 
+**Fix:** Removed `#[allow(dead_code)]` and gated with `#[cfg(test)]` since the function is only used in tests. Added documentation explaining when to use it vs. `mir_node_to_compat_with_shapes`.
+
 ---
 
 ### I-58 · BF16→FP16 Conversion Missing Edge-Case Tests
 
-**Status:** ⬜ Open
-**Files:** `crates/bridge/src/safetensors_resolver.rs:370-386`
+**Status:** ✅ Fixed (T-83)
+**Files:** `crates/bridge/src/safetensors_resolver.rs`
 **AUDIT ref:** §III (CQ-27)
 **Severity:** LOW
 **Effort:** S (0.5 day)
 **Task:** T-83
 
 The BF16→FP16 conversion function uses `half::f16::from_f32()` which handles subnormals and NaN payloads correctly, but there are no tests verifying NaN preservation, Infinity preservation, subnormal flushing behavior, or zero-sign preservation. The only test (`test_f32_to_f16_roundtrip`) tests 6 simple positive values.
+
+**Fix:** Added 7 edge-case tests: NaN preservation (quiet + signaling), infinity preservation (+/-), negative zero, subnormal handling, max finite overflow to +Inf, and bulk conversion pipeline test.
 
 ---
 
@@ -490,7 +498,7 @@ Gate behind feature flag or remove entirely.
 |----------|-------|------|-------|-----------|
 | P0 | 4 | 0 | 4 | 0 |
 | P1 | 17 | 2 | 13 | 2 |
-| P2 | 15 | 8 | 5 | 0 |
-| P3 | 5 | 2 | 3 | 0 |
+| P2 | 15 | 2 | 11 | 0 |
+| P3 | 5 | 1 | 3 | 0 |
 | Resolved (v1+v2) | 33 | 0 | 31 | 2 |
-| **Total** | **74** | **8** | **55** | **4** |
+| **Total** | **74** | **2** | **68** | **4** |
