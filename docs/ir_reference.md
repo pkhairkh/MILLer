@@ -1,6 +1,6 @@
 # IR Reference
 
-## Canonical v0 Task
+## Canonical Task
 
 **Name:** `linear_proj_slice`
 **Family:** `LinearProjection`
@@ -86,14 +86,14 @@ path, the `compile-full` command enables comparison and validation.
 
 - **AIR is skipped** in the fast-path `compile` command: SIR→MIR direct in `linear_slice.rs`
 - **Pass pipeline is wired** into the `compile-full` CLI subcommand (8 passes)
-- **Shard planning** produces a single-shard result in `compile-full`; multi-shard plans are produced by `compile-full-sharded` which runs the full pass pipeline per shard (Sprint 37)
+- **Shard planning** produces a single-shard result in `compile-full`; multi-shard plans are produced by `compile-full-sharded` which runs the full pass pipeline per shard
 - **Shard planning + MIR consistency** (S37.3): the compile-full-sharded path now runs ShardPlanPass and MilLowerPass for each shard, so MIR compute_unit_hint matches the per-shard compute unit assignment from the multi-shard plan
 - **Risk-based knowledge in multi-shard planning** (S37.4): `build_sharded_plan_from_spec_with_risk_knowledge()` applies both template and risk-based knowledge at the plan-construction level, fixing the previous gap where compile-full-sharded ignored accumulated risk observations
 - **PIR** is produced by the `compile-full` pass pipeline
 
 See [SPEC.md](../SPEC.md) section 5 for the full IR specification.
 
-## Structural Verification (Sprint 34)
+## Structural Verification
 
 Host-side inspection now includes structural verification via MLModelStructure,
 replacing the previous approach of checking only file existence and Manifest.json
@@ -135,7 +135,7 @@ which is not available. The `model_structure` bridge command:
 This means host inspection on Linux is still weaker than on macOS, but the
 weakness is now explicitly labeled rather than hidden.
 
-## SIR→AIR Decomposition (Sprint 36)
+## SIR→AIR Decomposition
 
 All declared SIR ops now have active SIR→AIR decomposition paths in
 `LegalityRewritePass`. Previously, `SirOp::AttentionBlock`, `SirOp::DecodeStep`,
@@ -154,14 +154,12 @@ lower-level AIR ops:
 | StateRead | StateReadFixed |
 | StateWrite | StateWriteFixed |
 
-### Critique Bug 1 Fix (Sprint 36)
+### LinearProjection→Conv1x1AsLinear Fix
 
 `SirOp::LinearProjection` now lowers to `AirOp::Conv1x1AsLinear` (not `AirOp::MatMul`).
-This closes the inconsistency where the Python emitter used `mb.linear` (Sprint 31)
-but the SIR→AIR path still produced `MatMul`. The full pipeline is now consistent:
-SIR → Conv1x1AsLinear → MILLinear → mb.linear.
+This closes the inconsistency where the Python emitter used `mb.linear` but the SIR→AIR path still produced `MatMul`. The full pipeline is now consistent: SIR → Conv1x1AsLinear → MILLinear → mb.linear.
 
-## AIR→MIR Lowering Coverage (Sprint 36)
+## AIR→MIR Lowering Coverage
 
 All previously "declared but no lowering" MIR ops now have active AIR→MIR lowering
 paths in `MilLowerPass`:

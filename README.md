@@ -15,12 +15,12 @@ An **ANE-first** multi-level compiler and empirical Core ML lab. Emits MIL/mlpac
 
 ## Project Status
 
-The project compiles and passes **637 tests** on Linux x86_64. End-to-end validation of emitted models (loading in Core ML runtime, predict() output, actual ANE placement) requires Apple hardware with macOS.
+The project compiles and passes **1252 tests** on Linux x86_64. End-to-end validation of emitted models (loading in Core ML runtime, predict() output, actual ANE placement) requires Apple hardware with macOS.
 
 | Verification Level | Status |
 |---|---|
 | Compiles (`cargo build`) | Yes — zero warnings |
-| Unit tests (`cargo test`) | Yes — 637 passing |
+| Unit tests (`cargo test`) | Yes — 1252 passing |
 | Python bridge produces `.mlpackage` | Yes — via coremltools 9.0 on Linux |
 | Proto-direct emission produces `.mlpackage` | Yes — via `prost` protobuf on any platform |
 | Apple device/runtime verified | No — requires macOS with Core ML runtime |
@@ -159,9 +159,9 @@ ane-cli trace-compile --model traced_graph.json --output artifacts/pretraced
 
 ## Key Capabilities
 
-### 1. Role-Specific Sharding (Sprint 43 + Sprint 44)
+### 1. Role-Specific Sharding
 
-Shard roles produce **genuinely different op structures end-to-end**, not just dimension changes. The Rust `RoleMirBuilder` (Sprint 43) and Python bridge emitters (Sprint 44) now both produce role-specific ops:
+Shard roles produce **genuinely different op structures end-to-end**, not just dimension changes. Both the Rust `RoleMirBuilder` and Python bridge emitters produce role-specific ops:
 
 | Role | Op Profile | Ops Produced |
 |---|---|---|
@@ -174,7 +174,7 @@ Shard roles produce **genuinely different op structures end-to-end**, not just d
 | IO Embedding | `IoEmbedding` | Const → **Gather** (CPU+GPU) |
 | Sampler | `SamplerTopk` | **Topk** → **Softmax** (CPU+GPU) |
 
-The `RoleMirBuilder` produces these graphs from `ShardSpec` + `ShardOpProfile`, and the `op_type_signature()` function proves they differ structurally. Before Sprint 43, all decoder shards produced the same `[Const, Linear]` structure.
+The `RoleMirBuilder` produces these graphs from `ShardSpec` + `ShardOpProfile`, and the `op_type_signature()` function proves they differ structurally.
 
 ### 2. Compute Plan Offline Verification
 
@@ -205,7 +205,7 @@ Two passes materially adapt from stored empirical knowledge:
 
 Adaptation provenance propagates through SIR → AIR → MIR → bridge payload, and is recorded in the compile manifest.
 
-### 5. Unified Verification Harness (Sprint 40)
+### 5. Unified Verification Harness
 
 A four-dimension verification harness checks emitted mlpackage artifacts against compiler intent:
 
@@ -230,7 +230,7 @@ The `verify` bridge command produces structured JSON artifacts with an overall w
 
 ```bash
 cargo build --workspace
-cargo test --workspace    # 637 tests
+cargo test --workspace    # 1252 tests
 ```
 
 ### Generate Tasks and Compile
@@ -297,7 +297,7 @@ cat /tmp/result.json
 ### Verify an Emitted Model
 
 ```bash
-# Verify a compiled mlpackage against compiler intent (Sprint 46)
+# Verify a compiled mlpackage against compiler intent
 cargo run -p ane-cli -- verify \
   --mlpackage artifacts/compile/run/linear_64x32_b1_fp16.mlpackage \
   --output artifacts/verify/result.json \
@@ -375,7 +375,7 @@ MILLer/
 
 ## Key Design Decisions
 
-1. **Rust-heavy, Python at boundary only** — The compiler is Rust-first. Python/coremltools is used only for the emission boundary. Proto-direct emission (Sprint 41) progressively eliminates even this dependency. Model tracing (`ane-trace`) uses a Python subprocess for `torch.fx` symbolic tracing, but the traced graph is immediately handed back to Rust via JSON for all compilation and constraint enforcement.
+1. **Rust-heavy, Python at boundary only** — The compiler is Rust-first. Python/coremltools is used only for the emission boundary. Proto-direct emission progressively eliminates even this dependency. Model tracing (`ane-trace`) uses a Python subprocess for `torch.fx` symbolic tracing, but the traced graph is immediately handed back to Rust via JSON for all compilation and constraint enforcement.
 
 2. **ANE-faithful, not just ANE-compatible** — The `ane-trace` crate enforces ANE constraints *during* lowering, not after. Operations that would fall back to CPU at runtime are detected and either decomposed into ANE-native sequences or flagged as violations. The `VersionedCompiler` applies per-family constraint profiles (A11 through A18) so the compiled graph is faithful to the target hardware generation.
 

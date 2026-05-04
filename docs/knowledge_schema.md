@@ -2,7 +2,7 @@
 
 See [SPEC.md](../SPEC.md) section 6 (Knowledge Adaptation Model) for the design rationale.
 
-This document describes the implemented knowledge store schema as of Sprint 8.
+This document describes the implemented knowledge store schema.
 
 ## Store Layout
 

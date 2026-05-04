@@ -110,7 +110,7 @@ and checked in `python/bridge.py` as `EXPECTED_BRIDGE_VERSION`.
 
 Build a dedicated LUT (Look-Up Table) projection MIL program, convert via converter.py, and save as mlpackage.
 
-This is the dedicated emission path for LUT projection tasks (Sprint 20). Unlike `emit_linear_projection`,
+This is the dedicated emission path for LUT projection tasks. Unlike `emit_linear_projection`,
 this path constructs a gather-based program that models the `constexpr_lut`-to-`gather` pattern used in
 ANE palettized inference, rather than the matmul+add pattern of linear projection.
 
@@ -137,7 +137,7 @@ Payload:
 
 Result: same structure as emit_linear_projection, with `metadata.emission_path: "lut_projection"`.
 
-**Limitations (Sprint 20, v0):**
+**Limitations:**
 - The gather-based program models a simplified LUT pattern; true grouped-palette semantics
   (per-group independent LUTs with per-group index tensors) are approximated by offset indexing.
 - Precision override (dtype adaptation from knowledge) is not yet wired into the LUT payload path.
