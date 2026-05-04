@@ -253,8 +253,11 @@ mod tests {
         meta.compute_plan_available = false;
         let result = detector.detect_from_timing(1.0, Some(1.0), &meta);
         let kinds: Vec<&str> = result.evidence.iter().map(|e| e.kind.as_str()).collect();
-        assert!(kinds.contains(&"compute_plan_unavailable"),
-            "Expected compute_plan_unavailable evidence, got: {:?}", kinds);
+        assert!(
+            kinds.contains(&"compute_plan_unavailable"),
+            "Expected compute_plan_unavailable evidence, got: {:?}",
+            kinds
+        );
     }
 
     #[test]
@@ -264,8 +267,11 @@ mod tests {
         let result = detector.detect_from_timing(10.0, Some(1.0), &meta);
         let kinds: Vec<&str> = result.evidence.iter().map(|e| e.kind.as_str()).collect();
         // Should have latency_anomaly since ratio > threshold
-        assert!(kinds.contains(&"latency_anomaly"),
-            "Expected latency_anomaly evidence, got: {:?}", kinds);
+        assert!(
+            kinds.contains(&"latency_anomaly"),
+            "Expected latency_anomaly evidence, got: {:?}",
+            kinds
+        );
     }
 
     #[test]

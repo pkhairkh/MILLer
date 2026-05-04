@@ -308,7 +308,8 @@ impl SafetensorsWeightResolver {
         if entry.shape.len() != 2 {
             log::warn!(
                 "shard weight '{}' references non-2D tensor with shape {:?}",
-                base_weight, entry.shape
+                base_weight,
+                entry.shape
             );
             return None;
         }
@@ -325,7 +326,9 @@ impl SafetensorsWeightResolver {
         if start_row >= vocab_size {
             log::warn!(
                 "shard index {} out of range for weight '{}' (vocab_size={})",
-                shard_index, base_weight, vocab_size
+                shard_index,
+                base_weight,
+                vocab_size
             );
             return None;
         }
@@ -611,10 +614,14 @@ mod tests {
         let pos_inf_fp16 = half::f16::from_bits(bf16_to_fp16_bits(pos_inf_bf16));
         let neg_inf_fp16 = half::f16::from_bits(bf16_to_fp16_bits(neg_inf_bf16));
 
-        assert!(pos_inf_fp16.is_infinite() && pos_inf_fp16.is_sign_positive(),
-            "BF16 +Inf should produce FP16 +Inf");
-        assert!(neg_inf_fp16.is_infinite() && neg_inf_fp16.is_sign_negative(),
-            "BF16 -Inf should produce FP16 -Inf");
+        assert!(
+            pos_inf_fp16.is_infinite() && pos_inf_fp16.is_sign_positive(),
+            "BF16 +Inf should produce FP16 +Inf"
+        );
+        assert!(
+            neg_inf_fp16.is_infinite() && neg_inf_fp16.is_sign_negative(),
+            "BF16 -Inf should produce FP16 -Inf"
+        );
     }
 
     #[test]
@@ -648,9 +655,11 @@ mod tests {
 
         // This BF16 value is far below FP16's normal range, so it becomes
         // a subnormal or flushes to zero. The `half` crate handles this correctly.
-        assert!(fp16_result.is_normal() == false || fp16_result.to_bits() == 0x0000,
+        assert!(
+            fp16_result.is_normal() == false || fp16_result.to_bits() == 0x0000,
             "BF16 small normal should map to FP16 subnormal or zero, got {:?}",
-            fp16_result);
+            fp16_result
+        );
     }
 
     #[test]
@@ -661,8 +670,11 @@ mod tests {
         let max_bf16 = 0x7F7Fu16;
         let fp16_result = half::f16::from_bits(bf16_to_fp16_bits(max_bf16));
 
-        assert!(fp16_result.is_infinite() && fp16_result.is_sign_positive(),
-            "BF16 max finite should overflow FP16 to +Inf, got {:?}", fp16_result);
+        assert!(
+            fp16_result.is_infinite() && fp16_result.is_sign_positive(),
+            "BF16 max finite should overflow FP16 to +Inf, got {:?}",
+            fp16_result
+        );
     }
 
     #[test]

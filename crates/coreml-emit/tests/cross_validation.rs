@@ -67,12 +67,12 @@
 
 use std::collections::HashMap;
 
-use ane_coreml_proto::mir_compat::{MilDtypeCompat, MirGraphCompat, MirOpCompat, TensorDescCompat};
-use ane_coreml_proto::{CoreMlComputeUnit, SpecVersion};
 use ane_coreml_emit::mir_to_proto::{
     build_linear_projection_mir, build_multifunction_shared_weights_mir, convert_mir_to_proto,
     convert_mir_to_proto_multifunction, model_to_protobuf_bytes,
 };
+use ane_coreml_proto::mir_compat::{MilDtypeCompat, MirGraphCompat, MirOpCompat, TensorDescCompat};
+use ane_coreml_proto::{CoreMlComputeUnit, SpecVersion};
 use prost::Message;
 
 // ─── Helper: parse protobuf and extract op types from a function ──────────
@@ -94,11 +94,7 @@ fn extract_output_names_from_proto(bytes: &[u8], function_name: &str) -> Vec<Str
     let ane_coreml_proto::apple_proto::model::Type::MlProgram(program) = model_type;
     let func = program.functions.get(function_name).unwrap();
     let block = func.block_specializations.get("CoreML9").unwrap();
-    block
-        .operations
-        .iter()
-        .flat_map(|op| op.outputs.iter().map(|o| o.name.clone()))
-        .collect()
+    block.operations.iter().flat_map(|op| op.outputs.iter().map(|o| o.name.clone())).collect()
 }
 
 // ─── Test 1: Linear Projection topology equivalence ──────────────────────
@@ -107,45 +103,25 @@ fn extract_output_names_from_proto(bytes: &[u8], function_name: &str) -> Vec<Str
 fn test_linear_projection_topology_equivalence() {
     // Python bridge produces: const (weight) + const (bias) + linear
     // Rust proto-direct should produce the same topology
-    let graph = build_linear_projection_mir(
-        "test_linear",
-        64,
-        32,
-        1,
-        MilDtypeCompat::Fp16,
-        42,
-    );
-    let model = convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe)
-        .unwrap();
+    let graph = build_linear_projection_mir("test_linear", 64, 32, 1, MilDtypeCompat::Fp16, 42);
+    let model =
+        convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
     let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
 
     let op_types = extract_op_types_from_proto(&bytes, "main");
 
     // Python bridge: mb.const (weight) → mb.const (bias) → mb.linear
     // Rust proto-direct: const → const → linear
-    assert_eq!(
-        op_types.len(),
-        3,
-        "Linear projection should have 3 ops: const, const, linear"
-    );
+    assert_eq!(op_types.len(), 3, "Linear projection should have 3 ops: const, const, linear");
     assert_eq!(op_types[0], "const", "First op should be const (weight)");
     assert_eq!(op_types[1], "const", "Second op should be const (bias)");
     assert_eq!(op_types[2], "linear", "Third op should be linear (projection)");
 
     // Verify output names match Python bridge convention
     let output_names = extract_output_names_from_proto(&bytes, "main");
-    assert!(
-        output_names.contains(&"weight".to_string()),
-        "Weight const output name"
-    );
-    assert!(
-        output_names.contains(&"bias".to_string()),
-        "Bias const output name"
-    );
-    assert!(
-        output_names.contains(&"output".to_string()),
-        "Linear output name"
-    );
+    assert!(output_names.contains(&"weight".to_string()), "Weight const output name");
+    assert!(output_names.contains(&"bias".to_string()), "Bias const output name");
+    assert!(output_names.contains(&"output".to_string()), "Linear output name");
 }
 
 // ─── Test 2: Multi-function topology equivalence ─────────────────────────
@@ -154,13 +130,8 @@ fn test_linear_projection_topology_equivalence() {
 fn test_multifunction_topology_equivalence() {
     // Python bridge produces: embedding function + decode_step function
     // Rust proto-direct should produce the same multi-function structure
-    let (graphs, shared_names) = build_multifunction_shared_weights_mir(
-        "test_shared",
-        128,
-        1,
-        MilDtypeCompat::Fp16,
-        42,
-    );
+    let (graphs, shared_names) =
+        build_multifunction_shared_weights_mir("test_shared", 128, 1, MilDtypeCompat::Fp16, 42);
     let model = convert_mir_to_proto_multifunction(
         &graphs,
         &shared_names,
@@ -175,14 +146,8 @@ fn test_multifunction_topology_equivalence() {
     let ane_coreml_proto::apple_proto::model::Type::MlProgram(program) = model_type;
 
     // Both paths should produce two functions: "embedding" and "decode_step"
-    assert!(
-        program.functions.contains_key("embedding"),
-        "Embedding function must exist"
-    );
-    assert!(
-        program.functions.contains_key("decode_step"),
-        "Decode step function must exist"
-    );
+    assert!(program.functions.contains_key("embedding"), "Embedding function must exist");
+    assert!(program.functions.contains_key("decode_step"), "Decode step function must exist");
 
     // Both functions should have const + linear topology
     for fn_name in &["embedding", "decode_step"] {
@@ -208,8 +173,7 @@ fn test_spec_version_propagation_equivalence() {
     let graph = build_linear_projection_mir("test_sv", 32, 16, 1, MilDtypeCompat::Fp16, 99);
 
     for version in [SpecVersion::V7, SpecVersion::V10] {
-        let model =
-            convert_mir_to_proto(&graph, version, CoreMlComputeUnit::CpuAndNe).unwrap();
+        let model = convert_mir_to_proto(&graph, version, CoreMlComputeUnit::CpuAndNe).unwrap();
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
         assert_eq!(
@@ -228,16 +192,9 @@ fn test_weight_embedding_equivalence() {
     // Python bridge embeds weights as numpy arrays via mb.const(val=...)
     // Rust proto-direct embeds weights as BlobFileValue references into weight.bin
     // Both should produce const ops that reference the same weight data
-    let graph = build_linear_projection_mir(
-        "test_weights",
-        32,
-        16,
-        1,
-        MilDtypeCompat::Fp16,
-        7,
-    );
-    let model = convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe)
-        .unwrap();
+    let graph = build_linear_projection_mir("test_weights", 32, 16, 1, MilDtypeCompat::Fp16, 7);
+    let model =
+        convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
 
     // Verify weight entries exist
     assert!(!model.weights.is_empty(), "Should have weight entries");
@@ -251,11 +208,7 @@ fn test_weight_embedding_equivalence() {
     let block = main_func.block_specializations.get("CoreML9").unwrap();
 
     // Find const ops and verify they use BlobFileValue (Rust path)
-    let const_ops: Vec<_> = block
-        .operations
-        .iter()
-        .filter(|op| op.r#type == "const")
-        .collect();
+    let const_ops: Vec<_> = block.operations.iter().filter(|op| op.r#type == "const").collect();
     assert!(!const_ops.is_empty(), "Should have const ops for weights");
 
     // Each const op should have a "val" attribute (BlobFileValue or immediate)
@@ -273,8 +226,8 @@ fn test_weight_embedding_equivalence() {
 fn test_io_descriptor_equivalence() {
     // Both paths should produce the same I/O structure in the model description
     let graph = build_linear_projection_mir("test_io", 64, 32, 1, MilDtypeCompat::Fp16, 42);
-    let model = convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe)
-        .unwrap();
+    let model =
+        convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
     let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
     let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
 
@@ -363,29 +316,17 @@ fn build_attention_like_mir() -> MirGraphCompat {
 #[test]
 fn test_attention_like_graph_topology() {
     let graph = build_attention_like_mir();
-    let model = convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe)
-        .unwrap();
+    let model =
+        convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
     let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
 
     let op_types = extract_op_types_from_proto(&bytes, "main");
 
     // Expected: const → linear → reshape → gelu
-    assert!(
-        op_types.contains(&"const".to_string()),
-        "Should have const op"
-    );
-    assert!(
-        op_types.contains(&"linear".to_string()),
-        "Should have linear op"
-    );
-    assert!(
-        op_types.contains(&"reshape".to_string()),
-        "Should have reshape op"
-    );
-    assert!(
-        op_types.contains(&"gelu".to_string()),
-        "Should have gelu op"
-    );
+    assert!(op_types.contains(&"const".to_string()), "Should have const op");
+    assert!(op_types.contains(&"linear".to_string()), "Should have linear op");
+    assert!(op_types.contains(&"reshape".to_string()), "Should have reshape op");
+    assert!(op_types.contains(&"gelu".to_string()), "Should have gelu op");
 }
 
 // ─── Test 7: Pooling ops compat validation ────────────────────────────────
@@ -463,10 +404,7 @@ fn test_pooling_ops_mir_compat_to_apple_proto() {
          until dedicated Apple proto emission is implemented, got: {:?}",
         op_types
     );
-    assert!(
-        op_types.contains(&"const".to_string()),
-        "Should have const op for input tensor"
-    );
+    assert!(op_types.contains(&"const".to_string()), "Should have const op for input tensor");
 }
 
 // ─── Test 8: Op coverage documentation test ───────────────────────────────
@@ -573,14 +511,8 @@ fn test_op_coverage_matrix_documentation() {
     ];
 
     // Verify the cross-validated ops list is not empty
-    assert!(
-        !cross_validated_ops.is_empty(),
-        "Cross-validated ops list should not be empty"
-    );
-    assert!(
-        !rust_only_ops.is_empty(),
-        "Rust-only ops list should not be empty"
-    );
+    assert!(!cross_validated_ops.is_empty(), "Cross-validated ops list should not be empty");
+    assert!(!rust_only_ops.is_empty(), "Rust-only ops list should not be empty");
 
     // The total number of supported op types should be significant
     let total_supported = cross_validated_ops.len() + rust_only_ops.len() + t66_fallback_ops.len();
@@ -637,10 +569,7 @@ fn build_stateful_decode_step_mir() -> MirGraphCompat {
         shape: vec![1, num_heads, kv_len, head_dim],
         dtype,
     });
-    node_shapes.insert(
-        "k_cache_read".to_string(),
-        vec![1, num_heads, kv_len, head_dim],
-    );
+    node_shapes.insert("k_cache_read".to_string(), vec![1, num_heads, kv_len, head_dim]);
 
     ops.push(MirOpCompat::ReadState {
         name: "v_cache_read".to_string(),
@@ -648,10 +577,7 @@ fn build_stateful_decode_step_mir() -> MirGraphCompat {
         shape: vec![1, num_heads, kv_len, head_dim],
         dtype,
     });
-    node_shapes.insert(
-        "v_cache_read".to_string(),
-        vec![1, num_heads, kv_len, head_dim],
-    );
+    node_shapes.insert("v_cache_read".to_string(), vec![1, num_heads, kv_len, head_dim]);
 
     // Linear: QKV projection
     ops.push(MirOpCompat::Linear {
@@ -681,10 +607,7 @@ fn build_stateful_decode_step_mir() -> MirGraphCompat {
         state_id: "k_state".to_string(),
         value: "k_cache_read".to_string(),
     });
-    node_shapes.insert(
-        "k_cache_write".to_string(),
-        vec![1, num_heads, kv_len, head_dim],
-    );
+    node_shapes.insert("k_cache_write".to_string(), vec![1, num_heads, kv_len, head_dim]);
 
     // Linear: output projection
     ops.push(MirOpCompat::Linear {
@@ -718,8 +641,8 @@ fn build_stateful_decode_step_mir() -> MirGraphCompat {
 #[test]
 fn test_stateful_decode_step_topology() {
     let graph = build_stateful_decode_step_mir();
-    let model = convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe)
-        .unwrap();
+    let model =
+        convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
     let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
 
     let op_types = extract_op_types_from_proto(&bytes, "main");

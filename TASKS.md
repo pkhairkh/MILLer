@@ -11,6 +11,7 @@
 > Tasks T-70, T-72, T-73, T-74, T-79, T-80, T-84, T-85 resolved in Bridge Model Leakage & Code Quality Sprint.
 > Tasks T-75, T-76, T-77, T-78, T-82, T-83 resolved in Bridge, FFI & Code Quality Sprint.
 > Tasks T-58, T-59 resolved in Test Coverage Sprint.
+> Tasks T-86, T-87, T-88, T-89, T-90 resolved in Test Coverage & Code Quality Sprint.
 
 ---
 
@@ -21,6 +22,22 @@ _No open CRITICAL tasks — T-67 resolved._
 ---
 
 ## 🟠 HIGH — Do These Next Sprint
+
+### T-86 · ~~Add Tests for Zero-Coverage Lab Modules~~
+
+~~**ISSUES ref**: I-61~~
+~~**AUDIT ref**: §V~~
+~~**Severity**: HIGH~~
+~~**Effort**: M (1.5 days)~~
+**✅ RESOLVED** — Added 33 tests across 3 modules: `device_meta.rs` (9 tests covering host_only/device_backed factory methods, all 11 chip→device class mappings, unknown chip handling, is_device_backed, and JSON serialization roundtrips for MetadataSource, RunType, ExecutionContext, DeviceMetadata), `run_dir.rs` (17 tests covering layout constants, LabRunWriter construction/directory creation, all 9 write methods, directory validation for missing/valid/nonexistent paths, and generate_run_id format including sha256 prefix handling), `host_inspect.rs` (7 tests covering constructor, nonexistent path, empty directory, valid/invalid manifest JSON, empty weights directory, and structure inspection fields when Python bridge fails on Linux).
+
+### T-87 · ~~Add Tests for Zero-Coverage Report/Trace/Passes Modules~~
+
+~~**ISSUES ref**: I-62~~
+~~**AUDIT ref**: §V~~
+~~**Severity**: HIGH~~
+~~**Effort**: M (1 day)~~
+**✅ RESOLVED** — Added 39 tests across 4 modules: `json_report.rs` (9 tests covering JsonReporter construction, compilation/knowledge/diagnostics report generation, bridge result inclusion, file writing roundtrip, and JSON serialization), `graph.rs` (15 tests covering TensorShape methods, all 34 TracedOp variant JSON roundtrips with #[serde(tag="type")] format, ModelConfig with rope_theta default, DiscoveredFeatures defaults, WeightInfo/WeightNameMapEntry/StateDeclaration/TracedGraph/TraceMetadata/TracedNode/QuantizedWeightInfo/TensorSpec serialization), `state_topology.rs` (5 tests covering StateTopologyPass construction, stateless graph no-op, matching StateRead/StateWrite, and StateRead without matching StateWrite), `knowledge_query.rs` (10 tests covering NoKnowledge returning None on all query methods, construction/field verification for LegalityInfo/RiskInfo/PrecisionHazardInfo/ComputePlanPlacementInfo, and Debug format verification).
 
 ### T-70 · ~~Fix K/V Projection Alias Map Drop~~
 
@@ -81,6 +98,30 @@ _No open CRITICAL tasks — T-67 resolved._
 ---
 
 ## 🟡 MEDIUM — Do These Soon
+
+### T-88 · ~~Code Quality Sweep — CQ-9, CQ-15, CQ-21, eprintln in StateTopology~~
+
+~~**ISSUES ref**: I-63~~
+~~**AUDIT ref**: §III (CQ-9, CQ-15, CQ-21)~~
+~~**Severity**: MEDIUM~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Fixed 4 code quality issues: (1) CQ-9: Added `log::warn!()` deprecation notice when `max_seq_len` defaults to 32768 in `mir_to_compat.rs`, matching the existing deprecation pattern in `shape_inference.rs`. (2) CQ-15: Ran `cargo fmt --all` across 16 files with ~90 formatting differences. (3) CQ-21: Replaced `.unwrap()` with `.expect("write to String cannot fail")` on `write!` calls in `session.rs::compute_task_hash()`, with safety comment explaining infallibility. (4) Replaced `eprintln!` with `log::warn!`/`log::info!` in `state_topology.rs`, matching the T-84 pattern.
+
+### T-89 · ~~Expand Precision Hazard Op Pattern Coverage~~
+
+~~**ISSUES ref**: I-64~~
+~~**AUDIT ref**: §III (CQ-11)~~
+~~**Severity**: MEDIUM~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Expanded `op_pattern_for_node()` in `precision_policy.rs` from 14 to 47 specific pattern strings. Added coverage for: normalization (LayerNorm, BatchNorm, InstanceNorm, L2Norm, LocalResponseNorm), linear/FC (MatMul, Einsum), convolution (Conv, ConvTranspose), elementwise binary (Sub, RealDiv, FloorDiv, Pow), elementwise unary (Neg, Sigmoid, Tanh, Relu, Silu, Gelu, Sqrt, Rsqrt, Exp, Log, Cast, Clip), reduction (ReduceSum, ReduceMean, ReduceMax, ReduceMin), pooling (MaxPool, AvgPool, L2Pool), tensor transform (Pad), scatter/gather (Gather, GatherNd, Scatter), attention (ScaledDotProductAttention), quantization (Quantize, Dequantize), and constants (Const, Fill, Identity). Only low-priority ops (random, control flow, recurrent, image resizing) remain as "Other". Added comprehensive test verifying 12 key pattern mappings.
+
+### T-90 · ~~Fix Attention Reshape Placeholder Zero Warning~~
+
+~~**ISSUES ref**: I-65~~
+~~**AUDIT ref**: §IV (B-12)~~
+~~**Severity**: MEDIUM~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Added `log::warn!()` in `decompose_attention_block()` when `DecompositionContext` is None. Without ctx, attention reshape shapes use zero placeholders which Core ML treats as literal zero dimensions. The warning directs users to provide ctx for correct shape resolution. Also replaced `eprintln!` with `log::warn!`/`log::info!` in `state_topology.rs` (same pattern as T-84).
 
 ### T-60 · ~~Fix Tile Decomposition Placeholder Zeros~~
 
@@ -246,6 +287,11 @@ _No open CRITICAL tasks — T-67 resolved._
 | T-83 | I-58 | LOW | S | ✅ Fixed |
 | T-84 | I-59 | LOW | S | ✅ Fixed |
 | T-85 | I-60 | LOW | S | ✅ Fixed |
+| T-86 | I-61 | HIGH | M | ✅ Fixed |
+| T-87 | I-62 | HIGH | M | ✅ Fixed |
+| T-88 | I-63 | MEDIUM | S | ✅ Fixed |
+| T-89 | I-64 | MEDIUM | S | ✅ Fixed |
+| T-90 | I-65 | MEDIUM | S | ✅ Fixed |
 
 ---
 

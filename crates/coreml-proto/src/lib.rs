@@ -1681,24 +1681,10 @@ pub mod mir_compat {
                 }
                 // T-66 (I-40): Quantize / Dequantize ops
                 MirOpCompat::Quantize { name, x, scale, zero_point, axis, output_dtype } => {
-                    MirOpCompat::Quantize {
-                        name,
-                        x: f(x),
-                        scale,
-                        zero_point,
-                        axis,
-                        output_dtype,
-                    }
+                    MirOpCompat::Quantize { name, x: f(x), scale, zero_point, axis, output_dtype }
                 }
                 MirOpCompat::Dequantize { name, x, scale, zero_point, axis, output_dtype } => {
-                    MirOpCompat::Dequantize {
-                        name,
-                        x: f(x),
-                        scale,
-                        zero_point,
-                        axis,
-                        output_dtype,
-                    }
+                    MirOpCompat::Dequantize { name, x: f(x), scale, zero_point, axis, output_dtype }
                 }
                 // Variants with no remappable inputs: pass through unchanged.
                 other => other,
@@ -1984,16 +1970,21 @@ pub mod mir_compat {
                     block_axis,
                 },
                 // T-66 (I-40): Pooling ops
-                MirOpCompat::MaxPool { name: _, x, kernel_sizes, strides, pad_type, pad_amounts } => {
-                    MirOpCompat::MaxPool {
-                        name: new_name,
-                        x,
-                        kernel_sizes,
-                        strides,
-                        pad_type,
-                        pad_amounts,
-                    }
-                }
+                MirOpCompat::MaxPool {
+                    name: _,
+                    x,
+                    kernel_sizes,
+                    strides,
+                    pad_type,
+                    pad_amounts,
+                } => MirOpCompat::MaxPool {
+                    name: new_name,
+                    x,
+                    kernel_sizes,
+                    strides,
+                    pad_type,
+                    pad_amounts,
+                },
                 MirOpCompat::AvgPool {
                     name: _,
                     x,
@@ -2011,16 +2002,21 @@ pub mod mir_compat {
                     pad_amounts,
                     count_include_padding,
                 },
-                MirOpCompat::L2Pool { name: _, x, kernel_sizes, strides, pad_type, pad_amounts } => {
-                    MirOpCompat::L2Pool {
-                        name: new_name,
-                        x,
-                        kernel_sizes,
-                        strides,
-                        pad_type,
-                        pad_amounts,
-                    }
-                }
+                MirOpCompat::L2Pool {
+                    name: _,
+                    x,
+                    kernel_sizes,
+                    strides,
+                    pad_type,
+                    pad_amounts,
+                } => MirOpCompat::L2Pool {
+                    name: new_name,
+                    x,
+                    kernel_sizes,
+                    strides,
+                    pad_type,
+                    pad_amounts,
+                },
                 // T-66 (I-40): Spatial rearrangement ops
                 MirOpCompat::DepthToSpace { name: _, x, block_size } => {
                     MirOpCompat::DepthToSpace { name: new_name, x, block_size }
@@ -2054,7 +2050,14 @@ pub mod mir_compat {
                 }
                 // T-66 (I-40): Quantize / Dequantize ops
                 MirOpCompat::Quantize { name: _, x, scale, zero_point, axis, output_dtype } => {
-                    MirOpCompat::Quantize { name: new_name, x, scale, zero_point, axis, output_dtype }
+                    MirOpCompat::Quantize {
+                        name: new_name,
+                        x,
+                        scale,
+                        zero_point,
+                        axis,
+                        output_dtype,
+                    }
                 }
                 MirOpCompat::Dequantize { name: _, x, scale, zero_point, axis, output_dtype } => {
                     MirOpCompat::Dequantize {
@@ -2393,13 +2396,7 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
                 }
             }
             MirOp::MILInstanceNorm { name, x, gamma, beta, epsilon } => {
-                mir_compat::MirOpCompat::InstanceNorm {
-                    name,
-                    x: nid(x),
-                    gamma,
-                    beta,
-                    epsilon,
-                }
+                mir_compat::MirOpCompat::InstanceNorm { name, x: nid(x), gamma, beta, epsilon }
             }
             MirOp::MILLayerNorm { name, x, weight, bias, epsilon, axes } => {
                 mir_compat::MirOpCompat::LayerNorm {
@@ -2411,14 +2408,12 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
                     axes: axes.into_iter().map(|a| a as i64).collect(),
                 }
             }
-            MirOp::MILL2Norm { name, x, epsilon, axes } => {
-                mir_compat::MirOpCompat::L2Norm {
-                    name,
-                    x: nid(x),
-                    epsilon,
-                    axes: axes.into_iter().map(|a| a as i64).collect(),
-                }
-            }
+            MirOp::MILL2Norm { name, x, epsilon, axes } => mir_compat::MirOpCompat::L2Norm {
+                name,
+                x: nid(x),
+                epsilon,
+                axes: axes.into_iter().map(|a| a as i64).collect(),
+            },
             MirOp::MILLocalResponseNorm { name, .. } => {
                 unsupported("local_response_norm", &name, &op_json)
             }
@@ -2434,17 +2429,23 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
                     pad_amounts: pad_amounts.into_iter().map(|d| d as i32).collect(),
                 }
             }
-            MirOp::MILAvgPool { name, x, kernel_sizes, strides, pad_types, pad_amounts, count_include_padding } => {
-                mir_compat::MirOpCompat::AvgPool {
-                    name,
-                    x: nid(x),
-                    kernel_sizes: kernel_sizes.into_iter().map(|d| d as i32).collect(),
-                    strides: strides.into_iter().map(|d| d as i32).collect(),
-                    pad_type: pad_types.first().cloned().unwrap_or_else(|| "valid".to_string()),
-                    pad_amounts: pad_amounts.into_iter().map(|d| d as i32).collect(),
-                    count_include_padding,
-                }
-            }
+            MirOp::MILAvgPool {
+                name,
+                x,
+                kernel_sizes,
+                strides,
+                pad_types,
+                pad_amounts,
+                count_include_padding,
+            } => mir_compat::MirOpCompat::AvgPool {
+                name,
+                x: nid(x),
+                kernel_sizes: kernel_sizes.into_iter().map(|d| d as i32).collect(),
+                strides: strides.into_iter().map(|d| d as i32).collect(),
+                pad_type: pad_types.first().cloned().unwrap_or_else(|| "valid".to_string()),
+                pad_amounts: pad_amounts.into_iter().map(|d| d as i32).collect(),
+                count_include_padding,
+            },
             MirOp::MILL2Pool { name, x, kernel_sizes, strides, pad_types, pad_amounts } => {
                 mir_compat::MirOpCompat::L2Pool {
                     name,

@@ -93,28 +93,100 @@ impl PrecisionPolicyPass {
     /// seed/observation entries use.
     fn op_pattern_for_node(node: &ane_ir::sir::SirNode) -> &str {
         match &node.op {
+            // ─── Composite / High-Level Semantic Ops ─────────────
             ane_ir::sir::SirOp::LinearProjection { .. } => "LinearProjection",
             ane_ir::sir::SirOp::AttentionBlock { .. } => "AttentionBlock",
+            ane_ir::sir::SirOp::DecodeStep { .. } => "DecodeStep",
+            ane_ir::sir::SirOp::Sampler { .. } => "Sampler",
+
+            // ─── Normalization ───────────────────────────────────
             ane_ir::sir::SirOp::RMSNorm { .. } => "RMSNorm",
+            ane_ir::sir::SirOp::LayerNorm { .. } => "LayerNorm",
+            ane_ir::sir::SirOp::BatchNorm { .. } => "BatchNorm",
+            ane_ir::sir::SirOp::InstanceNorm { .. } => "InstanceNorm",
+            ane_ir::sir::SirOp::L2Norm { .. } => "L2Norm",
+            ane_ir::sir::SirOp::LocalResponseNorm { .. } => "LocalResponseNorm",
+
+            // ─── Positional Encoding ─────────────────────────────
             ane_ir::sir::SirOp::RoPETransform { .. } => "RoPETransform",
+
+            // ─── State / KV-Cache ────────────────────────────────
+            ane_ir::sir::SirOp::StateRead { .. } => "StateRead",
+            ane_ir::sir::SirOp::StateWrite { .. } => "StateWrite",
+
+            // ─── Linear / FC ─────────────────────────────────────
+            ane_ir::sir::SirOp::MatMul { .. } => "MatMul",
+            ane_ir::sir::SirOp::Einsum { .. } => "Einsum",
+
+            // ─── Convolution ─────────────────────────────────────
+            ane_ir::sir::SirOp::Conv { .. } => "Conv",
+            ane_ir::sir::SirOp::ConvTranspose { .. } => "ConvTranspose",
+
+            // ─── Elementwise Binary ──────────────────────────────
             ane_ir::sir::SirOp::Add { .. } => "Add",
             ane_ir::sir::SirOp::Mul { .. } => "Mul",
-            ane_ir::sir::SirOp::Abs { .. } => "Abs",
+            ane_ir::sir::SirOp::Sub { .. } => "Sub",
             ane_ir::sir::SirOp::Maximum { .. } => "Maximum",
             ane_ir::sir::SirOp::Minimum { .. } => "Minimum",
+            ane_ir::sir::SirOp::RealDiv { .. } => "RealDiv",
+            ane_ir::sir::SirOp::FloorDiv { .. } => "FloorDiv",
+            ane_ir::sir::SirOp::Pow { .. } => "Pow",
+
+            // ─── Elementwise Unary ───────────────────────────────
+            ane_ir::sir::SirOp::Abs { .. } => "Abs",
+            ane_ir::sir::SirOp::Neg { .. } => "Neg",
+            ane_ir::sir::SirOp::Sigmoid { .. } => "Sigmoid",
+            ane_ir::sir::SirOp::Tanh { .. } => "Tanh",
+            ane_ir::sir::SirOp::Relu { .. } => "Relu",
+            ane_ir::sir::SirOp::Silu { .. } => "Silu",
+            ane_ir::sir::SirOp::Gelu { .. } => "Gelu",
+            ane_ir::sir::SirOp::Sqrt { .. } => "Sqrt",
+            ane_ir::sir::SirOp::Rsqrt { .. } => "Rsqrt",
+            ane_ir::sir::SirOp::Exp { .. } => "Exp",
+            ane_ir::sir::SirOp::Log { .. } => "Log",
+            ane_ir::sir::SirOp::Cast { .. } => "Cast",
+            ane_ir::sir::SirOp::Clip { .. } => "Clip",
+            ane_ir::sir::SirOp::Softmax { .. } => "Softmax",
+
+            // ─── Reduction ───────────────────────────────────────
+            ane_ir::sir::SirOp::ReduceSum { .. } => "ReduceSum",
+            ane_ir::sir::SirOp::ReduceMean { .. } => "ReduceMean",
+            ane_ir::sir::SirOp::ReduceMax { .. } => "ReduceMax",
+            ane_ir::sir::SirOp::ReduceMin { .. } => "ReduceMin",
+
+            // ─── Pooling ─────────────────────────────────────────
+            ane_ir::sir::SirOp::MaxPool { .. } => "MaxPool",
+            ane_ir::sir::SirOp::AvgPool { .. } => "AvgPool",
+            ane_ir::sir::SirOp::L2Pool { .. } => "L2Pool",
+
+            // ─── Tensor Transform ────────────────────────────────
             ane_ir::sir::SirOp::Reshape { .. } => "Reshape",
             ane_ir::sir::SirOp::Transpose { .. } => "Transpose",
             ane_ir::sir::SirOp::Split { .. } => "Split",
             ane_ir::sir::SirOp::Concat { .. } => "Concat",
-            ane_ir::sir::SirOp::Softmax { .. } => "Softmax",
-            ane_ir::sir::SirOp::StateRead { .. } => "StateRead",
-            ane_ir::sir::SirOp::StateWrite { .. } => "StateWrite",
-            ane_ir::sir::SirOp::DecodeStep { .. } => "DecodeStep",
-            ane_ir::sir::SirOp::Sampler { .. } => "Sampler",
+            ane_ir::sir::SirOp::Pad { .. } => "Pad",
+
+            // ─── Scatter / Gather ────────────────────────────────
+            ane_ir::sir::SirOp::Gather { .. } => "Gather",
+            ane_ir::sir::SirOp::GatherNd { .. } => "GatherNd",
+            ane_ir::sir::SirOp::Scatter { .. } => "Scatter",
+
+            // ─── Attention ───────────────────────────────────────
+            ane_ir::sir::SirOp::ScaledDotProductAttention { .. } => "ScaledDotProductAttention",
+
+            // ─── Quantization ────────────────────────────────────
+            ane_ir::sir::SirOp::Quantize { .. } => "Quantize",
+            ane_ir::sir::SirOp::Dequantize { .. } => "Dequantize",
+
+            // ─── Constants ───────────────────────────────────────
+            ane_ir::sir::SirOp::Const { .. } => "Const",
+            ane_ir::sir::SirOp::Fill { .. } => "Fill",
+            ane_ir::sir::SirOp::Identity { .. } => "Identity",
+
+            // ─── All remaining ops ───────────────────────────────
+            // Lower-priority ops that are unlikely to have precision hazards
+            // in transformer models. These can be expanded as needed.
             _ => "Other",
-            // TODO: Expand precision hazard pattern coverage beyond 14/167 ops.
-            // Currently only attention, linear, and normalization ops have patterns.
-            // Remaining ops fall into "Other" and never query precision hazards.
         }
     }
 
@@ -517,6 +589,180 @@ mod tests {
         assert!(
             !pass.has_adaptations(),
             "Hazard below custom threshold must not trigger adaptation"
+        );
+    }
+
+    /// Test that expanded op patterns cover key SIR op variants (T-89 / CQ-11).
+    ///
+    /// Previously only 14/167+ SIR ops had specific pattern strings.
+    /// This test verifies that the expanded pattern coverage maps
+    /// important op categories to meaningful pattern strings rather
+    /// than falling through to "Other".
+    #[test]
+    fn test_expanded_op_patterns_cover_key_categories() {
+        fn node_for_op(op: SirOp) -> SirNode {
+            SirNode {
+                id: SirNodeId("test".into()),
+                op,
+                name: "test_node".into(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }
+        }
+
+        // Composite ops
+        assert_eq!(
+            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::DecodeStep {
+                token: SirNodeId("t".into()),
+                state_map: vec![],
+                q_weight: None,
+                k_weight: None,
+                v_weight: None,
+                out_weight: None,
+                rope_tables: None,
+                position: None,
+                q_norm_weight: None,
+                k_norm_weight: None,
+                norm_epsilon: 1e-6,
+                qk_norm_type: "rms".into(),
+                mask_ref: None,
+            })),
+            "DecodeStep"
+        );
+        assert_eq!(
+            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Sampler {
+                logits: SirNodeId("l".into()),
+                temperature: 1.0,
+                top_p: 0.9,
+                rep_penalty: 1.0,
+                min_p: 0.0,
+                top_k: 50,
+                gumbel_noise: false,
+            })),
+            "Sampler"
+        );
+
+        // Normalization ops
+        assert_eq!(
+            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::LayerNorm {
+                input: SirNodeId("x".into()),
+                weight: "w".into(),
+                bias: None,
+                epsilon: 1e-5,
+                axes: vec![2],
+            })),
+            "LayerNorm"
+        );
+        assert_eq!(
+            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::BatchNorm {
+                input: SirNodeId("x".into()),
+                mean: "m".into(),
+                variance: "v".into(),
+                gamma: None,
+                beta: None,
+                epsilon: 1e-5,
+            })),
+            "BatchNorm"
+        );
+
+        // Linear/FC ops
+        assert_eq!(
+            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::MatMul {
+                a: SirNodeId("a".into()),
+                b: SirNodeId("b".into()),
+            })),
+            "MatMul"
+        );
+
+        // Convolution ops
+        assert_eq!(
+            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Conv {
+                input: SirNodeId("x".into()),
+                weight: SirNodeId("w".into()),
+                pad_type: "valid".into(),
+                groups: 1,
+                strides: vec![1],
+                pad_amounts: vec![0],
+                dilations: vec![1],
+            })),
+            "Conv"
+        );
+
+        // Elementwise unary ops
+        assert_eq!(
+            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Silu {
+                input: SirNodeId("x".into()),
+            })),
+            "Silu"
+        );
+        assert_eq!(
+            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Gelu {
+                input: SirNodeId("x".into()),
+                mode: "exact".into(),
+            })),
+            "Gelu"
+        );
+
+        // Pooling ops
+        assert_eq!(
+            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::MaxPool {
+                input: SirNodeId("x".into()),
+                kernel_sizes: vec![3],
+                strides: vec![1],
+                pad_types: vec!["valid".into()],
+                pad_amounts: vec![0],
+            })),
+            "MaxPool"
+        );
+
+        // Reduction ops
+        assert_eq!(
+            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::ReduceMean {
+                input: SirNodeId("x".into()),
+                axes: vec![1],
+                keep_dims: false,
+            })),
+            "ReduceMean"
+        );
+
+        // Attention
+        assert_eq!(
+            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+                SirOp::ScaledDotProductAttention {
+                    query: SirNodeId("q".into()),
+                    key: SirNodeId("k".into()),
+                    value: SirNodeId("v".into()),
+                    attention_mask: None,
+                    scale: None,
+                }
+            )),
+            "ScaledDotProductAttention"
+        );
+
+        // Quantization ops
+        assert_eq!(
+            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Quantize {
+                input: SirNodeId("x".into()),
+                scale: 1.0,
+                zero_point: 0,
+                axis: -1,
+                output_dtype: ane_ir::mir::MilDtype::Int8,
+            })),
+            "Quantize"
+        );
+
+        // Scatter/Gather ops
+        assert_eq!(
+            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Gather {
+                input: SirNodeId("x".into()),
+                indices: SirNodeId("i".into()),
+                axis: 0,
+            })),
+            "Gather"
         );
     }
 }

@@ -161,3 +161,151 @@ impl DeviceMetadata {
         self.source == MetadataSource::DeviceBacked
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_device_metadata_host_only() {
+        let meta = DeviceMetadata::host_only();
+        assert_eq!(meta.source, MetadataSource::HostOnly);
+        assert!(meta.device_class.is_none());
+        assert!(meta.chip_name.is_none());
+        assert!(meta.core_ml_version.is_none());
+        assert!(meta.total_memory_gb.is_none());
+        assert!(meta.ane_core_count.is_none());
+        assert!(!meta.coreml_runtime_available);
+        assert!(!meta.compute_plan_available);
+        // host_os should contain the OS name (e.g. "linux")
+        assert!(
+            meta.host_os.contains(std::env::consts::OS),
+            "host_os '{}' should contain OS '{}'",
+            meta.host_os,
+            std::env::consts::OS
+        );
+        // os_version should contain "host"
+        assert!(
+            meta.os_version.contains("host"),
+            "os_version '{}' should contain 'host'",
+            meta.os_version
+        );
+    }
+
+    #[test]
+    fn test_device_metadata_device_backed_on_non_apple() {
+        // On non-Apple platforms, device_backed() returns host-only metadata
+        // because we cannot collect device metadata without Apple hardware.
+        let meta = DeviceMetadata::device_backed();
+        // On non-Apple, source should be HostOnly (not DeviceBacked)
+        if !cfg!(target_vendor = "apple") {
+            assert_eq!(meta.source, MetadataSource::HostOnly);
+            assert!(meta.device_class.is_none());
+            assert!(meta.chip_name.is_none());
+            assert!(!meta.coreml_runtime_available);
+        }
+    }
+
+    #[test]
+    fn test_parse_device_class_known_chips() {
+        // M2 family
+        assert_eq!(DeviceMetadata::parse_device_class("t6020"), Some("Apple M2".to_string()));
+        assert_eq!(DeviceMetadata::parse_device_class("t6021"), Some("Apple M2".to_string()));
+        // M3 family
+        assert_eq!(DeviceMetadata::parse_device_class("t6030"), Some("Apple M3".to_string()));
+        assert_eq!(DeviceMetadata::parse_device_class("t6031"), Some("Apple M3".to_string()));
+        // M1 family
+        assert_eq!(DeviceMetadata::parse_device_class("t6000"), Some("Apple M1".to_string()));
+        assert_eq!(DeviceMetadata::parse_device_class("t6001"), Some("Apple M1".to_string()));
+        assert_eq!(DeviceMetadata::parse_device_class("t6002"), Some("Apple M1".to_string()));
+        // A-series
+        assert_eq!(
+            DeviceMetadata::parse_device_class("t8101"),
+            Some("Apple A14 Bionic".to_string())
+        );
+        assert_eq!(
+            DeviceMetadata::parse_device_class("t8110"),
+            Some("Apple A15 Bionic".to_string())
+        );
+        assert_eq!(
+            DeviceMetadata::parse_device_class("t8120"),
+            Some("Apple A16 Bionic".to_string())
+        );
+        assert_eq!(DeviceMetadata::parse_device_class("t8140"), Some("Apple A17 Pro".to_string()));
+    }
+
+    #[test]
+    fn test_parse_device_class_unknown_chip() {
+        assert_eq!(DeviceMetadata::parse_device_class("t9999"), None);
+        assert_eq!(DeviceMetadata::parse_device_class(""), None);
+    }
+
+    #[test]
+    fn test_is_device_backed_host_only() {
+        let meta = DeviceMetadata::host_only();
+        assert!(!meta.is_device_backed());
+    }
+
+    #[test]
+    fn test_metadata_source_serialization() {
+        // Roundtrip MetadataSource through serde_json
+        for source in [MetadataSource::HostOnly, MetadataSource::DeviceBacked] {
+            let json = serde_json::to_string(&source).unwrap();
+            let back: MetadataSource = serde_json::from_str(&json).unwrap();
+            assert_eq!(source, back, "MetadataSource roundtrip failed for {:?}", source);
+        }
+    }
+
+    #[test]
+    fn test_run_type_serialization() {
+        // Cold roundtrip
+        let cold = RunType::Cold;
+        let json = serde_json::to_string(&cold).unwrap();
+        let back: RunType = serde_json::from_str(&json).unwrap();
+        assert_eq!(cold, back);
+
+        // Warm roundtrip
+        let warm = RunType::Warm { warmup_iterations: 5 };
+        let json = serde_json::to_string(&warm).unwrap();
+        let back: RunType = serde_json::from_str(&json).unwrap();
+        assert_eq!(warm, back);
+        if let RunType::Warm { warmup_iterations } = back {
+            assert_eq!(warmup_iterations, 5);
+        } else {
+            panic!("Expected RunType::Warm");
+        }
+    }
+
+    #[test]
+    fn test_execution_context_serialization() {
+        let ctx = ExecutionContext {
+            device: DeviceMetadata::host_only(),
+            run_type: RunType::Cold,
+            measured_iterations: 10,
+            compute_units: "CPU_AND_NE".to_string(),
+        };
+        let json = serde_json::to_string(&ctx).unwrap();
+        let back: ExecutionContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.measured_iterations, 10);
+        assert_eq!(back.compute_units, "CPU_AND_NE");
+        assert_eq!(back.run_type, RunType::Cold);
+        assert_eq!(back.device.source, MetadataSource::HostOnly);
+    }
+
+    #[test]
+    fn test_device_metadata_serialization() {
+        let meta = DeviceMetadata::host_only();
+        let json = serde_json::to_string(&meta).unwrap();
+        let back: DeviceMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.source, meta.source);
+        assert_eq!(back.host_os, meta.host_os);
+        assert_eq!(back.device_class, meta.device_class);
+        assert_eq!(back.chip_name, meta.chip_name);
+        assert_eq!(back.os_version, meta.os_version);
+        assert_eq!(back.core_ml_version, meta.core_ml_version);
+        assert_eq!(back.total_memory_gb, meta.total_memory_gb);
+        assert_eq!(back.ane_core_count, meta.ane_core_count);
+        assert_eq!(back.coreml_runtime_available, meta.coreml_runtime_available);
+        assert_eq!(back.compute_plan_available, meta.compute_plan_available);
+    }
+}

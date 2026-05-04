@@ -144,7 +144,15 @@ pub fn mir_graph_to_compat_with_arch(
     max_seq_len: Option<usize>,
 ) -> Result<MirGraphCompat> {
     let alias_map = build_input_alias_map(graph, architecture);
-    let max_seq_len = max_seq_len.unwrap_or(32768);
+    // DEPRECATED (CQ-9): Hardcoded 32768 default is Qwen3-0.6B-specific.
+    // Callers should pass explicit max_seq_len for correctness.
+    let max_seq_len = max_seq_len.unwrap_or_else(|| {
+        log::warn!(
+            "mir_graph_to_compat_with_arch: max_seq_len not provided, defaulting to 32768 \
+             (Qwen3-0.6B default). Pass explicit max_seq_len for other models."
+        );
+        32768
+    });
 
     // Build a shape map from MirNode.id → MirNode.shape so that reshape ops
     // can resolve zero-placeholder dimensions by looking up their input node's
@@ -483,7 +491,9 @@ fn build_input_alias_map(
 
     for node in &graph.nodes {
         match &node.op {
-            MirOp::MILLinear { weight, .. } if weight.contains(q_proj) && !weight.contains(k_proj) => {
+            MirOp::MILLinear { weight, .. }
+                if weight.contains(q_proj) && !weight.contains(k_proj) =>
+            {
                 if let Some(layer) = layer_index_from_weight(weight) {
                     aliases.insert(
                         format!("sir_qkv_split_q_layer_{layer}_self_attn"),
@@ -491,7 +501,9 @@ fn build_input_alias_map(
                     );
                 }
             }
-            MirOp::MILLinear { weight, .. } if weight.contains(k_proj) && !weight.contains(v_proj) => {
+            MirOp::MILLinear { weight, .. }
+                if weight.contains(k_proj) && !weight.contains(v_proj) =>
+            {
                 if let Some(layer) = layer_index_from_weight(weight) {
                     aliases.insert(
                         format!("sir_qkv_split_k_layer_{layer}_self_attn"),
@@ -1323,17 +1335,23 @@ pub fn mir_op_to_compat(
                 pad_amounts: pad_amounts.iter().map(|&d| d as i32).collect(),
             })
         }
-        MirOp::MILAvgPool { name, x, kernel_sizes, strides, pad_types, pad_amounts, count_include_padding } => {
-            Ok(MirOpCompat::AvgPool {
-                name: name.clone(),
-                x: x.0.clone(),
-                kernel_sizes: kernel_sizes.iter().map(|&d| d as i32).collect(),
-                strides: strides.iter().map(|&d| d as i32).collect(),
-                pad_type: pad_types.first().cloned().unwrap_or_else(|| "valid".to_string()),
-                pad_amounts: pad_amounts.iter().map(|&d| d as i32).collect(),
-                count_include_padding: *count_include_padding,
-            })
-        }
+        MirOp::MILAvgPool {
+            name,
+            x,
+            kernel_sizes,
+            strides,
+            pad_types,
+            pad_amounts,
+            count_include_padding,
+        } => Ok(MirOpCompat::AvgPool {
+            name: name.clone(),
+            x: x.0.clone(),
+            kernel_sizes: kernel_sizes.iter().map(|&d| d as i32).collect(),
+            strides: strides.iter().map(|&d| d as i32).collect(),
+            pad_type: pad_types.first().cloned().unwrap_or_else(|| "valid".to_string()),
+            pad_amounts: pad_amounts.iter().map(|&d| d as i32).collect(),
+            count_include_padding: *count_include_padding,
+        }),
         MirOp::MILL2Pool { name, x, kernel_sizes, strides, pad_types, pad_amounts } => {
             Ok(MirOpCompat::L2Pool {
                 name: name.clone(),
@@ -1346,34 +1364,26 @@ pub fn mir_op_to_compat(
         }
 
         // ─── Spatial Rearrangement (T-66 / I-40) ───────────────────────
-        MirOp::MILDepthToSpace { name, x, block_size } => {
-            Ok(MirOpCompat::DepthToSpace {
-                name: name.clone(),
-                x: x.0.clone(),
-                block_size: *block_size as i64,
-            })
-        }
-        MirOp::MILSpaceToDepth { name, x, block_size } => {
-            Ok(MirOpCompat::SpaceToDepth {
-                name: name.clone(),
-                x: x.0.clone(),
-                block_size: *block_size as i64,
-            })
-        }
-        MirOp::MILPixelShuffle { name, x, upscale_factor } => {
-            Ok(MirOpCompat::PixelShuffle {
-                name: name.clone(),
-                x: x.0.clone(),
-                upscale_factor: *upscale_factor as i64,
-            })
-        }
-        MirOp::MILPixelUnshuffle { name, x, downscale_factor } => {
-            Ok(MirOpCompat::PixelUnshuffle {
-                name: name.clone(),
-                x: x.0.clone(),
-                downscale_factor: *downscale_factor as i64,
-            })
-        }
+        MirOp::MILDepthToSpace { name, x, block_size } => Ok(MirOpCompat::DepthToSpace {
+            name: name.clone(),
+            x: x.0.clone(),
+            block_size: *block_size as i64,
+        }),
+        MirOp::MILSpaceToDepth { name, x, block_size } => Ok(MirOpCompat::SpaceToDepth {
+            name: name.clone(),
+            x: x.0.clone(),
+            block_size: *block_size as i64,
+        }),
+        MirOp::MILPixelShuffle { name, x, upscale_factor } => Ok(MirOpCompat::PixelShuffle {
+            name: name.clone(),
+            x: x.0.clone(),
+            upscale_factor: *upscale_factor as i64,
+        }),
+        MirOp::MILPixelUnshuffle { name, x, downscale_factor } => Ok(MirOpCompat::PixelUnshuffle {
+            name: name.clone(),
+            x: x.0.clone(),
+            downscale_factor: *downscale_factor as i64,
+        }),
 
         // ─── Normalization (T-66 / I-40) ───────────────────────────────
         MirOp::MILBatchNorm { name, x, mean, variance, gamma, beta, epsilon } => {
@@ -1387,23 +1397,19 @@ pub fn mir_op_to_compat(
                 epsilon: *epsilon,
             })
         }
-        MirOp::MILInstanceNorm { name, x, gamma, beta, epsilon } => {
-            Ok(MirOpCompat::InstanceNorm {
-                name: name.clone(),
-                x: x.0.clone(),
-                gamma: gamma.clone(),
-                beta: beta.clone(),
-                epsilon: *epsilon,
-            })
-        }
-        MirOp::MILL2Norm { name, x, epsilon, axes } => {
-            Ok(MirOpCompat::L2Norm {
-                name: name.clone(),
-                x: x.0.clone(),
-                epsilon: *epsilon,
-                axes: axes.iter().map(|&d| d as i64).collect(),
-            })
-        }
+        MirOp::MILInstanceNorm { name, x, gamma, beta, epsilon } => Ok(MirOpCompat::InstanceNorm {
+            name: name.clone(),
+            x: x.0.clone(),
+            gamma: gamma.clone(),
+            beta: beta.clone(),
+            epsilon: *epsilon,
+        }),
+        MirOp::MILL2Norm { name, x, epsilon, axes } => Ok(MirOpCompat::L2Norm {
+            name: name.clone(),
+            x: x.0.clone(),
+            epsilon: *epsilon,
+            axes: axes.iter().map(|&d| d as i64).collect(),
+        }),
 
         // ─── Quantize / Dequantize (T-66 / I-40) ───────────────────────
         MirOp::MILQuantize { name, x, scale, zero_point, axis, output_dtype } => {
@@ -1600,7 +1606,9 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILReduceArgmax { name, .. } => ("reduce_argmax".into(), name.clone(), "{}".into()),
         MirOp::MILReduceArgmin { name, .. } => ("reduce_argmin".into(), name.clone(), "{}".into()),
         MirOp::MILBatchNorm { .. } => unreachable!("MILBatchNorm is handled by mir_op_to_compat"),
-        MirOp::MILInstanceNorm { .. } => unreachable!("MILInstanceNorm is handled by mir_op_to_compat"),
+        MirOp::MILInstanceNorm { .. } => {
+            unreachable!("MILInstanceNorm is handled by mir_op_to_compat")
+        }
         MirOp::MILL2Norm { .. } => unreachable!("MILL2Norm is handled by mir_op_to_compat"),
         MirOp::MILLocalResponseNorm { name, .. } => {
             ("local_response_norm".into(), name.clone(), "{}".into())
@@ -1636,9 +1644,15 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILSlidingWindows { name, .. } => {
             ("sliding_windows".into(), name.clone(), "{}".into())
         }
-        MirOp::MILDepthToSpace { .. } => unreachable!("MILDepthToSpace is handled by mir_op_to_compat"),
-        MirOp::MILSpaceToDepth { .. } => unreachable!("MILSpaceToDepth is handled by mir_op_to_compat"),
-        MirOp::MILPixelShuffle { .. } => unreachable!("MILPixelShuffle is handled by mir_op_to_compat"),
+        MirOp::MILDepthToSpace { .. } => {
+            unreachable!("MILDepthToSpace is handled by mir_op_to_compat")
+        }
+        MirOp::MILSpaceToDepth { .. } => {
+            unreachable!("MILSpaceToDepth is handled by mir_op_to_compat")
+        }
+        MirOp::MILPixelShuffle { .. } => {
+            unreachable!("MILPixelShuffle is handled by mir_op_to_compat")
+        }
         MirOp::MILPixelUnshuffle { .. } => {
             unreachable!("MILPixelUnshuffle is handled by mir_op_to_compat")
         }

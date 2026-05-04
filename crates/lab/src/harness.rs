@@ -580,8 +580,12 @@ mod tests {
     #[test]
     fn test_lab_run_builder_compile_result() {
         let cr = CompileStepResult {
-            success: true, error: None, output_path: None,
-            content_hash: None, file_count: None, coremltools_version: None,
+            success: true,
+            error: None,
+            output_path: None,
+            content_hash: None,
+            file_count: None,
+            coremltools_version: None,
         };
         let run = make_builder().compile_result(cr.clone()).build();
         assert!(run.compile_result.success);
@@ -590,14 +594,23 @@ mod tests {
     #[test]
     fn test_lab_run_builder_inspect_result() {
         let ir = InspectionStepResult {
-            package_present: true, manifest_readable: false, model_loadable: false,
-            model_load_failure_reason: None, function_count: None,
-            input_specs: vec![], output_specs: vec![], warnings: vec!["w1".to_string()],
+            package_present: true,
+            manifest_readable: false,
+            model_loadable: false,
+            model_load_failure_reason: None,
+            function_count: None,
+            input_specs: vec![],
+            output_specs: vec![],
+            warnings: vec!["w1".to_string()],
             structure_inspection_available: None,
             structure_inspection_failure_reason: None,
-            structure_op_names: vec![], structure_op_count: None,
-            structure_function_count: None, structure_state_declarations: vec![],
-            op_fidelity_score: None, missing_ops: vec![], extra_ops: vec![],
+            structure_op_names: vec![],
+            structure_op_count: None,
+            structure_function_count: None,
+            structure_state_declarations: vec![],
+            op_fidelity_score: None,
+            missing_ops: vec![],
+            extra_ops: vec![],
             inspection_method: "none".to_string(),
         };
         let run = make_builder().inspect_result(ir).build();
@@ -607,9 +620,15 @@ mod tests {
     #[test]
     fn test_lab_run_builder_timing() {
         let t = TimingResult {
-            warmup_iterations: 1, measured_iterations: 5,
-            p50_ms: 1.0, p90_ms: 1.0, p99_ms: 1.0,
-            min_ms: 1.0, max_ms: 1.0, mean_ms: 1.0, std_dev_ms: 0.0,
+            warmup_iterations: 1,
+            measured_iterations: 5,
+            p50_ms: 1.0,
+            p90_ms: 1.0,
+            p99_ms: 1.0,
+            min_ms: 1.0,
+            max_ms: 1.0,
+            mean_ms: 1.0,
+            std_dev_ms: 0.0,
             compute_units: "CPU_ONLY".to_string(),
             scope_note: "test".to_string(),
         };
@@ -627,8 +646,10 @@ mod tests {
         };
         let run = make_builder().fallback_suspicion(fs).build();
         assert!(run.fallback_suspicion.is_some());
-        assert_eq!(run.fallback_suspicion.as_ref().unwrap().suspicion_level,
-            FallbackSuspicionLevel::LowConfidenceSuspicion);
+        assert_eq!(
+            run.fallback_suspicion.as_ref().unwrap().suspicion_level,
+            FallbackSuspicionLevel::LowConfidenceSuspicion
+        );
     }
 
     #[test]
@@ -736,10 +757,12 @@ mod tests {
     #[test]
     fn test_compile_step_result_serialization() {
         let r = CompileStepResult {
-            success: true, error: Some("err".to_string()),
+            success: true,
+            error: Some("err".to_string()),
             output_path: Some("/tmp/out".to_string()),
             content_hash: Some("sha256:ab".to_string()),
-            file_count: Some(3), coremltools_version: Some("8.0".to_string()),
+            file_count: Some(3),
+            coremltools_version: Some("8.0".to_string()),
         };
         let json = serde_json::to_string(&r).unwrap();
         let back: CompileStepResult = serde_json::from_str(&json).unwrap();
@@ -751,15 +774,24 @@ mod tests {
     #[test]
     fn test_inspection_step_result_serialization() {
         let r = InspectionStepResult {
-            package_present: true, manifest_readable: true, model_loadable: false,
-            model_load_failure_reason: None, function_count: Some(2),
-            input_specs: vec![], output_specs: vec![], warnings: vec!["w".to_string()],
+            package_present: true,
+            manifest_readable: true,
+            model_loadable: false,
+            model_load_failure_reason: None,
+            function_count: Some(2),
+            input_specs: vec![],
+            output_specs: vec![],
+            warnings: vec!["w".to_string()],
             structure_inspection_available: Some(true),
             structure_inspection_failure_reason: None,
             structure_op_names: vec!["linear".to_string()],
-            structure_op_count: Some(1), structure_function_count: Some(1),
-            structure_state_declarations: vec![], op_fidelity_score: Some(0.95),
-            missing_ops: vec![], extra_ops: vec![], inspection_method: "mlmodel_structure".to_string(),
+            structure_op_count: Some(1),
+            structure_function_count: Some(1),
+            structure_state_declarations: vec![],
+            op_fidelity_score: Some(0.95),
+            missing_ops: vec![],
+            extra_ops: vec![],
+            inspection_method: "mlmodel_structure".to_string(),
         };
         let json = serde_json::to_string(&r).unwrap();
         let back: InspectionStepResult = serde_json::from_str(&json).unwrap();
@@ -770,9 +802,15 @@ mod tests {
     #[test]
     fn test_timing_result_serialization() {
         let r = TimingResult {
-            warmup_iterations: 5, measured_iterations: 20,
-            p50_ms: 1.0, p90_ms: 1.5, p99_ms: 2.0,
-            min_ms: 0.8, max_ms: 2.5, mean_ms: 1.1, std_dev_ms: 0.3,
+            warmup_iterations: 5,
+            measured_iterations: 20,
+            p50_ms: 1.0,
+            p90_ms: 1.5,
+            p99_ms: 2.0,
+            min_ms: 0.8,
+            max_ms: 2.5,
+            mean_ms: 1.1,
+            std_dev_ms: 0.3,
             compute_units: "CPU_AND_NE".to_string(),
             scope_note: "test timing".to_string(),
         };

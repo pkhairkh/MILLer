@@ -379,15 +379,28 @@ mod unified_check {
         // default_engine() but are in CPU_ONLY_OPS because they lack
         // MirOpCompat emission code. They will be moved to None as part
         // of T-66 (Add Remaining MirOpCompat Variants).
-        "max_pool", "avg_pool", "l2_pool",
-        "resize", "resize_nearest_neighbor", "resize_bilinear",
-        "upsample_nearest_neighbor", "upsample_bilinear",
-        "crop_resize", "affine", "resample",
-        "depth_to_space", "space_to_depth",
-        "pixel_shuffle", "pixel_unshuffle",
-        "batch_to_space", "space_to_batch",
-        "batch_norm", "instance_norm", "l2_norm",
-        "quantize", "dequantize",
+        "max_pool",
+        "avg_pool",
+        "l2_pool",
+        "resize",
+        "resize_nearest_neighbor",
+        "resize_bilinear",
+        "upsample_nearest_neighbor",
+        "upsample_bilinear",
+        "crop_resize",
+        "affine",
+        "resample",
+        "depth_to_space",
+        "space_to_depth",
+        "pixel_shuffle",
+        "pixel_unshuffle",
+        "batch_to_space",
+        "space_to_batch",
+        "batch_norm",
+        "instance_norm",
+        "l2_norm",
+        "quantize",
+        "dequantize",
     ];
 
     #[test]
@@ -485,35 +498,79 @@ mod tests {
         // - MILClassify (model-level op)
         let cpu_only_mir_names: &[&str] = &[
             // Scatter
-            "scatter", "scatter_along_axis", "scatter_nd",
+            "scatter",
+            "scatter_along_axis",
+            "scatter_nd",
             // Misc CPU-only
             "non_maximum_suppression",
             // RNN/LSTM/GRU
-            "rnn", "gru", "lstm",
+            "rnn",
+            "gru",
+            "lstm",
             // Control flow
-            "cond", "while_loop",
+            "cond",
+            "while_loop",
             // List ops
-            "make_list", "list_length", "list_write", "list_read",
-            "list_gather", "list_scatter",
+            "make_list",
+            "list_length",
+            "list_write",
+            "list_read",
+            "list_gather",
+            "list_scatter",
             // Random
-            "random_bernoulli", "random_normal", "random_uniform", "random_categorical",
+            "random_bernoulli",
+            "random_normal",
+            "random_uniform",
+            "random_categorical",
             // Cumsum
             "cumsum",
             // Conditional / tensor creation (no ANE converter)
-            "select", "where", "fill", "fill_like",
-            "one_hot", "non_zero", "range1d", "shape",
+            "select",
+            "where",
+            "fill",
+            "fill_like",
+            "one_hot",
+            "non_zero",
+            "range1d",
+            "shape",
             // Gather (ANE plannability ~0.26)
-            "gather", "gather_along_axis", "gather_nd",
+            "gather",
+            "gather_along_axis",
+            "gather_nd",
             // T-22: CPU-only ops moved from PE/NE pipeline
-            "acos", "asin", "atan", "atanh", "tan", "cosh", "sinh",
-            "logical_and", "logical_or", "logical_xor", "logical_not",
-            "relu6", "sigmoid_hard", "thresholded_relu", "clamped_relu",
-            "linear_activation", "prelu", "softsign", "scaled_tanh",
-            "softplus", "softplus_parametric",
-            "threshold", "inverse", "modulo", "clamp",
-            "band_part", "reverse_sequence", "einsum",
+            "acos",
+            "asin",
+            "atan",
+            "atanh",
+            "tan",
+            "cosh",
+            "sinh",
+            "logical_and",
+            "logical_or",
+            "logical_xor",
+            "logical_not",
+            "relu6",
+            "sigmoid_hard",
+            "thresholded_relu",
+            "clamped_relu",
+            "linear_activation",
+            "prelu",
+            "softsign",
+            "scaled_tanh",
+            "softplus",
+            "softplus_parametric",
+            "threshold",
+            "inverse",
+            "modulo",
+            "clamp",
+            "band_part",
+            "reverse_sequence",
+            "einsum",
             // T-47: PE engine but no ANEC converter
-            "slice_update", "sliding_windows", "reverse", "argsort",
+            "slice_update",
+            "sliding_windows",
+            "reverse",
+            "argsort",
             // T-67: MILNeg has no ANEC converter
             "neg",
         ];
@@ -532,16 +589,31 @@ mod tests {
     #[test]
     fn test_t67_fixed_names_in_cpu_only() {
         assert!(is_cpu_only("neg"), "\"neg\" should be CPU-only (MILNeg has no ANEC converter)");
-        assert!(is_cpu_only("round"), "\"round\" should be CPU-only (MILRound has no ANEC converter)");
+        assert!(
+            is_cpu_only("round"),
+            "\"round\" should be CPU-only (MILRound has no ANEC converter)"
+        );
     }
 
     /// T-67: Verify removed names are NOT in CPU_ONLY_OPS.
     #[test]
     fn test_t67_removed_names_not_in_cpu_only() {
-        assert!(!is_cpu_only("negative"), "\"negative\" should not be in CPU_ONLY_OPS — use \"neg\" instead");
-        assert!(!is_cpu_only("reverse_square_root"), "\"reverse_square_root\" should not be CPU-only — rsqrt IS ANE-legal");
-        assert!(!is_cpu_only("rint"), "\"rint\" should not be in CPU_ONLY_OPS — use \"round\" instead");
-        assert!(!is_cpu_only("reciprocal"), "\"reciprocal\" is dead code — no MirOp produces this name");
+        assert!(
+            !is_cpu_only("negative"),
+            "\"negative\" should not be in CPU_ONLY_OPS — use \"neg\" instead"
+        );
+        assert!(
+            !is_cpu_only("reverse_square_root"),
+            "\"reverse_square_root\" should not be CPU-only — rsqrt IS ANE-legal"
+        );
+        assert!(
+            !is_cpu_only("rint"),
+            "\"rint\" should not be in CPU_ONLY_OPS — use \"round\" instead"
+        );
+        assert!(
+            !is_cpu_only("reciprocal"),
+            "\"reciprocal\" is dead code — no MirOp produces this name"
+        );
         assert!(!is_cpu_only("signbit"), "\"signbit\" is dead code — no MirOp produces this name");
     }
 }

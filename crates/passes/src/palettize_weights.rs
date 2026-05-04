@@ -436,7 +436,11 @@ mod tests {
         for node in &graph.nodes {
             if let SirOp::LinearProjection { palette_bits, .. } = &node.op {
                 if node.name.contains(".self_attn.q_proj.weight") {
-                    assert_eq!(*palette_bits, Some(6), "Q proj should get 6 bits with conservative_qk");
+                    assert_eq!(
+                        *palette_bits,
+                        Some(6),
+                        "Q proj should get 6 bits with conservative_qk"
+                    );
                 }
             }
         }
@@ -499,8 +503,7 @@ mod tests {
         config.attention_bits = 6;
         config.mlp_bits = 4;
 
-        let result =
-            run_palettize_weights_pass_with_arch(&mut graph, &config, Some(&gpt2_arch));
+        let result = run_palettize_weights_pass_with_arch(&mut graph, &config, Some(&gpt2_arch));
 
         assert!(result.grouped_lut_applied >= 2);
 

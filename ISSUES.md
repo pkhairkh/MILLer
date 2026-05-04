@@ -1,6 +1,6 @@
 # MILLer Compiler — Issue Tracker
 
-*Last updated: 2026-05-04 (v3 audit — I-41 through I-60 added from deep source re-audit; T-61, T-66 resolved)*
+*Last updated: 2026-05-04 (v3 audit + sprint — I-61 through I-65 added; T-86 through T-90 resolved)*
 *Reference implementation: https://huggingface.co/pkhairkh/qwen3-coreml-palettized*
 *Audit source: `docs/audit/tabula-rasa-v3.md` (v3, generated 2026-05-04)*
 
@@ -459,6 +459,81 @@ Gate behind feature flag or remove entirely.
 
 ---
 
+### I-61 · Zero Tests for lab::host_inspect, lab::device_meta, lab::run_dir
+
+**Status:** ✅ Fixed (T-86)
+**Files:** `crates/lab/src/host_inspect.rs`, `crates/lab/src/device_meta.rs`, `crates/lab/src/run_dir.rs`
+**AUDIT ref:** §V
+**Severity:** HIGH
+**Effort:** M (1.5 days)
+**Task:** T-86
+
+Three lab modules with 0% test coverage and 19 pub fn total. `host_inspect.rs` has 2 pub fn for host-side mlpackage inspection. `device_meta.rs` has 4 pub fn for device metadata collection and chip mapping. `run_dir.rs` has 13 pub fn for lab run directory management.
+
+**Fix:** Added 33 tests: device_meta.rs (9 tests), run_dir.rs (17 tests), host_inspect.rs (7 tests). Covers host_only/device_backed factory methods, all 11 chip→device class mappings, is_device_backed, JSON serialization roundtrips, layout constants, LabRunWriter construction/directory creation/write methods, directory validation, generate_run_id format, and host inspector logic.
+
+---
+
+### I-62 · Zero Tests for report::json_report, trace::graph, passes::state_topology, passes::knowledge_query
+
+**Status:** ✅ Fixed (T-87)
+**Files:** `crates/report/src/json_report.rs`, `crates/trace/src/graph.rs`, `crates/passes/src/state_topology.rs`, `crates/passes/src/knowledge_query.rs`
+**AUDIT ref:** §V
+**Severity:** HIGH
+**Effort:** M (1 day)
+**Task:** T-87
+
+Four modules with 0% test coverage and 11 pub fn total. `json_report.rs` has 5 pub fn for JSON report generation. `graph.rs` has 3 pub fn for traced graph representation. `state_topology.rs` has 2 pub fn for state topology validation. `knowledge_query.rs` has 1 pub trait + NoKnowledge struct.
+
+**Fix:** Added 39 tests: json_report.rs (9 tests), graph.rs (15 tests), state_topology.rs (5 tests), knowledge_query.rs (10 tests). Covers report generation, TracedOp serialization, TensorShape methods, StateTopologyPass behavior, and NoKnowledge query methods.
+
+---
+
+### I-63 · Code Quality: CQ-9 (max_seq_len default), CQ-15 (fmt drift), CQ-21 (unwrap on write!)
+
+**Status:** ✅ Fixed (T-88)
+**Files:** `crates/bridge/src/mir_to_compat.rs`, `crates/lab/src/session.rs`, `crates/passes/src/state_topology.rs`, 16 files with fmt drift
+**AUDIT ref:** §III (CQ-9, CQ-15, CQ-21)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-88
+
+Multiple code quality issues: (1) CQ-9: `max_seq_len.unwrap_or(32768)` silently defaults to Qwen3-0.6B max_seq_len without any warning, same pattern as already-fixed deprecation in shape_inference.rs. (2) CQ-15: cargo fmt drift across 16 files with ~90 formatting differences. (3) CQ-21: `.unwrap()` on `write!` calls in `compute_task_hash()` — while technically infallible for String targets, the idiom should use `.expect()` for clarity. (4) `eprintln!` in `state_topology.rs` should use `log::warn!` per T-84 pattern.
+
+**Fix:** (1) Added `log::warn!()` deprecation notice when max_seq_len defaults to 32768. (2) Ran `cargo fmt --all`. (3) Replaced `.unwrap()` with `.expect("write to String cannot fail")` with safety comment. (4) Replaced `eprintln!` with `log::warn!`/`log::info!` in state_topology.rs.
+
+---
+
+### I-64 · Precision Hazard Pattern Coverage Only 14/167+ Ops (CQ-11)
+
+**Status:** ✅ Fixed (T-89)
+**Files:** `crates/passes/src/precision_policy.rs`
+**AUDIT ref:** §III (CQ-11)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-89
+
+`op_pattern_for_node()` only maps 14 SIR op variants to specific pattern strings. The remaining 153+ variants fall through to "Other" and never query precision hazards. Ops with real precision risk potential (MatMul, Einsum, Conv, LayerNorm, BatchNorm, ReduceMean, Gather, Quantize, etc.) silently get fp16 regardless of known hazards.
+
+**Fix:** Expanded `op_pattern_for_node()` from 14 to 47 specific pattern strings covering: composite ops (DecodeStep, Sampler), normalization (LayerNorm, BatchNorm, InstanceNorm, L2Norm, LocalResponseNorm), linear/FC (MatMul, Einsum), convolution (Conv, ConvTranspose), elementwise binary/unary, reduction, pooling, tensor transform, scatter/gather, attention (ScaledDotProductAttention), quantization, and constants. Added comprehensive test verifying 12 key pattern mappings.
+
+---
+
+### I-65 · Attention Reshape Placeholder Zero Without Warning (B-12)
+
+**Status:** ✅ Fixed (T-90)
+**Files:** `crates/passes/src/legality_rewrite.rs:1157-1168`
+**AUDIT ref:** §IV (B-12)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-90
+
+When `DecompositionContext` is None, `decompose_attention_block()` produces reshape shapes with zero placeholders (`vec![0, 0, 0, 0]`). Core ML treats 0 as a literal zero dimension, not a placeholder. These zeros silently survive to emission unless resolved by downstream `resolve_reshape_zeros()` heuristics, which can produce incorrect shapes for multi-zero cases. No warning is emitted when this happens.
+
+**Fix:** Added `log::warn!()` when `DecompositionContext` is None in `decompose_attention_block()`, directing users to provide ctx for correct shape resolution. This makes the placeholder-zero problem visible in logs rather than silently producing invalid shapes.
+
+---
+
 ## Resolved Issues (v1 + v2 Audits, All Fixed)
 
 ### v2 Audit (I-21 through I-40)
@@ -511,8 +586,8 @@ Gate behind feature flag or remove entirely.
 | Priority | Total | Open | Fixed | Retracted |
 |----------|-------|------|-------|-----------|
 | P0 | 4 | 0 | 4 | 0 |
-| P1 | 17 | 0 | 15 | 2 |
-| P2 | 15 | 0 | 14 | 0 |
+| P1 | 19 | 0 | 17 | 2 |
+| P2 | 20 | 0 | 19 | 0 |
 | P3 | 5 | 0 | 4 | 0 |
 | Resolved (v1+v2) | 33 | 0 | 31 | 2 |
-| **Total** | **74** | **0** | **68** | **4** |
+| **Total** | **81** | **0** | **75** | **4** |

@@ -1054,8 +1054,7 @@ mod tests {
     #[test]
     fn test_family_payload_dtype_override() {
         let spec = linear_spec();
-        let payload =
-            FamilyPayload::from_spec_with_override(&spec, "/out", Some("fp32")).unwrap();
+        let payload = FamilyPayload::from_spec_with_override(&spec, "/out", Some("fp32")).unwrap();
         assert_eq!(payload.params["dtype"], "fp32");
     }
 

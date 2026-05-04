@@ -224,7 +224,16 @@ fn test_mir_op_to_compat_exhaustive_coverage() {
         count_include_padding: true,
     };
     let compat = MirOpCompat::from(op);
-    if let MirOpCompat::AvgPool { name, x, kernel_sizes, strides, pad_type, pad_amounts, count_include_padding } = compat {
+    if let MirOpCompat::AvgPool {
+        name,
+        x,
+        kernel_sizes,
+        strides,
+        pad_type,
+        pad_amounts,
+        count_include_padding,
+    } = compat
+    {
         assert_eq!(name, "ap");
         assert_eq!(x, "a");
         assert_eq!(kernel_sizes, vec![2, 2]);
@@ -433,24 +442,33 @@ fn test_mir_op_field_values_preserved() {
 fn test_t66_input_names() {
     // Pooling ops: single input x
     let mp = MirOpCompat::MaxPool {
-        name: "mp".into(), x: "a".into(),
-        kernel_sizes: vec![3, 3], strides: vec![1, 1],
-        pad_type: "valid".into(), pad_amounts: vec![0, 0, 0, 0],
+        name: "mp".into(),
+        x: "a".into(),
+        kernel_sizes: vec![3, 3],
+        strides: vec![1, 1],
+        pad_type: "valid".into(),
+        pad_amounts: vec![0, 0, 0, 0],
     };
     assert_eq!(mp.input_names(), vec!["a"]);
 
     let ap = MirOpCompat::AvgPool {
-        name: "ap".into(), x: "b".into(),
-        kernel_sizes: vec![2, 2], strides: vec![2, 2],
-        pad_type: "same".into(), pad_amounts: vec![1, 1, 1, 1],
+        name: "ap".into(),
+        x: "b".into(),
+        kernel_sizes: vec![2, 2],
+        strides: vec![2, 2],
+        pad_type: "same".into(),
+        pad_amounts: vec![1, 1, 1, 1],
         count_include_padding: true,
     };
     assert_eq!(ap.input_names(), vec!["b"]);
 
     let lp = MirOpCompat::L2Pool {
-        name: "lp".into(), x: "c".into(),
-        kernel_sizes: vec![3, 3], strides: vec![2, 2],
-        pad_type: "valid".into(), pad_amounts: vec![0, 0, 0, 0],
+        name: "lp".into(),
+        x: "c".into(),
+        kernel_sizes: vec![3, 3],
+        strides: vec![2, 2],
+        pad_type: "valid".into(),
+        pad_amounts: vec![0, 0, 0, 0],
     };
     assert_eq!(lp.input_names(), vec!["c"]);
 
@@ -468,50 +486,67 @@ fn test_t66_input_names() {
     assert_eq!(pu.input_names(), vec!["g"]);
 
     // Normalization ops
-    let l2n = MirOpCompat::L2Norm { name: "l2".into(), x: "h".into(), epsilon: 1e-6, axes: vec![1, 2] };
+    let l2n =
+        MirOpCompat::L2Norm { name: "l2".into(), x: "h".into(), epsilon: 1e-6, axes: vec![1, 2] };
     assert_eq!(l2n.input_names(), vec!["h"]);
 
     let bn = MirOpCompat::BatchNorm {
-        name: "bn".into(), x: "i".into(),
-        mean: "m".into(), variance: "v".into(),
-        gamma: Some("g".into()), beta: Some("b".into()),
+        name: "bn".into(),
+        x: "i".into(),
+        mean: "m".into(),
+        variance: "v".into(),
+        gamma: Some("g".into()),
+        beta: Some("b".into()),
         epsilon: 1e-5,
     };
     assert_eq!(bn.input_names(), vec!["i", "m", "v", "g", "b"]);
 
     let bn_no_params = MirOpCompat::BatchNorm {
-        name: "bn2".into(), x: "i".into(),
-        mean: "m".into(), variance: "v".into(),
-        gamma: None, beta: None,
+        name: "bn2".into(),
+        x: "i".into(),
+        mean: "m".into(),
+        variance: "v".into(),
+        gamma: None,
+        beta: None,
         epsilon: 1e-5,
     };
     assert_eq!(bn_no_params.input_names(), vec!["i", "m", "v"]);
 
     let inorm = MirOpCompat::InstanceNorm {
-        name: "in".into(), x: "j".into(),
-        gamma: Some("g".into()), beta: None,
+        name: "in".into(),
+        x: "j".into(),
+        gamma: Some("g".into()),
+        beta: None,
         epsilon: 1e-4,
     };
     assert_eq!(inorm.input_names(), vec!["j", "g"]);
 
     let inorm_no_params = MirOpCompat::InstanceNorm {
-        name: "in2".into(), x: "j".into(),
-        gamma: None, beta: None,
+        name: "in2".into(),
+        x: "j".into(),
+        gamma: None,
+        beta: None,
         epsilon: 1e-4,
     };
     assert_eq!(inorm_no_params.input_names(), vec!["j"]);
 
     // Quantize / Dequantize ops: single input x
     let q = MirOpCompat::Quantize {
-        name: "q".into(), x: "k".into(),
-        scale: 0.1, zero_point: 128, axis: 0,
+        name: "q".into(),
+        x: "k".into(),
+        scale: 0.1,
+        zero_point: 128,
+        axis: 0,
         output_dtype: MilDtypeCompat::UInt8,
     };
     assert_eq!(q.input_names(), vec!["k"]);
 
     let dq = MirOpCompat::Dequantize {
-        name: "dq".into(), x: "l".into(),
-        scale: 0.05, zero_point: 0, axis: 1,
+        name: "dq".into(),
+        x: "l".into(),
+        scale: 0.05,
+        zero_point: 0,
+        axis: 1,
         output_dtype: MilDtypeCompat::Fp16,
     };
     assert_eq!(dq.input_names(), vec!["l"]);
@@ -521,9 +556,12 @@ fn test_t66_input_names() {
 #[test]
 fn test_t66_output_name() {
     let mp = MirOpCompat::MaxPool {
-        name: "mp_out".into(), x: "a".into(),
-        kernel_sizes: vec![3, 3], strides: vec![1, 1],
-        pad_type: "valid".into(), pad_amounts: vec![0, 0, 0, 0],
+        name: "mp_out".into(),
+        x: "a".into(),
+        kernel_sizes: vec![3, 3],
+        strides: vec![1, 1],
+        pad_type: "valid".into(),
+        pad_amounts: vec![0, 0, 0, 0],
     };
     assert_eq!(mp.output_name(), "mp_out");
 
@@ -531,15 +569,22 @@ fn test_t66_output_name() {
     assert_eq!(d2s.output_name(), "d2s_out");
 
     let bn = MirOpCompat::BatchNorm {
-        name: "bn_out".into(), x: "i".into(),
-        mean: "m".into(), variance: "v".into(),
-        gamma: None, beta: None, epsilon: 1e-5,
+        name: "bn_out".into(),
+        x: "i".into(),
+        mean: "m".into(),
+        variance: "v".into(),
+        gamma: None,
+        beta: None,
+        epsilon: 1e-5,
     };
     assert_eq!(bn.output_name(), "bn_out");
 
     let q = MirOpCompat::Quantize {
-        name: "q_out".into(), x: "k".into(),
-        scale: 0.1, zero_point: 128, axis: 0,
+        name: "q_out".into(),
+        x: "k".into(),
+        scale: 0.1,
+        zero_point: 128,
+        axis: 0,
         output_dtype: MilDtypeCompat::UInt8,
     };
     assert_eq!(q.output_name(), "q_out");
@@ -552,9 +597,12 @@ fn test_t66_remap_inputs() {
 
     // Pooling: remaps x
     let mp = MirOpCompat::MaxPool {
-        name: "mp".into(), x: "a".into(),
-        kernel_sizes: vec![3, 3], strides: vec![1, 1],
-        pad_type: "valid".into(), pad_amounts: vec![0, 0, 0, 0],
+        name: "mp".into(),
+        x: "a".into(),
+        kernel_sizes: vec![3, 3],
+        strides: vec![1, 1],
+        pad_type: "valid".into(),
+        pad_amounts: vec![0, 0, 0, 0],
     };
     let remapped = mp.remap_inputs(remap);
     if let MirOpCompat::MaxPool { x, .. } = remapped {
@@ -574,9 +622,12 @@ fn test_t66_remap_inputs() {
 
     // BatchNorm: remaps x, mean, variance, gamma, beta
     let bn = MirOpCompat::BatchNorm {
-        name: "bn".into(), x: "i".into(),
-        mean: "m".into(), variance: "v".into(),
-        gamma: Some("g".into()), beta: Some("b".into()),
+        name: "bn".into(),
+        x: "i".into(),
+        mean: "m".into(),
+        variance: "v".into(),
+        gamma: Some("g".into()),
+        beta: Some("b".into()),
         epsilon: 1e-5,
     };
     let remapped = bn.remap_inputs(remap);
@@ -592,8 +643,10 @@ fn test_t66_remap_inputs() {
 
     // InstanceNorm with None gamma/beta
     let inorm = MirOpCompat::InstanceNorm {
-        name: "in".into(), x: "j".into(),
-        gamma: None, beta: None,
+        name: "in".into(),
+        x: "j".into(),
+        gamma: None,
+        beta: None,
         epsilon: 1e-4,
     };
     let remapped = inorm.remap_inputs(remap);
@@ -606,7 +659,8 @@ fn test_t66_remap_inputs() {
     }
 
     // L2Norm: remaps x
-    let l2n = MirOpCompat::L2Norm { name: "l2".into(), x: "h".into(), epsilon: 1e-6, axes: vec![1, 2] };
+    let l2n =
+        MirOpCompat::L2Norm { name: "l2".into(), x: "h".into(), epsilon: 1e-6, axes: vec![1, 2] };
     let remapped = l2n.remap_inputs(remap);
     if let MirOpCompat::L2Norm { x, .. } = remapped {
         assert_eq!(x, "remapped_h");
@@ -616,8 +670,11 @@ fn test_t66_remap_inputs() {
 
     // Quantize: remaps x
     let q = MirOpCompat::Quantize {
-        name: "q".into(), x: "k".into(),
-        scale: 0.1, zero_point: 128, axis: 0,
+        name: "q".into(),
+        x: "k".into(),
+        scale: 0.1,
+        zero_point: 128,
+        axis: 0,
         output_dtype: MilDtypeCompat::UInt8,
     };
     let remapped = q.remap_inputs(remap);
@@ -629,8 +686,11 @@ fn test_t66_remap_inputs() {
 
     // Dequantize: remaps x
     let dq = MirOpCompat::Dequantize {
-        name: "dq".into(), x: "l".into(),
-        scale: 0.05, zero_point: 0, axis: 1,
+        name: "dq".into(),
+        x: "l".into(),
+        scale: 0.05,
+        zero_point: 0,
+        axis: 1,
         output_dtype: MilDtypeCompat::Fp16,
     };
     let remapped = dq.remap_inputs(remap);

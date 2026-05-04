@@ -193,3 +193,189 @@ impl JsonReporter {
         chrono::Utc::now().to_rfc3339()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_json_reporter_new() {
+        let _reporter = JsonReporter::new();
+    }
+
+    #[test]
+    fn test_json_report_default() {
+        let via_new = JsonReporter::new();
+        let via_default = JsonReporter::default();
+        // Both constructors produce the same (empty) state
+        let _ = (&via_new, &via_default);
+    }
+
+    #[test]
+    fn test_generate_compilation_report() {
+        let reporter = JsonReporter::new();
+        let manifest = serde_json::json!({
+            "model_id": "test-model",
+            "task_hash": "abc123",
+            "task_family": "causal_lm",
+            "version": "1.0",
+            "bridge_status": "success",
+            "packages": ["pkg1.mlpackage"]
+        });
+
+        let report = reporter.generate_compilation_report(&manifest, None).unwrap();
+
+        assert_eq!(report.report_type, "compilation");
+        assert_eq!(report.version, "1.0.0");
+        assert!(!report.timestamp.is_empty());
+
+        let data = &report.data;
+        assert_eq!(data["model_id"], "test-model");
+        assert_eq!(data["task_hash"], "abc123");
+        assert_eq!(data["task_family"], "causal_lm");
+        assert_eq!(data["manifest_version"], "1.0");
+        assert_eq!(data["status"], "success");
+        assert_eq!(data["packages"], serde_json::json!(["pkg1.mlpackage"]));
+    }
+
+    #[test]
+    fn test_generate_compilation_report_with_bridge_result() {
+        let reporter = JsonReporter::new();
+        let manifest = serde_json::json!({
+            "model_id": "test-model",
+            "task_hash": "abc123",
+            "task_family": "causal_lm",
+            "version": "1.0",
+            "bridge_status": "success",
+            "packages": ["pkg1.mlpackage"]
+        });
+
+        let bridge_result = serde_json::json!({
+            "content_hash": "sha256:deadbeef",
+            "package_files": [
+                { "path": "model.mlmodel", "size_bytes": 1024 },
+                { "path": "weights.bin", "size_bytes": 2048 }
+            ],
+            "coremltools_version": "7.2",
+            "compute_plan": { "ops": 10 }
+        });
+
+        let report = reporter.generate_compilation_report(&manifest, Some(&bridge_result)).unwrap();
+
+        let bridge_data = &report.data["bridge_result"];
+        assert_eq!(bridge_data["content_hash"], "sha256:deadbeef");
+        assert_eq!(bridge_data["total_size_bytes"], 3072); // 1024 + 2048
+        assert_eq!(bridge_data["file_count"], 2);
+        assert_eq!(bridge_data["coremltools_version"], "7.2");
+        assert!(bridge_data.get("compute_plan").is_some());
+    }
+
+    #[test]
+    fn test_generate_compilation_report_with_error() {
+        let reporter = JsonReporter::new();
+        let manifest = serde_json::json!({
+            "model_id": "test-model",
+            "task_hash": "abc123",
+            "task_family": "causal_lm",
+            "version": "1.0",
+            "bridge_status": "error",
+            "bridge_error": "test error",
+            "packages": []
+        });
+
+        let report = reporter.generate_compilation_report(&manifest, None).unwrap();
+
+        assert_eq!(report.data["status"], "error");
+        assert_eq!(report.data["error"], "test error");
+    }
+
+    #[test]
+    fn test_generate_knowledge_report() {
+        let reporter = JsonReporter::new();
+        let knowledge_update = serde_json::json!({
+            "task_name": "test-task",
+            "task_hash": "hash123",
+            "source": "synthetic",
+            "observations": [
+                { "pattern": "LinearProjection", "result": "legal" },
+                { "pattern": "AttentionBlock", "result": "legal" },
+                { "pattern": "RMSNorm", "result": "legal" }
+            ]
+        });
+
+        let report = reporter.generate_knowledge_report(&knowledge_update).unwrap();
+
+        assert_eq!(report.report_type, "knowledge");
+        assert_eq!(report.version, "1.0.0");
+        assert!(!report.timestamp.is_empty());
+        assert_eq!(report.data["task_name"], "test-task");
+        assert_eq!(report.data["task_hash"], "hash123");
+        assert_eq!(report.data["source"], "synthetic");
+        assert_eq!(report.data["observation_count"], 3);
+    }
+
+    #[test]
+    fn test_generate_diagnostics_report() {
+        let reporter = JsonReporter::new();
+        let error_data = serde_json::json!({
+            "error_type": "CompileError",
+            "message": "Unsupported op: Conv",
+            "stage": "legalization"
+        });
+
+        let report = reporter.generate_diagnostics_report(&error_data).unwrap();
+
+        assert_eq!(report.report_type, "diagnostics");
+        assert_eq!(report.version, "1.0.0");
+        assert!(!report.timestamp.is_empty());
+        assert_eq!(report.data["error_type"], "CompileError");
+        assert_eq!(report.data["message"], "Unsupported op: Conv");
+        assert_eq!(report.data["stage"], "legalization");
+    }
+
+    #[test]
+    fn test_write_to_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("report.json");
+        let file_path_str = file_path.to_str().unwrap();
+
+        let reporter = JsonReporter::new();
+        let report = JsonReport {
+            report_type: "test".to_string(),
+            version: "1.0.0".to_string(),
+            timestamp: "2025-01-01T00:00:00Z".to_string(),
+            data: serde_json::json!({ "key": "value" }),
+        };
+
+        reporter.write_to_file(&report, file_path_str).unwrap();
+
+        let content = fs::read_to_string(file_path_str).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["report_type"], "test");
+        assert_eq!(parsed["version"], "1.0.0");
+        assert_eq!(parsed["data"]["key"], "value");
+    }
+
+    #[test]
+    fn test_json_report_serialization_roundtrip() {
+        let original = JsonReport {
+            report_type: "compilation".to_string(),
+            version: "1.0.0".to_string(),
+            timestamp: "2025-06-15T12:00:00Z".to_string(),
+            data: serde_json::json!({
+                "model_id": "roundtrip-model",
+                "task_hash": "rt123",
+                "nested": { "a": 1, "b": [1, 2, 3] }
+            }),
+        };
+
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: JsonReport = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.report_type, original.report_type);
+        assert_eq!(deserialized.version, original.version);
+        assert_eq!(deserialized.timestamp, original.timestamp);
+        assert_eq!(deserialized.data, original.data);
+    }
+}

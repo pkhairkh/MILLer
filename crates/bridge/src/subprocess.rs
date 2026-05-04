@@ -91,7 +91,11 @@ impl PythonBridge {
                 Some(_status) => {
                     // Process exited — collect output
                     let output = child.wait_with_output()?;
-                    break OutputWithStatus { status: output.status, stdout: output.stdout, stderr: output.stderr };
+                    break OutputWithStatus {
+                        status: output.status,
+                        stdout: output.stdout,
+                        stderr: output.stderr,
+                    };
                 }
                 None if Instant::now() >= deadline => {
                     // Timeout — kill the subprocess

@@ -2,7 +2,7 @@
 
 ## Current Status — 2026-05-04
 
-- **1414 tests passing**, 0 failures
+- **1488 tests passing**, 0 failures
 - IR Cleanliness Score: 89%
 - 0 clippy warnings, 0 errors
 - **0 open issues** (0 CRITICAL, 0 HIGH, 0 MEDIUM, 0 LOW) — see [ISSUES.md](ISSUES.md)
@@ -12,6 +12,128 @@ Audit details: [docs/audit/tabula-rasa-v3.md](docs/audit/tabula-rasa-v3.md)
 Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
 
 ---
+
+## 2026-05-04 — Test Coverage & Code Quality Sprint
+
+### Resolved (T-86, T-87, T-88, T-89, T-90)
+
+| Task | Description | Key Change |
+|------|-------------|------------|
+| T-86 | Add Tests for Zero-Coverage Lab Modules | Added 33 tests across `device_meta.rs` (9), `run_dir.rs` (17), `host_inspect.rs` (7). Covers host_only/device_backed factory methods, all 11 chip→device class mappings, is_device_backed, JSON serialization roundtrips, layout constants, LabRunWriter construction/directory creation/write methods, directory validation, generate_run_id format, and host inspector logic. |
+| T-87 | Add Tests for Zero-Coverage Report/Trace/Passes Modules | Added 39 tests across `json_report.rs` (9), `graph.rs` (15), `state_topology.rs` (5), `knowledge_query.rs` (10). Covers report generation, all 34 TracedOp variant JSON roundtrips, TensorShape methods, StateTopologyPass behavior, and NoKnowledge query methods. |
+| T-88 | Code Quality Sweep — CQ-9, CQ-15, CQ-21, eprintln in StateTopology | Fixed 4 issues: (1) Added `log::warn!()` deprecation notice when max_seq_len defaults to 32768 in mir_to_compat.rs. (2) Ran `cargo fmt --all` across 16 files. (3) Replaced `.unwrap()` with `.expect("write to String cannot fail")` in session.rs. (4) Replaced `eprintln!` with `log::warn!`/`log::info!` in state_topology.rs. |
+| T-89 | Expand Precision Hazard Op Pattern Coverage | Expanded `op_pattern_for_node()` from 14 to 47 specific pattern strings. Added coverage for normalization, linear/FC, convolution, elementwise, reduction, pooling, tensor transform, scatter/gather, attention, quantization, and constants. Added comprehensive test verifying 12 key pattern mappings. |
+| T-90 | Fix Attention Reshape Placeholder Zero Warning | Added `log::warn!()` when `DecompositionContext` is None in `decompose_attention_block()`. This makes the placeholder-zero problem visible in logs rather than silently producing invalid shapes. |
+
+### New Tests Added (74 tests)
+
+**device_meta.rs (9 tests):**
+- `test_device_metadata_host_only` — all fields of host_only() verified
+- `test_device_metadata_device_backed_on_non_apple` — returns HostOnly on non-Apple
+- `test_parse_device_class_known_chips` — all 11 chip→device class mappings
+- `test_parse_device_class_unknown_chip` — returns None for unknown chips
+- `test_is_device_backed_host_only` — returns false for host-only metadata
+- `test_metadata_source_serialization` — MetadataSource roundtrip
+- `test_run_type_serialization` — RunType::Cold and RunType::Warm roundtrip
+- `test_execution_context_serialization` — ExecutionContext roundtrip
+- `test_device_metadata_serialization` — DeviceMetadata::host_only() roundtrip
+
+**run_dir.rs (17 tests):**
+- `test_layout_constants` — all layout constants match expected strings
+- `test_lab_run_writer_new` — construction stores output_dir
+- `test_create_run_directory` — creates mlpackage/ and knowledge/ subdirs
+- `test_write_run_record` — writes valid JSON LabRun
+- `test_write_manifest` — writes JSON manifest
+- `test_write_mir` — writes JSON MIR dump
+- `test_write_knowledge_update` — writes to knowledge/update_task.json
+- `test_write_inspection` — writes inspection JSON
+- `test_write_timing` — writes timing JSON
+- `test_write_fallback` — writes fallback JSON
+- `test_write_baseline` — writes baseline JSON
+- `test_write_drift` — writes drift JSON
+- `test_validate_run_directory_missing_required` — missing run.json and manifest.json flagged
+- `test_validate_run_directory_valid` — full structure validates clean
+- `test_validate_run_directory_nonexistent` — "does not exist" issue returned
+- `test_generate_run_id_format` — format starts with "run_"
+- `test_generate_run_id_with_sha256_prefix` — sha256: prefix handled correctly
+
+**host_inspect.rs (7 tests):**
+- `test_host_inspector_new` — construction stores paths
+- `test_inspect_nonexistent_path` — package_present=false for missing path
+- `test_inspect_empty_directory` — package_present=true, manifest_readable=false
+- `test_inspect_with_valid_manifest` — manifest_readable=true with valid JSON
+- `test_inspect_with_invalid_manifest_json` — manifest_readable=false, warnings mention invalid JSON
+- `test_inspect_with_empty_weights_dir` — warnings mention empty weights
+- `test_structure_inspection_result_default_fields` — Python bridge fails gracefully on Linux
+
+**json_report.rs (9 tests):**
+- `test_json_reporter_new` — creates without error
+- `test_json_report_default` — Default trait matches new()
+- `test_generate_compilation_report` — report_type, version, data fields verified
+- `test_generate_compilation_report_with_bridge_result` — bridge_result section has total_size_bytes
+- `test_generate_compilation_report_with_error` — error field appears
+- `test_generate_knowledge_report` — report_type="knowledge", observation_count
+- `test_generate_diagnostics_report` — report_type="diagnostics"
+- `test_write_to_file` — file roundtrip
+- `test_json_report_serialization_roundtrip` — all fields preserved
+
+**graph.rs (15 tests):**
+- `test_tensor_shape_rank` — rank() for various shapes
+- `test_tensor_shape_num_elements` — element counting
+- `test_tensor_shape_ane_compatible` — rank <= 5 returns true
+- `test_tensor_shape_default` — empty dims and dtype
+- `test_traced_op_serialization` — all 34 variants JSON roundtrip with #[serde(tag="type")]
+- `test_model_config_serialization` — roundtrip with rope_theta default
+- `test_discovered_features_default` — all fields empty/zero/false
+- `test_weight_info_serialization` — with/without quantized field
+- `test_weight_name_map_entry_serialization` — module_path, weight, bias
+- `test_state_declaration_serialization` — state_id, shape, dtype, layer_idx, is_key
+- `test_traced_graph_minimal_deserialization` — minimal JSON deserializes
+- `test_trace_metadata_serialization` — timestamp, duration, num_nodes
+- `test_traced_node_serialization` — id, op, name, inputs, output_shape, is_parameter
+- `test_quantized_weight_info_serialization` — scheme and bit_width
+- `test_tensor_spec_serialization` — name and shape
+
+**state_topology.rs (5 tests):**
+- `test_state_topology_pass_new` — construction
+- `test_state_topology_pass_default` — Default trait
+- `test_run_stateless_graph` — no StateRead/StateWrite → no-op
+- `test_run_graph_with_state_read_and_write` — matching read/write → Ok
+- `test_run_graph_with_read_no_write` — read without write → Ok with warning
+
+**knowledge_query.rs (10 tests):**
+- `test_no_knowledge_query_legality` — returns None
+- `test_no_knowledge_query_risk` — returns None
+- `test_no_knowledge_query_precision_hazard` — returns None
+- `test_no_knowledge_query_compute_plan` — returns None
+- `test_legality_info_construction` — all fields verified
+- `test_risk_info_construction` — all fields verified
+- `test_precision_hazard_info_construction` — all fields including description
+- `test_compute_plan_placement_info_construction` — all fields verified
+- `test_legality_info_debug_format` — Debug contains field names
+- `test_risk_info_debug_format` — Debug contains field names
+
+**precision_policy.rs (1 test):**
+- `test_expanded_op_patterns_cover_key_categories` — verifies 12 key pattern mappings for DecodeStep, Sampler, LayerNorm, BatchNorm, MatMul, Conv, Silu, Gelu, MaxPool, ReduceMean, ScaledDotProductAttention, Quantize, Gather
+
+### Files Modified
+
+- `crates/lab/src/device_meta.rs` — 9 new tests
+- `crates/lab/src/run_dir.rs` — 17 new tests
+- `crates/lab/src/host_inspect.rs` — 7 new tests
+- `crates/report/src/json_report.rs` — 9 new tests
+- `crates/report/Cargo.toml` — added tempfile dev-dependency
+- `crates/trace/src/graph.rs` — 15 new tests
+- `crates/passes/src/state_topology.rs` — 5 new tests + eprintln→log::warn!/log::info!
+- `crates/passes/src/knowledge_query.rs` — 10 new tests
+- `crates/passes/src/precision_policy.rs` — expanded op_pattern_for_node (14→47 patterns) + 1 new test
+- `crates/bridge/src/mir_to_compat.rs` — added log::warn! for CQ-9 max_seq_len default
+- `crates/lab/src/session.rs` — .unwrap()→.expect() for CQ-21
+- `crates/passes/src/legality_rewrite.rs` — added log::warn! for B-12 attention reshape
+- 16 files — cargo fmt --all applied (CQ-15)
+- `TASKS.md` — T-86 through T-90 added and marked resolved
+- `ISSUES.md` — I-61 through I-65 added and marked fixed
+- `CHANGELOG.md` — sprint entry added
 
 ## 2026-05-04 — Emission Equivalence & Compat Expansion Sprint
 

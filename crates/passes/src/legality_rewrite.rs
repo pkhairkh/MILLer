@@ -290,20 +290,36 @@ impl DecompositionContext {
         match position {
             0 => {
                 // Batch dimension
-                if self.batch_size > 0 { Some(self.batch_size) } else { None }
+                if self.batch_size > 0 {
+                    Some(self.batch_size)
+                } else {
+                    None
+                }
             }
             1 => {
                 // Second dimension — typically kv_heads for GQA Tile,
                 // or num_heads for non-GQA Tile.
-                if kv_heads > 0 { Some(kv_heads) } else { None }
+                if kv_heads > 0 {
+                    Some(kv_heads)
+                } else {
+                    None
+                }
             }
             2 => {
                 // Third dimension — typically sequence length.
-                if self.seq_len > 0 { Some(self.seq_len) } else { None }
+                if self.seq_len > 0 {
+                    Some(self.seq_len)
+                } else {
+                    None
+                }
             }
             3 => {
                 // Fourth dimension — typically head_dim.
-                if self.head_dim > 0 { Some(self.head_dim) } else { None }
+                if self.head_dim > 0 {
+                    Some(self.head_dim)
+                } else {
+                    None
+                }
             }
             _ => None,
         }
@@ -1148,7 +1164,18 @@ impl LegalityRewritePass {
                 c.kv_heads.max(1) as i64,
                 c.head_dim as i64,
             ),
-            None => (0, 0, 0, 0, 0, 0),
+            None => {
+                // B-12: Attention reshape without DecompositionContext produces
+                // zero-placeholder shapes. Core ML treats 0 as a literal zero
+                // dimension, so these must be resolved before emission. Log a
+                // warning so users know the output needs manual shape fixing.
+                log::warn!(
+                    "decompose_attention_block: no DecompositionContext provided; \
+                     reshape target shapes will use zero placeholders. \
+                     Provide ctx for correct shape resolution."
+                );
+                (0, 0, 0, 0, 0, 0)
+            }
         };
 
         let mut nodes = Vec::new();
@@ -4353,7 +4380,8 @@ impl LegalityRewritePass {
                      map_sir_op() (ane.legal.tile_decompose) or eliminated at the SIR builder \
                      level (split-based attention). mb.tile is ANE-illegal and must never \
                      reach AIR/MIR.",
-                    input, reps
+                    input,
+                    reps
                 );
             }
             SirOp::Cumsum { input, axis, exclusive, reverse } => (
@@ -5627,13 +5655,13 @@ mod tests {
     #[test]
     fn test_tile_input_dim_4d() {
         let ctx = DecompositionContext::for_attention_full(
-            1,    // batch_size
-            1024, // embed_dim
-            8,    // num_heads
-            128,  // head_dim
-            512,  // seq_len
-            2,    // kv_heads (GQA)
-            4096, // intermediate_size
+            1,      // batch_size
+            1024,   // embed_dim
+            8,      // num_heads
+            128,    // head_dim
+            512,    // seq_len
+            2,      // kv_heads (GQA)
+            4096,   // intermediate_size
             151936, // vocab_size
         );
 
@@ -7567,13 +7595,13 @@ mod tests {
 
         // T-60: With ctx, the Tile decomposition should produce concrete shapes.
         let ctx = DecompositionContext::for_attention_full(
-            1,    // batch_size
-            1024, // embed_dim
-            8,    // num_heads
-            128,  // head_dim
-            512,  // seq_len
-            2,    // kv_heads (GQA)
-            4096, // intermediate_size
+            1,      // batch_size
+            1024,   // embed_dim
+            8,      // num_heads
+            128,    // head_dim
+            512,    // seq_len
+            2,      // kv_heads (GQA)
+            4096,   // intermediate_size
             151936, // vocab_size
         );
 
@@ -7585,11 +7613,8 @@ mod tests {
         // Find the Reshape ops — the first reshape should have concrete dims,
         // not 0 placeholders. For reps=[1, 4, 1, 1] with kv_heads=2:
         // reshape_shape should be [1, 1, 2, 512, 128] (broadcast BEFORE kv_heads)
-        let reshape_nodes: Vec<_> = air
-            .nodes
-            .iter()
-            .filter(|n| matches!(n.op, AirOp::Reshape { .. }))
-            .collect();
+        let reshape_nodes: Vec<_> =
+            air.nodes.iter().filter(|n| matches!(n.op, AirOp::Reshape { .. })).collect();
 
         assert!(
             reshape_nodes.len() >= 2,
@@ -7622,7 +7647,11 @@ mod tests {
             );
             // T-60: final_shape is at the original input rank (4D), not the expanded rank (5D).
             // Expected: [1, 8, 512, 128] for kv_heads*fan_out = 2*4 = 8
-            assert_eq!(target_shape.len(), 4, "T-60: Final reshape should be 4D (same rank as Tile input)");
+            assert_eq!(
+                target_shape.len(),
+                4,
+                "T-60: Final reshape should be 4D (same rank as Tile input)"
+            );
             assert_eq!(
                 target_shape,
                 &vec![1, 8, 512, 128],
@@ -7638,10 +7667,7 @@ mod tests {
         let sir = SirGraph {
             nodes: vec![SirNode {
                 id: SirNodeId("tile_0".into()),
-                op: SirOp::Tile {
-                    input: SirNodeId("input".into()),
-                    reps: vec![1, 4, 1, 1],
-                },
+                op: SirOp::Tile { input: SirNodeId("input".into()), reps: vec![1, 4, 1, 1] },
                 name: "gqa_tile".into(),
                 metadata: SirMetadata {
                     task_origin: TaskOrigin::Synthetic,
@@ -7661,16 +7687,10 @@ mod tests {
         validate_air_graph_structural_invariants(&air);
 
         // Without ctx, the reshape shapes should have 0 placeholders
-        let reshape_nodes: Vec<_> = air
-            .nodes
-            .iter()
-            .filter(|n| matches!(n.op, AirOp::Reshape { .. }))
-            .collect();
+        let reshape_nodes: Vec<_> =
+            air.nodes.iter().filter(|n| matches!(n.op, AirOp::Reshape { .. })).collect();
 
-        assert!(
-            reshape_nodes.len() >= 2,
-            "Tile decomposition should have at least 2 Reshape ops"
-        );
+        assert!(reshape_nodes.len() >= 2, "Tile decomposition should have at least 2 Reshape ops");
 
         // The first reshape should have 0 placeholders (no ctx available for input dims)
         if let AirOp::Reshape { target_shape, .. } = &reshape_nodes[0].op {
@@ -7684,9 +7704,11 @@ mod tests {
         // T-60: The final reshape should also have 0s and be at the original input rank (4D)
         if let AirOp::Reshape { target_shape, .. } = &reshape_nodes[1].op {
             assert_eq!(
-                target_shape.len(), 4,
+                target_shape.len(),
+                4,
                 "T-60: Final reshape should be 4D (same rank as Tile input), got {}D: {:?}",
-                target_shape.len(), target_shape
+                target_shape.len(),
+                target_shape
             );
             assert!(
                 target_shape.contains(&0),

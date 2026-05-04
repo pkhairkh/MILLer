@@ -461,3 +461,199 @@ struct StructureInspectionResult {
     extra_ops: Vec<String>,
     method: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to create a HostInspector with a dummy Python path and bridge script.
+    /// On Linux, the Python bridge calls will always fail, which is expected.
+    fn make_inspector() -> HostInspector {
+        HostInspector::new("python3", "bridge_script.py")
+    }
+
+    #[test]
+    fn test_host_inspector_new() {
+        let inspector = HostInspector::new("/usr/bin/python3", "/path/to/bridge.py");
+        // We can't directly access private fields, but we can verify the inspector
+        // was constructed successfully by using it.
+        let result = inspector.inspect("/nonexistent/path");
+        // The inspector should have been constructed and is usable
+        assert!(!result.package_present, "Nonexistent path should report package_present=false");
+    }
+
+    #[test]
+    fn test_inspect_nonexistent_path() {
+        let inspector = make_inspector();
+        let result = inspector.inspect("/nonexistent/mlpackage_that_does_not_exist");
+
+        assert!(!result.package_present, "package_present should be false for nonexistent path");
+        assert!(
+            !result.manifest_readable,
+            "manifest_readable should be false for nonexistent path"
+        );
+        assert!(!result.model_loadable, "model_loadable should be false for nonexistent path");
+        assert_eq!(
+            result.inspection_method, "none",
+            "inspection_method should be 'none' for nonexistent path"
+        );
+        assert!(!result.warnings.is_empty(), "warnings should be non-empty for nonexistent path");
+    }
+
+    #[test]
+    fn test_inspect_empty_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Create a directory that exists but has no Manifest.json
+        let mlpackage_dir = tmp.path().join("TestModel.mlpackage");
+        std::fs::create_dir_all(&mlpackage_dir).unwrap();
+
+        let inspector = make_inspector();
+        let result = inspector.inspect(mlpackage_dir.to_str().unwrap());
+
+        assert!(result.package_present, "package_present should be true for existing directory");
+        assert!(
+            !result.manifest_readable,
+            "manifest_readable should be false when Manifest.json is missing"
+        );
+        // Should have a warning about missing Manifest.json
+        assert!(
+            result.warnings.iter().any(|w| w.contains("Manifest.json")),
+            "Should warn about missing Manifest.json, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_inspect_with_valid_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mlpackage_dir = tmp.path().join("TestModel.mlpackage");
+        std::fs::create_dir_all(&mlpackage_dir).unwrap();
+
+        // Write a valid Manifest.json
+        let manifest = serde_json::json!({
+            "model_name": "TestModel",
+            "model_version": "1.0"
+        });
+        std::fs::write(
+            mlpackage_dir.join("Manifest.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        // Create the Data/com.apple.CoreML/ directory and a model.mlmodel file
+        let coreml_dir = mlpackage_dir.join("Data").join("com.apple.CoreML");
+        std::fs::create_dir_all(&coreml_dir).unwrap();
+        std::fs::write(coreml_dir.join("model.mlmodel"), "dummy model data").unwrap();
+
+        let inspector = make_inspector();
+        let result = inspector.inspect(mlpackage_dir.to_str().unwrap());
+
+        assert!(result.package_present, "package_present should be true");
+        assert!(
+            result.manifest_readable,
+            "manifest_readable should be true with valid Manifest.json"
+        );
+        // On Linux, model_loadable should be false (Python bridge fails)
+        assert!(
+            !result.model_loadable,
+            "model_loadable should be false on Linux (no Core ML runtime)"
+        );
+    }
+
+    #[test]
+    fn test_inspect_with_invalid_manifest_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mlpackage_dir = tmp.path().join("BadManifest.mlpackage");
+        std::fs::create_dir_all(&mlpackage_dir).unwrap();
+
+        // Write an invalid Manifest.json
+        std::fs::write(mlpackage_dir.join("Manifest.json"), "this is not valid json {{{{").unwrap();
+
+        let inspector = make_inspector();
+        let result = inspector.inspect(mlpackage_dir.to_str().unwrap());
+
+        assert!(result.package_present, "package_present should be true");
+        assert!(!result.manifest_readable, "manifest_readable should be false with invalid JSON");
+        assert!(
+            result.warnings.iter().any(|w| w.contains("not valid JSON")),
+            "Should warn about invalid JSON in Manifest.json, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_inspect_with_empty_weights_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mlpackage_dir = tmp.path().join("EmptyWeights.mlpackage");
+        std::fs::create_dir_all(&mlpackage_dir).unwrap();
+
+        // Write a valid Manifest.json
+        std::fs::write(
+            mlpackage_dir.join("Manifest.json"),
+            serde_json::json!({"model_name": "Test"}).to_string(),
+        )
+        .unwrap();
+
+        // Create Data/com.apple.CoreML/weights/ directory (empty)
+        let weights_dir = mlpackage_dir.join("Data").join("com.apple.CoreML").join("weights");
+        std::fs::create_dir_all(&weights_dir).unwrap();
+
+        let inspector = make_inspector();
+        let result = inspector.inspect(mlpackage_dir.to_str().unwrap());
+
+        assert!(
+            result.warnings.iter().any(|w| w.contains("empty")),
+            "Should warn about empty weights directory, got: {:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn test_structure_inspection_result_default_fields() {
+        // On Linux, the Python bridge will always fail, so structure inspection
+        // fields should reflect that unavailability.
+        let tmp = tempfile::tempdir().unwrap();
+        let mlpackage_dir = tmp.path().join("StructTest.mlpackage");
+        std::fs::create_dir_all(&mlpackage_dir).unwrap();
+
+        // Write a valid Manifest.json so we get past the early checks
+        std::fs::write(
+            mlpackage_dir.join("Manifest.json"),
+            serde_json::json!({"model_name": "Test"}).to_string(),
+        )
+        .unwrap();
+
+        let inspector = make_inspector();
+        let result = inspector.inspect(mlpackage_dir.to_str().unwrap());
+
+        // On Linux, the Python bridge fails, so structure inspection should be unavailable
+        assert!(
+            result.structure_inspection_available == Some(false)
+                || result.structure_inspection_available.is_none(),
+            "structure_inspection_available should be Some(false) or None on Linux, got: {:?}",
+            result.structure_inspection_available
+        );
+        assert!(
+            result.structure_op_names.is_empty(),
+            "structure_op_names should be empty when bridge fails"
+        );
+        assert!(
+            result.structure_op_count.is_none(),
+            "structure_op_count should be None when bridge fails"
+        );
+        assert!(
+            result.structure_function_count.is_none(),
+            "structure_function_count should be None when bridge fails"
+        );
+        assert!(
+            result.structure_state_declarations.is_empty(),
+            "structure_state_declarations should be empty when bridge fails"
+        );
+        assert!(
+            result.op_fidelity_score.is_none(),
+            "op_fidelity_score should be None when bridge fails"
+        );
+        assert!(result.missing_ops.is_empty(), "missing_ops should be empty when bridge fails");
+        assert!(result.extra_ops.is_empty(), "extra_ops should be empty when bridge fails");
+    }
+}

@@ -173,3 +173,125 @@ pub trait PassKnowledgeQuery {
         scope: Option<&KnowledgeScope>,
     ) -> Option<ComputePlanPlacementInfo>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_no_knowledge_query_legality() {
+        let nk = NoKnowledge;
+        assert!(nk.query_legality("LinearProjection", None).is_none());
+    }
+
+    #[test]
+    fn test_no_knowledge_query_risk() {
+        let nk = NoKnowledge;
+        assert!(nk.query_risk("LinearProjection", None).is_none());
+    }
+
+    #[test]
+    fn test_no_knowledge_query_precision_hazard() {
+        let nk = NoKnowledge;
+        assert!(nk.query_precision_hazard("LinearProjection", "fp16", None).is_none());
+    }
+
+    #[test]
+    fn test_no_knowledge_query_compute_plan() {
+        let nk = NoKnowledge;
+        assert!(nk.query_compute_plan_placement("LinearProjection", None).is_none());
+    }
+
+    #[test]
+    fn test_legality_info_construction() {
+        let info = LegalityInfo {
+            ane_legal: true,
+            confidence: 0.95,
+            evidence_count: 3,
+            source_id: Some("ku_001".to_string()),
+        };
+        assert!(info.ane_legal);
+        assert!((info.confidence - 0.95).abs() < f32::EPSILON);
+        assert_eq!(info.evidence_count, 3);
+        assert_eq!(info.source_id, Some("ku_001".to_string()));
+    }
+
+    #[test]
+    fn test_risk_info_construction() {
+        let info = RiskInfo {
+            fallback_risk: 0.7,
+            drift_risk: 0.2,
+            confidence: 0.5,
+            evidence_count: 2,
+            source_id: Some("ku_002".to_string()),
+        };
+        assert!((info.fallback_risk - 0.7).abs() < f32::EPSILON);
+        assert!((info.drift_risk - 0.2).abs() < f32::EPSILON);
+        assert!((info.confidence - 0.5).abs() < f32::EPSILON);
+        assert_eq!(info.evidence_count, 2);
+        assert_eq!(info.source_id, Some("ku_002".to_string()));
+    }
+
+    #[test]
+    fn test_precision_hazard_info_construction() {
+        let info = PrecisionHazardInfo {
+            op_pattern: "LinearProjection".to_string(),
+            hazardous_dtype: "fp16".to_string(),
+            recommended_dtype: "fp32".to_string(),
+            confidence: 0.8,
+            evidence_count: 5,
+            source_id: Some("ku_003".to_string()),
+            description: Some("fp16 causes NaN for large weights".to_string()),
+        };
+        assert_eq!(info.op_pattern, "LinearProjection");
+        assert_eq!(info.hazardous_dtype, "fp16");
+        assert_eq!(info.recommended_dtype, "fp32");
+        assert!((info.confidence - 0.8).abs() < f32::EPSILON);
+        assert_eq!(info.evidence_count, 5);
+        assert_eq!(info.source_id, Some("ku_003".to_string()));
+        assert_eq!(info.description, Some("fp16 causes NaN for large weights".to_string()));
+    }
+
+    #[test]
+    fn test_compute_plan_placement_info_construction() {
+        let info = ComputePlanPlacementInfo {
+            op_pattern: "MatMul".to_string(),
+            ane_placed: true,
+            preferred_device: "NeuralEngine".to_string(),
+            confidence: 0.9,
+            evidence_count: 1,
+            source_id: Some("ku_004".to_string()),
+        };
+        assert_eq!(info.op_pattern, "MatMul");
+        assert!(info.ane_placed);
+        assert_eq!(info.preferred_device, "NeuralEngine");
+        assert!((info.confidence - 0.9).abs() < f32::EPSILON);
+        assert_eq!(info.evidence_count, 1);
+        assert_eq!(info.source_id, Some("ku_004".to_string()));
+    }
+
+    #[test]
+    fn test_legality_info_debug_format() {
+        let info =
+            LegalityInfo { ane_legal: true, confidence: 0.9, evidence_count: 1, source_id: None };
+        let debug_str = format!("{:?}", info);
+        assert!(debug_str.contains("ane_legal"));
+        assert!(debug_str.contains("confidence"));
+        assert!(debug_str.contains("evidence_count"));
+    }
+
+    #[test]
+    fn test_risk_info_debug_format() {
+        let info = RiskInfo {
+            fallback_risk: 0.3,
+            drift_risk: 0.1,
+            confidence: 0.5,
+            evidence_count: 2,
+            source_id: Some("ku_debug".to_string()),
+        };
+        let debug_str = format!("{:?}", info);
+        assert!(debug_str.contains("fallback_risk"));
+        assert!(debug_str.contains("drift_risk"));
+        assert!(debug_str.contains("confidence"));
+    }
+}

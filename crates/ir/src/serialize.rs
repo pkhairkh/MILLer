@@ -308,10 +308,7 @@ mod tests {
         assert!(matches!(de.nodes[1].op, SirOp::LinearProjection { .. }));
 
         // Verify metadata preserved
-        assert!(matches!(
-            de.nodes[0].metadata.task_origin,
-            TaskOrigin::Synthetic
-        ));
+        assert!(matches!(de.nodes[0].metadata.task_origin, TaskOrigin::Synthetic));
     }
 
     #[test]

@@ -187,9 +187,330 @@ impl LabRunWriter {
 pub fn generate_run_id(task_hash: &str) -> String {
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
     let hash_prefix = if task_hash.starts_with("sha256:") {
-        &task_hash[7..15] // Skip "sha256:" prefix, take 8 chars
+        &task_hash[7..15.min(task_hash.len())] // Skip "sha256:" prefix, take 8 chars
     } else {
         &task_hash[..8.min(task_hash.len())]
     };
     format!("run_{}_{}", timestamp, hash_prefix)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::harness::{
+        CompileStepResult, EnvironmentSummary, InspectionStepResult, LabRunBuilder,
+        VerificationScope,
+    };
+
+    fn make_minimal_run() -> LabRun {
+        LabRunBuilder::new(
+            "run_test_001".to_string(),
+            "sha256:abcdef1234567890".to_string(),
+            "test_task".to_string(),
+            VerificationScope::HostOnlyInspection,
+            EnvironmentSummary::detect(1),
+        )
+        .compile_result(CompileStepResult {
+            success: true,
+            error: None,
+            output_path: Some("/tmp/out.mlpackage".to_string()),
+            content_hash: Some("sha256:abc".to_string()),
+            file_count: Some(3),
+            coremltools_version: None,
+        })
+        .inspect_result(InspectionStepResult {
+            package_present: true,
+            manifest_readable: true,
+            model_loadable: false,
+            model_load_failure_reason: None,
+            function_count: None,
+            input_specs: vec![],
+            output_specs: vec![],
+            warnings: vec![],
+            structure_inspection_available: None,
+            structure_inspection_failure_reason: None,
+            structure_op_names: vec![],
+            structure_op_count: None,
+            structure_function_count: None,
+            structure_state_declarations: vec![],
+            op_fidelity_score: None,
+            missing_ops: vec![],
+            extra_ops: vec![],
+            inspection_method: "none".to_string(),
+        })
+        .build()
+    }
+
+    #[test]
+    fn test_layout_constants() {
+        assert_eq!(layout::RUN_JSON, "run.json");
+        assert_eq!(layout::MANIFEST_JSON, "manifest.json");
+        assert_eq!(layout::MIR_JSON, "mir.json");
+        assert_eq!(layout::MLPACKAGE_DIR, "mlpackage");
+        assert_eq!(layout::KNOWLEDGE_DIR, "knowledge");
+        assert_eq!(layout::INSPECTION_JSON, "inspection.json");
+        assert_eq!(layout::TIMING_JSON, "timing.json");
+        assert_eq!(layout::FALLBACK_JSON, "fallback.json");
+        assert_eq!(layout::BASELINE_JSON, "baseline.json");
+        assert_eq!(layout::DRIFT_JSON, "drift.json");
+    }
+
+    #[test]
+    fn test_lab_run_writer_new() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = LabRunWriter::new(tmp.path());
+        assert_eq!(writer.output_dir, tmp.path());
+    }
+
+    #[test]
+    fn test_create_run_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = LabRunWriter::new(tmp.path());
+        let run_dir = writer.create_run_directory("run_001").unwrap();
+
+        assert!(run_dir.exists());
+        assert!(run_dir.join(layout::MLPACKAGE_DIR).exists());
+        assert!(run_dir.join(layout::KNOWLEDGE_DIR).exists());
+    }
+
+    #[test]
+    fn test_write_run_record() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = LabRunWriter::new(tmp.path());
+        let run_dir = writer.create_run_directory("run_002").unwrap();
+
+        let run = make_minimal_run();
+        writer.write_run_record(&run_dir, &run).unwrap();
+
+        let run_json_path = run_dir.join(layout::RUN_JSON);
+        assert!(run_json_path.exists(), "run.json should exist after write");
+
+        let content = std::fs::read_to_string(&run_json_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["run_id"], "run_test_001");
+    }
+
+    #[test]
+    fn test_write_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = LabRunWriter::new(tmp.path());
+        let run_dir = writer.create_run_directory("run_003").unwrap();
+
+        let manifest = serde_json::json!({
+            "model_name": "test_model",
+            "version": "1.0"
+        });
+        writer.write_manifest(&run_dir, &manifest).unwrap();
+
+        let path = run_dir.join(layout::MANIFEST_JSON);
+        assert!(path.exists(), "manifest.json should exist after write");
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["model_name"], "test_model");
+    }
+
+    #[test]
+    fn test_write_mir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = LabRunWriter::new(tmp.path());
+        let run_dir = writer.create_run_directory("run_004").unwrap();
+
+        let mir = serde_json::json!({
+            "ops": ["linear", "relu"],
+            "op_count": 2
+        });
+        writer.write_mir(&run_dir, &mir).unwrap();
+
+        let path = run_dir.join(layout::MIR_JSON);
+        assert!(path.exists(), "mir.json should exist after write");
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["op_count"], 2);
+    }
+
+    #[test]
+    fn test_write_knowledge_update() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = LabRunWriter::new(tmp.path());
+        let run_dir = writer.create_run_directory("run_005").unwrap();
+
+        let update = serde_json::json!({
+            "observation": "model compiles successfully",
+            "confidence": 0.9
+        });
+        writer.write_knowledge_update(&run_dir, "compile_task", &update).unwrap();
+
+        let path = run_dir.join(layout::KNOWLEDGE_DIR).join("update_compile_task.json");
+        assert!(path.exists(), "knowledge/update_compile_task.json should exist after write");
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["confidence"], 0.9);
+    }
+
+    #[test]
+    fn test_write_inspection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = LabRunWriter::new(tmp.path());
+        let run_dir = writer.create_run_directory("run_006").unwrap();
+
+        let inspection = serde_json::json!({
+            "package_present": true,
+            "manifest_readable": true
+        });
+        writer.write_inspection(&run_dir, &inspection).unwrap();
+
+        let path = run_dir.join(layout::INSPECTION_JSON);
+        assert!(path.exists(), "inspection.json should exist after write");
+    }
+
+    #[test]
+    fn test_write_timing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = LabRunWriter::new(tmp.path());
+        let run_dir = writer.create_run_directory("run_007").unwrap();
+
+        let timing = serde_json::json!({
+            "p50_ms": 1.5,
+            "p90_ms": 2.0
+        });
+        writer.write_timing(&run_dir, &timing).unwrap();
+
+        let path = run_dir.join(layout::TIMING_JSON);
+        assert!(path.exists(), "timing.json should exist after write");
+    }
+
+    #[test]
+    fn test_write_fallback() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = LabRunWriter::new(tmp.path());
+        let run_dir = writer.create_run_directory("run_008").unwrap();
+
+        let fallback = serde_json::json!({
+            "suspicion_level": "no_conclusion",
+            "explanation": "insufficient evidence"
+        });
+        writer.write_fallback(&run_dir, &fallback).unwrap();
+
+        let path = run_dir.join(layout::FALLBACK_JSON);
+        assert!(path.exists(), "fallback.json should exist after write");
+    }
+
+    #[test]
+    fn test_write_baseline() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = LabRunWriter::new(tmp.path());
+        let run_dir = writer.create_run_directory("run_009").unwrap();
+
+        let baseline = serde_json::json!({
+            "output_hash": "sha256:abc",
+            "precision": "fp32"
+        });
+        writer.write_baseline(&run_dir, &baseline).unwrap();
+
+        let path = run_dir.join(layout::BASELINE_JSON);
+        assert!(path.exists(), "baseline.json should exist after write");
+    }
+
+    #[test]
+    fn test_write_drift() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = LabRunWriter::new(tmp.path());
+        let run_dir = writer.create_run_directory("run_010").unwrap();
+
+        let drift = serde_json::json!({
+            "drift_detected": false,
+            "max_abs_diff": 0.001
+        });
+        writer.write_drift(&run_dir, &drift).unwrap();
+
+        let path = run_dir.join(layout::DRIFT_JSON);
+        assert!(path.exists(), "drift.json should exist after write");
+    }
+
+    #[test]
+    fn test_validate_run_directory_missing_required() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Create an empty directory (no run.json, no manifest.json)
+        let empty_dir = tmp.path().join("empty_run");
+        std::fs::create_dir_all(&empty_dir).unwrap();
+
+        let writer = LabRunWriter::new(tmp.path());
+        let issues = writer.validate_run_directory(&empty_dir);
+
+        assert!(
+            issues.iter().any(|i| i.contains("run.json")),
+            "Should report missing run.json, got: {:?}",
+            issues
+        );
+        assert!(
+            issues.iter().any(|i| i.contains("manifest.json")),
+            "Should report missing manifest.json, got: {:?}",
+            issues
+        );
+    }
+
+    #[test]
+    fn test_validate_run_directory_valid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = LabRunWriter::new(tmp.path());
+        let run_dir = writer.create_run_directory("run_valid").unwrap();
+
+        // Write run.json and manifest.json to make it valid
+        let run = make_minimal_run();
+        writer.write_run_record(&run_dir, &run).unwrap();
+        writer.write_manifest(&run_dir, &serde_json::json!({})).unwrap();
+
+        let issues = writer.validate_run_directory(&run_dir);
+        assert!(issues.is_empty(), "Valid directory should have no issues, got: {:?}", issues);
+    }
+
+    #[test]
+    fn test_validate_run_directory_nonexistent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = LabRunWriter::new(tmp.path());
+        let nonexistent = tmp.path().join("does_not_exist");
+
+        let issues = writer.validate_run_directory(&nonexistent);
+        assert!(
+            issues.iter().any(|i| i.contains("does not exist")),
+            "Should report nonexistent directory, got: {:?}",
+            issues
+        );
+    }
+
+    #[test]
+    fn test_generate_run_id_format() {
+        let run_id = generate_run_id("abcdef1234567890");
+        assert!(run_id.starts_with("run_"), "Run ID should start with 'run_', got: {}", run_id);
+        // Should contain a timestamp (YYYYMMDD_HHMMSS) and hash prefix
+        // Format: run_YYYYMMDD_HHMMSS_<8-char-hash-prefix>
+        let parts: Vec<&str> = run_id.splitn(4, '_').collect();
+        assert!(
+            parts.len() >= 3,
+            "Run ID should have at least 3 underscore-separated parts, got: {}",
+            run_id
+        );
+        // The hash prefix part should be "abcdef12" (first 8 chars of the hash)
+        assert!(
+            run_id.ends_with("abcdef12"),
+            "Run ID should end with hash prefix 'abcdef12', got: {}",
+            run_id
+        );
+    }
+
+    #[test]
+    fn test_generate_run_id_with_sha256_prefix() {
+        let run_id = generate_run_id("sha256:abcdef1234567890");
+        assert!(run_id.starts_with("run_"), "Run ID should start with 'run_', got: {}", run_id);
+        // When hash starts with "sha256:", it should skip that prefix
+        // and use the next 8 chars as the hash prefix
+        assert!(
+            run_id.ends_with("abcdef12"),
+            "Run ID should end with 'abcdef12' (after skipping sha256: prefix), got: {}",
+            run_id
+        );
+    }
 }

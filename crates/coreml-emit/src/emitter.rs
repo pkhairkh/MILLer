@@ -117,7 +117,6 @@ impl ProtoEmitter {
             function_names: model.functions.iter().map(|f| f.name.clone()).collect(),
         })
     }
-
 }
 
 #[cfg(test)]

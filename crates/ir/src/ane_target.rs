@@ -71,7 +71,10 @@ impl AneFamily {
     /// Whether this family supports ReduceMin for non-FP types.
     /// A11/A12/A13 only support FP ReduceMin; A14+ supports all types.
     pub fn supports_reducemin_all_dtypes(&self) -> bool {
-        matches!(self, AneFamily::A14 | AneFamily::A15 | AneFamily::A16 | AneFamily::A17 | AneFamily::A18)
+        matches!(
+            self,
+            AneFamily::A14 | AneFamily::A15 | AneFamily::A16 | AneFamily::A17 | AneFamily::A18
+        )
     }
 
     /// Whether this family supports ArgMin/ArgMax (reduce_argmax, reduce_argmin).
@@ -439,10 +442,16 @@ mod tests {
         assert!(AneFamily::A17.supports_e4m3());
         // All other capabilities are identical
         assert_eq!(AneFamily::A16.broadcast_fp16_only(), AneFamily::A17.broadcast_fp16_only());
-        assert_eq!(AneFamily::A16.uses_a14minus_converters(), AneFamily::A17.uses_a14minus_converters());
+        assert_eq!(
+            AneFamily::A16.uses_a14minus_converters(),
+            AneFamily::A17.uses_a14minus_converters()
+        );
         assert_eq!(AneFamily::A16.supports_sdpa(), AneFamily::A17.supports_sdpa());
         assert_eq!(AneFamily::A16.supports_layernorm(), AneFamily::A17.supports_layernorm());
-        assert_eq!(AneFamily::A16.supports_reducemin_all_dtypes(), AneFamily::A17.supports_reducemin_all_dtypes());
+        assert_eq!(
+            AneFamily::A16.supports_reducemin_all_dtypes(),
+            AneFamily::A17.supports_reducemin_all_dtypes()
+        );
         assert_eq!(AneFamily::A16.supports_argminmax(), AneFamily::A17.supports_argminmax());
     }
 }

@@ -101,13 +101,14 @@ pub struct LabResult {
 /// of truth for all op-specific fields, eliminating per-variant match arms.
 pub fn compute_task_hash(spec: &ane_ir::task_spec::SyntheticTaskSpec) -> String {
     let mut hash_input = String::new();
-    write!(hash_input, "family={}", spec.family).unwrap();
-    write!(hash_input, ";name={}", spec.name).unwrap();
-    write!(hash_input, ";{}", spec.op.identity_string()).unwrap();
+    // SAFETY: write! to String is infallible (std::fmt::Write for String never errors).
+    write!(hash_input, "family={}", spec.family).expect("write to String cannot fail");
+    write!(hash_input, ";name={}", spec.name).expect("write to String cannot fail");
+    write!(hash_input, ";{}", spec.op.identity_string()).expect("write to String cannot fail");
 
     let digest = sha2::Sha256::digest(hash_input.as_bytes());
     let hex: String = digest.iter().fold(String::new(), |mut output, b| {
-        write!(output, "{:02x}", b).unwrap();
+        write!(output, "{:02x}", b).expect("write to String cannot fail");
         output
     });
     format!("sha256:{}", hex)
@@ -1601,7 +1602,11 @@ mod tests {
     fn test_compute_task_hash_format() {
         let spec = make_test_spec();
         let hash = compute_task_hash(&spec);
-        assert!(hash.starts_with("sha256:"), "Hash must start with 'sha256:' prefix, got: {}", hash);
+        assert!(
+            hash.starts_with("sha256:"),
+            "Hash must start with 'sha256:' prefix, got: {}",
+            hash
+        );
         let hex_part = &hash[7..];
         assert_eq!(hex_part.len(), 64, "SHA-256 hex digest must be 64 chars");
         assert!(hex_part.chars().all(|c| c.is_ascii_hexdigit()), "Hex portion must be valid hex");
@@ -1612,13 +1617,24 @@ mod tests {
         let mut spec_a = make_test_spec();
         let mut spec_b = make_test_spec();
         spec_a.op = TaskOp::LinearProjection {
-            input_dim: 64, output_dim: 32, batch_size: 1, has_bias: true, dtype: "fp16".to_string(),
+            input_dim: 64,
+            output_dim: 32,
+            batch_size: 1,
+            has_bias: true,
+            dtype: "fp16".to_string(),
         };
         spec_b.op = TaskOp::LinearProjection {
-            input_dim: 64, output_dim: 32, batch_size: 1, has_bias: false, dtype: "fp16".to_string(),
+            input_dim: 64,
+            output_dim: 32,
+            batch_size: 1,
+            has_bias: false,
+            dtype: "fp16".to_string(),
         };
-        assert_ne!(compute_task_hash(&spec_a), compute_task_hash(&spec_b),
-            "Hash must incorporate the op identity string (has_bias differs)");
+        assert_ne!(
+            compute_task_hash(&spec_a),
+            compute_task_hash(&spec_b),
+            "Hash must incorporate the op identity string (has_bias differs)"
+        );
     }
 
     #[test]
@@ -1721,15 +1737,20 @@ mod tests {
             baseline_schema_version: "1.0.0".to_string(),
             task_id: "test_task".to_string(),
             task_hash: Some(task_hash.to_string()),
-            input_dim: 64, output_dim: 32, batch_size: 1, seed: 42,
+            input_dim: 64,
+            output_dim: 32,
+            batch_size: 1,
+            seed: 42,
             precision: "fp32".to_string(),
             output_tensor: vec![0.0; 32],
             output_shape: vec![1, 32],
             compute_time_ms: 1.0,
         };
-        let drift = crate::drift::DriftDetector::new().detect(&[1.0f32, 2.0, 3.0], &[1.01, 2.01, 3.01]);
+        let drift =
+            crate::drift::DriftDetector::new().detect(&[1.0f32, 2.0, 3.0], &[1.01, 2.01, 3.01]);
         assert!(drift.is_computed());
-        let update = build_knowledge_update_with_drift(&spec, &bridge_result, task_hash, &baseline, &drift);
+        let update =
+            build_knowledge_update_with_drift(&spec, &bridge_result, task_hash, &baseline, &drift);
         assert_eq!(update["version"], 3);
         assert_eq!(update["source"], "lab_run_with_drift");
         let observations = update["observations"].as_array().unwrap();
@@ -1756,14 +1777,18 @@ mod tests {
             baseline_schema_version: "1.0.0".to_string(),
             task_id: "test_task".to_string(),
             task_hash: Some(task_hash.to_string()),
-            input_dim: 64, output_dim: 32, batch_size: 1, seed: 42,
+            input_dim: 64,
+            output_dim: 32,
+            batch_size: 1,
+            seed: 42,
             precision: "fp32".to_string(),
             output_tensor: vec![0.0; 32],
             output_shape: vec![1, 32],
             compute_time_ms: 1.0,
         };
         let drift = crate::drift::DriftDetector::unavailable("no Apple hardware");
-        let update = build_knowledge_update_with_drift(&spec, &bridge_result, task_hash, &baseline, &drift);
+        let update =
+            build_knowledge_update_with_drift(&spec, &bridge_result, task_hash, &baseline, &drift);
         let observations = update["observations"].as_array().unwrap();
         let drift_obs = &observations[2];
         assert_eq!(drift_obs["knowledge_type"], "PrecisionHazard");
@@ -1781,14 +1806,18 @@ mod tests {
             baseline_schema_version: "1.0.0".to_string(),
             task_id: "test_task".to_string(),
             task_hash: None,
-            input_dim: 64, output_dim: 32, batch_size: 1, seed: 42,
+            input_dim: 64,
+            output_dim: 32,
+            batch_size: 1,
+            seed: 42,
             precision: "fp32".to_string(),
             output_tensor: vec![0.0; 32],
             output_shape: vec![1, 32],
             compute_time_ms: 1.0,
         };
         let drift = crate::drift::DriftDetector::unavailable("test");
-        let update = build_knowledge_update_with_drift(&spec, &bridge_result, task_hash, &baseline, &drift);
+        let update =
+            build_knowledge_update_with_drift(&spec, &bridge_result, task_hash, &baseline, &drift);
         assert_eq!(update["version"], 3, "Drift variant must use version 3");
     }
 
@@ -1827,7 +1856,8 @@ mod tests {
                 },
             ],
         });
-        let count = ingest_knowledge_observations(&mut store, &knowledge_update, "sha256:abc").unwrap();
+        let count =
+            ingest_knowledge_observations(&mut store, &knowledge_update, "sha256:abc").unwrap();
         assert_eq!(count, 2, "Should ingest 2 valid observations");
     }
 
@@ -1837,7 +1867,8 @@ mod tests {
         let store_path = tmp.path().join("store").to_string_lossy().to_string();
         let mut store = ane_knowledge::store::KnowledgeStore::open(&store_path).unwrap();
         let knowledge_update = serde_json::json!({"observations": []});
-        let count = ingest_knowledge_observations(&mut store, &knowledge_update, "sha256:abc").unwrap();
+        let count =
+            ingest_knowledge_observations(&mut store, &knowledge_update, "sha256:abc").unwrap();
         assert_eq!(count, 0, "Empty observations array should ingest 0");
     }
 
@@ -1849,7 +1880,9 @@ mod tests {
         let knowledge_update = serde_json::json!({"version": 2, "source": "test"});
         let result = ingest_knowledge_observations(&mut store, &knowledge_update, "sha256:abc");
         assert!(result.is_err(), "Missing observations field should return Err");
-        assert!(result.unwrap_err().contains("No observations found"),
-            "Error message should mention missing observations");
+        assert!(
+            result.unwrap_err().contains("No observations found"),
+            "Error message should mention missing observations"
+        );
     }
 }
