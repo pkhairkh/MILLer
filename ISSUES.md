@@ -815,3 +815,189 @@
 | Medium (error strings, constraint strings) | 15 | Constraint vocabulary, architecture-gated strings |
 | Weak (naming inference, absence claims) | 12 | Hardware target mapping, absence proofs |
 | Unknown (sub-variant semantics) | 6 | HAL sub-variant differences |
+
+---
+
+## Additional Issues — MLIR-Method Violations (M-prefix)
+
+> From MLIRVIOLATIONS.md: Applying MLIR compiler-design discipline as a conceptual lens.
+
+### M-001: Zero-Filled "Production" Models via allow_missing_weights=true
+- **Severity:** CRITICAL | **Class:** PHANTOM-SEMANTIC | **Confidence:** HIGH
+- **Location:** `crates/bridge/src/proto_direct.rs:164–189`
+- **Status:** OPEN | **Remediation:** T-P2-09
+- **Description:** Production path passes `allow_missing_weights=true`, silently producing zero-filled weights.
+
+### M-002: MatMul Inner Dimension Mismatch Treated as Warning
+- **Severity:** CRITICAL | **Class:** UNVERIFIED-INVARIANT | **Confidence:** HIGH
+- **Location:** `crates/passes/src/mil_lower.rs:92–98`
+- **Status:** OPEN | **Remediation:** T-P5-02
+- **Description:** Mismatched inner dims produce garbage output instead of hard error.
+
+### M-003: Shape Inference Returns Empty Vec for Unknown Operations
+- **Severity:** HIGH | **Class:** UNVERIFIED-INVARIANT | **Confidence:** HIGH
+- **Location:** `crates/passes/src/mil_lower.rs:401`; `crates/bridge/src/shape_inference.rs:528–531`
+- **Status:** OPEN | **Remediation:** T-P5-04
+- **Description:** `infer_shape()` returns `Ok(vec![])` as fallback; unknown shapes silently propagate.
+
+### M-004: StaticizePass Is a Pure Pass-Through (Stub Mimic)
+- **Severity:** HIGH | **Class:** STUB-MIMIC | **Confidence:** HIGH
+- **Location:** `crates/passes/src/staticize.rs:52–63`
+- **Status:** OPEN | **Remediation:** T-P4-03
+- **Description:** Returns `Ok(input)` unchanged with 1500+ line test suite.
+
+### M-005: slanc_scales Pass Inserts Const+Mul with Uncomputed Scale Values
+- **Severity:** HIGH | **Class:** STUB-MIMIC | **Confidence:** HIGH
+- **Location:** `crates/passes/src/slanc_scales.rs:63–123`
+- **Status:** OPEN | **Remediation:** T-P3-09
+- **Description:** Inserts Mul ops with uninitialized scale factors, silently corrupting the graph.
+
+### M-006: shard_plan.rs Falls Back to Dimension=1 with Only Warning
+- **Severity:** HIGH | **Class:** UNVERIFIED-INVARIANT | **Confidence:** HIGH
+- **Location:** `crates/passes/src/shard_plan.rs:239–247`
+- **Status:** OPEN | **Remediation:** T-P5-04
+- **Description:** Falls back to [1,1,1,1] when shape unavailable, producing wrong PIR specs.
+
+### M-007: dtype_constraints.rs Returns Ok(()) for Constrained Dtypes
+- **Severity:** HIGH | **Class:** UNVERIFIED-INVARIANT | **Confidence:** HIGH
+- **Location:** `crates/passes/src/dtype_constraints.rs:127–161`
+- **Status:** OPEN | **Remediation:** T-P2-02
+- **Description:** Int4/UInt4/UInt16/Bool gates return Ok with deferred "caller must check" comments.
+
+### M-008: validate_cross_type_compatibility Effectively No-Op
+- **Severity:** HIGH | **Class:** UNVERIFIED-INVARIANT | **Confidence:** HIGH
+- **Location:** `crates/passes/src/dtype_constraints.rs:440–470`
+- **Status:** OPEN | **Remediation:** T-P1-05
+- **Description:** Documents ANEC constraints but never rejects anything.
+
+### M-009: MirOpCompat::Unsupported Invisible to Weight Materialization
+- **Severity:** HIGH | **Class:** STUB-MIMIC | **Confidence:** HIGH
+- **Location:** `crates/coreml-proto/src/lib.rs:1043–1051, 1337`
+- **Status:** OPEN | **Remediation:** T-P5-10
+- **Description:** Unsupported ops return `input_names(): vec![]`, invisible to weight materialization.
+
+### M-010: kv_cache_rewrite Generates ANE-Illegal Ops
+- **Severity:** HIGH | **Class:** STUB-MIMIC | **Confidence:** HIGH
+- **Location:** `crates/passes/src/kv_cache_rewrite.rs:1–313`
+- **Status:** OPEN | **Remediation:** T-P1-02
+- **Description:** Generates SirOp::Where (ANE-illegal); deprecated but not removed.
+
+### M-011: AIR legality_confidence Field Not Enforced
+- **Severity:** HIGH | **Class:** PHANTOM-SEMANTIC | **Confidence:** HIGH
+- **Location:** `crates/ir/src/air.rs:890`; SPEC §5.2
+- **Status:** OPEN | **Remediation:** T-P5-03, T-P3-03
+- **Description:** legality_confidence defaults to 0.0 with no rejection gate; SPEC claims "hard invariant."
+
+### M-012: SPEC Claims SQLite Knowledge Store; Implementation Is JSON
+- **Severity:** HIGH | **Class:** DOC-CODE-DRIFT | **Confidence:** HIGH
+- **Location:** `SPEC.md:304, 516–520`; `crates/knowledge/src/store.rs:8–10`
+- **Status:** OPEN | **Remediation:** T-P5-11
+- **Description:** SPEC describes SQLite; implementation uses JSON with linear-scan queries.
+
+### M-013: Knowledge Seed Files Not Loaded by Any Runtime Crate
+- **Severity:** HIGH | **Class:** PHANTOM-SEMANTIC | **Confidence:** HIGH
+- **Location:** `knowledge/ane_op_family_matrix.json`; `knowledge/palettization_constraints_seed.json`
+- **Status:** OPEN | **Remediation:** T-P2-04
+- **Description:** Seed files validated in tests but never loaded at runtime; data hardcoded in Rust.
+
+### M-014: MILLinear/MILConv Shape Inference Propagates Input Shape
+- **Severity:** HIGH | **Class:** UNVERIFIED-INVARIANT | **Confidence:** HIGH
+- **Location:** `crates/bridge/src/shape_inference.rs:139, 376`
+- **Status:** OPEN | **Remediation:** T-P5-04
+- **Description:** Propagates input shape instead of computing correct output shape.
+
+### M-015–M-044: See MLIRVIOLATIONS.md for full MEDIUM/LOW issues
+- Includes: ANE constraints leak into lowering (M-015), name-based dtype heuristics (M-016), LegalityRewrite entirely ANE-specific (M-017), name-based shape heuristics (M-018–M-041), Python bridge unverifiable (M-020, M-032), doc-code drift (M-029–M-044).
+
+---
+
+## Additional Issues — Binary-Research Forensic Findings (N-prefix)
+
+> From cross-referencing MILLer source code against ANEC binary research in ane-constraints-docs/.
+
+### N-001: 1-bit and 2-bit Palettization Allowed but ANEC Rejects Them
+- **Severity:** CRITICAL | **Class:** LACUNA | **Confidence:** HIGH
+- **Location:** `crates/ir/src/ane_layout.rs:164`
+- **Status:** OPEN | **Remediation:** T-P5-01
+- **Description:** VALID_PALETTE_BITS includes 1 and 2; ANEC rejects "1 and 2 bit palettes not supported."
+
+### N-002: 35+ ANEC hal_params Not Modeled — 70% of Hardware Constraints Missing
+- **Severity:** CRITICAL | **Class:** LACUNA | **Confidence:** HIGH
+- **Location:** `crates/ir/src/ane_hw_limits.rs:10–30`
+- **Status:** OPEN | **Remediation:** T-P6-01
+- **Description:** Only 15 of 50+ hal_params modeled. Missing: kernel depth, padding limits, PE/NE limits, alignment.
+
+### N-003: M1 Hardware Limits Inherit from A17 Despite A14 Family
+- **Severity:** HIGH | **Class:** ABERRANT | **Confidence:** HIGH
+- **Location:** `crates/ir/src/ane_hw_limits.rs:133–135`
+- **Status:** OPEN | **Remediation:** T-P6-02
+- **Description:** m1() uses ..Self::a17() but M1 is A14-family; may allow oversized tensors.
+
+### N-004: ValidateLayer Equivalent Entirely Absent (Layer 1 of 5)
+- **Severity:** HIGH | **Class:** LACUNA | **Confidence:** HIGH
+- **Location:** `crates/passes/src/placement_validate.rs` (entire file)
+- **Status:** OPEN | **Remediation:** T-P6-03
+- **Description:** 40+ ANEC ValidateLayer instantiations have no MILLer equivalent.
+
+### N-005: MLIR Placement Dialect Entirely Absent (Layer 2 of 5)
+- **Severity:** HIGH | **Class:** LACUNA | **Confidence:** HIGH
+- **Location:** Entire MILLer codebase — no placement dialect module
+- **Status:** OPEN | **Remediation:** Long-term infrastructure
+- **Description:** No region-based placement, no force-ane-placement, no boundary ops.
+
+### N-006: Fusability Checks Entirely Absent (Layer 4 of 5)
+- **Severity:** HIGH | **Class:** LACUNA | **Confidence:** HIGH
+- **Location:** Entire MILLer codebase — no fusability module
+- **Status:** OPEN | **Remediation:** T-P6-05
+- **Description:** No IsFusable checks; ops may pass placement but fail to fuse into engine layers.
+
+### N-007: Memory Pressure / L2 Legalization Absent (Layer 5 of 5)
+- **Severity:** HIGH | **Class:** LACUNA | **Confidence:** HIGH
+- **Location:** Entire MILLer codebase — no L2/memory module
+- **Status:** OPEN | **Remediation:** T-P6-06
+- **Description:** No L2 budget modeling; individually legal ops may collectively exceed limits.
+
+### N-008: Missing AneRevision::Vu1 for uANE
+- **Severity:** HIGH | **Class:** LACUNA | **Confidence:** MEDIUM
+- **Location:** `crates/ir/src/ane_target.rs:200–213`
+- **Status:** OPEN | **Remediation:** T-P6-04
+- **Description:** uANE variant not modeled; potential constraint differences unknown.
+
+### N-009: MILTile Assigned PE Engine but Tile Has No ANEC Converter
+- **Severity:** HIGH | **Class:** PHANTOM-SEMANTIC | **Confidence:** HIGH
+- **Location:** `crates/ir/src/mir.rs:1181`
+- **Status:** OPEN | **Remediation:** T-P5-07
+- **Description:** Tile assigned PE engine but not in CPU_ONLY_OPS; legality_rewrite decomposes it.
+
+### N-010: ne_palette_lut_size_in_bytes Not Modeled
+- **Severity:** HIGH | **Class:** LACUNA | **Confidence:** HIGH
+- **Location:** `crates/ir/src/ane_layout.rs` (entire file)
+- **Status:** OPEN | **Remediation:** T-P6-01
+- **Description:** No LUT size overflow detection; large palettes may exceed hardware limit.
+
+### N-011: Deconv Validator Exists but Not Wired; Missing 12+ Binary Constraints
+- **Severity:** HIGH | **Class:** LACUNA | **Confidence:** HIGH
+- **Location:** `crates/passes/src/placement_validate.rs:589`; `op_constraints.rs:340–396`
+- **Status:** OPEN | **Remediation:** T-P2-01
+- **Description:** validate_deconv_constraints() checks 5 constraints; binary documents 12+ additional.
+
+### N-012: Conv Kernel Constraints Not Wired into Placement
+- **Severity:** HIGH | **Class:** LACUNA | **Confidence:** HIGH
+- **Location:** `crates/passes/src/placement_validate.rs` — no MILConv match arm
+- **Status:** OPEN | **Remediation:** T-P2-01
+- **Description:** validate_conv_constraints() exists but placement never calls it.
+
+### N-013: Pooling Constraints Not Wired into Placement
+- **Severity:** HIGH | **Class:** LACUNA | **Confidence:** HIGH
+- **Location:** `crates/passes/src/placement_validate.rs` — no pool match arm
+- **Status:** OPEN | **Remediation:** T-P2-01
+- **Description:** validate_pooling_constraints() exists but placement never calls it.
+
+### N-014: Missing AneFamily Capability for A13 Pool-to-Conv Restriction
+- **Severity:** HIGH | **Class:** LACUNA | **Confidence:** HIGH
+- **Location:** `crates/ir/src/ane_target.rs:73–191`
+- **Status:** OPEN | **Remediation:** T-P6-04
+- **Description:** "Pool-to-Conv not supported for A13 and below" has no capability method.
+
+### N-015–N-038: See ISSUES.md full version for MEDIUM/LOW binary-research findings
+- Includes: packed10 rejection (N-015), ChannelLast DRAM constraints (N-016), broadcast shape constraints (N-017), normalization format constraints (N-018–N-019), SDPA mask gaps (N-020), NMS OS-version dependency (N-021), PixelShuffle validation (N-022), Reshape dynamic-shape rejection (N-023), Gather wrong constraints (N-024), Sort/TopK format (N-025), conv kernel depth (N-026), InstanceNorm architecture gate (N-027), palettization+stride (N-028), palettization+compression (N-029), InputView constraints (N-030), dynamic shape kill switch (N-031), 2xInt8 (N-032), non-constant axes (N-033), mutable weights (N-034), stencil gaps (N-035), conv padding limits (N-036), ArgMinMax padding (N-037), Softmax architecture gate (N-038).

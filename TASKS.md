@@ -1,6 +1,10 @@
 # TASKS.md — MILLer Remediation Task Board
 
-> Auto-generated from `ANEVIOLATIONS.md` forensic audit.
+> Consolidated remediation task board derived from three audit sources:
+> - ANEVIOLATIONS.md (ANE constraint-grounded audit — V-prefix issues)
+> - MLIRVIOLATIONS.md (MLIR-method violation audit — M-prefix issues)
+> - Binary-research forensic analysis (ANE binary cross-reference — N-prefix issues)
+>
 > Format: Agentic AI task specification (structured, machine-parseable, human-readable).
 > Each task is independently executable by an AI coding agent with access to this repository.
 
@@ -606,6 +610,302 @@
 
 ---
 
+## Phase 5 — MLIR-Method Architectural Remediation (from MLIRVIOLATIONS.md)
+
+Tasks addressing violations identified by applying MLIR compiler-design discipline as a conceptual lens. See ISSUES.md (M-prefix entries) and MLIRVIOLATIONS.md for full details.
+
+### T-P5-01: Remove 1-bit and 2-bit palette support (ANEC rejects them)
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P5-01 |
+| `title` | Change VALID_PALETTE_BITS from [1,2,3,4,6,8] to [3,4,6,8] |
+| `phase` | P1 |
+| `severity` | CRITICAL |
+| `depends_on` | [] |
+| `files` | `crates/ir/src/ane_layout.rs` |
+| `violation_refs` | [N-001] |
+| `acceptance_criteria` | 1) `VALID_PALETTE_BITS = &[3, 4, 6, 8]`; 2) `validate_palette_bits()` rejects 1/2-bit; 3) `clamp_to_valid_palette_bits()` clamps 1→3, 2→3 with `log::warn!`; 4) Tests updated; 5) `palettization_constraints_seed.json` audited |
+| `agent_hints` | Change the const at ane_layout.rs:164. Update all three functions that reference it. Search for any code constructing `palette_bits: Some(1)` or `Some(2)`. |
+
+---
+
+### T-P5-02: Convert MatMul dimension mismatch from warning to hard error
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P5-02 |
+| `title` | Replace eprintln!("[WARN]") with anyhow::bail!() for MatMul mismatch |
+| `phase` | P1 |
+| `severity` | CRITICAL |
+| `depends_on` | [] |
+| `files` | `crates/passes/src/mil_lower.rs` |
+| `violation_refs` | [M-002] |
+| `acceptance_criteria` | 1) `mil_lower.rs:92–98` uses `bail!()` instead of `eprintln!`; 2) Test: MatMul with mismatched inner dims returns Err |
+| `agent_hints` | Replace the `eprintln!("[WARN]...")` + continue with `anyhow::bail!("MatMul inner dimension mismatch: lhs_cols={} != rhs_rows={}", lhs_cols, rhs_rows)`. Add a unit test in mil_lower tests. |
+
+---
+
+### T-P5-03: Implement per-IR-layer verify() methods
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P5-03 |
+| `title` | Add SirGraph::verify(), AirGraph::verify(), MirGraph::verify() |
+| `phase` | P2 |
+| `severity` | HIGH |
+| `depends_on` | [] |
+| `files` | `crates/ir/src/sir.rs`, `crates/ir/src/air.rs`, `crates/ir/src/mir.rs` |
+| `violation_refs` | [M-003, M-011, M-014] |
+| `acceptance_criteria` | 1) Each verify() checks node reference integrity, required fields, dtype legality; 2) AirGraph::verify() rejects legality_confidence==0.0 in strict mode; 3) MirGraph::verify() requires non-empty shapes or Dynamic; 4) verify() called after each pass; 5) Pipeline aborts on failure |
+| `agent_hints` | Add `pub fn verify(&self) -> Result<(), Vec<VerifyError>>` to each graph type. Check: all node IDs resolve, all dtype values are valid, required fields non-empty. For AIR, check legality_confidence>0.0. For MIR, check shapes are non-empty. Call from pipeline after each pass. |
+
+---
+
+### T-P5-04: Replace empty-shape fallbacks with explicit errors
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P5-04 |
+| `title` | infer_shape() and compat_output_shape() must not return Ok(vec![]) |
+| `phase` | P2 |
+| `severity` | HIGH |
+| `depends_on` | [T-P5-03] |
+| `files` | `crates/passes/src/mil_lower.rs`, `crates/bridge/src/shape_inference.rs` |
+| `violation_refs` | [M-003, M-006, M-033] |
+| `acceptance_criteria` | 1) `infer_shape()` returns Err for unknown variants; 2) `compat_output_shape()` returns Err for unhandled MirOp; 3) `shard_plan.rs` returns Err instead of [1,1,1,1]; 4) Downstream handles Shape::Dynamic explicitly or fails |
+| `agent_hints` | Change `Ok(vec![])` to `Err(...)` in infer_shape and compat_output_shape. Change derive_primary_shapes to bail! instead of defaulting. Add a `Shape::Dynamic` variant for intentional dynamic shapes. |
+
+---
+
+### T-P5-05: Rename LegalityRewritePass to AneLegalityRewritePass
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P5-05 |
+| `title` | Rename pass to reflect ANE-specific nature |
+| `phase` | P3 |
+| `severity` | MEDIUM |
+| `depends_on` | [] |
+| `files` | `crates/passes/src/legality_rewrite.rs`, `crates/passes/src/lib.rs`, `docs/ir_reference.md` |
+| `violation_refs` | [M-017] |
+| `acceptance_criteria` | 1) Pass renamed; 2) All references updated; 3) docs/ir_reference.md updated |
+| `agent_hints` | Rename the struct and module. Update all use statements. Update the pipeline construction. Update the IR reference doc. |
+
+---
+
+### T-P5-06: Move ANE-specific validation out of mil_lower.rs
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P5-06 |
+| `title` | Extract validate_sdpa_constraints() from MilLowerPass |
+| `phase` | P2 |
+| `severity` | MEDIUM |
+| `depends_on` | [T-P2-01] |
+| `files` | `crates/passes/src/mil_lower.rs`, `crates/passes/src/placement_validate.rs` |
+| `violation_refs` | [M-015] |
+| `acceptance_criteria` | 1) MilLowerPass::run() does not call validate_sdpa_constraints(); 2) Constraints checked in placement; 3) MilLowerPass is pure AIR→MIR mapping |
+| `agent_hints` | Move `validate_sdpa_constraints()` to placement_validate.rs. Remove the call from mil_lower.rs. Add a call in the SDPA placement validation block. |
+
+---
+
+### T-P5-07: Move engine assignment out of MirOp::base_engine()
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P5-07 |
+| `title` | Create ane_placement.rs for target-parameterized engine mapping |
+| `phase` | P3 |
+| `severity` | MEDIUM |
+| `depends_on` | [T-P1-01, T-P2-06] |
+| `files` | `crates/ir/src/mir.rs`, new `crates/ir/src/ane_placement.rs` |
+| `violation_refs` | [M-028, M-035] |
+| `acceptance_criteria` | 1) New module maps MirOp→AneEngine parameterized by AneFamily; 2) base_engine() removed or replaced; 3) iOS18 hardcoding replaced with target-derived value; 4) Tests updated |
+| `agent_hints` | Create ane_placement.rs with `fn engine_for_op(op: &MirOp, family: AneFamily) -> Option<AneEngine>`. Move the default_engine_for_revision logic there. Mark base_engine() deprecated. Make opset_version configurable. |
+
+---
+
+### T-P5-08: Remove ANE-specific attributes from SIR and MIR
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P5-08 |
+| `title` | Move palette_bits, kernel_scale, kernel_zero_point, kernel_palettized_lut to target layer |
+| `phase` | P3 |
+| `severity` | MEDIUM |
+| `depends_on` | [T-P5-07] |
+| `files` | `crates/ir/src/sir.rs`, `crates/ir/src/mir.rs` |
+| `violation_refs` | [M-028] |
+| `acceptance_criteria` | 1) SirOp::LinearProjection no longer has palette_bits; 2) MirOp::MILConv no longer has ANEC attributes; 3) Target-specific layer adds these during ANE lowering; 4) SIR can represent non-ANE targets |
+| `agent_hints` | Move palette_bits from SirOp to a separate SirOpMetadata or target annotation. Move kernel_scale/kernel_zero_point/kernel_palettized_lut from MirOp to ane_placement metadata. This is a significant refactor — break into smaller PRs. |
+
+---
+
+### T-P5-09: Replace name-based heuristics with explicit annotations
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P5-09 |
+| `title` | Remove name.contains("input_ids"), ends_with("_ids"), "__placeholder__" heuristics |
+| `phase` | P2 |
+| `severity` | MEDIUM |
+| `depends_on` | [T-P5-04] |
+| `files` | `crates/bridge/src/shape_inference.rs`, `crates/passes/src/mil_lower.rs` |
+| `violation_refs` | [M-016, M-018, M-041] |
+| `acceptance_criteria` | 1) compat_input_shape() does not use name heuristics; 2) mil_lower dtype inference does not use name heuristics; 3) Shape/dtype carried as explicit fields from SIR→AIR→MIR; 4) Returns Err when unavailable |
+| `agent_hints` | Replace name-based fallbacks with Err returns. Add explicit shape/dtype fields to MirOp variants. The Qwen3 defaults (T-P2-11) provide the required parameters once that task is complete. |
+
+---
+
+### T-P5-10: Add post-lowering verification pass
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P5-10 |
+| `title` | Verify every MIR node has known shape and dtype after AIR→MIR lowering |
+| `phase` | P2 |
+| `severity` | MEDIUM |
+| `depends_on` | [T-P5-03, T-P5-04] |
+| `files` | `crates/passes/src/` (new module) |
+| `violation_refs` | [M-003, M-014] |
+| `acceptance_criteria` | 1) MirVerifyPass runs after MilLowerPass; 2) Checks: non-empty shape (or Dynamic), legal dtype; 3) Verification failure → pipeline aborts; 4) Test: lowering with empty shape triggers error |
+| `agent_hints` | Create `mir_verify.rs` in passes/. Iterate over all nodes in MirGraph. Check each node has a non-empty shape and a legal dtype. Return Err with detailed diagnostic on first failure. Add to pipeline after MilLowerPass. |
+
+---
+
+### T-P5-11: Update SPEC.md to match implementation
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P5-11 |
+| `title` | Fix SPEC: JSON not SQLite, confidence decay not wired, pruning not implemented, CrossValidated=0.6 |
+| `phase` | P3 |
+| `severity` | MEDIUM |
+| `depends_on` | [] |
+| `files` | `SPEC.md` |
+| `violation_refs` | [M-012, M-029, M-030, M-043, M-044] |
+| `acceptance_criteria` | 1) SPEC describes JSON file store; 2) Confidence decay marked "not yet implemented"; 3) Knowledge pruning marked "not yet implemented"; 4) CrossValidated confidence = 0.6; 5) Test count matches CHANGELOG |
+| `agent_hints` | Update SPEC sections on knowledge persistence, confidence decay, and pruning. Change CrossValidated value from 0.85 to 0.6. Update test count from 1270 to 1651+. |
+
+---
+
+### T-P5-12: Add semantic verification to Python bridge
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P5-12 |
+| `title` | Verify constructed MIL graph against MIR spec after build_*_program() |
+| `phase` | P3 |
+| `severity` | MEDIUM |
+| `depends_on` | [] |
+| `files` | `python/mil_emitter.py`, `python/bridge.py` |
+| `violation_refs` | [M-020, M-032] |
+| `acceptance_criteria` | 1) After build, validate constructed program op set; 2) BridgeResult.status != semantic legality; 3) Structural verification of output graph; 4) LUT bitwidth wired; 5) Test: bridge returns Err on divergence |
+| `agent_hints` | Add a `verify_program(program, expected_ops)` function in mil_emitter.py. Call after each build_*_program(). Verify op types and topology match expectations. In bridge.py, don't treat status=="success" as semantic legality. |
+
+---
+
+## Phase 6 — Binary-Research Infrastructure Gaps (from forensic analysis)
+
+Tasks addressing findings from cross-referencing MILLer source code against ANEC binary research. See ISSUES.md (N-prefix entries) for full details.
+
+### T-P6-01: Add 15+ highest-impact missing hal_params to AneHwLimits
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P6-01 |
+| `title` | Model critical missing hardware constraint parameters |
+| `phase` | P2 |
+| `severity` | CRITICAL |
+| `depends_on` | [] |
+| `files` | `crates/ir/src/ane_hw_limits.rs` |
+| `violation_refs` | [N-002, N-026, N-036] |
+| `acceptance_criteria` | 1) AneHwLimits gains: max_conv_kernel_dim_z, max_conv_pad_x/y/z, pe_max_tile_height, ne_transpose_w_max, ne_palette_lut_size_in_bytes, dram_alignment; 2) Values populated per revision; 3) validate_tensor_dims() uses new fields |
+| `agent_hints` | Add fields to AneHwLimits struct. Populate from binary research docs or empirical testing. Mark unverified values with verified:false. Update for_revision() to populate. Update validate methods. |
+
+---
+
+### T-P6-02: Fix M1 hardware limits to reflect A14-family
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P6-02 |
+| `title` | m1() must derive from a14() values, not a17() |
+| `phase` | P2 |
+| `severity` | HIGH |
+| `depends_on` | [T-P6-01, T-P2-08] |
+| `files` | `crates/ir/src/ane_hw_limits.rs` |
+| `violation_refs` | [N-003, V-019] |
+| `acceptance_criteria` | 1) m1() derives from a14() values; 2) A12() no longer copies A11 without verification; 3) future() clearly marked speculative; 4) Test: M1 limits match A14 class |
+| `agent_hints` | Change `..Self::a17()` to `..Self::a14()` in m1(). Update a12() to use independent values with verified:false flag. Add log::warn! for speculative limits. |
+
+---
+
+### T-P6-03: Build ValidateLayer equivalent (ANE Constraint Layer 1)
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P6-03 |
+| `title` | Per-op ANECTensorDesc validation before placement |
+| `phase` | P3 |
+| `severity` | HIGH |
+| `depends_on` | [T-P6-01, T-P2-01] |
+| `files` | New `crates/passes/src/ane_validate_layer.rs` |
+| `violation_refs` | [N-004] |
+| `acceptance_criteria` | 1) Per-op validation functions for Conv, Deconv, Pool, Linear, MatMul, Elementwise, Norm, SDPA, Softmax, Gather, ArgMinMax, Reshape, Transpose, Pad, Sort/TopK; 2) Validates: tensor rank, valid format, interleave, int4→interleave-8; 3) Called from placement_validate.rs; 4) Test: each op with invalid tensor desc rejected |
+| `agent_hints` | Create ane_validate_layer.rs with validation functions per op type. Start with Conv/Linear/Elementwise (highest impact). Check rank ≤ 5, valid interleave ∈ {1,2,3,4,8}, int4→interleave=8, packed10 rejection. Import and call from placement_validate match arms. |
+
+---
+
+### T-P6-04: Add missing AneFamily capability methods
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P6-04 |
+| `title` | Add supports_pool_conv_fallback(), supports_channellast_dram(), supports_instance_norm() |
+| `phase` | P2 |
+| `severity` | HIGH |
+| `depends_on` | [] |
+| `files` | `crates/ir/src/ane_target.rs` |
+| `violation_refs` | [N-014, N-016, N-008] |
+| `acceptance_criteria` | 1) supports_pool_conv_fallback() returns false for A13-; 2) supports_channellast_dram() returns false; 3) supports_instance_norm() added; 4) AneRevision::Vu1 added for uANE; 5) Tests |
+| `agent_hints` | Add methods following existing supports_sdpa()/supports_layernorm() pattern. For Vu1, add `V17u1` variant with unknown limits (verified:false). Wire into placement validation. |
+
+---
+
+### T-P6-05: Add fusability checks (ANE Constraint Layer 4)
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P6-05 |
+| `title` | Build IsFusable-style checks for NE/PE engine layers |
+| `phase` | P4 |
+| `severity` | HIGH |
+| `depends_on` | [T-P6-03, T-P5-07] |
+| `files` | New `crates/passes/src/ane_fusability.rs` |
+| `violation_refs` | [N-006] |
+| `acceptance_criteria` | 1) Module documents fusable ops; 2) Documents impossible fusion patterns; 3) Warns when ops pass placement but can't fuse; 4) Test: known-impossible pattern detected |
+| `agent_hints` | Start as a documentation/validation module. Enumerate which activations can fuse into NE/PE layers and which cannot. Add a check function that warns when a non-fusable pattern is detected after placement. |
+
+---
+
+### T-P6-06: Build L2/Memory pressure model (ANE Constraint Layer 5)
+
+| Field | Value |
+|-------|-------|
+| `id` | T-P6-06 |
+| `title` | L2 cache budget estimation and DRAM limit checking |
+| `phase` | P4 |
+| `severity` | HIGH |
+| `depends_on` | [T-P6-01, T-P6-03, T-P6-05] |
+| `files` | New `crates/passes/src/ane_memory_pressure.rs` |
+| `violation_refs` | [N-007] |
+| `acceptance_criteria` | 1) L2 budget estimation per engine layer; 2) DRAM alignment validation; 3) Spatial split feasibility analysis; 4) Warning when L2 budget likely exceeded |
+| `agent_hints` | This is the most complex infrastructure task. Start with DRAM alignment checking (uses dram_alignment from T-P6-01). Add simple L2 budget estimation per layer. Mark all estimates as heuristic. |
+
+---
+
 ## Task Dependency Graph
 
 ```
@@ -614,11 +914,21 @@ T-P1-04 ──→ T-P2-05
 T-P2-01 ──→ T-P3-09
 T-P2-08 ──→ T-P4-07
 T-P4-03 ──→ T-P4-06
+
+T-P5-03 ──→ T-P5-04
+T-P5-04 ──→ T-P5-10
+T-P5-07 ──→ T-P5-08
+T-P5-09 depends on T-P5-04
+
+T-P6-01 ──→ T-P6-02
+T-P6-01 ──→ T-P6-03
+T-P6-03 ──→ T-P6-05 ──→ T-P6-06
+T-P5-07 ──→ T-P6-05
 ```
 
 ## Execution Order Recommendation
 
-1. **T-P1-01 through T-P1-05** — can be executed in parallel (no interdependencies)
-2. **T-P2-01 through T-P2-12** — can be mostly parallel; T-P2-05 depends on T-P1-04, T-P2-06 depends on T-P1-01
-3. **T-P3-01 through T-P3-11** — can be mostly parallel; T-P3-09 depends on T-P2-01
-4. **T-P4-01 through T-P4-08** — can be executed in any order; T-P4-06 depends on T-P4-03, T-P4-07 depends on T-P2-08
+1. **T-P1-01 through T-P1-05, T-P5-01, T-P5-02** — CRITICAL, can be executed in parallel
+2. **T-P2-01 through T-P2-12, T-P5-06, T-P5-09, T-P6-01, T-P6-04** — HIGH, mostly parallel
+3. **T-P3-01 through T-P3-11, T-P5-03, T-P5-05, T-P5-07, T-P5-10, T-P5-11, T-P5-12, T-P6-02, T-P6-03** — MEDIUM, some dependencies
+4. **T-P4-01 through T-P4-08, T-P5-08, T-P6-05, T-P6-06** — LOW, long-term infrastructure
