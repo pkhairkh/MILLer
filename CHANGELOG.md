@@ -1,15 +1,97 @@
 # Changelog
 
-## Current Status — 2026-03-05
+## Current Status — 2026-05-04
 
-- **1488+ tests passing**, 0 failures
+- **1541 tests passing**, 0 failures
 - IR Cleanliness Score: 89%
 - 0 clippy warnings, 0 errors
-- **12 open issues** (0 CRITICAL, 12 HIGH, 0 MEDIUM, 0 LOW) — see [ISSUES.md](ISSUES.md)
-- **5 open tasks** — see [TASKS.md](TASKS.md)
+- **24 open tasks** (1 CRITICAL, 3 HIGH, 12 MEDIUM, 8 LOW) — see [TASKS.md](TASKS.md)
+- **20 tasks resolved** this sprint cycle (T-109, T-104, T-114, T-115 from this sprint)
 
 Audit details: [docs/audit/tabula-rasa-v3.md](docs/audit/tabula-rasa-v3.md)
 Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
+
+---
+
+## [sprint-pir-shard-hardening] — 2026-05-04
+
+### Sprint: PIR/Shard Plan Hardening (T-109, T-104, T-114, T-115)
+
+Resolved 4 tasks (all MEDIUM) from the NECROSCOPY forensic audit
+(ane-violations.md). All changes harden the shard plan and PIR pipeline
+by removing hardcoded defaults, adding error enforcement, and making
+configuration explicit and independently controllable.
+
+#### Tasks Resolved
+
+| Task | Description | Issues Fixed |
+|------|-------------|--------------|
+| T-109 | Make StateTopologyPass Return Errors | I-84 |
+| T-104 | Derive State Shape from ReadState Op | I-79, I-89 |
+| T-114 | Fix PIR Tensor Spec Dtype Hardcoding | I-89 |
+| T-115 | Make Opset Version and Deployment Target Configurable | I-90 |
+
+#### Added
+
+- T-109: `strict: bool` field on `StateTopologyPass` (default: true). Strict mode
+  returns `Err` for ReadState without matching WriteState. WriteState without
+  ReadState still logs info (valid for initial state writes). Added
+  `new_lenient()` and `with_strict()` constructors. Module-level doc comment
+  expanded with strict mode documentation.
+- T-104: `read_state_map` in `convert_mir_to_proto_multifunction()` collects all
+  ReadState ops before the state-building loop. `CoremlUpdateState` and
+  `StateWrite` now derive shape/dtype from ReadState map. Returns explicit
+  error when no ReadState exists and shape is empty (Core ML rejects empty-
+  dimension state tensors).
+- T-114: `derive_primary_dtype()` method on `ShardPlanPass` scans SIR graph for
+  dtype-bearing ops (Const, Cast, Fill, FillLike, Quantize, Dequantize).
+  Replaced all 9 hardcoded `"fp16"` values in `shard_plan.rs` with
+  `primary_dtype.clone()`. Fallback to `"fp16"` with explicit `log::warn!`
+  when no dtype-bearing op is found.
+- T-115: `DEFAULT_MINIMUM_DEPLOYMENT_TARGET` constant in `lib.rs`, separate
+  from `DEFAULT_OPSET_VERSION`. `minimum_deployment_target` field on
+  `ShardPipelineSpec`, decoupled from `opset_version`. Builder method
+  `with_deployment_target()` for independent configuration. Updated
+  `shard_desc.rs` and `serialize.rs` to use the separate constant.
+
+#### Changed
+
+- `state_topology.rs`: Added `strict` field and conditional error returns.
+  `ReadState` without matching `WriteState` now returns `Err` in strict mode
+  (default). Non-strict mode preserves old warning-only behavior.
+- `mir_to_proto.rs`: State declarations no longer default to empty shape and
+  Float16 dtype. Shape and dtype are derived from ReadState ops. Missing
+  ReadState for a state is now a hard error.
+- `shard_plan.rs`: All TensorSpec dtype fields now use `primary_dtype.clone()`
+  instead of hardcoded `"fp16"`. StateDeclaration and Handoff dtype fields
+  similarly updated. Opset and deployment target use named constants instead
+  of inline `"iOS18"` strings.
+- `pir.rs`: `ShardPipelineSpec` gains `minimum_deployment_target` field and
+  `with_deployment_target()` builder. `to_pir_graph()` uses the dedicated
+  field instead of cloning `opset_version`.
+- `lib.rs`: New `DEFAULT_MINIMUM_DEPLOYMENT_TARGET` constant with
+  documentation explaining the decoupling rationale.
+- `serialize.rs`: Uses `DEFAULT_MINIMUM_DEPLOYMENT_TARGET` constant.
+- `shard_desc.rs`: Uses `DEFAULT_MINIMUM_DEPLOYMENT_TARGET` constant.
+
+#### Tests
+
+- T-109: Strict mode validation (ReadState without WriteState returns Err),
+  non-strict mode validation (warning only), existing tests updated.
+- T-114: `test_t114_derive_primary_dtype_fallback` — fallback to "fp16" when
+  no dtype-bearing op in graph. `test_t114_derive_primary_dtype_from_const` —
+  derives "fp32" from Const op. `test_t114_build_sharded_plan_fp32_dtype` —
+  verifies fp32 propagation through PIR packages, inputs, outputs, and
+  handoffs.
+- T-115: `test_deployment_target_independent_of_opset` — verifies
+  `with_deployment_target()` sets target independently. Default values
+  verified for both `opset_version` and `minimum_deployment_target`.
+- T-104: State shape derivation from ReadState verified. Error behavior for
+  missing ReadState verified.
+
+#### Issues Closed (4 issues)
+
+I-79, I-84, I-89, I-90
 
 ---
 

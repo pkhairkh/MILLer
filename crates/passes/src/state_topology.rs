@@ -10,13 +10,29 @@
 //! - Validates that KV-cache state IDs follow the naming convention
 //!   `kv_cache_layer_{idx}_{key|value}`
 //! - Flags state operations that exceed ANE state capacity
+//!
+//! ## Strict Mode (T-109)
+//!
+//! When `strict` is true (the default), the pass enforces validation
+//! by returning errors for invalid patterns:
+//! - ReadState without matching WriteState → `Err`
+//! - WriteState without matching ReadState → `warn!` only (valid for
+//!   initial state writes, e.g., prefill embedding)
+//!
+//! When `strict` is false, all validation failures are logged as
+//! warnings/info only (backward-compatible behavior).
 
 use ane_ir::sir::SirGraph;
 use anyhow::Result;
 
 /// State Topology pass implementation.
+///
+/// T-109: Added `strict` mode to enforce validation by returning errors
+/// instead of silently logging warnings.
 pub struct StateTopologyPass {
-    // No configuration needed
+    /// T-109: When true, validation failures return Err instead of just logging.
+    /// Default: true.
+    strict: bool,
 }
 
 impl Default for StateTopologyPass {
@@ -27,7 +43,17 @@ impl Default for StateTopologyPass {
 
 impl StateTopologyPass {
     pub fn new() -> Self {
-        Self {}
+        Self { strict: true }
+    }
+
+    /// T-109: Create a pass with explicit strict mode.
+    pub fn with_strict(strict: bool) -> Self {
+        Self { strict }
+    }
+
+    /// T-109: Create a non-strict pass (backward-compatible with old behavior).
+    pub fn new_lenient() -> Self {
+        Self { strict: false }
     }
 
     /// Run the state topology pass.
@@ -36,10 +62,14 @@ impl StateTopologyPass {
     /// this pass validates their structure and naming. For stateless graphs
     /// (no `StateRead`/`StateWrite` ops), it is a no-op.
     ///
-    /// Validation checks:
-    /// 1. Every `StateRead` has a matching `StateWrite` for the same state_id
-    /// 2. KV-cache state IDs follow the `kv_cache_layer_{idx}_{key|value}` convention
-    /// 3. State shapes are consistent between reads and writes
+    /// ## Validation behavior (T-109)
+    ///
+    /// In strict mode (default):
+    /// - `ReadState` without matching `WriteState` → returns `Err`
+    /// - `WriteState` without matching `ReadState` → logs warning only
+    ///
+    /// In non-strict mode:
+    /// - All validation failures are logged as warnings/info only
     pub fn run(&self, input: SirGraph) -> Result<SirGraph> {
         use ane_ir::sir::SirOp;
 
@@ -67,19 +97,30 @@ impl StateTopologyPass {
         }
 
         // Validate: every state read should have a corresponding write
-        for state_id in state_reads.keys() {
+        for (state_id, read_indices) in &state_reads {
             if !state_writes.contains_key(state_id) {
-                // This is acceptable for prefill (embedding) models that only
-                // write states but never read them. Log a warning but don't fail.
-                log::warn!(
-                    "StateTopology: State '{}' has reads but no writes. \
-                     This may indicate an incomplete KV-cache pattern.",
-                    state_id
-                );
+                // T-109: Strict mode validation — read without write is an error
+                if self.strict {
+                    let read_op_name = &input.nodes[read_indices[0]].name;
+                    anyhow::bail!(
+                        "StateTopology validation: read op '{}' references state '{}' with no matching write op",
+                        read_op_name,
+                        state_id
+                    );
+                } else {
+                    // Non-strict: log warning only (backward-compatible)
+                    log::warn!(
+                        "StateTopology: State '{}' has reads but no writes. \
+                         This may indicate an incomplete KV-cache pattern.",
+                        state_id
+                    );
+                }
             }
         }
 
         // Validate: every state write should have a corresponding read
+        // T-109: Write without read is always just a warning — this is valid
+        // for initial state writes (e.g., prefill embedding).
         for state_id in state_writes.keys() {
             if !state_reads.contains_key(state_id) {
                 // This is acceptable for the first decode step where the cache
@@ -128,12 +169,14 @@ mod tests {
 
     #[test]
     fn test_state_topology_pass_new() {
-        let _pass = StateTopologyPass::new();
+        let pass = StateTopologyPass::new();
+        assert!(pass.strict, "Default strict mode should be true");
     }
 
     #[test]
     fn test_state_topology_pass_default() {
-        let _pass = StateTopologyPass::default();
+        let pass = StateTopologyPass::default();
+        assert!(pass.strict, "Default strict mode should be true");
     }
 
     #[test]
@@ -180,15 +223,15 @@ mod tests {
         ];
         let graph = make_graph(nodes);
 
+        // Strict mode: should still be Ok (read has matching write)
         let pass = StateTopologyPass::new();
         let result = pass.run(graph);
         assert!(result.is_ok());
     }
 
+    /// T-109: Test that strict mode returns Err when there's a read without a write.
     #[test]
-    fn test_run_graph_with_read_no_write() {
-        // A graph with StateRead but no matching StateWrite.
-        // The pass should still return Ok (just prints a warning).
+    fn test_run_graph_with_read_no_write_strict() {
         let nodes = vec![SirNode {
             id: SirNodeId("state_read_0".to_string()),
             op: SirOp::StateRead {
@@ -201,8 +244,102 @@ mod tests {
         }];
         let graph = make_graph(nodes);
 
+        // T-109: In strict mode (default), read without write should return Err
         let pass = StateTopologyPass::new();
         let result = pass.run(graph);
-        assert!(result.is_ok());
+        assert!(result.is_err(), "Strict mode should return Err for read without write");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("StateTopology validation"),
+            "Error message should mention StateTopology validation, got: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("kv_cache_layer_0_key"),
+            "Error message should reference the state_id, got: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("state_read_0"),
+            "Error message should reference the read op name, got: {}",
+            err_msg
+        );
+    }
+
+    /// T-109: Test that non-strict mode returns Ok with warning for read without write.
+    #[test]
+    fn test_run_graph_with_read_no_write_lenient() {
+        let nodes = vec![SirNode {
+            id: SirNodeId("state_read_0".to_string()),
+            op: SirOp::StateRead {
+                state_id: "kv_cache_layer_0_key".to_string(),
+                offset: 0,
+                shape: vec![1, 32, 128],
+            },
+            name: "state_read_0".to_string(),
+            metadata: test_metadata(),
+        }];
+        let graph = make_graph(nodes);
+
+        // T-109: In non-strict mode, read without write should return Ok (just warns)
+        let pass = StateTopologyPass::new_lenient();
+        let result = pass.run(graph);
+        assert!(
+            result.is_ok(),
+            "Non-strict mode should return Ok for read without write (just warn)"
+        );
+    }
+
+    /// T-109: Test that write without read is Ok in both modes (valid for initial state writes).
+    #[test]
+    fn test_run_graph_with_write_no_read() {
+        let nodes = vec![SirNode {
+            id: SirNodeId("state_write_0".to_string()),
+            op: SirOp::StateWrite {
+                state_id: "kv_cache_layer_0_key".to_string(),
+                offset: 0,
+                value: SirNodeId("some_value".to_string()),
+            },
+            name: "state_write_0".to_string(),
+            metadata: test_metadata(),
+        }];
+        let graph = make_graph(nodes);
+
+        // Strict mode: write without read should still be Ok (just info log)
+        let pass = StateTopologyPass::new();
+        let result = pass.run(graph);
+        assert!(
+            result.is_ok(),
+            "Write without read should be Ok in strict mode (valid for initial state writes)"
+        );
+
+        // Non-strict mode: also Ok
+        let pass = StateTopologyPass::new_lenient();
+        let nodes2 = vec![SirNode {
+            id: SirNodeId("state_write_0".to_string()),
+            op: SirOp::StateWrite {
+                state_id: "kv_cache_layer_0_key".to_string(),
+                offset: 0,
+                value: SirNodeId("some_value".to_string()),
+            },
+            name: "state_write_0".to_string(),
+            metadata: test_metadata(),
+        }];
+        let graph2 = make_graph(nodes2);
+        let result = pass.run(graph2);
+        assert!(
+            result.is_ok(),
+            "Write without read should be Ok in non-strict mode"
+        );
+    }
+
+    /// T-109: Test with_strict constructor.
+    #[test]
+    fn test_with_strict_constructor() {
+        let strict_pass = StateTopologyPass::with_strict(true);
+        assert!(strict_pass.strict);
+
+        let lenient_pass = StateTopologyPass::with_strict(false);
+        assert!(!lenient_pass.strict);
     }
 }

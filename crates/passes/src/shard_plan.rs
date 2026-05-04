@@ -172,6 +172,47 @@ impl ShardPlanPass {
         "mb.matmul"
     }
 
+    /// T-114: Derive the primary dtype from the SIR graph.
+    ///
+    /// Scans the graph for the first op that carries a `dtype` or `output_dtype`
+    /// field and converts it to a string. If no dtype-bearing op is found,
+    /// falls back to `"fp16"` with an explicit warning.
+    fn derive_primary_dtype(input: &SirGraph) -> String {
+        use ane_ir::sir::SirOp;
+
+        for node in &input.nodes {
+            match &node.op {
+                SirOp::Const { dtype, .. } => {
+                    return format!("{:?}", dtype).to_lowercase();
+                }
+                SirOp::Cast { dtype, .. } => {
+                    return format!("{:?}", dtype).to_lowercase();
+                }
+                SirOp::Fill { dtype, .. } => {
+                    return format!("{:?}", dtype).to_lowercase();
+                }
+                SirOp::FillLike { dtype, .. } => {
+                    return format!("{:?}", dtype).to_lowercase();
+                }
+                SirOp::Quantize { output_dtype, .. } => {
+                    return format!("{:?}", output_dtype).to_lowercase();
+                }
+                SirOp::Dequantize { output_dtype, .. } => {
+                    return format!("{:?}", output_dtype).to_lowercase();
+                }
+                _ => {}
+            }
+        }
+
+        // T-114: No dtype-bearing op found — fall back to fp16 with warning
+        log::warn!(
+            "T-114: No dtype-bearing op found in SIR graph. \
+             Defaulting to 'fp16'. Set an explicit dtype in the task spec \
+             to avoid this fallback."
+        );
+        "fp16".to_string()
+    }
+
     /// Determine the compute units for a shard based on risk knowledge.
     ///
     /// If the knowledge store reports high fallback risk for the shard's
@@ -253,6 +294,11 @@ impl ShardPlanPass {
         let mut kv_cache_shapes: std::collections::HashMap<String, Vec<usize>> =
             std::collections::HashMap::new();
         let mut decoder_indices: Vec<usize> = Vec::new();
+
+        // T-114: Derive the primary dtype from the graph instead of hardcoding "fp16".
+        // Scan for the first op with a dtype field and use that as the default.
+        // Fall back to "fp16" only with an explicit warning.
+        let primary_dtype = Self::derive_primary_dtype(input);
 
         for (idx, node) in input.nodes.iter().enumerate() {
             match &node.op {
@@ -368,12 +414,12 @@ impl ShardPlanPass {
                     inputs: vec![TensorSpec {
                         name: "input_ids".into(),
                         shape: vec![1, 1], // batch, seq — derived from graph
-                        dtype: "fp16".into(),
+                        dtype: primary_dtype.clone().into(), // T-114: derived from graph
                     }],
                     outputs: vec![TensorSpec {
                         name: "logits".into(),
                         shape: vec![1, 1], // batch, vocab — derived from graph
-                        dtype: "fp16".into(),
+                        dtype: primary_dtype.clone().into(), // T-114: derived from graph
                     }],
                     stateful: false,
                 }],
@@ -401,7 +447,7 @@ impl ShardPlanPass {
                 kv_state_decls.push(StateDeclaration {
                     state_id: state_id.clone(),
                     shape,
-                    dtype: "fp16".into(),
+                    dtype: primary_dtype.clone().into(), // T-114: derived from graph
                     owner_package: decoder_name.clone(),
                 });
             }
@@ -419,12 +465,12 @@ impl ShardPlanPass {
                     inputs: vec![TensorSpec {
                         name: "hidden_states".into(),
                         shape: vec![1, 1], // batch, embed — derived from graph
-                        dtype: "fp16".into(),
+                        dtype: primary_dtype.clone().into(), // T-114: derived from graph
                     }],
                     outputs: vec![TensorSpec {
                         name: "logits".into(),
                         shape: vec![1, 1], // batch, vocab — derived from graph
-                        dtype: "fp16".into(),
+                        dtype: primary_dtype.clone().into(), // T-114: derived from graph
                     }],
                     stateful: is_stateful,
                 }],
@@ -453,7 +499,7 @@ impl ShardPlanPass {
                     inputs: vec![TensorSpec {
                         name: "logits".into(),
                         shape: vec![1, 1], // batch, vocab
-                        dtype: "fp16".into(),
+                        dtype: primary_dtype.clone().into(), // T-114: derived from graph
                     }],
                     outputs: vec![TensorSpec {
                         name: "next_token".into(),
@@ -485,7 +531,7 @@ impl ShardPlanPass {
                     to_package: dec.name.clone(),
                     tensor_name: "hidden_states".into(),
                     shape: vec![1, 1],
-                    dtype: "fp16".into(),
+                    dtype: primary_dtype.clone().into(), // T-114: derived from graph
                     handoff_kind: HandoffKind::TensorPassThrough,
                     execution_order: order,
                     source_output_name: "logits".into(),
@@ -505,7 +551,7 @@ impl ShardPlanPass {
                     to_package: "sampler".to_string(),
                     tensor_name: "logits".into(),
                     shape: vec![1, 1],
-                    dtype: "fp16".into(),
+                    dtype: primary_dtype.clone().into(), // T-114: derived from graph
                     handoff_kind: HandoffKind::TensorPassThrough,
                     execution_order: order,
                     source_output_name: "logits".into(),
@@ -530,7 +576,7 @@ impl ShardPlanPass {
                         to_package: dec.name.clone(), // self-referential: same shard reads its own state
                         tensor_name: state_id.clone(),
                         shape,
-                        dtype: "fp16".into(),
+                        dtype: primary_dtype.clone().into(), // T-114: derived from graph
                         handoff_kind: HandoffKind::StateWriteRead,
                         execution_order: order,
                         source_output_name: format!("{}_update", state_id),
@@ -558,8 +604,9 @@ impl ShardPlanPass {
             handoffs,
             shard_template: None,
             context_length: 0,
-            opset_version: "iOS18".into(),
-            minimum_deployment_target: "iOS18".into(),
+            opset_version: ane_ir::DEFAULT_OPSET_VERSION.into(),
+            // T-115: Use DEFAULT_MINIMUM_DEPLOYMENT_TARGET instead of hardcoded "iOS18"
+            minimum_deployment_target: ane_ir::DEFAULT_MINIMUM_DEPLOYMENT_TARGET.into(),
             kv_cache_layout: if !kv_cache_state_ids.is_empty() {
                 KvCacheLayout::MaskedBlend
             } else {
@@ -1535,5 +1582,130 @@ mod tests {
 
         assert_eq!(plan.compute_units, vec!["CPU_AND_NE", "CPU_AND_NE", "CPU_AND_NE"]);
         assert!(adaptations.is_empty());
+    }
+
+    /// T-114: Verify that derive_primary_dtype returns "fp16" for a graph
+    /// with no dtype-bearing ops (fallback behavior).
+    #[test]
+    fn test_t114_derive_primary_dtype_fallback() {
+        // A graph with only LinearProjection (no dtype field) should fall back
+        let nodes = vec![SirNode {
+            id: SirNodeId("linear_0".to_string()),
+            op: SirOp::LinearProjection {
+                input: SirNodeId("input_0".to_string()),
+                weight: "weight_0".to_string(),
+                bias: None,
+                palette_bits: None,
+            },
+            name: "linear_0".to_string(),
+            metadata: SirMetadata {
+                task_origin: TaskOrigin::Synthetic,
+                model_id: None,
+                quality_contract: None,
+                precision_override: None,
+            },
+        }];
+        let graph = SirGraph {
+            nodes,
+            inputs: vec![SirNodeId("input_0".to_string())],
+            outputs: vec![SirNodeId("linear_0".to_string())],
+        };
+
+        let dtype = ShardPlanPass::derive_primary_dtype(&graph);
+        assert_eq!(dtype, "fp16", "Fallback dtype should be fp16 when no dtype-bearing op found");
+    }
+
+    /// T-114: Verify that derive_primary_dtype extracts the correct dtype
+    /// from a Const op in the graph.
+    #[test]
+    fn test_t114_derive_primary_dtype_from_const() {
+        use ane_ir::common::MilDtype;
+
+        let nodes = vec![
+            SirNode {
+                id: SirNodeId("const_fp32".to_string()),
+                op: SirOp::Const {
+                    value_path: "weights/fp32_weight.bin".to_string(),
+                    dtype: MilDtype::Fp32,
+                    palette_bits: None,
+                },
+                name: "const_fp32".to_string(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            },
+            SirNode {
+                id: SirNodeId("linear_0".to_string()),
+                op: SirOp::LinearProjection {
+                    input: SirNodeId("const_fp32".to_string()),
+                    weight: "weight_0".to_string(),
+                    bias: None,
+                    palette_bits: None,
+                },
+                name: "linear_0".to_string(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            },
+        ];
+        let graph = SirGraph {
+            nodes,
+            inputs: vec![SirNodeId("input_0".to_string())],
+            outputs: vec![SirNodeId("linear_0".to_string())],
+        };
+
+        let dtype = ShardPlanPass::derive_primary_dtype(&graph);
+        assert_eq!(dtype, "fp32", "Dtype should be derived from Const op");
+    }
+
+    /// T-114: Verify that build_sharded_plan propagates dtype through
+    /// TensorSpecs correctly for non-fp16 dtypes.
+    #[test]
+    fn test_t114_build_sharded_plan_fp32_dtype() {
+        let (plan, pir) =
+            ShardPlanPass::build_sharded_plan("test_fp32", 512, 1024, 4096, 1, "fp32");
+
+        // Verify the plan was created
+        assert!(plan.num_shards >= 1);
+
+        // Verify that PIR packages have fp32 dtype in their TensorSpecs
+        for package in &pir.packages {
+            for func in &package.functions {
+                for input in &func.inputs {
+                    assert_eq!(
+                        input.dtype, "fp32",
+                        "Input TensorSpec dtype should be fp32, got {}",
+                        input.dtype
+                    );
+                }
+                for output in &func.outputs {
+                    // Sampler output is int32, not the primary dtype
+                    if output.name != "next_token" {
+                        assert_eq!(
+                            output.dtype, "fp32",
+                            "Output TensorSpec dtype should be fp32, got {}",
+                            output.dtype
+                        );
+                    }
+                }
+            }
+        }
+
+        // Verify handoffs also use fp32
+        for handoff in &pir.handoffs {
+            if handoff.handoff_kind == HandoffKind::TensorPassThrough {
+                assert_eq!(
+                    handoff.dtype, "fp32",
+                    "Handoff dtype should be fp32, got {}",
+                    handoff.dtype
+                );
+            }
+        }
     }
 }

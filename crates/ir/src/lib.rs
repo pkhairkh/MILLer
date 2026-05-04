@@ -16,6 +16,15 @@
 /// Core ML runtime versions.
 pub const DEFAULT_OPSET_VERSION: &str = "iOS18";
 
+/// T-115: Default minimum deployment target for Core ML models.
+///
+/// Decoupled from `DEFAULT_OPSET_VERSION` because the opset version
+/// (which MIL opset the model uses) and the deployment target
+/// (which OS version the model requires) can differ. For example,
+/// a model may use iOS18 opset features but only require iOS17
+/// as a deployment target if those features are backward-compatible.
+pub const DEFAULT_MINIMUM_DEPLOYMENT_TARGET: &str = "iOS18";
+
 pub mod air;
 pub mod ane_engine;
 pub mod ane_hw_limits;

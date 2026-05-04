@@ -510,6 +510,9 @@ pub struct ShardPipelineSpec {
     pub shard_template: Option<ShardTemplate>,
     /// Opset version for the pipeline.
     pub opset_version: String,
+    /// T-115: Minimum deployment target for the pipeline.
+    /// Decoupled from `opset_version` so they can be set independently.
+    pub minimum_deployment_target: String,
 }
 
 impl ShardPipelineSpec {
@@ -656,6 +659,8 @@ impl ShardPipelineSpec {
             state_declarations: vec![],
             shard_template: Some(shard_template),
             opset_version: crate::DEFAULT_OPSET_VERSION.into(),
+            // T-115: Use DEFAULT_MINIMUM_DEPLOYMENT_TARGET separately from opset_version
+            minimum_deployment_target: crate::DEFAULT_MINIMUM_DEPLOYMENT_TARGET.into(),
         }
     }
 
@@ -832,6 +837,8 @@ impl ShardPipelineSpec {
             state_declarations,
             shard_template: Some(shard_template),
             opset_version: crate::DEFAULT_OPSET_VERSION.into(),
+            // T-115: Use DEFAULT_MINIMUM_DEPLOYMENT_TARGET separately from opset_version
+            minimum_deployment_target: crate::DEFAULT_MINIMUM_DEPLOYMENT_TARGET.into(),
         }
     }
 
@@ -843,6 +850,16 @@ impl ShardPipelineSpec {
     /// Whether this is a multi-shard pipeline (more than one shard).
     pub fn is_multi_shard(&self) -> bool {
         self.shards.len() > 1
+    }
+
+    /// T-115: Builder method to override the minimum deployment target.
+    ///
+    /// By default, `minimum_deployment_target` equals `DEFAULT_MINIMUM_DEPLOYMENT_TARGET`.
+    /// Use this method to set a different target when the pipeline requires
+    /// a different OS version than the opset version implies.
+    pub fn with_deployment_target(mut self, target: &str) -> Self {
+        self.minimum_deployment_target = target.into();
+        self
     }
 
     /// Convert this pipeline spec into a PIR graph.
@@ -878,7 +895,8 @@ impl ShardPipelineSpec {
             shard_template: self.shard_template.clone(),
             context_length: self.shard_template.as_ref().map(|t| t.context_length).unwrap_or(0),
             opset_version: self.opset_version.clone(),
-            minimum_deployment_target: self.opset_version.clone(),
+            // T-115: Use the dedicated field instead of opset_version
+            minimum_deployment_target: self.minimum_deployment_target.clone(),
             kv_cache_layout: KvCacheLayout::default(),
             sampler_spec: None,
             io_model_spec: None,
@@ -975,5 +993,152 @@ mod tests {
             spec.state_declarations.iter().any(|s| s.state_id.contains("kv_cache")),
             "At least one state declaration must reference KV cache"
         );
+    }
+
+    // ─── T-115: Opset version and deployment target decoupling tests ──────
+
+    /// T-115: Verify that opset_version and minimum_deployment_target can be
+    /// set independently using the `with_deployment_target()` builder.
+    #[test]
+    fn test_t115_opset_and_deployment_target_independent() {
+        let spec = ShardPipelineSpec::three_shard_linear("test_t115", 64, 48, 32, 1, "fp16")
+            .with_deployment_target("iOS17");
+
+        // opset_version should remain the default "iOS18"
+        assert_eq!(
+            spec.opset_version, "iOS18",
+            "opset_version should remain iOS18 by default"
+        );
+        // minimum_deployment_target should be overridden to "iOS17"
+        assert_eq!(
+            spec.minimum_deployment_target, "iOS17",
+            "minimum_deployment_target should be overridden to iOS17"
+        );
+
+        // Verify the PIR graph also gets the independent values
+        let pir = spec.to_pir_graph();
+        assert_eq!(
+            pir.opset_version, "iOS18",
+            "PIR opset_version should be iOS18"
+        );
+        assert_eq!(
+            pir.minimum_deployment_target, "iOS17",
+            "PIR minimum_deployment_target should be iOS17"
+        );
+    }
+
+    /// T-115: Verify that defaults remain "iOS18" for both opset_version
+    /// and minimum_deployment_target when no override is provided.
+    #[test]
+    fn test_t115_defaults_both_ios18() {
+        let spec = ShardPipelineSpec::three_shard_linear("test_t115_default", 64, 48, 32, 1, "fp16");
+
+        assert_eq!(
+            spec.opset_version, "iOS18",
+            "Default opset_version should be iOS18"
+        );
+        assert_eq!(
+            spec.minimum_deployment_target, "iOS18",
+            "Default minimum_deployment_target should be iOS18"
+        );
+
+        // Also verify decode-step constructor
+        let decode_spec = ShardPipelineSpec::three_shard_decode_step(
+            "test_t115_decode_default", 128, 4, 32, 64, 1, "fp16",
+        );
+        assert_eq!(
+            decode_spec.opset_version, "iOS18",
+            "Decode-step default opset_version should be iOS18"
+        );
+        assert_eq!(
+            decode_spec.minimum_deployment_target, "iOS18",
+            "Decode-step default minimum_deployment_target should be iOS18"
+        );
+    }
+
+    // ─── T-114: Dtype propagation tests ───────────────────────────────────
+
+    /// T-114: Verify that a shard plan with dtype "fp32" propagates that
+    /// dtype to all TensorSpecs (shard inputs, outputs, handoffs, state).
+    #[test]
+    fn test_t114_three_shard_linear_fp32_dtype() {
+        let spec = ShardPipelineSpec::three_shard_linear("test_fp32", 64, 48, 32, 1, "fp32");
+
+        // Check all shard input/output specs
+        for shard in &spec.shards {
+            for input in &shard.input_specs {
+                assert_eq!(
+                    input.dtype, "fp32",
+                    "T-114: Shard '{}' input '{}' dtype should be fp32, got {}",
+                    shard.shard_name, input.name, input.dtype
+                );
+            }
+            for output in &shard.output_specs {
+                assert_eq!(
+                    output.dtype, "fp32",
+                    "T-114: Shard '{}' output '{}' dtype should be fp32, got {}",
+                    shard.shard_name, output.name, output.dtype
+                );
+            }
+        }
+
+        // Check all handoff dtypes
+        for handoff in &spec.handoffs {
+            assert_eq!(
+                handoff.dtype, "fp32",
+                "T-114: Handoff '{}' dtype should be fp32, got {}",
+                handoff.tensor_name, handoff.dtype
+            );
+        }
+
+        // Check pipeline-level dtype
+        assert_eq!(spec.dtype, "fp32", "T-114: Pipeline dtype should be fp32");
+    }
+
+    /// T-114: Verify that a shard plan with dtype "int8" propagates that
+    /// dtype to all TensorSpecs including state declarations.
+    #[test]
+    fn test_t114_three_shard_decode_step_int8_dtype() {
+        let spec =
+            ShardPipelineSpec::three_shard_decode_step("test_int8", 128, 4, 32, 64, 1, "int8");
+
+        // Check all shard input/output specs
+        for shard in &spec.shards {
+            for input in &shard.input_specs {
+                assert_eq!(
+                    input.dtype, "int8",
+                    "T-114: Shard '{}' input '{}' dtype should be int8, got {}",
+                    shard.shard_name, input.name, input.dtype
+                );
+            }
+            for output in &shard.output_specs {
+                assert_eq!(
+                    output.dtype, "int8",
+                    "T-114: Shard '{}' output '{}' dtype should be int8, got {}",
+                    shard.shard_name, output.name, output.dtype
+                );
+            }
+        }
+
+        // Check all handoff dtypes
+        for handoff in &spec.handoffs {
+            assert_eq!(
+                handoff.dtype, "int8",
+                "T-114: Handoff '{}' dtype should be int8, got {}",
+                handoff.tensor_name, handoff.dtype
+            );
+        }
+
+        // Check state declarations
+        for state in &spec.state_declarations {
+            assert_eq!(
+                state.dtype, "int8",
+                "T-114: State '{}' dtype should be int8, got {}",
+                state.state_id, state.dtype
+            );
+        }
+
+        // Check pipeline-level dtype
+        assert_eq!(spec.dtype, "int8", "T-114: Pipeline dtype should be int8");
     }
 }

@@ -212,7 +212,8 @@ mod tests {
             }),
             context_length: 0,
             opset_version: crate::DEFAULT_OPSET_VERSION.into(),
-            minimum_deployment_target: crate::DEFAULT_OPSET_VERSION.into(),
+            // T-115: Use DEFAULT_MINIMUM_DEPLOYMENT_TARGET instead of DEFAULT_OPSET_VERSION
+            minimum_deployment_target: crate::DEFAULT_MINIMUM_DEPLOYMENT_TARGET.into(),
             kv_cache_layout: crate::sir::KvCacheLayout::default(),
             sampler_spec: None,
             io_model_spec: None,

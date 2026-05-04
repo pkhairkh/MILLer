@@ -301,14 +301,10 @@ F32 weight data was passed through without conversion to FP16, even though BF16 
 
 ---
 
-### I-79 · StateTopologyPass Only Logs Warnings, Never Returns Err
-**Status:** ⬜ Open | **Files:** `crates/passes/src/state_topology.rs:43-96` | **AUDIT ref:** V-016 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-103
+### I-79 · ~~StateTopologyPass Only Logs Warnings, Never Returns Err~~
+**Status:** ✅ Fixed (T-109) | **Files:** `crates/passes/src/state_topology.rs:43-96` | **AUDIT ref:** V-016 | **Severity:** MEDIUM | **Effort:** S (0.5 day) | **Task:** T-109
 
-**Intent:** StateTopologyPass claims to "verify" and "ensure" state patterns but only logs warnings — never returns Err. Invalid state patterns pass through silently, causing undefined behavior at inference time.
-
-**Fix direction:** Change return type to Result. Return Err for invalid patterns in strict mode. Add strict: bool flag.
-
-**Definition of Done:** Returns Err for invalid patterns in strict mode; advisory mode documented; tests for both modes.
+Added `strict: bool` field (default: true). Strict mode returns `Err` for ReadState without matching WriteState. WriteState without ReadState still logs info. Added `new_lenient()` and `with_strict()` constructors.
 
 ---
 
@@ -403,14 +399,12 @@ Bool, Float64, and Unknown dtypes were silently mapped to Float32 blob format. D
 
 ---
 
-### I-89 · State Declarations Default to Empty Shape + Fp16
-**Status:** ⬜ Open | **Files:** `crates/coreml-emit/src/mir_to_proto.rs:339-356` | **AUDIT ref:** V-028 | **Severity:** HIGH | **Effort:** S (0.5 day) | **Task:** T-104
+### I-89 · ~~State Declarations Default to Empty Shape + Fp16~~
+**Status:** ✅ Fixed (T-104) | **Files:** `crates/coreml-emit/src/mir_to_proto.rs:339-356` | **AUDIT ref:** V-028 | **Severity:** MEDIUM | **Effort:** S (0.5 day) | **Task:** T-104
 
-**Intent:** State declarations default to empty shape + Fp16 when only a write op is present. Core ML rejects proto with empty-dimension state tensors. Affects stateful ops where initial state shape cannot be inferred from a read.
+State declarations default to empty shape + Fp16 when only a write op is present. Core ML rejects proto with empty-dimension state tensors.
 
-**Fix direction:** Derive state shape from ReadState op. If no ReadState exists, require explicit shape specification. Fail if shape cannot be determined.
-
-**Definition of Done:** State shape derived from ReadState when available; explicit shape required otherwise; no empty-dimension states.
+**Fix:** `mir_to_proto.rs` now derives state shape/dtype from matching ReadState ops. Returns error when no ReadState exists and shape is empty.
 
 ---
 
@@ -1308,9 +1302,9 @@ Bool, Float64, and Unknown data types silently mapped to Float32 blob format. Da
 
 ---
 
-### I-79 · State Declarations Default to Empty Shape + Fp16
+### I-79 · ~~State Declarations Default to Empty Shape + Fp16~~
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-104)
 **Files:** `crates/coreml-emit/src/mir_to_proto.rs:339-356`
 **AUDIT ref:** V-028 (ane-violations.md §III)
 **Severity:** MEDIUM
@@ -1318,6 +1312,8 @@ Bool, Float64, and Unknown data types silently mapped to Float32 blob format. Da
 **Task:** T-104
 
 State declarations default to empty shape + Fp16 when only write op present. Core ML rejects proto with empty-dimension state.
+
+**Fix:** `mir_to_proto.rs` now derives state shape/dtype from matching ReadState ops. Returns error when no ReadState exists and shape is empty.
 
 ---
 
@@ -1373,9 +1369,9 @@ Only 14 of ~167 SIR op types query precision hazards. All others silently use de
 
 ---
 
-### I-84 · StateTopologyPass Only Logs Warnings, Never Returns Errors
+### I-84 · ~~StateTopologyPass Only Logs Warnings, Never Returns Errors~~
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-109)
 **Files:** `crates/passes/src/state_topology.rs:43-96`
 **AUDIT ref:** V-016 (ane-violations.md §III)
 **Severity:** MEDIUM
@@ -1383,6 +1379,8 @@ Only 14 of ~167 SIR op types query precision hazards. All others silently use de
 **Task:** T-109
 
 Pass claims to "verify" and "ensure" state patterns but only logs eprintln warnings — never returns Err. Invalid state naming conventions and capacity violations pass silently.
+
+**Fix:** Added `strict: bool` field (default: true). Strict mode returns `Err` for ReadState without matching WriteState. WriteState without ReadState still logs info. Added `new_lenient()` and `with_strict()` constructors.
 
 ---
 
@@ -1438,9 +1436,9 @@ default_engine() returns static engine assignment per op regardless of AneRevisi
 
 ---
 
-### I-89 · PIR Tensor Spec Dtype Hardcoded to "fp16"
+### I-89 · ~~PIR Tensor Spec Dtype Hardcoded to "fp16"~~
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-114)
 **Files:** `crates/ir/src/shard_desc.rs:363-389`
 **AUDIT ref:** V-038 (ane-violations.md §III)
 **Severity:** MEDIUM
@@ -1449,9 +1447,22 @@ default_engine() returns static engine assignment per op regardless of AneRevisi
 
 PIR tensor specs hardcoded to dtype "fp16" ignoring actual task spec dtype. Wrong for fp32/int4/int8 tasks.
 
+**Fix:** Added `derive_primary_dtype()` method to ShardPlanPass that scans SIR graph for dtype-bearing ops (Const, Cast, Fill, FillLike, Quantize, Dequantize). Replaced all 9 hardcoded `"fp16"` values in shard_plan.rs with `primary_dtype.clone()`. Fallback to "fp16" with explicit warning when no dtype-bearing op found.
+
 ---
 
-### I-90 · Opset Version and Deployment Target Hardcoded
+### I-90 · ~~Opset Version and Deployment Target Hardcoded~~
+
+**Status:** ✅ Fixed (T-115)
+**Files:** `crates/ir/src/lib.rs`, `crates/ir/src/pir.rs`, `crates/ir/src/shard_desc.rs`, `crates/ir/src/serialize.rs`
+**AUDIT ref:** V-037, V-046 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-115
+
+Opset version and minimum deployment target were hardcoded as "iOS18" throughout the codebase with no way to configure them independently.
+
+**Fix:** Added `DEFAULT_MINIMUM_DEPLOYMENT_TARGET` constant separate from `DEFAULT_OPSET_VERSION`. Decoupled `minimum_deployment_target` from `opset_version` in `ShardPipelineSpec`. Added `with_deployment_target()` builder method. Updated `shard_desc.rs` and `serialize.rs` to use separate constant.
 
 ### I-154 · Hardcoded Fallback Dimensions in role_mir
 **Status:** ⬜ Open | **Files:** `crates/passes/src/role_mir.rs:131,146,210` | **AUDIT ref:** V-089 | **Severity:** LOW | **Effort:** S (0.25 day) | **Task:** T-116

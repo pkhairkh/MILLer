@@ -291,6 +291,20 @@ pub fn convert_mir_to_proto_multifunction(
             }
         }
 
+        // T-104: Before the state-building loop, collect all ReadState ops into
+        // a map so that CoremlUpdateState and StateWrite can derive their shape
+        // and dtype from ReadState when present. Core ML rejects protos with
+        // empty-dimension state tensors, so we must not default to shape=[].
+        let mut read_state_map: std::collections::HashMap<String, (Vec<usize>, CoreMlDataType)> =
+            std::collections::HashMap::new();
+        for op in &graph.ops {
+            if let MirOpCompat::ReadState { state_id, shape, dtype, .. } = op {
+                read_state_map
+                    .entry(state_id.clone())
+                    .or_insert_with(|| (shape.clone(), CoreMlDataType::from_mir_dtype(dtype)));
+            }
+        }
+
         // Extract weights from constants
         let mut graph_weights = Vec::new();
         let mut graph_inputs = Vec::new();
@@ -332,27 +346,50 @@ pub fn convert_mir_to_proto_multifunction(
                         });
                     }
                 MirOpCompat::CoremlUpdateState { state_id, .. }
-                    // Also collect state declarations from CoremlUpdateState ops.
+                    // T-104: Also collect state declarations from CoremlUpdateState ops.
                     // A function might only write to a state without reading
                     // it first (e.g., initial fill), so we need to capture
-                    // these declarations too.
+                    // these declarations too. Look up ReadState map for shape/dtype.
                     if !graph_states.iter().any(|s: &TensorDesc| s.name == *state_id) => {
-                        graph_states.push(TensorDesc {
-                            name: state_id.clone(),
-                            shape: vec![], // Shape inferred from ReadState if present
-                            dtype: CoreMlDataType::Float16, // Default; overridden by ReadState
-                            is_state: true,
-                        });
+                        // T-104: Derive shape/dtype from ReadState if available
+                        if let Some((shape, dtype)) = read_state_map.get(state_id) {
+                            graph_states.push(TensorDesc {
+                                name: state_id.clone(),
+                                shape: shape.iter().map(|&d| d as u64).collect(),
+                                dtype: dtype.clone(),
+                                is_state: true,
+                            });
+                        } else {
+                            // T-104: No ReadState exists and shape is empty — Core ML
+                            // rejects empty-dimension state tensors.
+                            anyhow::bail!(
+                                "State '{}' has no ReadState op and no explicit shape — \
+                                 Core ML rejects empty-dimension state tensors",
+                                state_id
+                            );
+                        }
                     }
                 MirOpCompat::StateWrite { state_ref, .. }
-                    // StateWrite uses state_ref instead of state_id.
+                    // T-104: StateWrite uses state_ref instead of state_id.
+                    // Look up ReadState map for shape/dtype.
                     if !graph_states.iter().any(|s: &TensorDesc| s.name == *state_ref) => {
-                        graph_states.push(TensorDesc {
-                            name: state_ref.clone(),
-                            shape: vec![],
-                            dtype: CoreMlDataType::Float16,
-                            is_state: true,
-                        });
+                        // T-104: Derive shape/dtype from ReadState if available
+                        if let Some((shape, dtype)) = read_state_map.get(state_ref) {
+                            graph_states.push(TensorDesc {
+                                name: state_ref.clone(),
+                                shape: shape.iter().map(|&d| d as u64).collect(),
+                                dtype: dtype.clone(),
+                                is_state: true,
+                            });
+                        } else {
+                            // T-104: No ReadState exists and shape is empty — Core ML
+                            // rejects empty-dimension state tensors.
+                            anyhow::bail!(
+                                "State '{}' has no ReadState op and no explicit shape — \
+                                 Core ML rejects empty-dimension state tensors",
+                                state_ref
+                            );
+                        }
                     }
                 _ => {}
             }
