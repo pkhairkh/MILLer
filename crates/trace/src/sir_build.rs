@@ -438,6 +438,7 @@ impl<'a> SirBuildContext<'a> {
                         input: input_id,
                         weight: weight_name,
                         bias: bias_name,
+                        palette_bits: None,
                     },
                     format!("linear_{}_{}", in_features, out_features),
                 )])
@@ -660,6 +661,7 @@ impl<'a> SirBuildContext<'a> {
                         SirOp::Const {
                             value_path: "scalar://fp16/1.0".to_string(),
                             dtype: MilDtype::Fp16,
+                            palette_bits: None,
                         },
                         "where_one".to_string(),
                     ),
@@ -843,21 +845,36 @@ impl<'a> SirBuildContext<'a> {
         // Step 1-3: Q/K/V projections (flat 3D outputs)
         // Separate Q projection: input → Q (flat [B, S, q_heads*head_dim])
         ops.push((
-            SirOp::LinearProjection { input: input_id.clone(), weight: q_weight, bias: None },
+            SirOp::LinearProjection {
+                input: input_id.clone(),
+                weight: q_weight,
+                bias: None,
+                palette_bits: None,
+            },
             format!("q_proj_{}", q_proj_dim),
         ));
         let mut q_id = SirNodeId(format!("sir_q_proj_{}", node.id));
 
         // Separate K projection: input → K (flat [B, S, kv_heads*head_dim])
         ops.push((
-            SirOp::LinearProjection { input: input_id.clone(), weight: k_weight, bias: None },
+            SirOp::LinearProjection {
+                input: input_id.clone(),
+                weight: k_weight,
+                bias: None,
+                palette_bits: None,
+            },
             format!("k_proj_{}", kv_proj_dim),
         ));
         let mut k_id = SirNodeId(format!("sir_k_proj_{}", node.id));
 
         // Separate V projection: input → V (flat [B, S, kv_heads*head_dim])
         ops.push((
-            SirOp::LinearProjection { input: input_id, weight: v_weight, bias: None },
+            SirOp::LinearProjection {
+                input: input_id,
+                weight: v_weight,
+                bias: None,
+                palette_bits: None,
+            },
             format!("v_proj_{}", kv_proj_dim),
         ));
         let mut v_id = SirNodeId(format!("sir_v_proj_{}", node.id));
@@ -1044,6 +1061,7 @@ impl<'a> SirBuildContext<'a> {
             SirOp::Const {
                 value_path: format!("attn_scale_{}_{:.8}", node.id, scale_value),
                 dtype: MilDtype::Fp16,
+                palette_bits: None,
             },
             "attn_scale_const".to_string(),
         ));
@@ -1063,6 +1081,7 @@ impl<'a> SirBuildContext<'a> {
             SirOp::Const {
                 value_path: "static_tables/rope_tables_shared/mask_tab".to_string(),
                 dtype: MilDtype::Fp16,
+                palette_bits: None,
             },
             "causal_mask".to_string(),
         ));
@@ -1243,7 +1262,12 @@ impl<'a> SirBuildContext<'a> {
         // Input: [B, S, num_heads*D] = [1, 512, 2048]
         // Output: [B, S, hidden_size] = [1, 512, 1024]
         ops.push((
-            SirOp::LinearProjection { input: attn_flat_id, weight: out_weight, bias: None },
+            SirOp::LinearProjection {
+                input: attn_flat_id,
+                weight: out_weight,
+                bias: None,
+                palette_bits: None,
+            },
             format!("out_proj_{}", embed_dim),
         ));
 
@@ -1320,6 +1344,7 @@ impl<'a> SirBuildContext<'a> {
                     input: input_id.clone(),
                     weight: gate_weight,
                     bias: None,
+                    palette_bits: None,
                 },
                 format!("gate_proj_{}_{}", input_dim, hidden_dim),
             ));
@@ -1331,7 +1356,12 @@ impl<'a> SirBuildContext<'a> {
 
             // 3. up_proj(x) — NO activation
             ops.push((
-                SirOp::LinearProjection { input: input_id, weight: up_weight, bias: None },
+                SirOp::LinearProjection {
+                    input: input_id,
+                    weight: up_weight,
+                    bias: None,
+                    palette_bits: None,
+                },
                 format!("up_proj_{}_{}", input_dim, hidden_dim),
             ));
             let up_id = SirNodeId(format!("sir_up_proj_{}", node.id));
@@ -1342,7 +1372,12 @@ impl<'a> SirBuildContext<'a> {
 
             // 5. down_proj
             ops.push((
-                SirOp::LinearProjection { input: swiglu_id, weight: down_weight, bias: None },
+                SirOp::LinearProjection {
+                    input: swiglu_id,
+                    weight: down_weight,
+                    bias: None,
+                    palette_bits: None,
+                },
                 format!("down_proj_{}_{}", hidden_dim, output_dim),
             ));
         } else {
@@ -1360,7 +1395,12 @@ impl<'a> SirBuildContext<'a> {
 
             // Up-projection: input → hidden
             ops.push((
-                SirOp::LinearProjection { input: input_id, weight: up_weight_resolved, bias: None },
+                SirOp::LinearProjection {
+                    input: input_id,
+                    weight: up_weight_resolved,
+                    bias: None,
+                    palette_bits: None,
+                },
                 format!("up_proj_{}_{}", input_dim, hidden_dim),
             ));
 
@@ -1390,7 +1430,12 @@ impl<'a> SirBuildContext<'a> {
             // Down-projection: hidden → output
             let act_id = SirNodeId(format!("sir_mlp_act_{}", node.id));
             ops.push((
-                SirOp::LinearProjection { input: act_id, weight: down_weight, bias: None },
+                SirOp::LinearProjection {
+                    input: act_id,
+                    weight: down_weight,
+                    bias: None,
+                    palette_bits: None,
+                },
                 format!("down_proj_{}_{}", hidden_dim, output_dim),
             ));
         }
@@ -1554,6 +1599,7 @@ impl<'a> SirBuildContext<'a> {
             SirOp::Const {
                 value_path: format!("sdpa_scale_{}_{:.8}", node.id, scale_f32),
                 dtype: MilDtype::Fp16,
+                palette_bits: None,
             },
             "sdpa_scale_const".to_string(),
         ));

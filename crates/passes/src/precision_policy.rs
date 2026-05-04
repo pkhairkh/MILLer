@@ -368,6 +368,7 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "weight".into(),
                         bias: Some("bias".into()),
+                        palette_bits: None,
                     },
                     name: "linear_out".into(),
                     metadata: SirMetadata {

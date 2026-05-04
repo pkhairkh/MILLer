@@ -349,7 +349,7 @@ impl LegalityRewritePass {
             // Some SIR ops decompose into multiple AIR ops; those helpers
             // return the AirNodeId of the *final* op in the decomposition.
             let (final_air_id, decomposed_nodes, _op_pattern) = match &sir_node.op {
-                SirOp::LinearProjection { input: sir_input, weight, bias: _ } => {
+                SirOp::LinearProjection { input: sir_input, weight, bias: _, .. } => {
                     // CRITICAL FIX (Sprint 36 / Critique Bug 1):
                     // Linear projection must lower to Conv1x1AsLinear, NOT MatMul.
                     // The Python emitter uses mb.linear (Sprint 31), and the
@@ -3733,7 +3733,7 @@ impl LegalityRewritePass {
 
         match op {
             // ─── Constants ───────────────────────────────────────
-            SirOp::Const { value_path, dtype } => {
+            SirOp::Const { value_path, dtype, .. } => {
                 (AirOp::Const { value_path: value_path.clone(), dtype: dtype.clone() }, "mb.const")
             }
 
@@ -4761,6 +4761,7 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "weight".into(),
                         bias: Some("bias".into()),
+                        palette_bits: None,
                     },
                     name: "linear_out".into(),
                     metadata: SirMetadata {
@@ -5787,6 +5788,7 @@ mod tests {
                         input: input_id.clone(),
                         weight: "model.layers.0.self_attn.q_proj.weight".into(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "q_proj_2048".into(),
                     metadata: SirMetadata {
@@ -5802,6 +5804,7 @@ mod tests {
                         input: input_id.clone(),
                         weight: "model.layers.0.self_attn.k_proj.weight".into(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "k_proj_1024".into(),
                     metadata: SirMetadata {
@@ -5817,6 +5820,7 @@ mod tests {
                         input: input_id.clone(),
                         weight: "model.layers.0.self_attn.v_proj.weight".into(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "v_proj_1024".into(),
                     metadata: SirMetadata {
@@ -6449,6 +6453,7 @@ mod tests {
                         input: SirNodeId("hidden_state".into()),
                         weight: "model.layers.0.self_attn.q_proj.weight".into(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "q_proj".into(),
                     metadata: SirMetadata {
@@ -6464,6 +6469,7 @@ mod tests {
                         input: SirNodeId("hidden_state".into()),
                         weight: "model.layers.0.self_attn.k_proj.weight".into(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "k_proj".into(),
                     metadata: SirMetadata {
@@ -6479,6 +6485,7 @@ mod tests {
                         input: SirNodeId("hidden_state".into()),
                         weight: "model.layers.0.self_attn.v_proj.weight".into(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "v_proj".into(),
                     metadata: SirMetadata {
@@ -6752,6 +6759,7 @@ mod tests {
                         input: input_id.clone(),
                         weight: "model.layers.0.self_attn.q_proj.weight".into(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "q_proj".into(),
                     metadata: SirMetadata {
@@ -6767,6 +6775,7 @@ mod tests {
                         input: input_id.clone(),
                         weight: "model.layers.0.self_attn.k_proj.weight".into(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "k_proj".into(),
                     metadata: SirMetadata {
@@ -6782,6 +6791,7 @@ mod tests {
                         input: input_id.clone(),
                         weight: "model.layers.0.self_attn.v_proj.weight".into(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "v_proj".into(),
                     metadata: SirMetadata {
@@ -7137,6 +7147,7 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "model.layers.0.self_attn.q_proj.weight".into(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "q_proj".into(),
                     metadata: SirMetadata {
@@ -7152,6 +7163,7 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "model.layers.0.self_attn.k_proj.weight".into(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "k_proj".into(),
                     metadata: SirMetadata {
@@ -7167,6 +7179,7 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "model.layers.0.self_attn.v_proj.weight".into(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "v_proj".into(),
                     metadata: SirMetadata {
@@ -7182,6 +7195,7 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "model.layers.0.self_attn.o_proj.weight".into(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "o_proj".into(),
                     metadata: SirMetadata {
@@ -7197,6 +7211,7 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "model.layers.0.mlp.gate_proj.weight".into(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "gate_proj".into(),
                     metadata: SirMetadata {
@@ -7212,6 +7227,7 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "model.layers.0.mlp.down_proj.weight".into(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "down_proj".into(),
                     metadata: SirMetadata {
@@ -7227,6 +7243,7 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "lm_head.weight".into(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "lm_head".into(),
                     metadata: SirMetadata {

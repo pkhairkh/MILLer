@@ -10,8 +10,34 @@
 //! - Attention/MLP projections: GroupedLut (4/6/8-bit with per-group scalars)
 //! - KV/mask constants: 1-bit kmeans palettization
 //! - Q/K projections: treated more conservatively (higher bitwidth)
+//!
+//! ## Palette bit-width validation
+//!
+//! The ANE only supports palette bit-widths in the set {1, 2, 3, 4, 6, 8}.
+//! Bit-widths 5 and 7 are **invalid** and will cause ANE runtime errors.
+//! The pass validates all computed bit-widths and rejects invalid values
+//! with a clear error message.
 
 use ane_ir::sir::{SirGraph, SirOp};
+
+/// Valid palette bit-widths supported by the ANE hardware.
+/// Values 5 and 7 are NOT supported and will cause runtime errors.
+pub const VALID_PALETTE_BITS: &[usize] = &[1, 2, 3, 4, 6, 8];
+
+/// Validate that a palette bit-width is in the ANE-supported set.
+///
+/// Returns `Ok(())` if valid, or an error message describing the issue.
+pub fn validate_palette_bits(bits: usize) -> Result<(), String> {
+    if VALID_PALETTE_BITS.contains(&bits) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Invalid palette bit-width {}: must be one of {:?}. \
+             ANE hardware does not support {}-bit palettization.",
+            bits, VALID_PALETTE_BITS, bits
+        ))
+    }
+}
 
 /// Result of the palettize weights pass.
 #[derive(Debug, Clone)]
@@ -22,6 +48,8 @@ pub struct PalettizeResult {
     pub grouped_lut_applied: usize,
     /// Number of Const nodes that received palettization.
     pub consts_palettized: usize,
+    /// Number of ops where bit-width validation failed (bit-width clamped to nearest valid).
+    pub bits_clamped: usize,
 }
 
 /// Configuration for the palettize weights pass.
@@ -51,6 +79,19 @@ impl Default for PalettizeConfig {
     }
 }
 
+/// Clamp a bit-width to the nearest valid ANE palette bit-width.
+///
+/// For bit-widths between valid values, rounds down to the nearest
+/// supported bit-width (e.g., 5 → 4, 7 → 6). This preserves
+/// quantization benefit while ensuring ANE compatibility.
+fn clamp_to_valid_bits(bits: usize) -> usize {
+    if VALID_PALETTE_BITS.contains(&bits) {
+        return bits;
+    }
+    // Round down to nearest valid bit-width
+    *VALID_PALETTE_BITS.iter().filter(|&&b| b <= bits).last().unwrap_or(&1)
+}
+
 /// Run the palettize weights pass on a SIR graph.
 ///
 /// This pass annotates weight-bearing ops (LinearProjection, Const,
@@ -60,20 +101,29 @@ impl Default for PalettizeConfig {
 ///
 /// The annotation strategy:
 /// - LinearProjection ops get `GroupedLut` quantization based on their
-///   position in the model (attention vs MLP)
-/// - Const ops for KV/mask get `Palettized` quantization
+///   position in the model (attention vs MLP), stored in `palette_bits`
+/// - Const ops for KV/mask get kmeans palettization stored in `palette_bits`
 /// - Embedding ops get `Blockwise` quantization
+///
+/// # Panics
+///
+/// This function will not panic — invalid bit-widths are clamped to the
+/// nearest valid ANE-supported value and a warning is recorded.
 pub fn run_palettize_weights_pass(
     graph: &mut SirGraph,
     config: &PalettizeConfig,
 ) -> PalettizeResult {
-    let mut result =
-        PalettizeResult { weights_annotated: 0, grouped_lut_applied: 0, consts_palettized: 0 };
+    let mut result = PalettizeResult {
+        weights_annotated: 0,
+        grouped_lut_applied: 0,
+        consts_palettized: 0,
+        bits_clamped: 0,
+    };
 
     // Annotate LinearProjection nodes with GroupedLut quantization
     for node in &mut graph.nodes {
         match &mut node.op {
-            SirOp::LinearProjection { weight, .. } => {
+            SirOp::LinearProjection { palette_bits, .. } => {
                 // Determine if this is an attention or MLP projection
                 // based on the node name (heuristic from naming conventions)
                 let is_attention = node.name.contains("q_proj")
@@ -85,8 +135,11 @@ pub fn run_palettize_weights_pass(
 
                 let is_qk = node.name.contains("q_proj") || node.name.contains("k_proj");
 
-                let bits = if is_qk && config.conservative_qk {
+                let raw_bits = if is_qk && config.conservative_qk {
                     // Q/K get higher bit-width for stability
+                    // NOTE: attention_bits + 2 can produce invalid widths (5, 7).
+                    // For example, attention_bits=4 → 6 (valid), but attention_bits=3 → 5 (invalid).
+                    // We clamp to the nearest valid ANE-supported bit-width.
                     (config.attention_bits + 2).min(8)
                 } else if is_attention {
                     config.attention_bits
@@ -94,16 +147,40 @@ pub fn run_palettize_weights_pass(
                     config.mlp_bits
                 };
 
-                // Record the quantization strategy in the weight name
-                // (A more robust approach would use metadata, but this
-                // preserves backward compatibility)
-                let _ = (weight, bits);
+                // Validate and clamp bit-width to ANE-supported values
+                let bits = if validate_palette_bits(raw_bits).is_ok() {
+                    raw_bits
+                } else {
+                    let clamped = clamp_to_valid_bits(raw_bits);
+                    log::warn!(
+                        "Palettize: bit-width {} invalid for ANE, clamped to {} for node '{}'",
+                        raw_bits, clamped, node.name
+                    );
+                    result.bits_clamped += 1;
+                    clamped
+                };
+
+                // Wire the quantization strategy into the palette_bits field
+                *palette_bits = Some(bits);
                 result.grouped_lut_applied += 1;
                 result.weights_annotated += 1;
             }
-            SirOp::Const { value_path, dtype: _ }
+            SirOp::Const { value_path, palette_bits, .. }
                 // Palettize KV/mask constants
                 if (value_path.contains("mask") || value_path.contains("kv")) => {
+                    // Validate mask/KV bit-width
+                    let bits = if validate_palette_bits(config.mask_kv_bits).is_ok() {
+                        config.mask_kv_bits
+                    } else {
+                        let clamped = clamp_to_valid_bits(config.mask_kv_bits);
+                        log::warn!(
+                            "Palettize: mask/kv bit-width {} invalid for ANE, clamped to {}",
+                            config.mask_kv_bits, clamped
+                        );
+                        result.bits_clamped += 1;
+                        clamped
+                    };
+                    *palette_bits = Some(bits);
                     result.consts_palettized += 1;
                     result.weights_annotated += 1;
                 }
@@ -128,6 +205,7 @@ mod tests {
                         input: SirNodeId("input_0".to_string()),
                         weight: "q_weight_0".to_string(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "q_proj_0".to_string(),
                     metadata: SirMetadata {
@@ -143,6 +221,7 @@ mod tests {
                         input: SirNodeId("input_1".to_string()),
                         weight: "down_weight_0".to_string(),
                         bias: None,
+                        palette_bits: None,
                     },
                     name: "down_proj_0".to_string(),
                     metadata: SirMetadata {
@@ -157,6 +236,7 @@ mod tests {
                     op: SirOp::Const {
                         value_path: "static_tables/mask_tab".to_string(),
                         dtype: ane_ir::mir::MilDtype::Fp16,
+                        palette_bits: None,
                     },
                     name: "causal_mask_0".to_string(),
                     metadata: SirMetadata {
@@ -181,6 +261,29 @@ mod tests {
         assert!(result.grouped_lut_applied >= 2, "Should annotate at least 2 LinearProjection ops");
         assert!(result.consts_palettized >= 1, "Should palettize at least 1 mask constant");
         assert!(result.weights_annotated >= 3, "Should annotate at least 3 weights total");
+
+        // Verify palette_bits is actually set (was a no-op before T-48)
+        for node in &graph.nodes {
+            match &node.op {
+                SirOp::LinearProjection { palette_bits, .. } => {
+                    assert!(
+                        palette_bits.is_some(),
+                        "LinearProjection '{}' should have palette_bits set after pass",
+                        node.name
+                    );
+                }
+                SirOp::Const { value_path, palette_bits, .. }
+                    if value_path.contains("mask") || value_path.contains("kv") =>
+                {
+                    assert!(
+                        palette_bits.is_some(),
+                        "Const '{}' should have palette_bits set after pass",
+                        node.name
+                    );
+                }
+                _ => {}
+            }
+        }
     }
 
     #[test]
@@ -192,5 +295,81 @@ mod tests {
 
         let result = run_palettize_weights_pass(&mut graph, &config);
         assert!(result.grouped_lut_applied >= 1);
+
+        // With conservative_qk and attention_bits=4: Q/K get 4+2=6 bits
+        for node in &graph.nodes {
+            if let SirOp::LinearProjection { palette_bits, .. } = &node.op {
+                if node.name.contains("q_proj") || node.name.contains("k_proj") {
+                    assert_eq!(
+                        *palette_bits,
+                        Some(6),
+                        "Q/K projections should get 6 bits (4+2 conservative)"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_invalid_bit_width_clamped() {
+        let mut graph = make_test_graph();
+        let mut config = PalettizeConfig::default();
+        config.conservative_qk = true;
+        config.attention_bits = 3; // 3 + 2 = 5 (invalid!)
+
+        let result = run_palettize_weights_pass(&mut graph, &config);
+        assert!(result.bits_clamped >= 1, "Should clamp at least 1 invalid bit-width");
+
+        // 5-bit should be clamped to 4
+        for node in &graph.nodes {
+            if let SirOp::LinearProjection { palette_bits, .. } = &node.op {
+                if node.name.contains("q_proj") || node.name.contains("k_proj") {
+                    assert_eq!(*palette_bits, Some(4), "5-bit should be clamped to 4");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_validate_palette_bits() {
+        // Valid bit-widths
+        for &bits in VALID_PALETTE_BITS {
+            assert!(validate_palette_bits(bits).is_ok(), "{} should be valid", bits);
+        }
+        // Invalid bit-widths
+        assert!(validate_palette_bits(5).is_err(), "5-bit is not ANE-supported");
+        assert!(validate_palette_bits(7).is_err(), "7-bit is not ANE-supported");
+        assert!(validate_palette_bits(9).is_err(), "9-bit is not ANE-supported");
+        assert!(validate_palette_bits(0).is_err(), "0-bit is not ANE-supported");
+    }
+
+    #[test]
+    fn test_clamp_to_valid_bits() {
+        assert_eq!(clamp_to_valid_bits(1), 1);
+        assert_eq!(clamp_to_valid_bits(4), 4);
+        assert_eq!(clamp_to_valid_bits(5), 4); // 5 → 4 (round down)
+        assert_eq!(clamp_to_valid_bits(6), 6);
+        assert_eq!(clamp_to_valid_bits(7), 6); // 7 → 6 (round down)
+        assert_eq!(clamp_to_valid_bits(8), 8);
+        assert_eq!(clamp_to_valid_bits(10), 8); // 10 → 8 (round down)
+    }
+
+    #[test]
+    fn test_mlp_projection_gets_mlp_bits() {
+        let mut graph = make_test_graph();
+        let mut config = PalettizeConfig::default();
+        config.mlp_bits = 6;
+        config.conservative_qk = false;
+
+        let _result = run_palettize_weights_pass(&mut graph, &config);
+
+        // down_proj is MLP — should get mlp_bits
+        for node in &graph.nodes {
+            if let SirOp::LinearProjection { palette_bits, .. } = &node.op {
+                if node.name.contains("down_proj") {
+                    assert_eq!(*palette_bits, Some(6), "MLP projection should get mlp_bits=6");
+                }
+            }
+        }
     }
 }

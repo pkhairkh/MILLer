@@ -86,6 +86,7 @@ pub fn run_static_tables_pass(graph: &mut SirGraph) -> StaticTablesResult {
                 op: SirOp::Const {
                     value_path: format!("static_tables/{}/{}", tables_ref, table_name),
                     dtype: dtype.clone(),
+                    palette_bits: None,
                 },
                 name: format!("static_{}_{}", table_name, tables_ref),
                 metadata: metadata.clone(),

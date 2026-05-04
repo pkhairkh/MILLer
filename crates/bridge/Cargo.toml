@@ -10,6 +10,7 @@ ane-coreml-emit = { workspace = true }
 ane-coreml-proto = { workspace = true }
 ane-trace = { workspace = true }
 anyhow = { workspace = true }
+log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }

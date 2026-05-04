@@ -203,6 +203,51 @@ pub static CPU_ONLY_OPS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "inverse",
         // Einsum: no ANEC converter in any family
         "einsum",
+        // ─── T-47: Ops with PE engine but no ANEC converter ──────
+        // These were incorrectly assigned ANE engine but map to
+        // MirOpCompat::Unsupported at emission time.
+        "slice_update",
+        "sliding_windows",
+        "reverse",
+        "argsort",
+        // ─── T-49: Additional missing CPU-only ops ────────────────
+        // Source: ane-constraints-docs/04-operation-support/ CPU-only list.
+        // Control flow
+        "return",
+        // Type check
+        "is_finite",
+        "is_infinite",
+        "is_nan",
+        // Elementwise
+        "negative",
+        "reciprocal",
+        "reverse_square_root",
+        "rint",
+        "signbit",
+        // Transform
+        "strided_slice_update",
+        "dynamic_shape_cast",
+        "reinterpret_cast",
+        "col_to_im",
+        "im_to_col",
+        // Sparse/buffer (additional)
+        "dequantize_lut",
+        "extract",
+        "from_elements",
+        "func",
+        "get_coordinates",
+        "local_convolution",
+        "lp_norm",
+        "prune",
+        "pruning_metric",
+        "pruning_structure",
+        "variable_from_tensor",
+        "assign_variable",
+        "placeholder",
+        "device_hint",
+        "nf",
+        "unrealized_fold",
+        "create_texture_tensor",
     ];
     ops.iter().copied().collect()
 });
@@ -322,11 +367,20 @@ mod tests {
     }
 
     #[test]
+    fn test_t47_ops_are_cpu_only() {
+        // T-47: These 4 ops were incorrectly assigned PE engine but have no ANEC converter.
+        assert!(is_cpu_only("slice_update"));
+        assert!(is_cpu_only("sliding_windows"));
+        assert!(is_cpu_only("reverse"));
+        assert!(is_cpu_only("argsort"));
+    }
+
+    #[test]
     fn test_cpu_only_set_size() {
-        // Should have at least 93 entries (was 83, added 10 in T-22)
+        // Should have at least 120 entries (was 93, added 4 in T-47, ~23 in T-49)
         assert!(
-            CPU_ONLY_OPS.len() >= 93,
-            "CPU_ONLY_OPS has {} entries, expected >= 93",
+            CPU_ONLY_OPS.len() >= 120,
+            "CPU_ONLY_OPS has {} entries, expected >= 120",
             CPU_ONLY_OPS.len()
         );
     }

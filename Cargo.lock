@@ -61,6 +61,7 @@ dependencies = [
  "ane-trace",
  "anyhow",
  "half",
+ "log",
  "safetensors",
  "serde",
  "serde_json",
@@ -174,6 +175,7 @@ version = "0.1.0"
 dependencies = [
  "ane-ir",
  "anyhow",
+ "log",
  "serde",
 ]
 

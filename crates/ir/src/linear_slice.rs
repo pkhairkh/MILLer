@@ -81,6 +81,7 @@ pub fn sir_from_linear_projection(spec: &SyntheticTaskSpec) -> Result<SirGraph, 
                 input: input_id.clone(),
                 weight: "weight".into(),
                 bias: Some("bias".into()),
+                palette_bits: None,
             },
             name: "linear_out".into(),
             metadata: SirMetadata {

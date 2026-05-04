@@ -45,6 +45,12 @@ pub enum SirOp {
         input: SirNodeId,
         weight: String,
         bias: Option<String>,
+        /// Palette bit-width for GroupedLut quantization.
+        /// When `Some(bits)`, the weight should be palettized with the given
+        /// bit-width during Core ML emission. Valid values: {1, 2, 3, 4, 6, 8}.
+        /// When `None`, no palettization is applied.
+        #[serde(default)]
+        palette_bits: Option<usize>,
     },
     AttentionBlock {
         q: SirNodeId,
@@ -147,6 +153,12 @@ pub enum SirOp {
     Const {
         value_path: String,
         dtype: MilDtype,
+        /// Palette bit-width for kmeans palettization.
+        /// When `Some(bits)`, the constant should be palettized with the given
+        /// bit-width during Core ML emission. Valid values: {1, 2, 3, 4, 6, 8}.
+        /// When `None`, no palettization is applied.
+        #[serde(default)]
+        palette_bits: Option<usize>,
     },
 
     // ─── Linear / FC ─────────────────────────────────────────────

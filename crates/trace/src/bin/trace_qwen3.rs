@@ -66,7 +66,7 @@ fn main() {
     println!("\n=== First 15 nodes ===");
     for node in sir.nodes.iter().take(15) {
         let desc = match &node.op {
-            SirOp::LinearProjection { input, weight, bias } => {
+            SirOp::LinearProjection { input, weight, bias, .. } => {
                 format!("Linear(in={}, w={}, b={:?})", input.0, weight, bias)
             }
             SirOp::RMSNorm { input, weight: _, epsilon, axes: _ } => {

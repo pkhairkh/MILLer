@@ -66,9 +66,16 @@ pub fn compat_input_shape(name: &str, shape: &[usize], max_seq_len: usize) -> Ve
 /// Infer the shape for a compat graph input node using default Qwen3-0.6B
 /// max sequence length (32768).
 ///
+/// **Deprecated**: This function silently assumes Qwen3-0.6B's max_seq_len,
+/// which is a correctness hazard for any other model. Prefer
+/// [`compat_input_shape`] with an explicit `max_seq_len` parameter.
+///
 /// Convenience wrapper for callers that don't have a `ModelArchConfig` available.
-/// Prefer [`compat_input_shape`] with an explicit `max_seq_len` for correctness.
 pub fn compat_input_shape_default(name: &str, shape: &[usize]) -> Vec<usize> {
+    log::warn!(
+        "compat_input_shape_default: using hardcoded max_seq_len=32768 (Qwen3-0.6B). \
+         Pass explicit max_seq_len via compat_input_shape() for correctness."
+    );
     compat_input_shape(name, shape, 32768)
 }
 
@@ -555,14 +562,19 @@ fn reduce_shape(
 /// Convenience wrapper for [`compat_output_shape`] using default Qwen3-0.6B
 /// max sequence length (32768).
 ///
-/// Prefer [`compat_output_shape`] with an explicit `max_seq_len` for correctness
-/// when compiling models with different sequence lengths.
+/// **Deprecated**: This function silently assumes Qwen3-0.6B's max_seq_len,
+/// which is a correctness hazard for any other model. Prefer
+/// [`compat_output_shape`] with an explicit `max_seq_len` parameter.
 pub fn compat_output_shape_default(
     name: &str,
     op: &MirOp,
     shape: &[usize],
     node_shapes: &HashMap<String, Vec<usize>>,
 ) -> Vec<usize> {
+    log::warn!(
+        "compat_output_shape_default: using hardcoded max_seq_len=32768 (Qwen3-0.6B). \
+         Pass explicit max_seq_len via compat_output_shape() for correctness."
+    );
     compat_output_shape(name, op, shape, node_shapes, 32768)
 }
 

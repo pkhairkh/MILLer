@@ -80,7 +80,11 @@ pub fn run_slanc_scales_pass(graph: &mut SirGraph) -> NormStabilizationResult {
 
         let const_node = SirNode {
             id: const_id.clone(),
-            op: SirOp::Const { value_path: scale_name.clone(), dtype: ane_ir::mir::MilDtype::Fp16 },
+            op: SirOp::Const {
+                value_path: scale_name.clone(),
+                dtype: ane_ir::mir::MilDtype::Fp16,
+                palette_bits: None,
+            },
             name: format!("norm_stabilization_const_{}", node.id.0),
             metadata: node.metadata.clone(),
         };

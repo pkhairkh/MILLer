@@ -77,6 +77,7 @@ pub enum PlacementDecision {
 ///     is_depthwise_conv: false,
 ///     is_asymmetric_quant: false,
 ///     is_blockwise_scale: false,
+///     anef_revision: None,
 /// };
 /// ```
 #[derive(Debug, Clone, Default)]
@@ -110,6 +111,10 @@ pub struct PlacementContext {
 
     /// Whether the op uses blockwise scaling (not supported on ANE).
     pub is_blockwise_scale: bool,
+
+    /// ANE revision for hardware limit validation (T-53).
+    /// When provided, tensor dimensions are validated against per-revision HW limits.
+    pub anef_revision: Option<ane_ir::ane_target::AneRevision>,
 }
 
 impl PlacementContext {
@@ -135,6 +140,30 @@ impl PlacementContext {
             interleave: Some(interleave),
             channels: Some(channels),
             ..Self::default()
+        }
+    }
+}
+
+/// Extract width, height, depth, channels from a shape vector.
+///
+/// ANE tensor layout convention:
+/// - Rank 1: [width]
+/// - Rank 2: [height, width]
+/// - Rank 3: [depth, height, width]
+/// - Rank 4: [channels, depth, height, width]  (ChannelFirst)
+/// - Rank 5: [batch, channels, depth, height, width]
+fn extract_whdc(shape: &[usize]) -> (u64, u64, u64, u64) {
+    match shape.len() {
+        0 => (0, 0, 0, 0),
+        1 => (shape[0] as u64, 1, 1, 1),
+        2 => (shape[1] as u64, shape[0] as u64, 1, 1),
+        3 => (shape[2] as u64, shape[1] as u64, shape[0] as u64, 1),
+        4 => (shape[3] as u64, shape[2] as u64, shape[1] as u64, shape[0] as u64),
+        5 => (shape[4] as u64, shape[3] as u64, shape[2] as u64, shape[1] as u64),
+        _ => {
+            // Rank > 5: use last 4 dims as (w, h, d, c)
+            let n = shape.len();
+            (shape[n - 1] as u64, shape[n - 2] as u64, shape[n - 3] as u64, shape[n - 4] as u64)
         }
     }
 }
@@ -296,6 +325,27 @@ pub fn validate_placement_with_context(
         ));
     }
 
+    // ─── T-53: Hardware tensor dimension limits ──────────────────
+    // Validate tensor dimensions against per-revision HW limits.
+    // Oversized tensors pass validation but fail at ANE runtime.
+    if !input_shapes.is_empty() {
+        if let Some(revision) = ctx.anef_revision {
+            let hw_limits = ane_ir::ane_hw_limits::AneHwLimits::for_revision(revision);
+            for (i, shape) in input_shapes.iter().enumerate() {
+                let (w, h, d, c) = extract_whdc(shape);
+                let rank = shape.len() as u32;
+                if let Err(violation) = hw_limits.validate_tensor_dims(w, h, d, c, rank) {
+                    return PlacementDecision::CpuOnly(format!(
+                        "{}: input {} tensor dims violate HW limits — {}",
+                        op_name(op),
+                        i,
+                        violation
+                    ));
+                }
+            }
+        }
+    }
+
     // ─── Op-specific constraints ────────────────────────────────────
     match op {
         // Linear: input rank must be < 5 (rank-5 inputs cause NE pipe
@@ -376,6 +426,26 @@ pub fn validate_placement_with_context(
                      supported on A11Legacy through A16 only",
                     op_name(op)
                 ));
+            }
+            PlacementDecision::AneAllowed
+        }
+
+        // T-51: ReduceMin — non-FP dtypes only on A14+ (LSE_3+).
+        // The canonical rule: "ReduceMin non-FP: only A14+". The method
+        // supports_reducemin_all_dtypes() implements this, but the
+        // placement validator had no match arm for MILReduceMin, so
+        // non-FP ReduceMin would pass on A11/A12/A13 and fail at ANE runtime.
+        MirOp::MILReduceMin { .. } => {
+            if let Some(ref dtype) = ctx.dtype {
+                let is_fp =
+                    matches!(dtype, ane_ir::mir::MilDtype::Fp16 | ane_ir::mir::MilDtype::Fp32);
+                if !is_fp && !target_family.supports_reducemin_all_dtypes() {
+                    return PlacementDecision::CpuOnly(format!(
+                        "MILReduceMin: non-FP dtype {:?} requires A14+ (LSE_3+), \
+                         current family {:?} does not support it",
+                        dtype, target_family
+                    ));
+                }
             }
             PlacementDecision::AneAllowed
         }

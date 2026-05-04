@@ -241,10 +241,25 @@ pub struct ModelArchConfig {
 impl Default for ModelArchConfig {
     /// Default configuration for Qwen3-0.6B (the primary compilation target).
     ///
-    /// This default exists for backward compatibility with existing callers
-    /// that do not yet pass an explicit config. New code should prefer
-    /// constructing `ModelArchConfig` explicitly from model metadata.
+    /// **Deprecated**: This default silently assumes Qwen3-0.6B dimensions,
+    /// which is a correctness hazard for any other model architecture.
+    /// Prefer `ModelArchConfig::qwen3_0_6b()` for explicit Qwen3 usage, or
+    /// `ModelArchConfig::from_model_config()` for other architectures.
+    ///
+    /// This default is retained for backward compatibility with existing callers
+    /// that do not yet pass an explicit config.
     fn default() -> Self {
+        Self::qwen3_0_6b()
+    }
+}
+
+impl ModelArchConfig {
+    /// Qwen3-0.6B configuration factory.
+    ///
+    /// Use this instead of `Default` when you explicitly want Qwen3-0.6B
+    /// dimensions. This makes the model assumption explicit rather than
+    /// silently relying on a default.
+    pub fn qwen3_0_6b() -> Self {
         Self {
             vocab_size: 151936,
             embed_dim: 1024,
@@ -256,9 +271,6 @@ impl Default for ModelArchConfig {
             architecture: ModelArchitecture::Qwen3,
         }
     }
-}
-
-impl ModelArchConfig {
     /// Construct from trace::ModelConfig fields.
     ///
     /// This is the primary factory method used by the CLI to build

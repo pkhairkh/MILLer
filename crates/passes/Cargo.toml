@@ -6,4 +6,5 @@ edition = "2021"
 [dependencies]
 ane-ir = { workspace = true }
 anyhow = { workspace = true }
+log = { workspace = true }
 serde = { workspace = true }

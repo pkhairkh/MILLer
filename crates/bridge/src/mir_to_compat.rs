@@ -451,8 +451,21 @@ fn build_input_alias_map(
     graph: &MirGraph,
     architecture: Option<&ane_ir::common::ModelArchitecture>,
 ) -> std::collections::HashMap<String, String> {
-    // Default to Qwen3 patterns when no architecture is specified.
-    let arch = architecture.cloned().unwrap_or(ane_ir::common::ModelArchitecture::Qwen3);
+    // T-57: Use Qwen3 patterns when no architecture is specified.
+    // Previously this silently defaulted to Qwen3, which is a correctness
+    // hazard for non-Qwen3 models. Now we log a warning to make the
+    // assumption visible.
+    let arch = match architecture.cloned() {
+        Some(a) => a,
+        None => {
+            log::warn!(
+                "mir_to_compat: no architecture specified, defaulting to Qwen3 \
+                 weight-name patterns. Pass an explicit architecture to avoid \
+                 incorrect weight resolution for non-Qwen3 models."
+            );
+            ane_ir::common::ModelArchitecture::Qwen3
+        }
+    };
     let q_proj = arch.q_proj_pattern();
     let _k_proj = arch.k_proj_pattern();
     let _v_proj = arch.v_proj_pattern();

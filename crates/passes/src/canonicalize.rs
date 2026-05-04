@@ -133,11 +133,14 @@ impl CanonicalizePass {
 
         match op {
             SirOp::Identity { input } => SirOp::Identity { input: r!(input) },
-            SirOp::LinearProjection { input, weight, bias } => SirOp::LinearProjection {
-                input: r!(input),
-                weight: weight.clone(),
-                bias: bias.clone(),
-            },
+            SirOp::LinearProjection { input, weight, bias, palette_bits } => {
+                SirOp::LinearProjection {
+                    input: r!(input),
+                    weight: weight.clone(),
+                    bias: bias.clone(),
+                    palette_bits: palette_bits.clone(),
+                }
+            }
             SirOp::RMSNorm { input, weight, epsilon, axes } => SirOp::RMSNorm {
                 input: r!(input),
                 weight: weight.clone(),
@@ -331,6 +334,7 @@ mod tests {
                         input: SirNodeId("input".to_string()),
                         weight: "w".to_string(),
                         bias: None,
+                        palette_bits: None,
                     },
                 ),
                 make_node("output", SirOp::Identity { input: SirNodeId("linear".to_string()) }),
@@ -378,6 +382,7 @@ mod tests {
                         input: SirNodeId("c".to_string()),
                         weight: "w".to_string(),
                         bias: None,
+                        palette_bits: None,
                     },
                 ),
             ],

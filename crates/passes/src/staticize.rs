@@ -149,6 +149,7 @@ mod tests {
                 SirOp::Const {
                     value_path: "weights/embedding.bin".to_string(),
                     dtype: MilDtype::Fp16,
+                    palette_bits: None,
                 },
             )],
             inputs: vec![],
@@ -206,6 +207,7 @@ mod tests {
                         input: SirNodeId("input".to_string()),
                         weight: "model.layers.0.self_attn.q_proj.weight".to_string(),
                         bias: None,
+                        palette_bits: None,
                     },
                 ),
             ],
@@ -231,6 +233,7 @@ mod tests {
                         input: SirNodeId("input".to_string()),
                         weight: "lm_head.weight".to_string(),
                         bias: Some("lm_head.bias".to_string()),
+                        palette_bits: None,
                     },
                 ),
             ],
@@ -1273,6 +1276,7 @@ mod tests {
                         input: SirNodeId("token".to_string()),
                         weight: "q_proj.weight".to_string(),
                         bias: None,
+                        palette_bits: None,
                     },
                 ),
                 make_node(
@@ -1291,6 +1295,7 @@ mod tests {
                         input: SirNodeId("sdpa".to_string()),
                         weight: "o_proj.weight".to_string(),
                         bias: None,
+                        palette_bits: None,
                     },
                 ),
                 make_node(
@@ -1457,7 +1462,11 @@ mod tests {
         let graph = SirGraph {
             nodes: vec![make_node(
                 "node_0",
-                SirOp::Const { value_path: "w.bin".to_string(), dtype: MilDtype::Fp32 },
+                SirOp::Const {
+                    value_path: "w.bin".to_string(),
+                    dtype: MilDtype::Fp32,
+                    palette_bits: None,
+                },
             )],
             inputs: vec![],
             outputs: vec![SirNodeId("node_0".to_string())],
@@ -1486,6 +1495,7 @@ mod tests {
                         input: SirNodeId("input".to_string()),
                         weight: "w_q.bin".to_string(),
                         bias: None,
+                        palette_bits: None,
                     },
                 ),
                 make_node("relu_0", SirOp::Relu { input: SirNodeId("linear_0".to_string()) }),
@@ -1523,6 +1533,7 @@ mod tests {
                         input: SirNodeId("rms_0".to_string()),
                         weight: "q_proj.weight".to_string(),
                         bias: None,
+                        palette_bits: None,
                     },
                 ),
                 make_node(

@@ -1174,19 +1174,19 @@ impl MirOp {
             | MirOp::MILStack { .. }
             | MirOp::MILTile { .. }
             | MirOp::MILPad { .. }
-            // Slice / reverse
+            // Slice (ANE-legal)
             | MirOp::MILSliceByIndex { .. }
             | MirOp::MILSliceBySize { .. }
-            | MirOp::MILSliceUpdate { .. }
-            | MirOp::MILSlidingWindows { .. }
-            | MirOp::MILReverse { .. }
+            // MILSliceUpdate moved to CPU-only (T-47): no ANEC converter.
+            // MILSlidingWindows moved to CPU-only (T-47): no ANEC converter.
+            // MILReverse moved to CPU-only (T-47): no ANEC converter.
             // MILReverseSequence moved to CPU-only (T-22).
             // Quantize / dequantize (ANE-legal per per-op matrix rows 84-85,
             // but currently lack MirOpCompat variants — see T-39)
             | MirOp::MILQuantize { .. }
             | MirOp::MILDequantize { .. }
-            // Sort / topk (ANE-legal)
-            | MirOp::MILArgsort { .. }
+            // Sort / topk
+            // MILArgsort moved to CPU-only (T-47): no ANEC converter.
             | MirOp::MILTopk { .. }
             // MILBandPart moved to CPU-only (T-22).
             // Identity / misc (ANE-legal)
@@ -1298,7 +1298,15 @@ impl MirOp {
             | MirOp::MILBandPart { .. }
             | MirOp::MILReverseSequence { .. }
             // Einsum: no ANEC converter in any family.
-            | MirOp::MILEinsum { .. } => None,
+            | MirOp::MILEinsum { .. }
+            // ─── T-47: Ops with PE engine but no ANEC converter ──────
+            // These were incorrectly assigned Some(AneEngine::PE) but map
+            // to MirOpCompat::Unsupported at emission time. Moving to
+            // CPU-only prevents silent emission failures.
+            | MirOp::MILSliceUpdate { .. }
+            | MirOp::MILSlidingWindows { .. }
+            | MirOp::MILReverse { .. }
+            | MirOp::MILArgsort { .. } => None,
         }
     }
 
