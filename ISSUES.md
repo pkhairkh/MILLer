@@ -8,39 +8,109 @@
 
 ## Resolved Issues — Archive Summary
 
-Issues I-01 through I-65 from the v1/v2/v3 tabula-rasa audits are all resolved. See `CHANGELOG.md` for details.
+Issues I-01 through I-66 from the v1/v2/v3/ane-violations audits are all resolved. See `CHANGELOG.md` for details.
 
 | Audit | Issues | Status |
 |-------|--------|--------|
 | v1 (I-01 through I-20) | 20 | All fixed |
 | v2 (I-21 through I-40) | 20 | 18 fixed, 2 retracted |
 | v3 (I-41 through I-65) | 25 | All fixed |
+| ane-violations (I-66 resolved) | 1 | Fixed |
+
+### Recently Resolved
+
+### I-61 · Knowledge Seed Family Mappings Contradict Rust Code
+
+**Status:** ✅ Fixed (T-86)
+**Files:** `knowledge/ane_hw_limits_seed.json:40-55,108-123`, `crates/ir/src/ane_target.rs`
+**AUDIT ref:** V-001, V-002 (ane-violations.md §III)
+**Severity:** CRITICAL
+**Effort:** S (0.5 day)
+**Task:** T-86
+
+The knowledge seed `ane_hw_limits_seed.json` maps V6 to family `"A14"` and V11 to family `"A16"`, but the Rust code maps V6→A13 and V11→A17. The knowledge system grants A14-class capabilities to A13 hardware and misses A17's E4M3 support distinction. Since knowledge seeds are the runtime data source for constraint validation, these mismatches produce silent miscompilation — models that pass validation but fail at ANE runtime because the seed granted capabilities the hardware doesn't have.
+
+**Fix:** Align `ane_hw_limits_seed.json` family fields with `ane_target.rs` mappings. Add automated consistency test.
+
+---
+
+### I-62 · Three-Way Knowledge Seed Contradictions
+
+**Status:** ✅ Fixed (T-87)
+**Files:** `knowledge/cpu_only_ops_seed.json:296-324`, `knowledge/ane_op_family_matrix.json:1239-1285`, `knowledge/legality_seed.json:62-75`
+**AUDIT ref:** V-003, V-004, V-005 (ane-violations.md §III)
+**Severity:** CRITICAL
+**Effort:** M (1 day)
+**Task:** T-87
+
+Three knowledge seeds contradict each other and the ANEC binary evidence: (1) Comparison ops listed as CPU-only but have ANEC converters on A14+. (2) Logical AND/OR/NOT listed as "supported" A12+ but have no ANEC converter. (3) Gather declared ANE-illegal but `anec.gather` converter exists. These contradictions mean models are either unnecessarily forced to CPU (comparison ops) or routed to ANE for ops that will fail at compilation (logical ops).
+
+**Fix:** Move comparison ops from CPU-only to A14+ in family matrix. Mark logical AND/OR/NOT as CPU-only. Change gather to limited-ANE-legal with constraint metadata.
+
+---
+
+### I-63 · Unknown Dtype Silently Defaults to Fp16
+
+**Status:** ✅ Fixed (T-88)
+**Files:** `crates/ir/src/shard_desc.rs:95`
+**AUDIT ref:** V-011 (ane-violations.md §III)
+**Severity:** HIGH
+**Effort:** S (0.5 day)
+**Task:** T-88
+
+When a dtype string is not recognized (e.g., `"bf16"`, `"int8"`, or a typo), the code silently defaults to Fp16. Invalid dtype specifications produce wrong precision without any error. Int8 is also missing from the accepted dtype list despite being a valid ANE weight format.
+
+**Fix:** Replace silent default with explicit `bail!()` error. Add Int8 and UInt8 as recognized dtype strings.
+
+---
+
+### I-64 · Gelu Mode Contradictions — EXACT Mode Has No ANEC Converter
+
+**Status:** ✅ Fixed (T-89)
+**Files:** `crates/trace/src/sir_build.rs:518,1415`, `crates/passes/src/role_mir.rs:252`, `crates/passes/src/staticize.rs:527`, `python/mil_emitter.py:893,1142`
+**AUDIT ref:** V-099, V-113 (ane-violations.md §III)
+**Severity:** CRITICAL
+**Effort:** S (0.5 day)
+**Task:** T-89
+
+MILLer emits `mb.gelu` with contradictory modes: `"EXACT"` from the SIR builder, `"TANH_APPROXIMATION"` from role_mir and Python emitter, `"exact"` from test fixtures. ANEC `ConvertElementwiseUnary(Gelu)` only supports tanh approximation. The SIR→AIR→MIR pipeline preserves whatever mode the SIR builder sets — since SIR uses `"EXACT"`, models compiled through the Rust pipeline produce invalid gelu operations that fail at ANEC compile time. Orion #10 documents that gelu is not a valid MIL activation in its native form.
+
+**Fix:** Standardize all gelu emissions on `"TANH_APPROXIMATION"`. Add validation check in `mir.rs` rejecting EXACT mode. Add consistency test.
+
+---
+
+### I-66 · Knowledge Seed Family Mismatches Grant Wrong Capabilities to Hardware
+
+**Status:** ✅ Fixed (T-86)
+**Files:** `knowledge/ane_hw_limits_seed.json:40-55,108-123`, `crates/ir/src/ane_target.rs`
+**AUDIT ref:** V-001, V-002
+**Severity:** CRITICAL
+**Effort:** S (0.5 day)
+**Task:** T-86
+
+The `ane_hw_limits_seed.json` maps hardware revision V6 to family "A14" but Rust code (`ane_target.rs`) maps V6→A13. Similarly, V11→family "A16" in the JSON but V11→A17 in Rust. These mismatches grant A14-class capabilities to A13 hardware and miss A17 E4M3 support. Every model compiled for A13 or A17 hardware uses incorrect constraint data, potentially placing ops on the ANE that the hardware cannot execute, causing silent runtime failures.
+
+**Fix:** Fixed `ane_hw_limits_seed.json`: V6→A13 (was A14), V11→A17 (was A16). Added `test_hw_limits_seed_family_consistency()` to prevent future drift. (Originally tracked as T-91, consolidated with T-86 which resolved the same V-001/V-002 violations.)
+
+---
+
+### I-66 · Zero-Weight Placeholders Produce Silently Broken Models
+
+**Status:** ✅ Fixed (T-91)
+**Files:** `crates/bridge/src/safetensors_resolver.rs:135-169`, `crates/bridge/src/mir_to_compat.rs:224-249`
+**AUDIT ref:** V-007 (ane-violations.md §III)
+**Severity:** HIGH
+**Effort:** M (1 day)
+**Task:** T-91
+
+When a weight cannot be resolved, MILLer produces a zero-filled placeholder with only a stderr warning (added in T-79/I-54). The resulting model compiles and loads but produces completely incorrect inference — the most dangerous class of failure. The warning is insufficient because it's easy to miss in CI logs and doesn't prevent the broken model from being produced.
+
+**Fix:** Make zero-fill a hard error by default. Add `--allow-missing-weights` CLI flag for opt-in. Add `MILLER_ALLOW_MISSING_WEIGHTS` env var as alternative.
 
 ---
 
 ## P0 — CRITICAL (Silent Miscompilation / Data Corruption)
 
-### I-66 · Knowledge Seed Family Mismatches Grant Wrong Capabilities to Hardware
-
-**Status:** ⬜ Open
-**Files:** `knowledge/ane_hw_limits_seed.json:40-55,108-123`, `crates/ir/src/ane_target.rs`
-**AUDIT ref:** V-001, V-002
-**Severity:** CRITICAL
-**Effort:** S (0.5 day)
-**Task:** T-91
-
-**Intent:** The `ane_hw_limits_seed.json` maps hardware revision V6 to family "A14" but Rust code (`ane_target.rs`) maps V6→A13. Similarly, V11→family "A16" in the JSON but V11→A17 in Rust. These mismatches grant A14-class capabilities to A13 hardware and miss A17 E4M3 support. Every model compiled for A13 or A17 hardware uses incorrect constraint data, potentially placing ops on the ANE that the hardware cannot execute, causing silent runtime failures.
-
-**Current behavior:** JSON seed file's family assignments for V6 and V11 contradict the Rust source of truth. No test validates consistency between these two representations.
-
-**Fix direction:** (1) Change V6 family to "A13" and V11 family to "A17" in `ane_hw_limits_seed.json` to match Rust. (2) Add CI test `test_hw_limits_seed_family_consistency()` that cross-validates every V→family mapping against `revision_to_family()`. (3) Add inline comment in JSON documenting that Rust code is the source of truth.
-
-**Definition of Done:**
-- [ ] V6→A13 and V11→A17 in JSON matching Rust code
-- [ ] Cross-validation test passes for ALL V→family mappings
-- [ ] No other V→family mismatches exist
-
----
 
 ### I-67 · Comparison Ops Wrongly Classified as CPU-Only
 
@@ -174,60 +244,10 @@ Issues I-01 through I-65 from the v1/v2/v3 tabula-rasa audits are all resolved. 
 - [ ] Validation rejects non-TANH_APPROXIMATION gelu for ANE
 - [ ] Test fixtures updated
 - [ ] Rust and Python paths produce consistent gelu mode
-*Last updated: 2026-05-04 (NECROSCOPY forensic audit — I-61 through I-98 derived from `docs/audit/ane-violations.md`)*
-*Reference implementation: https://huggingface.co/pkhairkh/qwen3-coreml-palettized*
-*Audit sources: `docs/audit/tabula-rasa-v3.md`, `docs/audit/ane-violations.md`*
 
 ---
 
-## P0 — CRITICAL (Silent Miscompilation / Data Corruption)
-
-### I-61 · Knowledge Seed Family Mappings Contradict Rust Code
-
-**Status:** ✅ Fixed (T-86)
-**Files:** `knowledge/ane_hw_limits_seed.json:40-55,108-123`, `crates/ir/src/ane_target.rs`
-**AUDIT ref:** V-001, V-002 (ane-violations.md §III)
-**Severity:** CRITICAL
-**Effort:** S (0.5 day)
-**Task:** T-86
-
-The knowledge seed `ane_hw_limits_seed.json` maps V6 to family `"A14"` and V11 to family `"A16"`, but the Rust code maps V6→A13 and V11→A17. The knowledge system grants A14-class capabilities to A13 hardware and misses A17's E4M3 support distinction. Since knowledge seeds are the runtime data source for constraint validation, these mismatches produce silent miscompilation — models that pass validation but fail at ANE runtime because the seed granted capabilities the hardware doesn't have.
-
-**Fix:** Align `ane_hw_limits_seed.json` family fields with `ane_target.rs` mappings. Add automated consistency test.
-
----
-
-### I-62 · Three-Way Knowledge Seed Contradictions
-
-**Status:** ✅ Fixed (T-87)
-**Files:** `knowledge/cpu_only_ops_seed.json:296-324`, `knowledge/ane_op_family_matrix.json:1239-1285`, `knowledge/legality_seed.json:62-75`
-**AUDIT ref:** V-003, V-004, V-005 (ane-violations.md §III)
-**Severity:** CRITICAL
-**Effort:** M (1 day)
-**Task:** T-87
-
-Three knowledge seeds contradict each other and the ANEC binary evidence: (1) Comparison ops listed as CPU-only but have ANEC converters on A14+. (2) Logical AND/OR/NOT listed as "supported" A12+ but have no ANEC converter. (3) Gather declared ANE-illegal but `anec.gather` converter exists. These contradictions mean models are either unnecessarily forced to CPU (comparison ops) or routed to ANE for ops that will fail at compilation (logical ops).
-
-**Fix:** Move comparison ops from CPU-only to A14+ in family matrix. Mark logical AND/OR/NOT as CPU-only. Change gather to limited-ANE-legal with constraint metadata.
-
----
-
-### I-64 · Gelu Mode Contradictions — EXACT Mode Has No ANEC Converter
-
-**Status:** ✅ Fixed (T-89)
-**Files:** `crates/trace/src/sir_build.rs:518,1415`, `crates/passes/src/role_mir.rs:252`, `crates/passes/src/staticize.rs:527`, `python/mil_emitter.py:893,1142`
-**AUDIT ref:** V-099, V-113 (ane-violations.md §III)
-**Severity:** CRITICAL
-**Effort:** S (0.5 day)
-**Task:** T-89
-
-MILLer emits `mb.gelu` with contradictory modes: `"EXACT"` from the SIR builder, `"TANH_APPROXIMATION"` from role_mir and Python emitter, `"exact"` from test fixtures. ANEC `ConvertElementwiseUnary(Gelu)` only supports tanh approximation. The SIR→AIR→MIR pipeline preserves whatever mode the SIR builder sets — since SIR uses `"EXACT"`, models compiled through the Rust pipeline produce invalid gelu operations that fail at ANEC compile time. Orion #10 documents that gelu is not a valid MIL activation in its native form.
-
-**Fix:** Standardize all gelu emissions on `"TANH_APPROXIMATION"`. Add validation check in `mir.rs` rejecting EXACT mode. Add consistency test.
-
----
-
-### I-65 · Concat Emissions Rejected by ANE Compiler (Orion #1)
+## P1 — HIGH (Missing Enforcement / Validation Gaps / Untested Paths)
 
 ### I-73 · Conv/Pool Constraint Fields Defined But Never Validated
 **Status:** ⬜ Open | **Files:** `crates/ir/src/ane_hw_limits.rs:148-193`, `crates/passes/src/op_constraints.rs` | **AUDIT ref:** V-009 | **Severity:** HIGH | **Effort:** S (as part of T-97) | **Task:** T-97
@@ -578,54 +598,12 @@ MILLer emits `mb.gelu` with contradictory modes: `"EXACT"` from the SIR builder,
 **Fix direction:** Replace MILLinear→MILMatMul with MILLinear→MILConv(1x1) for ANE targets. Keep MatMul as fallback.
 
 **Definition of Done:** MILLinear emits as Conv1x1; MatMul only when Conv1x1 impossible; performance test.
-**Status:** ⬜ Open
-**Files:** `crates/passes/src/mil_lower.rs:2842-2858`, `crates/passes/src/legality_rewrite.rs:3098,3622`, `python/mil_emitter.py:432`
-**AUDIT ref:** V-098, V-130 (ane-violations.md §III)
-**Severity:** CRITICAL
-**Effort:** L (2 days)
-**Task:** T-90
-
-MILLer emits `MILConcat` in the SDPA decomposition path and the RoPE rotate_half path. The ANE compiler rejects concat operations except along the channel axis with a constant positive axis (Orion #1). SDPA emits concat along non-channel axes; RoPE emits `concat(-x2, x1, axis=-1)` using a negative axis. Both paths produce models that fail at ANEC compile time. Binary forensic evidence confirms: "Concat supports only 1 axis", "ANE Concat supports only const positive axis", "failed: only works when concat is applied on the channel axis".
-
-**Fix:** Replace concat with ANE-legal alternatives: reshape+stack for SDPA, reshape+transpose for RoPE. Add linter check for ANE-targeted concat with non-channel axis.
-
----
-
-## P1 — HIGH (Missing Enforcement / Validation Gaps / Untested Paths)
-
-### I-63 · Unknown Dtype Silently Defaults to Fp16
-
-**Status:** ✅ Fixed (T-88)
-**Files:** `crates/ir/src/shard_desc.rs:95`
-**AUDIT ref:** V-011 (ane-violations.md §III)
-**Severity:** HIGH
-**Effort:** S (0.5 day)
-**Task:** T-88
-
-When a dtype string is not recognized (e.g., `"bf16"`, `"int8"`, or a typo), the code silently defaults to Fp16. Invalid dtype specifications produce wrong precision without any error. Int8 is also missing from the accepted dtype list despite being a valid ANE weight format.
-
-**Fix:** Replace silent default with explicit `bail!()` error. Add Int8 and UInt8 as recognized dtype strings.
-
----
-
-### I-66 · Zero-Weight Placeholders Produce Silently Broken Models
-
-**Status:** ✅ Fixed (T-91)
-**Files:** `crates/bridge/src/safetensors_resolver.rs:135-169`, `crates/bridge/src/mir_to_compat.rs:224-249`
-**AUDIT ref:** V-007 (ane-violations.md §III)
-**Severity:** HIGH
-**Effort:** M (1 day)
-**Task:** T-91
-
-When a weight cannot be resolved, MILLer produces a zero-filled placeholder with only a stderr warning (added in T-79/I-54). The resulting model compiles and loads but produces completely incorrect inference — the most dangerous class of failure. The warning is insufficient because it's easy to miss in CI logs and doesn't prevent the broken model from being produced.
-
-**Fix:** Make zero-fill a hard error by default. Add `--allow-missing-weights` CLI flag for opt-in. Add `MILLER_ALLOW_MISSING_WEIGHTS` env var as alternative.
 
 ---
 
 ### I-67 · Conv/Pool Constraint Fields Defined but Never Validated
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-92)
 **Files:** `crates/ir/src/ane_hw_limits.rs:148-193`, `crates/passes/src/op_constraints.rs`
 **AUDIT ref:** V-009, V-132, V-128 (ane-violations.md §III)
 **Severity:** HIGH
@@ -634,13 +612,13 @@ When a weight cannot be resolved, MILLer produces a zero-filled placeholder with
 
 Seven conv/pool/PE constraint fields defined in AneHwLimits but never validated by `validate_tensor_dims()`. Conv kernel range 1-7 allows sizes 3, 5, 6, 7 which fail ANEC power-of-2 requirement. Dilated pooling and dilated stencil rejected by ANEC but MILLer has no dilation check.
 
-**Fix:** Add conv kernel power-of-2 validation, dilated pooling rejection, dilated stencil rejection, 5D stencil rejection. Wire all into constraint validation pipeline.
+**Fix:** Added power-of-2 kernel validation for conv W/H/D, dilated stencil rejection, stencil constraints (5D, non-4D kernel, non-sum reduction, dilated, strided). Added `validate_stencil_constraints()`. Updated conv tests. (T-92)
 
 ---
 
 ### I-68 · Large Kernel Mode Constraints Not Enforced
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-93)
 **Files:** `crates/passes/src/op_constraints.rs`
 **AUDIT ref:** V-115 (ane-violations.md §III)
 **Severity:** HIGH
@@ -649,13 +627,13 @@ Seven conv/pool/PE constraint fields defined in AneHwLimits but never validated 
 
 ANEC has a "large kernel" mode with 12+ additional constraints: kernel W/H multiple of 8, stride 1-2 only, zero padding only, no depth>1, no palettized weights, matching input/output strides, no grouped conv, no dynamic shape, no dilation. None are validated.
 
-**Fix:** Add `validate_large_kernel_constraints()` with all 12 checks. Wire into conv validation.
+**Fix:** Added `LARGE_KERNEL_THRESHOLD=16` constant and `validate_large_kernel_constraints()` checking W/H multiple of 8, stride 1-2, no depth>1, no grouped conv, no dilation. Wired into `validate_conv_constraints()`. (T-93)
 
 ---
 
 ### I-69 · Deconvolution Constraints Not Enforced
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-94)
 **Files:** `crates/passes/src/op_constraints.rs`, `crates/passes/src/placement_validate.rs:516`
 **AUDIT ref:** V-116, V-048 (ane-violations.md §III)
 **Severity:** HIGH
@@ -664,7 +642,7 @@ ANEC has a "large kernel" mode with 12+ additional constraints: kernel W/H multi
 
 ConvTranspose always passes placement validation unconditionally. Five ANEC-specific deconv constraints not enforced: no dilation, SOx==2, no large kernel, no vector palettization, stride>2 with kernel depth>1.
 
-**Fix:** Add `validate_deconv_constraints()`. Wire into placement validator for ConvTranspose.
+**Fix:** Added `validate_deconv_constraints()` checking no dilation, SOx==2, no large kernel, no vector palettization, stride>2+depth>1. Updated ConvTranspose placement comment. (T-94)
 
 ---
 
@@ -730,7 +708,7 @@ ANEC convolution schema includes kernel_scale, kernel_zero_point, kernel_paletti
 
 ### I-74 · Conv 32K-Channel Limit Not Enforced
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-99)
 **Files:** `crates/ir/src/ane_hw_limits.rs:178`, `crates/passes/src/op_constraints.rs`
 **AUDIT ref:** V-103 (ane-violations.md §III)
 **Severity:** HIGH
@@ -739,13 +717,13 @@ ANEC convolution schema includes kernel_scale, kernel_zero_point, kernel_paletti
 
 max_tensor_channels allows 65536 for newer revisions but ANEC has conv-specific 32768 limit (Orion #16). Convolutions with 32768-65535 channels pass validation but fail at ANEC.
 
-**Fix:** Add max_conv_channels field (32768) to AneHwLimits. Use it in conv validation.
+**Fix:** Added `max_conv_channels: 32768` field to AneHwLimits. Added `validate_conv_channels()` method. Updated `ane_hw_limits_seed.json` for all 11 revisions. (T-99)
 
 ---
 
 ### I-75 · Non-Constant Gather Axis Not Rejected
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-100)
 **Files:** `crates/passes/src/op_constraints.rs`, `crates/passes/src/mil_lower.rs`, `crates/passes/src/legality_rewrite.rs`
 **AUDIT ref:** V-136 (ane-violations.md §III)
 **Severity:** HIGH
@@ -754,7 +732,7 @@ max_tensor_channels allows 65536 for newer revisions but ANEC has conv-specific 
 
 ANEC rejects gather with non-constant axis. MILLer emits dynamic-axis gather for embedding lookups and RoPE table lookups. These fail at ANEC compile time.
 
-**Fix:** Add gather axis constness validation. Reject dynamic-axis gather targeting ANE.
+**Fix:** Extended `validate_gather_constraints()` with `axis_is_constant: bool` parameter. Non-constant axis rejected with clear error. Updated all callers. (T-100)
 
 ---
 

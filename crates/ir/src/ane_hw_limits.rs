@@ -18,6 +18,11 @@ pub struct AneHwLimits {
     pub max_f16_conv_kernel_dim_x: u64,
     pub max_conv_kernel_dim_y: u64,
     pub max_pooling_kernel_dim: u64,
+    /// T-99 (Orion #16): Conv-specific channel limit (32768), lower than
+    /// general max_tensor_channels (65536). Convolutions with channel
+    /// counts between 32768 and 65536 pass general validation but fail
+    /// at ANEC compile time.
+    pub max_conv_channels: u64,
     pub pe_max_tile_height: u64,
     pub pe_reduction_cout_limit: u64,
     pub num_nes: u32,
@@ -56,6 +61,8 @@ impl AneHwLimits {
             max_f16_conv_kernel_dim_x: 7,
             max_conv_kernel_dim_y: 7,
             max_pooling_kernel_dim: 27,
+            // T-99 (Orion #16): Conv-specific channel limit is 32K
+            max_conv_channels: 32768,
             pe_max_tile_height: 2048,
             pe_reduction_cout_limit: 16384,
             num_nes: 1,
@@ -193,6 +200,22 @@ impl AneHwLimits {
         }
         Ok(())
     }
+
+    /// T-99 (Orion #16): Validate conv-specific channel limits.
+    /// Conv has a lower channel limit (32768) than the general
+    /// max_tensor_channels (65536). This catches convolutions with
+    /// channel counts between 32768 and 65536 that pass general
+    /// validation but fail at ANEC compile time.
+    pub fn validate_conv_channels(&self, channels: u64) -> Result<(), HwLimitViolation> {
+        if channels > self.max_conv_channels {
+            return Err(HwLimitViolation {
+                param: "max_conv_channels".into(),
+                value: channels,
+                limit: self.max_conv_channels,
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Hardware limit violation.
@@ -272,5 +295,31 @@ mod tests {
         let a18 = AneHwLimits::for_revision(AneRevision::V19);
         assert!(a18.num_nes > a14.num_nes);
         assert!(a14.num_nes > a12.num_nes);
+    }
+
+    // T-99 (Orion #16): Conv-specific 32K channel limit
+    #[test]
+    fn test_conv_channels_at_limit_ok() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // 32768 channels should pass conv channel check
+        assert!(limits.validate_conv_channels(32768).is_ok());
+    }
+
+    #[test]
+    fn test_conv_channels_over_limit_rejected() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // 32769 channels should be rejected
+        let result = limits.validate_conv_channels(32769);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.param, "max_conv_channels");
+        assert_eq!(err.limit, 32768);
+    }
+
+    #[test]
+    fn test_conv_channels_lower_than_general_channels() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // Conv limit (32K) must be lower than general tensor channel limit
+        assert!(limits.max_conv_channels < limits.max_tensor_channels);
     }
 }

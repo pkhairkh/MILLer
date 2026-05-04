@@ -24,8 +24,24 @@ impl std::fmt::Display for OpConstraintViolation {
     }
 }
 
+/// T-93: Threshold above which ANE activates "large kernel" mode with
+/// additional constraints. Based on binary forensic evidence: "kernel
+/// width and height should be multiple of 8 for large kernel" appears
+/// when W or H exceeds this threshold. The previous dead-code comparison
+/// at line 41 used a literal 16; this named constant replaces it.
+pub const LARGE_KERNEL_THRESHOLD: u64 = 16;
+
+/// Check whether a value is a power of 2 (0 is not a power of 2).
+fn is_power_of_two(v: u64) -> bool {
+    v > 0 && (v & (v - 1)) == 0
+}
+
 /// Validate convolution constraints.
 /// Source: ane-constraints-docs Section 4.1-4.5
+///
+/// T-92: Now includes power-of-2 kernel validation, dilated stencil
+/// rejection, and stencil (depthwise conv) constraints per ANEC binary
+/// forensic evidence.
 pub fn validate_conv_constraints(
     kernel_w: u64,
     kernel_h: u64,
@@ -34,7 +50,45 @@ pub fn validate_conv_constraints(
     is_dilated: bool,
     stride: &[u64],
 ) -> Result<(), OpConstraintViolation> {
-    // Kernel dimensions must be within 1-7 range
+    // ─── T-92: Kernel dimensions must be power of 2 ────────────────
+    // ANEC rejects non-power-of-2 kernel sizes: "Kernel width must be
+    // a power of 2", "Kernel height must be a power of 2", "Kernel
+    // depth must be a power of 2."
+    // The existing range check (1-7) allows 3, 5, 6, 7 which are
+    // ANEC-illegal. We add the power-of-2 check first, then retain
+    // the range check as a secondary defense.
+    if !is_power_of_two(kernel_w) {
+        return Err(OpConstraintViolation {
+            op_name: "conv".into(),
+            constraint: "kernel_width_power_of_2".into(),
+            message: format!(
+                "Kernel width {} must be a power of 2 for ANE (valid: 1, 2, 4)",
+                kernel_w
+            ),
+        });
+    }
+    if !is_power_of_two(kernel_h) {
+        return Err(OpConstraintViolation {
+            op_name: "conv".into(),
+            constraint: "kernel_height_power_of_2".into(),
+            message: format!(
+                "Kernel height {} must be a power of 2 for ANE (valid: 1, 2, 4)",
+                kernel_h
+            ),
+        });
+    }
+    if kernel_d > 1 && !is_power_of_two(kernel_d) {
+        return Err(OpConstraintViolation {
+            op_name: "conv".into(),
+            constraint: "kernel_depth_power_of_2".into(),
+            message: format!(
+                "Kernel depth {} must be a power of 2 for ANE 3D conv",
+                kernel_d
+            ),
+        });
+    }
+
+    // Kernel dimensions must be within 1-7 range (secondary defense)
     if !(1..=7).contains(&kernel_w) {
         return Err(OpConstraintViolation {
             op_name: "conv".into(),
@@ -88,7 +142,7 @@ pub fn validate_conv_constraints(
         }
     }
     // Grouped conv + large kernel = hard reject
-    if groups > 1 && (kernel_w > 16 || kernel_h > 16) {
+    if groups > 1 && (kernel_w > LARGE_KERNEL_THRESHOLD || kernel_h > LARGE_KERNEL_THRESHOLD) {
         return Err(OpConstraintViolation {
             op_name: "conv".into(),
             constraint: "grouped_conv_large_kernel".into(),
@@ -96,11 +150,246 @@ pub fn validate_conv_constraints(
         });
     }
     // Dilated conv + large kernel = hard reject
-    if is_dilated && (kernel_w > 16 || kernel_h > 16) {
+    if is_dilated && (kernel_w > LARGE_KERNEL_THRESHOLD || kernel_h > LARGE_KERNEL_THRESHOLD) {
         return Err(OpConstraintViolation {
             op_name: "conv".into(),
             constraint: "dilated_conv_large_kernel".into(),
             message: "dilated conv with large kernel size is not supported".into(),
+        });
+    }
+
+    // ─── T-93: Large kernel mode constraints ───────────────────────
+    // When kernel W or H exceeds the threshold, ANEC enters "large
+    // kernel mode" with additional constraints. Binary forensic
+    // evidence confirms 12+ additional constraints.
+    if kernel_w > LARGE_KERNEL_THRESHOLD || kernel_h > LARGE_KERNEL_THRESHOLD {
+        if let Err(e) = validate_large_kernel_constraints(
+            kernel_w, kernel_h, kernel_d, groups, is_dilated, stride,
+        ) {
+            return Err(e);
+        }
+    }
+
+    Ok(())
+}
+
+/// T-93: Validate ANEC large kernel mode constraints.
+///
+/// When kernel width or height exceeds `LARGE_KERNEL_THRESHOLD` (16),
+/// ANEC activates a special "large kernel mode" with 12+ additional
+/// constraints. All of these are derived from binary forensic strings:
+///
+/// 1. Kernel W/H must be multiple of 8
+/// 2. Stride must be 1 or 2 only
+/// 3. Only zero padding is supported
+/// 4. No kernel depth > 1
+/// 5. No palettized weights (caller-enforced via op metadata)
+/// 6. No grouped convolution
+/// 7. No dynamic shapes (caller-enforced via placement validator)
+/// 8. No dilation
+fn validate_large_kernel_constraints(
+    kernel_w: u64,
+    kernel_h: u64,
+    kernel_d: u64,
+    groups: u64,
+    is_dilated: bool,
+    stride: &[u64],
+) -> Result<(), OpConstraintViolation> {
+    // 1. Kernel W/H must be multiple of 8
+    if kernel_w % 8 != 0 {
+        return Err(OpConstraintViolation {
+            op_name: "conv".into(),
+            constraint: "large_kernel_wh_multiple_of_8".into(),
+            message: format!(
+                "Large kernel mode requires kernel width multiple of 8, got {}",
+                kernel_w
+            ),
+        });
+    }
+    if kernel_h % 8 != 0 {
+        return Err(OpConstraintViolation {
+            op_name: "conv".into(),
+            constraint: "large_kernel_wh_multiple_of_8".into(),
+            message: format!(
+                "Large kernel mode requires kernel height multiple of 8, got {}",
+                kernel_h
+            ),
+        });
+    }
+    // 2. Stride must be 1 or 2 only
+    for (i, &s) in stride.iter().enumerate() {
+        if s > 2 {
+            return Err(OpConstraintViolation {
+                op_name: "conv".into(),
+                constraint: "large_kernel_stride_1_or_2".into(),
+                message: format!(
+                    "Large kernel mode requires stride 1 or 2, got stride[{}]={}",
+                    i, s
+                ),
+            });
+        }
+    }
+    // 4. No kernel depth > 1
+    if kernel_d > 1 {
+        return Err(OpConstraintViolation {
+            op_name: "conv".into(),
+            constraint: "large_kernel_no_depth".into(),
+            message: format!(
+                "Large kernel mode does not support kernel depth > 1, got {}",
+                kernel_d
+            ),
+        });
+    }
+    // 6. No grouped convolution
+    if groups > 1 {
+        return Err(OpConstraintViolation {
+            op_name: "conv".into(),
+            constraint: "large_kernel_no_grouped".into(),
+            message: "Large kernel mode does not support grouped convolution".into(),
+        });
+    }
+    // 8. No dilation
+    if is_dilated {
+        return Err(OpConstraintViolation {
+            op_name: "conv".into(),
+            constraint: "large_kernel_no_dilation".into(),
+            message: "Large kernel mode does not support dilation".into(),
+        });
+    }
+    Ok(())
+}
+
+/// T-92: Validate stencil (depthwise conv) constraints.
+///
+/// Five stencil constraints from ANEC binary forensic evidence:
+/// 1. 5D stencil rejected ("stencil along channel with rank 5 input
+///    is not supported on ANEs")
+/// 2. Non-sum reduction mode rejected
+/// 3. Dilated stencil rejected
+/// 4. Strided stencil rejected (stride > 1)
+/// 5. Non-4D kernel rejected for depthwise conv
+pub fn validate_stencil_constraints(
+    input_rank: usize,
+    kernel_rank: usize,
+    is_dilated: bool,
+    stride: &[u64],
+    reduction_mode: &str,
+) -> Result<(), OpConstraintViolation> {
+    // 1. 5D stencil rejected
+    if input_rank >= 5 {
+        return Err(OpConstraintViolation {
+            op_name: "stencil".into(),
+            constraint: "no_5d_stencil".into(),
+            message: "Stencil along channel with rank 5 input is not supported on ANE".into(),
+        });
+    }
+    // 5. Non-4D kernel rejected for depthwise conv
+    if kernel_rank != 4 {
+        return Err(OpConstraintViolation {
+            op_name: "stencil".into(),
+            constraint: "kernel_must_be_4d".into(),
+            message: format!(
+                "Depthwise conv stencil kernel must be rank 4, got rank {}",
+                kernel_rank
+            ),
+        });
+    }
+    // 2. Non-sum reduction mode rejected
+    if reduction_mode != "sum" && reduction_mode != "SUM" {
+        return Err(OpConstraintViolation {
+            op_name: "stencil".into(),
+            constraint: "reduction_must_be_sum".into(),
+            message: format!(
+                "Stencil reduction mode must be 'sum', got '{}'",
+                reduction_mode
+            ),
+        });
+    }
+    // 3. Dilated stencil rejected
+    if is_dilated {
+        return Err(OpConstraintViolation {
+            op_name: "stencil".into(),
+            constraint: "no_dilated_stencil".into(),
+            message: "Dilated stencil is not supported on ANE".into(),
+        });
+    }
+    // 4. Strided stencil rejected
+    for (i, &s) in stride.iter().enumerate() {
+        if s > 1 {
+            return Err(OpConstraintViolation {
+                op_name: "stencil".into(),
+                constraint: "no_strided_stencil".into(),
+                message: format!(
+                    "Strided stencil is not supported on ANE (stride[{}]={})",
+                    i, s
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// T-94: Validate deconvolution (ConvTranspose) constraints.
+///
+/// Five ANEC-specific constraints from binary forensic evidence:
+/// 1. No dilation ("Dilation not supported for deconvolution")
+/// 2. SOx must equal 2 ("deconv with SOx != 2 is not supported")
+/// 3. No large kernel ("deconv with large kernel size is not supported")
+/// 4. No vector palettization ("deconv with vector palettization is not supported")
+/// 5. Stride > 2 does not support kernel depth > 1
+pub fn validate_deconv_constraints(
+    is_dilated: bool,
+    sox: u64,
+    kernel_w: u64,
+    kernel_h: u64,
+    kernel_d: u64,
+    stride: u64,
+    is_vector_palettized: bool,
+) -> Result<(), OpConstraintViolation> {
+    // 1. No dilation
+    if is_dilated {
+        return Err(OpConstraintViolation {
+            op_name: "deconv".into(),
+            constraint: "no_dilation".into(),
+            message: "Dilation not supported for deconvolution".into(),
+        });
+    }
+    // 2. SOx must equal 2
+    if sox != 2 {
+        return Err(OpConstraintViolation {
+            op_name: "deconv".into(),
+            constraint: "sox_must_be_2".into(),
+            message: format!(
+                "Deconv with SOx != 2 is not supported, got SOx={}",
+                sox
+            ),
+        });
+    }
+    // 3. No large kernel
+    if kernel_w > LARGE_KERNEL_THRESHOLD || kernel_h > LARGE_KERNEL_THRESHOLD {
+        return Err(OpConstraintViolation {
+            op_name: "deconv".into(),
+            constraint: "no_large_kernel".into(),
+            message: "Deconv with large kernel size is not supported".into(),
+        });
+    }
+    // 4. No vector palettization
+    if is_vector_palettized {
+        return Err(OpConstraintViolation {
+            op_name: "deconv".into(),
+            constraint: "no_vector_palettization".into(),
+            message: "Deconv with vector palettization is not supported".into(),
+        });
+    }
+    // 5. Stride > 2 does not support kernel depth > 1
+    if stride > 2 && kernel_d > 1 {
+        return Err(OpConstraintViolation {
+            op_name: "deconv".into(),
+            constraint: "stride_gt_2_no_depth".into(),
+            message: format!(
+                "Deconv with stride > 2 ({}) does not support kernel depth > 1 ({})",
+                stride, kernel_d
+            ),
         });
     }
     Ok(())
@@ -131,7 +420,16 @@ pub fn validate_linear_constraints(
 
 /// Validate gather constraints.
 /// Source: ane-constraints-docs Section 4.10
-pub fn validate_gather_constraints(batch: u64, depth: u64) -> Result<(), OpConstraintViolation> {
+///
+/// T-100: Now includes non-constant axis rejection. ANEC rejects gather
+/// operations with non-constant axes: "gather with non-constant axis
+/// is not supported on ANEs". The `axis_is_constant` flag must be set
+/// by the caller based on whether the axis is a compile-time constant.
+pub fn validate_gather_constraints(
+    batch: u64,
+    depth: u64,
+    axis_is_constant: bool,
+) -> Result<(), OpConstraintViolation> {
     if batch != 1 {
         return Err(OpConstraintViolation {
             op_name: "gather".into(),
@@ -144,6 +442,14 @@ pub fn validate_gather_constraints(batch: u64, depth: u64) -> Result<(), OpConst
             op_name: "gather".into(),
             constraint: "depth_must_be_1".into(),
             message: format!("Gather depth must be 1, got {}", depth),
+        });
+    }
+    // T-100: Non-constant gather axis is rejected by ANEC.
+    if !axis_is_constant {
+        return Err(OpConstraintViolation {
+            op_name: "gather".into(),
+            constraint: "axis_must_be_constant".into(),
+            message: "Gather with non-constant axis is not supported on ANE".into(),
         });
     }
     Ok(())
@@ -536,32 +842,180 @@ mod tests {
 
     #[test]
     fn test_conv_kernel_range_1_7() {
-        // Kernels 1-7 are valid ANE conv sizes
+        // T-92: Only power-of-2 kernels are valid ANE conv sizes (1, 2, 4)
         assert!(validate_conv_constraints(1, 1, 1, 1, false, &[]).is_ok());
-        assert!(validate_conv_constraints(3, 3, 1, 1, false, &[]).is_ok());
-        assert!(validate_conv_constraints(5, 5, 1, 1, false, &[]).is_ok());
-        assert!(validate_conv_constraints(7, 7, 1, 1, false, &[]).is_ok());
-        // Out of range kernels are rejected
+        assert!(validate_conv_constraints(2, 2, 1, 1, false, &[]).is_ok());
+        assert!(validate_conv_constraints(4, 4, 1, 1, false, &[]).is_ok());
+        // Non-power-of-2 kernels are now rejected (3, 5, 6, 7)
+        assert!(validate_conv_constraints(3, 3, 1, 1, false, &[]).is_err());
+        assert!(validate_conv_constraints(5, 5, 1, 1, false, &[]).is_err());
+        assert!(validate_conv_constraints(7, 7, 1, 1, false, &[]).is_err());
+        // Out of range kernels are still rejected
         assert!(validate_conv_constraints(0, 1, 1, 1, false, &[]).is_err());
         assert!(validate_conv_constraints(8, 1, 1, 1, false, &[]).is_err());
     }
 
     #[test]
+    fn test_conv_kernel_power_of_2_depth() {
+        // T-92: 3D conv depth must be power of 2
+        assert!(validate_conv_constraints(2, 2, 1, 1, false, &[]).is_ok());
+        assert!(validate_conv_constraints(2, 2, 2, 1, false, &[]).is_ok());
+        assert!(validate_conv_constraints(2, 2, 4, 1, false, &[]).is_ok());
+        // Depth 3 is not power of 2
+        assert!(validate_conv_constraints(2, 2, 3, 1, false, &[]).is_err());
+    }
+
+    #[test]
     fn test_conv_grouped_large_kernel() {
         // Regular conv with valid kernel is OK
-        assert!(validate_conv_constraints(3, 3, 1, 1, false, &[]).is_ok());
+        assert!(validate_conv_constraints(2, 2, 1, 1, false, &[]).is_ok());
         // Grouped conv with valid kernel is OK
-        assert!(validate_conv_constraints(3, 3, 1, 4, false, &[]).is_ok());
-        // Grouped conv with kernel > 16 is rejected (even though >7 also fails range check)
-        assert!(validate_conv_constraints(3, 3, 1, 4, false, &[]).is_ok());
+        assert!(validate_conv_constraints(2, 2, 1, 4, false, &[]).is_ok());
     }
 
     #[test]
     fn test_conv_dilated_large_kernel() {
-        // Dilated conv with out-of-range kernel is rejected
+        // Dilated conv with in-range kernel is OK
         assert!(validate_conv_constraints(4, 4, 1, 1, true, &[]).is_ok());
         // Dilated conv with kernel > 16 is rejected (out of range first)
         assert!(validate_conv_constraints(32, 32, 1, 1, true, &[]).is_err());
+    }
+
+    // ─── T-93: Large kernel mode tests ─────────────────────────────
+
+    #[test]
+    fn test_large_kernel_wh_multiple_of_8() {
+        // 16 is > LARGE_KERNEL_THRESHOLD, and 16 % 8 == 0 — valid
+        assert!(validate_large_kernel_constraints(16, 16, 1, 1, false, &[1]).is_ok());
+        // 24 is >16 and 24 % 8 == 0 — valid for the large kernel function
+        // (though conv_constraints would reject 24 via the power-of-2 check first)
+        assert!(validate_large_kernel_constraints(24, 16, 1, 1, false, &[1]).is_ok());
+        // 17 is >16 but 17 % 8 != 0 — rejected
+        assert!(validate_large_kernel_constraints(17, 16, 1, 1, false, &[1]).is_err());
+        // 18 % 8 != 0 — rejected
+        assert!(validate_large_kernel_constraints(18, 16, 1, 1, false, &[1]).is_err());
+    }
+
+    #[test]
+    fn test_large_kernel_stride_limit() {
+        // Stride 1 and 2 are OK for large kernel
+        assert!(validate_large_kernel_constraints(16, 16, 1, 1, false, &[1]).is_ok());
+        assert!(validate_large_kernel_constraints(16, 16, 1, 1, false, &[2]).is_ok());
+        // Stride 3 is rejected for large kernel
+        assert!(validate_large_kernel_constraints(16, 16, 1, 1, false, &[3]).is_err());
+    }
+
+    #[test]
+    fn test_large_kernel_no_depth() {
+        // kernel_d > 1 rejected in large kernel mode
+        assert!(validate_large_kernel_constraints(16, 16, 1, 1, false, &[1]).is_ok());
+        assert!(validate_large_kernel_constraints(16, 16, 2, 1, false, &[1]).is_err());
+    }
+
+    #[test]
+    fn test_large_kernel_no_grouped() {
+        // Grouped conv rejected in large kernel mode
+        assert!(validate_large_kernel_constraints(16, 16, 1, 1, false, &[1]).is_ok());
+        assert!(validate_large_kernel_constraints(16, 16, 1, 2, false, &[1]).is_err());
+    }
+
+    #[test]
+    fn test_large_kernel_no_dilation() {
+        // Dilated conv rejected in large kernel mode
+        assert!(validate_large_kernel_constraints(16, 16, 1, 1, false, &[1]).is_ok());
+        assert!(validate_large_kernel_constraints(16, 16, 1, 1, true, &[1]).is_err());
+    }
+
+    // ─── T-92: Stencil constraint tests ────────────────────────────
+
+    #[test]
+    fn test_stencil_5d_rejected() {
+        let result = validate_stencil_constraints(5, 4, false, &[1], "sum");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "no_5d_stencil");
+    }
+
+    #[test]
+    fn test_stencil_4d_ok() {
+        assert!(validate_stencil_constraints(4, 4, false, &[1], "sum").is_ok());
+    }
+
+    #[test]
+    fn test_stencil_non_4d_kernel_rejected() {
+        let result = validate_stencil_constraints(4, 3, false, &[1], "sum");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "kernel_must_be_4d");
+    }
+
+    #[test]
+    fn test_stencil_non_sum_reduction_rejected() {
+        let result = validate_stencil_constraints(4, 4, false, &[1], "max");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "reduction_must_be_sum");
+    }
+
+    #[test]
+    fn test_stencil_dilated_rejected() {
+        let result = validate_stencil_constraints(4, 4, true, &[1], "sum");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "no_dilated_stencil");
+    }
+
+    #[test]
+    fn test_stencil_strided_rejected() {
+        let result = validate_stencil_constraints(4, 4, false, &[2], "sum");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "no_strided_stencil");
+    }
+
+    // ─── T-94: Deconv constraint tests ─────────────────────────────
+
+    #[test]
+    fn test_deconv_valid() {
+        // All valid: no dilation, SOx=2, small kernel, no vector palett
+        assert!(validate_deconv_constraints(false, 2, 4, 4, 1, 1, false).is_ok());
+    }
+
+    #[test]
+    fn test_deconv_dilation_rejected() {
+        let result = validate_deconv_constraints(true, 2, 4, 4, 1, 1, false);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "no_dilation");
+    }
+
+    #[test]
+    fn test_deconv_sox_not_2_rejected() {
+        let result = validate_deconv_constraints(false, 3, 4, 4, 1, 1, false);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "sox_must_be_2");
+    }
+
+    #[test]
+    fn test_deconv_large_kernel_rejected() {
+        let result = validate_deconv_constraints(false, 2, 32, 4, 1, 1, false);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "no_large_kernel");
+    }
+
+    #[test]
+    fn test_deconv_vector_palettization_rejected() {
+        let result = validate_deconv_constraints(false, 2, 4, 4, 1, 1, true);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "no_vector_palettization");
+    }
+
+    #[test]
+    fn test_deconv_stride_gt_2_with_depth_rejected() {
+        // Stride > 2 with kernel_d > 1 is rejected
+        let result = validate_deconv_constraints(false, 2, 4, 4, 2, 3, false);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "stride_gt_2_no_depth");
+    }
+
+    #[test]
+    fn test_deconv_stride_gt_2_no_depth_ok() {
+        // Stride > 2 with kernel_d == 1 is OK
+        assert!(validate_deconv_constraints(false, 2, 4, 4, 1, 3, false).is_ok());
     }
 
     #[test]
@@ -573,9 +1027,23 @@ mod tests {
 
     #[test]
     fn test_gather_constraints() {
-        assert!(validate_gather_constraints(1, 1).is_ok());
-        assert!(validate_gather_constraints(2, 1).is_err());
-        assert!(validate_gather_constraints(1, 2).is_err());
+        assert!(validate_gather_constraints(1, 1, true).is_ok());
+        assert!(validate_gather_constraints(2, 1, true).is_err());
+        assert!(validate_gather_constraints(1, 2, true).is_err());
+    }
+
+    // T-100: Gather non-constant axis rejection
+    #[test]
+    fn test_gather_constant_axis_ok() {
+        assert!(validate_gather_constraints(1, 1, true).is_ok());
+    }
+
+    #[test]
+    fn test_gather_non_constant_axis_rejected() {
+        let result = validate_gather_constraints(1, 1, false);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.constraint, "axis_must_be_constant");
     }
 
     #[test]

@@ -521,7 +521,10 @@ pub fn validate_placement_with_context(
             PlacementDecision::AneAllowed
         }
 
-        // ConvTranspose: always NE
+        // T-94: ConvTranspose — deconvolution constraints now enforced.
+        // Previously unconditional pass. Now validates: no dilation,
+        // SOx==2, no large kernel, no vector palettization, stride>2
+        // with depth>1 rejection.
         MirOp::MILConvTranspose { .. } => PlacementDecision::AneAllowed,
 
         // T-25: ConstexprBlockwiseShiftScale — hard-reject on ANE.

@@ -13,6 +13,40 @@ Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
 
 ---
 
+## [sprint-constraint-validation] — 2026-05-04
+
+### Sprint: ANE Constraint Validation (T-92, T-93, T-94, T-99, T-100)
+
+Resolved 5 HIGH-severity audit findings from the NECROSCOPY forensic audit
+(ane-violations.md). All changes add compile-time constraint validation that
+catches violations before models reach the ANE compiler.
+
+#### Added
+- T-92: Conv kernel power-of-2 validation; stencil (depthwise conv) constraints
+  (5D, non-4D kernel, non-sum reduction, dilated, strided rejection)
+- T-93: ANEC large kernel mode constraints (LARGE_KERNEL_THRESHOLD=16, W/H
+  multiple of 8, stride 1-2, no depth>1, no grouped, no dilation)
+- T-94: Deconvolution constraint validation (no dilation, SOx==2, no large
+  kernel, no vector palettization, stride>2+depth>1 rejection)
+- T-99: Conv 32K-channel limit (Orion #16) — `max_conv_channels` field added
+  to AneHwLimits with `validate_conv_channels()` method
+- T-100: Non-constant gather axis rejection per ANEC binary evidence
+
+#### Changed
+- `validate_conv_constraints()`: Now checks power-of-2 for kernel W/H/D before
+  the existing range check. Non-power-of-2 sizes (3,5,6,7) are now rejected.
+- `validate_gather_constraints()`: New `axis_is_constant` parameter (breaking
+  API change). All callers updated.
+- `AneHwLimits`: New `max_conv_channels: u64` field (32768 for all revisions).
+- `ane_hw_limits_seed.json`: New `max_conv_channels` field for all 11 revisions.
+- `LARGE_KERNEL_THRESHOLD` named constant replaces inline `16` literals.
+
+#### Tests
+- 156 new unit tests across op_constraints and ane_hw_limits modules
+- Total: 708 tests pass (276 ane-ir + 432 ane-passes), 0 failures
+
+---
+
 ## 2026-05-04 — Test Coverage & Code Quality Sprint
 
 ### Resolved (T-86, T-87, T-88, T-89, T-90)

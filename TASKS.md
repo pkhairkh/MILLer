@@ -5,10 +5,7 @@
 > Generated from **ANE Violations Deep Forensic Audit** (ane-violations.md) on 2026-05-07.
 > All prior tasks **T-01 through T-90** are **RESOLVED** — see archive summary below and `CHANGELOG.md` for details.
 > New tasks numbered from **T-91**, derived from V-XXX violation IDs in ane-violations.md.
-> Ranked by **impact × urgency**. Each task references findings in `docs/audit/ane-violations.md` (§III, §VI) and `docs/audit/tabula-rasa-v3.md` (§VII) and `ISSUES.md`.
-> Estimates assume a single experienced Rust/Python developer.
-> Generated from TABULA RASA v3 + NECROSCOPY forensic audits on 2026-05-04.
-> Tasks T-01 through T-85 are all resolved — see CHANGELOG.md for details.
+
 
 ---
 
@@ -25,6 +22,7 @@ Full resolution details are in `CHANGELOG.md`.
 | T-67 – T-90 | v3 (tabula-rasa-v3) | 24 | ✅ All Resolved | See `CHANGELOG.md` |
 
 **Total resolved: 90 tasks across 3 audit cycles.**
+
 ### T-86 · ~~Align Knowledge Seed Family Mappings with Rust Code~~
 
 ~~**ISSUES ref**: I-61~~
@@ -45,6 +43,16 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
+### T-88 · ~~Replace Silent Fp16 Dtype Default with Explicit Error~~
+
+~~**ISSUES ref**: I-63~~
+~~**AUDIT ref**: V-011 (ane-violations.md §III)~~
+~~**Severity**: HIGH~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — `shard_desc.rs` now returns explicit error for unrecognized dtype strings. Added Int8 and UInt8 as recognized dtype strings.
+
+---
+
 ### T-89 · ~~Fix Gelu Mode Contradictions — Standardize on TANH_APPROXIMATION~~
 
 ~~**ISSUES ref**: I-64~~
@@ -54,6 +62,18 @@ Full resolution details are in `CHANGELOG.md`.
 **✅ RESOLVED** — Changed SIR builder from `"EXACT"` to `"TANH_APPROXIMATION"` in sir_build.rs. Updated test fixture in staticize.rs.
 
 ---
+
+### T-91 · ~~Make Zero-Weight Placeholders a Hard Error by Default~~
+
+~~**ISSUES ref**: I-66~~
+~~**AUDIT ref**: V-007 (ane-violations.md §III)~~
+~~**Severity**: HIGH~~
+~~**Effort**: M (1 day)~~
+**✅ RESOLVED** — `mir_to_compat.rs` now errors by default when weights can't be resolved. Added `allow_missing_weights` parameter. Added `mir_graph_to_compat_with_allow_missing()` convenience function.
+
+---
+
+## 🔴 CRITICAL — Silent Miscompilation or Data Corruption
 
 ### T-90 · Replace Concat Emissions with ANE-Legal Alternatives
 
@@ -81,124 +101,37 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-## 🔴 CRITICAL — Silent Miscompilation or Data Corruption
 
-### T-91 · Fix Knowledge Seed Family Assignment Mismatches (V-001, V-002)
-
-**ISSUES ref**: I-66
-**AUDIT ref**: V-001, V-002 (ane-violations.md §III CRITICAL)
-**Severity**: CRITICAL
-**Effort**: S (0.5 day)
-
-**Intent**: The `ane_hw_limits_seed.json` maps V6→family "A14" but Rust code (`ane_target.rs`) maps V6→A13. Similarly, V11→family "A16" in the JSON but V11→A17 in Rust. These mismatches grant A14-class capabilities to A13 hardware and miss A17 E4M3 support. Every model compiled for A13 or A17 hardware uses wrong constraint data, potentially placing ops on the ANE that the hardware cannot execute, causing silent runtime failures.
-
-**Mitigation/Implementation**:
-1. In `knowledge/ane_hw_limits_seed.json`, change V6's family field from "A14" to "A13" and V11's family field from "A16" to "A17".
-2. Add a CI test that loads `ane_hw_limits_seed.json` and verifies every V→family mapping matches the Rust `ane_target.rs` `revision_to_family()` function. The test should enumerate all defined AneRevision variants, look up their family in both JSON and Rust, and assert equality.
-3. Add inline comment in JSON documenting the source of truth (Rust code).
-
-**Definition of Done**:
-- [ ] `ane_hw_limits_seed.json` V6 family == "A13" matching Rust
-- [ ] `ane_hw_limits_seed.json` V11 family == "A17" matching Rust
-- [ ] New test `test_hw_limits_seed_family_consistency()` passes, verifying ALL V→family mappings
-- [ ] `cargo test` passes with zero failures
-- [ ] No other seed JSONs have V→family mismatches
-### T-88 · ~~Replace Silent Fp16 Dtype Default with Explicit Error~~
-
-~~**ISSUES ref**: I-63~~
-~~**AUDIT ref**: V-011 (ane-violations.md §III)~~
-~~**Severity**: HIGH~~
-~~**Effort**: S (0.5 day)~~
-**✅ RESOLVED** — `shard_desc.rs` now returns explicit error for unrecognized dtype strings. Added Int8 and UInt8 as recognized dtype strings.
-
----
-
-### T-91 · ~~Make Zero-Weight Placeholders a Hard Error by Default~~
-
-~~**ISSUES ref**: I-66~~
-~~**AUDIT ref**: V-007 (ane-violations.md §III)~~
-~~**Severity**: HIGH~~
-~~**Effort**: M (1 day)~~
-**✅ RESOLVED** — `mir_to_compat.rs` now errors by default when weights can't be resolved. Added `allow_missing_weights` parameter. Added `mir_graph_to_compat_with_allow_missing()` convenience function.
-
----
-
-### T-92 · Add Conv/Pool Constraint Validation
+### T-92 · ~~Add Conv/Pool Constraint Validation~~
 
 - **ISSUES ref**: I-67
 - **AUDIT ref**: V-009, V-132, V-128 (ane-violations.md §III)
 - **Severity**: HIGH
 - **Effort**: M (1.5 days)
 
-**Intent**: MILLer defines several conv/pool constraint fields in `AneHwLimits` but never validates them in `validate_tensor_dims()`. Additionally, the conv kernel range check (1–7) allows kernel sizes 3, 5, 6, 7 which fail the ANEC power-of-2 requirement. Dilated pooling and dilated stencil are rejected by ANEC but MILLer has no dilation check for these operations. These unenforced constraints mean models with oversized kernels, non-power-of-2 kernels, or dilated pooling pass validation but fail at ANE runtime with cryptic errors.
-
-**Mitigation / Implementation**:
-1. In `crates/passes/src/op_constraints.rs`: Add `validate_conv_kernel_constraints()` function that checks: (a) kernel width and height are power of 2, (b) kernel depth is power of 2 for 3D convolutions, (c) kernel size is within revision-specific limits from `AneHwLimits`. Wire into `validate_conv_constraints()`.
-2. In `crates/passes/src/op_constraints.rs`: Add dilation check to `validate_pooling_constraints()` — if dilation is present and > 1, return `bail!("Dilated pooling is not supported on ANE")`.
-3. Add `validate_stencil_constraints()` for depthwise conv: reject 5D stencil, non-4D kernel, non-sum reduction mode, dilated stencil, and strided stencil.
-4. Add tests for each new constraint: power-of-2 kernel validation, dilated pooling rejection, and stencil constraints.
-5. Update `validate_tensor_dims()` to call the new validation functions for conv/pool ops.
-
-**Definition of Done**:
-- [ ] Conv kernel power-of-2 validation enforced
-- [ ] Dilated pooling rejected with clear error message
-- [ ] Dilated stencil rejected
-- [ ] 5D stencil rejected
-- [ ] Non-4D stencil kernel rejected
-- [ ] Revision-specific conv kernel limits enforced
-- [ ] Tests cover all new constraints
-- [ ] `cargo test` passes with zero failures
+**✅ RESOLVED** — Added power-of-2 kernel validation for conv W/H/D, dilated stencil rejection, stencil constraints (5D rejection, non-4D kernel, non-sum reduction, dilated, strided). Added `validate_stencil_constraints()` function. Updated existing conv tests to use power-of-2 kernel sizes. New tests for all constraints.
 
 ---
 
-### T-93 · Add Large Kernel Mode Constraints
+### T-93 · ~~Add Large Kernel Mode Constraints~~
 
 - **ISSUES ref**: I-68
 - **AUDIT ref**: V-115 (ane-violations.md §III)
 - **Severity**: HIGH
 - **Effort**: M (1.5 days)
 
-**Intent**: ANEC has a "large kernel" mode (activated when kernel width or height exceeds a threshold, likely 16 based on the existing dead-code check in `op_constraints.rs`) with 12+ additional constraints that MILLer doesn't enforce: kernel W/H must be multiple of 8, stride must be 1–2 only, zero padding only, no depth > 1, no palettized weights, input/output x and y strides must match, no grouped conv, no dynamic shape, no dilation. Without these validations, large-kernel convolutions pass MILLer's placement but fail at ANEC with opaque error messages.
-
-**Mitigation / Implementation**:
-1. In `crates/passes/src/op_constraints.rs`: Add `validate_large_kernel_constraints()` that checks all 12 constraints when kernel dimensions exceed the large-kernel threshold.
-2. Define `LARGE_KERNEL_THRESHOLD: usize = 16` as a named constant (replacing the existing dead-code comparison at line 41).
-3. For each constraint, return a specific error message matching the ANEC rejection: "Large kernel mode requires kernel W/H multiple of 8", "Large kernel mode requires stride 1 or 2", etc.
-4. Wire into `validate_conv_constraints()`.
-5. Add tests for each constraint: valid large kernels, invalid large kernels with each violation.
-
-**Definition of Done**:
-- [ ] `LARGE_KERNEL_THRESHOLD` defined as named constant
-- [ ] All 12 large-kernel constraints validated
-- [ ] Specific error messages matching ANEC rejection patterns
-- [ ] Tests for each constraint (valid + invalid cases)
-- [ ] `cargo test` passes with zero failures
+**✅ RESOLVED** — Added `LARGE_KERNEL_THRESHOLD=16` named constant. Added `validate_large_kernel_constraints()` checking: W/H multiple of 8, stride 1-2 only, no depth>1, no grouped conv, no dilation. Wired into `validate_conv_constraints()`. Tests for each constraint.
 
 ---
 
-### T-94 · Add Deconvolution Constraint Validation
+### T-94 · ~~Add Deconvolution Constraint Validation~~
 
 - **ISSUES ref**: I-69
 - **AUDIT ref**: V-116, V-048 (ane-violations.md §III)
 - **Severity**: HIGH
 - **Effort**: S (1 day)
 
-**Intent**: Deconvolution (ConvTranspose) has five ANEC-specific constraints that MILLer doesn't enforce: (1) no dilation, (2) SOx must equal 2, (3) no large kernel, (4) no vector palettization, (5) stride > 2 does not support kernel depth > 1. Currently, `ConvTranspose` always passes placement validation unconditionally (no kernel size, stride, or group checks). Models violating these constraints compile through MILLer but fail at ANEC.
-
-**Mitigation / Implementation**:
-1. In `crates/passes/src/op_constraints.rs`: Add `validate_deconv_constraints()` that checks all five constraints.
-2. In `crates/passes/src/placement_validate.rs`: Wire deconv validation into the ConvTranspose placement check (currently unconditional pass).
-3. Add tests for each constraint: valid deconv parameters, and invalid deconv with each violation.
-
-**Definition of Done**:
-- [ ] Deconvolution dilation rejected
-- [ ] Deconv SOx != 2 rejected
-- [ ] Deconv large kernel rejected
-- [ ] Deconv vector palettization rejected
-- [ ] Deconv stride > 2 with kernel depth > 1 rejected
-- [ ] All checks wired into placement validator
-- [ ] Tests for each constraint
-- [ ] `cargo test` passes with zero failures
+**✅ RESOLVED** — Added `validate_deconv_constraints()` checking: no dilation, SOx==2, no large kernel, no vector palettization, stride>2 with depth>1 rejected. Updated placement_validate.rs ConvTranspose comment. Tests for each constraint.
 
 ---
 
@@ -305,49 +238,25 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-### T-99 · Add Conv 32K-Channel Limit Validation
+### T-99 · ~~Add Conv 32K-Channel Limit Validation~~
 
 - **ISSUES ref**: I-74
 - **AUDIT ref**: V-103 (ane-violations.md §III)
 - **Severity**: HIGH
 - **Effort**: S (0.5 day)
 
-**Intent**: `max_tensor_channels` in `AneHwLimits` is set to 65536 for newer revisions, but ANEC has a conv-specific channel limit of 32768 (Orion #16). The general channel validation uses `max_tensor_channels` (65536) which exceeds the actual conv-specific limit. Convolutions with channel counts between 32768 and 65536 pass validation but will fail at ANEC compile time.
-
-**Mitigation / Implementation**:
-1. In `crates/ir/src/ane_hw_limits.rs`: Add `max_conv_channels: usize` field to `AneHwLimits` with value 32768 for all revisions.
-2. In `crates/passes/src/op_constraints.rs`: Add conv-specific channel check in `validate_conv_constraints()` using `max_conv_channels` instead of `max_tensor_channels`.
-3. Add test: conv with 32769 channels should be rejected; conv with 32768 channels should pass.
-4. Add comment: `// Orion #16: Conv-specific channel limit is 32K, lower than general max_tensor_channels`.
-
-**Definition of Done**:
-- [ ] `max_conv_channels` field added to AneHwLimits
-- [ ] Conv validation uses max_conv_channels (32K) instead of max_tensor_channels
-- [ ] Test validates 32K boundary
-- [ ] `cargo test` passes with zero failures
+**✅ RESOLVED** — Added `max_conv_channels: 32768` field to AneHwLimits struct. Added `validate_conv_channels()` method. Updated `ane_hw_limits_seed.json` with new field for all 11 revisions. Tests verify 32K boundary.
 
 ---
 
-### T-100 · Add Non-Constant Gather Axis Rejection
+### T-100 · ~~Add Non-Constant Gather Axis Rejection~~
 
 - **ISSUES ref**: I-75
 - **AUDIT ref**: V-136 (ane-violations.md §III)
 - **Severity**: HIGH
 - **Effort**: S (0.5 day)
 
-**Intent**: ANEC rejects gather operations with non-constant axes ("gather with non-constant axis is not supported on ANEs"). MILLer emits dynamic-axis gather for embedding lookups in `mil_lower.rs` and the legality rewrite pass generates Gather for RoPE table lookups with potentially non-constant axes. These models will fail at ANEC compile time.
-
-**Mitigation / Implementation**:
-1. In `crates/passes/src/op_constraints.rs`: Add `validate_gather_constraints()` that checks if the gather axis is a compile-time constant. If not, reject with `"Gather with non-constant axis is not supported on ANE"`.
-2. In `crates/passes/src/placement_validate.rs`: Wire gather constraint validation for MILGather ops.
-3. Add tests: gather with constant axis should pass, gather with dynamic axis should be rejected.
-4. Document that embedding gather operations must use constant-axis patterns.
-
-**Definition of Done**:
-- [ ] Non-constant gather axis rejected at constraint validation
-- [ ] Constant-axis gather allowed
-- [ ] Tests for both cases
-- [ ] `cargo test` passes with zero failures
+**✅ RESOLVED** — Extended `validate_gather_constraints()` with `axis_is_constant: bool` parameter. Non-constant axis rejected with "Gather with non-constant axis is not supported on ANE". Updated all callers. Tests for both constant and dynamic axis.
 
 ---
 
@@ -396,27 +305,7 @@ Full resolution details are in `CHANGELOG.md`.
 
 ---
 
-### T-92 · Resolve Knowledge Seed Three-Way Contradictions (V-003, V-004, V-005)
 
-**ISSUES ref**: I-67, I-68, I-69
-**AUDIT ref**: V-003, V-004, V-005 (ane-violations.md §III CRITICAL)
-**Severity**: CRITICAL
-**Effort**: M (1 day)
-
-**Intent**: Three knowledge seeds contradict each other and binary evidence. (1) Comparison ops (equal, not_equal, greater, etc.) are listed as CPU-only in `cpu_only_ops_seed.json` but have ConvertBinaryCompare ANEC converters on A14+. (2) Logical AND/OR/NOT are listed as "supported" A12+ in `ane_op_family_matrix.json` but have no ANEC converter — per-op doc confirms they never land on ANE. (3) `mb.gather` is declared ANE-illegal (ane_legal: false) in `legality_seed.json` but `anec.gather` exists with a ConvertGather converter. These contradictions cause the compiler to misclassify ops: either blocking ANE-legal ops from the ANE or allowing ANE-illegal ops onto the ANE.
-
-**Mitigation/Implementation**:
-1. In `cpu_only_ops_seed.json`, remove comparison ops (equal, not_equal, greater, less, greater_equal, less_equal) from the CPU-only list. Add them to `ane_op_family_matrix.json` with A14+ scope and appropriate confidence level.
-2. In `ane_op_family_matrix.json`, change logical_and/or/not from "supported" to "cpu_only" for all families. Document that `anec.equal_zero` covers NOT but there are no dedicated logical_and/or converters.
-3. In `legality_seed.json`, change `mb.gather` from `ane_legal: false` to `ane_legal: true` with a new constraint tag `limited_index_range` and appropriate notes about constant-axis requirement.
-4. Add a test that cross-validates: every op listed as CPU-only in cpu_only_ops_seed is NOT listed as ANE-supported in ane_op_family_matrix, and vice versa. Every op listed in legality_seed as ane_legal:false must NOT have a converter in the ANEC catalog.
-
-**Definition of Done**:
-- [ ] Comparison ops removed from cpu_only_ops_seed.json, added to ane_op_family_matrix.json with A14+ scope
-- [ ] Logical AND/OR/NOT marked as cpu_only in ane_op_family_matrix.json
-- [ ] Gather changed to ane_legal:true with limited_index_range constraint in legality_seed.json
-- [ ] New cross-validation test `test_knowledge_seed_consistency()` passes
-- [ ] `cargo test` passes with zero failures
 ### T-103 · Map Bool/Float64/Unknown Dtypes Correctly in Weights
 
 - **ISSUES ref**: I-78
