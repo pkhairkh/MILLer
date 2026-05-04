@@ -4393,7 +4393,7 @@ fn run_trace_compile(
     // inference: every forward pass recomputes the entire KV cache from
     // scratch, and autoregressive generation is impossible.
     let emit_result = if with_kv_cache && mirs.len() == 1 {
-        use ane_bridge::mir_to_compat::mir_graph_to_compat;
+        use ane_bridge::mir_to_compat::mir_graph_to_compat_with_allow_missing;
         use ane_bridge::proto_direct::emit_proto_direct_multifunction;
 
         println!("  KV-cache enabled: emitting multi-function model (embedding + decode_step)");
@@ -4559,9 +4559,9 @@ fn run_trace_compile(
         // Each function uses its own resolver with the correct seq_len for static tables:
         // - embedding_resolver: tables with seq_len (prefill length)
         // - decode_resolver: tables with actual_max_seq_len (full KV cache length)
-        let embedding_compat = mir_graph_to_compat(embedding_mir, &embedding_resolver)
+        let embedding_compat = mir_graph_to_compat_with_allow_missing(embedding_mir, &embedding_resolver, true)
             .map_err(|e| format!("Embedding MIR compat conversion failed: {}", e))?;
-        let decode_step_compat = mir_graph_to_compat(decode_step_mir, &decode_resolver)
+        let decode_step_compat = mir_graph_to_compat_with_allow_missing(decode_step_mir, &decode_resolver, true)
             .map_err(|e| format!("Decode-step MIR compat conversion failed: {}", e))?;
 
         // DIAGNOSTIC: Verify compat format preserves state ops

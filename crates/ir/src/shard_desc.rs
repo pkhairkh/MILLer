@@ -84,15 +84,25 @@ pub fn lower_shard_to_mir(
     batch_size: usize,
     dtype: &str,
 ) -> Result<MirGraph, String> {
+    // V-011: Previously defaulted to Fp16 for unrecognized dtype strings, which
+    // silently produced wrong precision for typos or unsupported types like "int8".
+    // Now returns an explicit error listing valid options.
     let mil_dtype = match dtype {
         "fp16" => MilDtype::Fp16,
         "fp32" => MilDtype::Fp32,
         "int4" => MilDtype::Int4,
+        "int8" => MilDtype::Int8,
         "uint4" => MilDtype::UInt4,
+        "uint8" => MilDtype::UInt8,
         "e4m3" => MilDtype::E4M3,
         "e5m2" => MilDtype::E5M2,
         "uint16" => MilDtype::UInt16,
-        _ => MilDtype::Fp16,
+        other => {
+            return Err(format!(
+                "Unrecognized dtype string '{}'. Valid options: fp16, fp32, int4, int8, uint4, uint8, e4m3, e5m2, uint16",
+                other
+            ));
+        }
     };
 
     // Sprint 58 (S58.3): inline conversion removed — compute_units is now
@@ -604,9 +614,37 @@ mod tests {
     #[test]
     fn test_lower_shard_to_mir_default_dtype() {
         let shard = entry_shard();
-        // Unknown dtype defaults to fp16
-        let mir = lower_shard_to_mir(&shard, 1, "unknown_dtype").unwrap();
-        assert_eq!(mir.nodes[0].dtype, MilDtype::Fp16);
+        // T-88 (V-011): Unknown dtype now produces an explicit error instead of
+        // silently defaulting to Fp16.
+        let result = lower_shard_to_mir(&shard, 1, "unknown_dtype");
+        assert!(result.is_err(), "Expected error for unrecognized dtype");
+        let err_msg = result.unwrap_err();
+        assert!(
+            err_msg.contains("Unrecognized dtype string"),
+            "Error should mention unrecognized dtype, got: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("unknown_dtype"),
+            "Error should include the invalid dtype string, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_lower_shard_to_mir_int8_dtype() {
+        let shard = entry_shard();
+        // T-88: Int8 is now a recognized dtype string
+        let mir = lower_shard_to_mir(&shard, 1, "int8").unwrap();
+        assert_eq!(mir.nodes[0].dtype, MilDtype::Int8);
+    }
+
+    #[test]
+    fn test_lower_shard_to_mir_uint8_dtype() {
+        let shard = entry_shard();
+        // T-88: UInt8 is now a recognized dtype string
+        let mir = lower_shard_to_mir(&shard, 1, "uint8").unwrap();
+        assert_eq!(mir.nodes[0].dtype, MilDtype::UInt8);
     }
 
     // ─── ShardedShardPayload ──────────────────────────────────────────

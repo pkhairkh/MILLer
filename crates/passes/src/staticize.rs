@@ -524,7 +524,7 @@ mod tests {
             ("tanh_0", SirOp::Tanh { input: SirNodeId("input".to_string()) }),
             (
                 "gelu_0",
-                SirOp::Gelu { input: SirNodeId("input".to_string()), mode: "exact".to_string() },
+                SirOp::Gelu { input: SirNodeId("input".to_string()), mode: "TANH_APPROXIMATION".to_string() },
             ),
             ("exp_0", SirOp::Exp { input: SirNodeId("input".to_string()) }),
             ("neg_0", SirOp::Neg { input: SirNodeId("input".to_string()) }),

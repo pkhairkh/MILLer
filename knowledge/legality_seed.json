@@ -11,9 +11,17 @@
       "evidence_source": "RealModelRun",
       "evidence_count": 5,
       "scope": {
-        "device_classes": ["M2", "M2_Pro", "M3"],
-        "os_versions": ["macOS_15"],
-        "opset_versions": ["iOS18"]
+        "device_classes": [
+          "M2",
+          "M2_Pro",
+          "M3"
+        ],
+        "os_versions": [
+          "macOS_15"
+        ],
+        "opset_versions": [
+          "iOS18"
+        ]
       }
     },
     {
@@ -25,9 +33,17 @@
       "evidence_source": "RealModelRun",
       "evidence_count": 10,
       "scope": {
-        "device_classes": ["M2", "M2_Pro", "M3"],
-        "os_versions": ["macOS_15"],
-        "opset_versions": ["iOS18"]
+        "device_classes": [
+          "M2",
+          "M2_Pro",
+          "M3"
+        ],
+        "os_versions": [
+          "macOS_15"
+        ],
+        "opset_versions": [
+          "iOS18"
+        ]
       }
     },
     {
@@ -39,9 +55,16 @@
       "evidence_source": "RealModelRun",
       "evidence_count": 3,
       "scope": {
-        "device_classes": ["M2", "M2_Pro"],
-        "os_versions": ["macOS_15"],
-        "opset_versions": ["iOS18"]
+        "device_classes": [
+          "M2",
+          "M2_Pro"
+        ],
+        "os_versions": [
+          "macOS_15"
+        ],
+        "opset_versions": [
+          "iOS18"
+        ]
       }
     },
     {
@@ -53,25 +76,42 @@
       "evidence_source": "SyntheticRun",
       "evidence_count": 20,
       "scope": {
-        "device_classes": ["M2", "M2_Pro", "M3", "M4"],
-        "os_versions": ["macOS_15"],
-        "opset_versions": ["iOS18"]
+        "device_classes": [
+          "M2",
+          "M2_Pro",
+          "M3",
+          "M4"
+        ],
+        "os_versions": [
+          "macOS_15"
+        ],
+        "opset_versions": [
+          "iOS18"
+        ]
       }
     },
     {
       "id": "legality_gather",
       "knowledge_type": "LegalityRule",
       "op_pattern": "mb.gather",
-      "ane_legal": false,
+      "ane_legal": true,
       "confidence": 0.7,
       "evidence_source": "RealModelRun",
       "evidence_count": 5,
       "scope": {
-        "device_classes": ["M2", "M3"],
-        "os_versions": ["macOS_15"],
-        "opset_versions": ["iOS18"]
+        "device_classes": [
+          "M2",
+          "M3"
+        ],
+        "os_versions": [
+          "macOS_15"
+        ],
+        "opset_versions": [
+          "iOS18"
+        ]
       },
-      "note": "Gather typically does not map to ANE. Use 1x1-conv permutation as alternative (per ANE-sha256d evidence)."
+      "note": "Gather has anec.gather converter (family-agnostic). Limited to constant axis and constrained index range on ANE. Prefer SliceByIndex for dynamic-axis patterns.",
+      "limited_index_range": true
     }
   ]
 }

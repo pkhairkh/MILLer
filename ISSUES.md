@@ -174,10 +174,60 @@ Issues I-01 through I-65 from the v1/v2/v3 tabula-rasa audits are all resolved. 
 - [ ] Validation rejects non-TANH_APPROXIMATION gelu for ANE
 - [ ] Test fixtures updated
 - [ ] Rust and Python paths produce consistent gelu mode
+*Last updated: 2026-05-04 (NECROSCOPY forensic audit — I-61 through I-98 derived from `docs/audit/ane-violations.md`)*
+*Reference implementation: https://huggingface.co/pkhairkh/qwen3-coreml-palettized*
+*Audit sources: `docs/audit/tabula-rasa-v3.md`, `docs/audit/ane-violations.md`*
 
 ---
 
-## P1 — HIGH (Missing Enforcement / Model Leakage / Untested Paths)
+## P0 — CRITICAL (Silent Miscompilation / Data Corruption)
+
+### I-61 · Knowledge Seed Family Mappings Contradict Rust Code
+
+**Status:** ✅ Fixed (T-86)
+**Files:** `knowledge/ane_hw_limits_seed.json:40-55,108-123`, `crates/ir/src/ane_target.rs`
+**AUDIT ref:** V-001, V-002 (ane-violations.md §III)
+**Severity:** CRITICAL
+**Effort:** S (0.5 day)
+**Task:** T-86
+
+The knowledge seed `ane_hw_limits_seed.json` maps V6 to family `"A14"` and V11 to family `"A16"`, but the Rust code maps V6→A13 and V11→A17. The knowledge system grants A14-class capabilities to A13 hardware and misses A17's E4M3 support distinction. Since knowledge seeds are the runtime data source for constraint validation, these mismatches produce silent miscompilation — models that pass validation but fail at ANE runtime because the seed granted capabilities the hardware doesn't have.
+
+**Fix:** Align `ane_hw_limits_seed.json` family fields with `ane_target.rs` mappings. Add automated consistency test.
+
+---
+
+### I-62 · Three-Way Knowledge Seed Contradictions
+
+**Status:** ✅ Fixed (T-87)
+**Files:** `knowledge/cpu_only_ops_seed.json:296-324`, `knowledge/ane_op_family_matrix.json:1239-1285`, `knowledge/legality_seed.json:62-75`
+**AUDIT ref:** V-003, V-004, V-005 (ane-violations.md §III)
+**Severity:** CRITICAL
+**Effort:** M (1 day)
+**Task:** T-87
+
+Three knowledge seeds contradict each other and the ANEC binary evidence: (1) Comparison ops listed as CPU-only but have ANEC converters on A14+. (2) Logical AND/OR/NOT listed as "supported" A12+ but have no ANEC converter. (3) Gather declared ANE-illegal but `anec.gather` converter exists. These contradictions mean models are either unnecessarily forced to CPU (comparison ops) or routed to ANE for ops that will fail at compilation (logical ops).
+
+**Fix:** Move comparison ops from CPU-only to A14+ in family matrix. Mark logical AND/OR/NOT as CPU-only. Change gather to limited-ANE-legal with constraint metadata.
+
+---
+
+### I-64 · Gelu Mode Contradictions — EXACT Mode Has No ANEC Converter
+
+**Status:** ✅ Fixed (T-89)
+**Files:** `crates/trace/src/sir_build.rs:518,1415`, `crates/passes/src/role_mir.rs:252`, `crates/passes/src/staticize.rs:527`, `python/mil_emitter.py:893,1142`
+**AUDIT ref:** V-099, V-113 (ane-violations.md §III)
+**Severity:** CRITICAL
+**Effort:** S (0.5 day)
+**Task:** T-89
+
+MILLer emits `mb.gelu` with contradictory modes: `"EXACT"` from the SIR builder, `"TANH_APPROXIMATION"` from role_mir and Python emitter, `"exact"` from test fixtures. ANEC `ConvertElementwiseUnary(Gelu)` only supports tanh approximation. The SIR→AIR→MIR pipeline preserves whatever mode the SIR builder sets — since SIR uses `"EXACT"`, models compiled through the Rust pipeline produce invalid gelu operations that fail at ANEC compile time. Orion #10 documents that gelu is not a valid MIL activation in its native form.
+
+**Fix:** Standardize all gelu emissions on `"TANH_APPROXIMATION"`. Add validation check in `mir.rs` rejecting EXACT mode. Add consistency test.
+
+---
+
+### I-65 · Concat Emissions Rejected by ANE Compiler (Orion #1)
 
 ### I-73 · Conv/Pool Constraint Fields Defined But Never Validated
 **Status:** ⬜ Open | **Files:** `crates/ir/src/ane_hw_limits.rs:148-193`, `crates/passes/src/op_constraints.rs` | **AUDIT ref:** V-009 | **Severity:** HIGH | **Effort:** S (as part of T-97) | **Task:** T-97
@@ -528,6 +578,213 @@ Issues I-01 through I-65 from the v1/v2/v3 tabula-rasa audits are all resolved. 
 **Fix direction:** Replace MILLinear→MILMatMul with MILLinear→MILConv(1x1) for ANE targets. Keep MatMul as fallback.
 
 **Definition of Done:** MILLinear emits as Conv1x1; MatMul only when Conv1x1 impossible; performance test.
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/mil_lower.rs:2842-2858`, `crates/passes/src/legality_rewrite.rs:3098,3622`, `python/mil_emitter.py:432`
+**AUDIT ref:** V-098, V-130 (ane-violations.md §III)
+**Severity:** CRITICAL
+**Effort:** L (2 days)
+**Task:** T-90
+
+MILLer emits `MILConcat` in the SDPA decomposition path and the RoPE rotate_half path. The ANE compiler rejects concat operations except along the channel axis with a constant positive axis (Orion #1). SDPA emits concat along non-channel axes; RoPE emits `concat(-x2, x1, axis=-1)` using a negative axis. Both paths produce models that fail at ANEC compile time. Binary forensic evidence confirms: "Concat supports only 1 axis", "ANE Concat supports only const positive axis", "failed: only works when concat is applied on the channel axis".
+
+**Fix:** Replace concat with ANE-legal alternatives: reshape+stack for SDPA, reshape+transpose for RoPE. Add linter check for ANE-targeted concat with non-channel axis.
+
+---
+
+## P1 — HIGH (Missing Enforcement / Validation Gaps / Untested Paths)
+
+### I-63 · Unknown Dtype Silently Defaults to Fp16
+
+**Status:** ✅ Fixed (T-88)
+**Files:** `crates/ir/src/shard_desc.rs:95`
+**AUDIT ref:** V-011 (ane-violations.md §III)
+**Severity:** HIGH
+**Effort:** S (0.5 day)
+**Task:** T-88
+
+When a dtype string is not recognized (e.g., `"bf16"`, `"int8"`, or a typo), the code silently defaults to Fp16. Invalid dtype specifications produce wrong precision without any error. Int8 is also missing from the accepted dtype list despite being a valid ANE weight format.
+
+**Fix:** Replace silent default with explicit `bail!()` error. Add Int8 and UInt8 as recognized dtype strings.
+
+---
+
+### I-66 · Zero-Weight Placeholders Produce Silently Broken Models
+
+**Status:** ✅ Fixed (T-91)
+**Files:** `crates/bridge/src/safetensors_resolver.rs:135-169`, `crates/bridge/src/mir_to_compat.rs:224-249`
+**AUDIT ref:** V-007 (ane-violations.md §III)
+**Severity:** HIGH
+**Effort:** M (1 day)
+**Task:** T-91
+
+When a weight cannot be resolved, MILLer produces a zero-filled placeholder with only a stderr warning (added in T-79/I-54). The resulting model compiles and loads but produces completely incorrect inference — the most dangerous class of failure. The warning is insufficient because it's easy to miss in CI logs and doesn't prevent the broken model from being produced.
+
+**Fix:** Make zero-fill a hard error by default. Add `--allow-missing-weights` CLI flag for opt-in. Add `MILLER_ALLOW_MISSING_WEIGHTS` env var as alternative.
+
+---
+
+### I-67 · Conv/Pool Constraint Fields Defined but Never Validated
+
+**Status:** ⬜ Open
+**Files:** `crates/ir/src/ane_hw_limits.rs:148-193`, `crates/passes/src/op_constraints.rs`
+**AUDIT ref:** V-009, V-132, V-128 (ane-violations.md §III)
+**Severity:** HIGH
+**Effort:** M (1.5 days)
+**Task:** T-92
+
+Seven conv/pool/PE constraint fields defined in AneHwLimits but never validated by `validate_tensor_dims()`. Conv kernel range 1-7 allows sizes 3, 5, 6, 7 which fail ANEC power-of-2 requirement. Dilated pooling and dilated stencil rejected by ANEC but MILLer has no dilation check.
+
+**Fix:** Add conv kernel power-of-2 validation, dilated pooling rejection, dilated stencil rejection, 5D stencil rejection. Wire all into constraint validation pipeline.
+
+---
+
+### I-68 · Large Kernel Mode Constraints Not Enforced
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/op_constraints.rs`
+**AUDIT ref:** V-115 (ane-violations.md §III)
+**Severity:** HIGH
+**Effort:** M (1.5 days)
+**Task:** T-93
+
+ANEC has a "large kernel" mode with 12+ additional constraints: kernel W/H multiple of 8, stride 1-2 only, zero padding only, no depth>1, no palettized weights, matching input/output strides, no grouped conv, no dynamic shape, no dilation. None are validated.
+
+**Fix:** Add `validate_large_kernel_constraints()` with all 12 checks. Wire into conv validation.
+
+---
+
+### I-69 · Deconvolution Constraints Not Enforced
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/op_constraints.rs`, `crates/passes/src/placement_validate.rs:516`
+**AUDIT ref:** V-116, V-048 (ane-violations.md §III)
+**Severity:** HIGH
+**Effort:** S (1 day)
+**Task:** T-94
+
+ConvTranspose always passes placement validation unconditionally. Five ANEC-specific deconv constraints not enforced: no dilation, SOx==2, no large kernel, no vector palettization, stride>2 with kernel depth>1.
+
+**Fix:** Add `validate_deconv_constraints()`. Wire into placement validator for ConvTranspose.
+
+---
+
+### I-70 · Multi-Surface Ordering and Uniformity Not Validated
+
+**Status:** ⬜ Open
+**Files:** `crates/coreml-emit/src/mir_to_proto.rs`, `crates/bridge/src/mir_to_compat.rs`
+**AUDIT ref:** V-105, V-117, V-118, V-119, V-120, V-121 (ane-violations.md §III)
+**Severity:** HIGH
+**Effort:** M (1.5 days)
+**Task:** T-95
+
+ANE requires multi-output/input surfaces in alphabetical order (Orion #3, #19) with uniform allocation sizes (Orion #2, #18). Neither is validated. Incorrect ordering causes silent data corruption. Non-uniform sizes cause 0x1d runtime error. Flat buffer layout packed [1,C,1,S] (Orion #20) not validated.
+
+**Fix:** Sort surfaces alphabetically before emission. Validate uniform sizes. Validate flat buffer layout.
+
+---
+
+### I-71 · MILLinear→MILMatMul Defeats Conv1x1AsLinear Optimization
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/mil_lower.rs:3268-3307`, `crates/passes/src/legality_rewrite.rs:354-370`
+**AUDIT ref:** V-114 (ane-violations.md §III)
+**Severity:** HIGH
+**Effort:** M (1 day)
+**Task:** T-96
+
+The AIR→MIR pipeline creates Conv1x1AsLinear in legality_rewrite, but mil_lower converts ALL MILLinear to MILMatMul. Orion #17 documents conv 1x1 is 3x faster than matmul on ANE. The comment says "linear op may not have an ANE execution converter" but ConvertLayer has 97 instances vs ConvertMatMul's 8.
+
+**Fix:** Preserve Conv1x1AsLinear as MILConv(1x1) for ANE targets. Keep MILLinear→MILMatMul for CPU targets.
+
+---
+
+### I-72 · Dtype Cross-Validation and Rejection Gaps
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/dtype_constraints.rs`, `crates/passes/src/palettize_weights.rs`
+**AUDIT ref:** V-125, V-126, V-051/V-111, V-134 (ane-violations.md §III)
+**Severity:** HIGH
+**Effort:** M (1.5 days)
+**Task:** T-97
+
+Four dtype gaps: (1) BF16/F16 cross-type operations rejected by ANEC but no cross-type validation. (2) FP32 rejected on some architectures but is_dtype_ane_legal() approves FP32 for all families. (3) E5M2 accepted by quantize validator but universally rejected by ANEC. (4) Asymmetric quantization not rejected for ANE path.
+
+**Fix:** Add cross-type validation, architecture-conditional FP32 check, E5M2 rejection in quantize, asymmetric quantization rejection.
+
+---
+
+### I-73 · Quantized Conv Weight Attributes Not Modeled
+
+**Status:** ⬜ Open
+**Files:** `crates/ir/src/mir.rs:59-68`, `crates/coreml-proto/src/lib.rs`, `crates/coreml-proto/proto/coreml/MIL.proto`
+**AUDIT ref:** V-110 (ane-violations.md §III)
+**Severity:** HIGH
+**Effort:** L (2 days)
+**Task:** T-98
+
+ANEC convolution schema includes kernel_scale, kernel_zero_point, kernel_palettized_LUT, kernel_mutable_palettized_LUT attributes for quantized/palettized weights. MILLer's MILConv and MilConvOp don't carry these. Quantized/palettized conv emission incomplete, fails for non-FP16 weight formats.
+
+**Fix:** Add fields to MILConv, ToProto emission, and palettize pass population.
+
+---
+
+### I-74 · Conv 32K-Channel Limit Not Enforced
+
+**Status:** ⬜ Open
+**Files:** `crates/ir/src/ane_hw_limits.rs:178`, `crates/passes/src/op_constraints.rs`
+**AUDIT ref:** V-103 (ane-violations.md §III)
+**Severity:** HIGH
+**Effort:** S (0.5 day)
+**Task:** T-99
+
+max_tensor_channels allows 65536 for newer revisions but ANEC has conv-specific 32768 limit (Orion #16). Convolutions with 32768-65535 channels pass validation but fail at ANEC.
+
+**Fix:** Add max_conv_channels field (32768) to AneHwLimits. Use it in conv validation.
+
+---
+
+### I-75 · Non-Constant Gather Axis Not Rejected
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/op_constraints.rs`, `crates/passes/src/mil_lower.rs`, `crates/passes/src/legality_rewrite.rs`
+**AUDIT ref:** V-136 (ane-violations.md §III)
+**Severity:** HIGH
+**Effort:** S (0.5 day)
+**Task:** T-100
+
+ANEC rejects gather with non-constant axis. MILLer emits dynamic-axis gather for embedding lookups and RoPE table lookups. These fail at ANEC compile time.
+
+**Fix:** Add gather axis constness validation. Reject dynamic-axis gather targeting ANE.
+
+---
+
+### I-76 · Fallback Shapes/Dtypes for Missing MIR Nodes
+
+**Status:** ⬜ Open
+**Files:** `crates/bridge/src/mir_to_compat.rs:275-413,458-468`
+**AUDIT ref:** V-023, V-025 (ane-violations.md §III)
+**Severity:** HIGH
+**Effort:** M (1 day)
+**Task:** T-101
+
+When input/output nodes are missing from MIR graph, code falls back to shape vec![1] and dtype Fp16 — almost certainly wrong. Default architecture silently defaults to Qwen3 patterns, producing wrong input remapping for non-Qwen3 models.
+
+**Fix:** Replace fallbacks with hard errors. Require explicit architecture specification.
+
+---
+
+### I-77 · F32 Weight Data Not Converted to FP16
+
+**Status:** ⬜ Open
+**Files:** `crates/bridge/src/safetensors_resolver.rs:196-199`
+**AUDIT ref:** V-026 (ane-violations.md §III)
+**Severity:** HIGH
+**Effort:** S (0.5 day)
+**Task:** T-102
+
+F32 weight data passed through without FP16 conversion (BF16 gets converted; F32 does not). If proto declares FP16 but raw data is F32 (4 bytes/element), weight file has double the expected bytes, causing buffer over-reads.
+
+**Fix:** Add F32→FP16 conversion when target dtype is FP16. Use same path as BF16→FP16.
 
 ---
 
@@ -574,6 +831,16 @@ Issues I-01 through I-65 from the v1/v2/v3 tabula-rasa audits are all resolved. 
 **Fix direction:** Change handoff kind to accurate descriptor (DirectPassThrough) or implement stateful KV cache semantics.
 
 **Definition of Done:** Handoff kind matches actual emission; no false claims.
+### I-35 · No Cross-Validation Between Python and Rust Emission Paths
+
+**Status:** ⬜ Open
+**Files:** `python/mil_emitter.py` vs `crates/coreml-emit/src/mir_to_proto.rs`
+**AUDIT ref:** §III (D-1, D-4) of tabula-rasa-v3.md
+**Severity:** MEDIUM
+**Effort:** M (1 day)
+**Task:** T-61
+
+Python bridge (coremltools subprocess) and Rust proto-direct path exist independently with no cross-validation test. Fill/FillLike decomposition, weight embedding, and op-specific serialization may diverge.
 
 ---
 
@@ -1069,10 +1336,174 @@ Issues I-01 through I-65 from the v1/v2/v3 tabula-rasa audits are all resolved. 
 **Fix direction:** Emit matmul transpose flags as named const nodes instead of immediate bool values.
 
 **Definition of Done:** Transpose flags as named const nodes; test.
+**Status:** ⬜ Open
+**Files:** `crates/coreml-proto/src/lib.rs`, `crates/bridge/src/mir_to_compat.rs`
+**AUDIT ref:** V-100, V-138 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** M (2 days)
+**Task:** T-66
+
+ANEC defines 98+ operations but MILLer's MirOpCompat only models ~30 variants. 70+ ANEC operations including RingBufferReader/Writer, State, ScaledElementWise, HighPrecisionSigmoid, NRelu, ClampedRelu, Dirac, Degamma, GOC, Sqr, Rsqrt, Elu, LeakyRelu, Log2, Exp2, Sign, Trunc, Ceil, Floor, RegionReturn, UnrealizedConversionCast, TensorBufferToTensor, TensorToTensorBuffer have no MILLer equivalents. At minimum, the 27 ConvertElementwiseUnary variants need mappings.
 
 ---
 
-## P3 — LOW (Minor Quality / Style / Documentation)
+### I-78 · Bool/Float64/Unknown Dtypes Silently Mapped to Float32 in Weights
+
+**Status:** ⬜ Open
+**Files:** `crates/coreml-emit/src/weights.rs:116-119`
+**AUDIT ref:** V-027 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-103
+
+Bool, Float64, and Unknown data types silently mapped to Float32 blob format. Data-corrupting for Bool (1 bit vs 32 bit); incorrect for Float64 (8 bytes vs 4 bytes); Unknown should be rejected.
+
+---
+
+### I-79 · State Declarations Default to Empty Shape + Fp16
+
+**Status:** ⬜ Open
+**Files:** `crates/coreml-emit/src/mir_to_proto.rs:339-356`
+**AUDIT ref:** V-028 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-104
+
+State declarations default to empty shape + Fp16 when only write op present. Core ML rejects proto with empty-dimension state.
+
+---
+
+### I-80 · Softmax/InstanceNorm Family Gating Contradiction
+
+**Status:** ⬜ Open
+**Files:** `knowledge/ane_op_family_matrix.json:806-821,951-965`
+**AUDIT ref:** V-029, V-030, V-101 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** M (1 day)
+**Task:** T-105
+
+Converters exist for all families (family-agnostic) but ANEC has architecture-conditional rejection strings. Neither MILLer's documentation nor its constraint model captures this nuance.
+
+---
+
+### I-81 · Pooling Stride-3 Avg-Only Not Enforced
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/op_constraints.rs`
+**AUDIT ref:** V-127 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-106
+
+Stride 3 only supported for Avg pooling mode. Large-stride Min/Max pool with padding not supported. Neither enforced.
+
+---
+
+### I-82 · StaticizePass Is Pure Pass-Through
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/staticize.rs:43-46`
+**AUDIT ref:** V-014 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** M (1 day)
+**Task:** T-107
+
+Entire `StaticizePass::run()` is `Ok(input)`. Doc claims it replaces symbolic dims, resolves variable-length sequences, records decisions. None implemented. Phantom pass wastes developer trust.
+
+---
+
+### I-83 · Precision Policy Only Covers 14/167 Op Types
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/precision_policy.rs:94-118`
+**AUDIT ref:** V-015 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** L (2 days)
+**Task:** T-108
+
+Only 14 of ~167 SIR op types query precision hazards. All others silently use default fp16 even if stored knowledge indicates a hazard.
+
+---
+
+### I-84 · StateTopologyPass Only Logs Warnings, Never Returns Errors
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/state_topology.rs:43-96`
+**AUDIT ref:** V-016 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-109
+
+Pass claims to "verify" and "ensure" state patterns but only logs eprintln warnings — never returns Err. Invalid state naming conventions and capacity violations pass silently.
+
+---
+
+### I-85 · FunctionEntry Shapes Hardcoded as vec![1,1]
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/shard_plan.rs:367-378`
+**AUDIT ref:** V-017 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** M (1 day)
+**Task:** T-110
+
+FunctionEntry TensorSpec shapes hardcoded as vec![1,1] throughout. Comments say "derived from graph" but derivation not implemented. Wrong for any model with batch>1 or seq_len>1.
+
+---
+
+### I-86 · Interleave Constraints Skipped When Channels Unknown
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/placement_validate.rs:272-292`
+**AUDIT ref:** V-020 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-111
+
+Interleave constraints skipped entirely when channels unknown, including non-channel-dependent checks (const→1, int4→8). Int4/UInt4 dtypes pass validation without required interleave==8 check.
+
+---
+
+### I-87 · Knowledge Conflict Detection Not Symmetric
+
+**Status:** ⬜ Open
+**Files:** `crates/knowledge/src/transfer.rs:152`, `crates/knowledge/src/store.rs:524-547`
+**AUDIT ref:** V-021, V-022 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** M (1 day)
+**Task:** T-112
+
+Conflict detection marks new entry as ConflictedWith(existing) but never back-patches existing entry. claims_agree defaults to true for 7/8 knowledge types, preventing contradiction detection.
+
+---
+
+### I-88 · default_engine() Not Revision-Aware
+
+**Status:** ⬜ Open
+**Files:** `crates/ir/src/mir.rs:1061-1311`
+**AUDIT ref:** V-010 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** M (1 day)
+**Task:** T-113
+
+default_engine() returns static engine assignment per op regardless of AneRevision. Ops assigned to PE may be placed on families that don't support them (e.g., ArgMinMax on A18).
+
+---
+
+### I-89 · PIR Tensor Spec Dtype Hardcoded to "fp16"
+
+**Status:** ⬜ Open
+**Files:** `crates/ir/src/shard_desc.rs:363-389`
+**AUDIT ref:** V-038 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-114
+
+PIR tensor specs hardcoded to dtype "fp16" ignoring actual task spec dtype. Wrong for fp32/int4/int8 tasks.
+
+---
+
+### I-90 · Opset Version and Deployment Target Hardcoded
 
 ### I-154 · Hardcoded Fallback Dimensions in role_mir
 **Status:** ⬜ Open | **Files:** `crates/passes/src/role_mir.rs:131,146,210` | **AUDIT ref:** V-089 | **Severity:** LOW | **Effort:** S (0.25 day) | **Task:** T-116
@@ -1135,6 +1566,195 @@ Issues I-01 through I-65 from the v1/v2/v3 tabula-rasa audits are all resolved. 
 **Intent:** Conv kernel range 1-7 contradicts grouped/dilated threshold of 16. Either 1-7 too restrictive or 16-check is dead code.
 **Fix direction:** Resolve: expand range or remove dead threshold. Binary suggests threshold corresponds to large kernel mode activation.
 **Definition of Done:** No contradictory kernel range checks; relationship documented.
+**Status:** ⬜ Open
+**Files:** `crates/ir/src/lib.rs:17`, `crates/passes/src/shard_plan.rs:561-562`
+**AUDIT ref:** V-037, V-046 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-115
+
+DEFAULT_OPSET_VERSION = "iOS18" and minimum_deployment_target hardcoded. Models will fail on older iOS. Wrong for A11/A12 (iOS 16-era hardware).
+
+---
+
+### I-91 · ANEC Attribute Shape Validation Missing
+
+**Status:** ⬜ Open
+**Files:** `crates/coreml-emit/src/mir_to_proto.rs`
+**AUDIT ref:** V-107 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** M (1 day)
+**Task:** T-116
+
+ANEC defines precise attribute shapes for all 98 operations (e.g., conv: stride=shape{3}). MILLer doesn't validate emitted attributes match ANEC expectations. Wrong-shaped attributes fail at ANEC compile time.
+
+---
+
+### I-92 · AneFamily Missing 2 Binary-Defined Families
+
+**Status:** ⬜ Open
+**Files:** `crates/ir/src/ane_target.rs`
+**AUDIT ref:** V-109 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** M (1 day)
+**Task:** T-117
+
+Binary MinimumFamily enum has 8 values (0-7), MILLer only models 6 (A11Legacy through A18). Families 6-7 unmapped — MILLer cannot express constraints for these families.
+
+---
+
+### I-93 · Palette Bits Validation Missing Version-Conditional Support
+
+**Status:** ⬜ Open
+**Files:** `crates/ir/src/sir.rs:48-53`
+**AUDIT ref:** V-033 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-118
+
+Valid set {1,2,3,4,6,8} documented but not enforced. Binary shows version-conditional: "3-bit palettization is only supported from version {1}". Out-of-range values accepted silently.
+
+---
+
+### I-94 · Minimum IOSurface Size Not Validated
+
+**Status:** ⬜ Open
+**Files:** `crates/coreml-emit/` (all emission paths)
+**AUDIT ref:** V-104, V-122 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-119
+
+~49 KB minimum IOSurface for eval buffers (Orion #4). Smaller buffers cause 0x1d runtime error.
+
+---
+
+### I-95 · Compilation Count Per Process Not Tracked
+
+**Status:** ⬜ Open
+**Files:** `crates/bridge/src/subprocess.rs`
+**AUDIT ref:** V-106, V-123 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-120
+
+~119 compilation limit per process (Orion #5). Exceeding limit causes silent crash.
+
+---
+
+### I-96 · Vector Palettization At-Cout Constraint Not Enforced
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/palettize_weights.rs`
+**AUDIT ref:** V-133 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-121
+
+Vector palettization only supported at Cout for ANE. Zero point not supported for vector palettized kernel. Size=256 not supported. None enforced.
+
+---
+
+### I-97 · Weight Dict Initialization Not Guaranteed
+
+**Status:** ⬜ Open
+**Files:** `crates/coreml-emit/src/mir_to_proto.rs`
+**AUDIT ref:** V-124 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-122
+
+Nil weight dict crashes ANEC at compile time (Orion #11). Emission path doesn't verify weight dict is properly initialized as @{}.
+
+---
+
+### I-98 · Stencil Constraints Not Enforced
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/op_constraints.rs`
+**AUDIT ref:** V-137 (ane-violations.md §III)
+**Severity:** MEDIUM
+**Effort**: S (0.5 day)
+**Task:** T-123
+
+Five stencil constraints not enforced: 5D stencil rejected, non-4D kernel rejected, non-sum reduction rejected, dilated stencil rejected, strided stencil rejected.
+
+---
+
+## Resolved Issues (All Fixed)
+
+### v3 Audit (I-41 through I-60) — 18 Fixed, 2 Carried Forward
+
+| ID | Description | Resolution |
+|---|---|---|
+| I-41 | MILNeg passes CPU-only gate (name mismatch) | ✅ T-67 |
+| I-42 | CPU_ONLY_OPS name mismatches for 5 entries | ✅ T-67 |
+| I-43 | extract_whdc() swaps depth↔channels for NCHW | ✅ T-68 |
+| I-44 | Pooling kernel_size constraint discarded | ✅ T-69 |
+| I-45 | K/V projection alias maps silently dropped | ✅ T-70 |
+| I-46 | Float64 element_size() returns 4 instead of 8 | ✅ T-71 |
+| I-47 | Palettize Qwen3 name heuristics | ✅ T-72 |
+| I-48 | LM_HEAD_SHARD_SIZE=19000 hardcoded | ✅ T-73 |
+| I-49 | resolve_shard FP16-only byte offsets | ✅ T-74 |
+| I-50 | FFI coreml_model_destroy unsoundness | ✅ T-75 |
+| I-51 | Zero tests for coreml-ffi::api | ✅ T-76 |
+| I-52 | PythonBridge timeout_secs never enforced | ✅ T-77 |
+| I-53 | compare_with_python_bridge dead code | ✅ T-78 |
+| I-54 | Empty SafetensorsResolver no warning | ✅ T-79 |
+| I-55 | Fill op input_names() returns empty vec | ✅ T-80 |
+| I-56 | compat_input_dtype string matching | ✅ T-81 |
+| I-57 | Dead-code mir_node_to_compat | ✅ T-82 |
+| I-58 | BF16→FP16 edge-case tests | ✅ T-83 |
+| I-59 | eprintln! in library function | ✅ T-84 |
+| I-60 | Deprecated kv_cache_rewrite still compiled | ✅ T-85 |
+
+### v2 Audit (I-21 through I-40) — 15 Fixed, 2 Retracted, 3 Carried Forward
+
+| ID | Description | Resolution |
+|---|---|---|
+| I-21 | Four ops with PE engine but no ANEC converter | ✅ T-47 |
+| I-22 | Palettize weights pass is a functional no-op | ✅ T-48 |
+| I-23 | ~30 missing ops in CPU_ONLY_OPS set | ✅ T-49 |
+| I-24 | Broadcast FP16-only should include A13 | **RETRACTED** |
+| I-25 | ReduceMin non-FP dtype not enforced | ✅ T-51 |
+| I-26 | E4M3 not supported on A17 Pro | ✅ T-52 |
+| I-27 | Tensor dimension HW limits not enforced | ✅ T-53 |
+| I-28 | panic!() in emission and lowering code | ✅ T-54 |
+| I-29 | .unwrap() in weight file I/O | **RETRACTED** |
+| I-30 | ModelArchConfig default hardcodes Qwen3 | ✅ T-56 |
+| I-31 | Qwen3 architecture fallback in bridge | ✅ T-57 |
+| I-32 | Zero tests for ir::payload/shard_desc/serialize | ✅ T-58 |
+| I-33 | Zero tests for lab::session/harness/fallback | ✅ T-59 |
+| I-34 | Tile decomposition placeholder zeros | ✅ T-60 |
+| I-36 | Conv constraint discards kernel_d and stride | ✅ T-62 |
+| I-37 | Zero-channels bypasses interleave check | ✅ T-63 |
+| I-38 | Palette bit-width validation scattered | ✅ T-64 |
+| I-39 | CPU-only classification in two places | ✅ T-65 |
+
+### v1 Audit (I-01 through I-20) — All Fixed
+
+| ID | Description | Resolution |
+|---|---|---|
+| I-01 | Three sources of truth diverged | ✅ T-22 |
+| I-02 | CPU-only list not checked by validator | ✅ T-23 |
+| I-03 | V6 (A13) mapped to A14 family | ✅ T-24 |
+| I-04 | Interleave + dtype validators dead code | ✅ T-25 |
+| I-05 | Missing validate_matmul_constraints() | ✅ T-26 |
+| I-06 | Missing validate_pad_constraints() | ✅ T-27 |
+| I-07 | Reshape .unwrap() panic | ✅ T-28 |
+| I-08 | Zero-dim shapes survive to emission | ✅ T-29 |
+| I-09 | % 1 == 0 always-true logic bug | ✅ T-30 |
+| I-10 | SDPA compat missing mask and scale | ✅ T-31 |
+| I-11 | ArgMinMax missing A18 guard | ✅ T-32 |
+| I-12 | Zero tests for shape_inference | ✅ T-33 |
+| I-13 | Zero tests for staticize | ✅ T-34 |
+| I-14 | MilDtype missing Int4/UInt4/E4M3/E5M2 | ✅ T-35 |
+| I-15 | Model-specific constants hardcoded | ✅ T-36 |
+| I-16 | No SIR→AIR roundtrip test | ✅ T-37 |
+| I-17 | MirOp + MirOpCompat not unified | ✅ T-38 |
+| I-18 | Proto-direct cannot emit palettized weights | ✅ T-39 |
+| I-19 | V17 (M1) mapped to A18 family | ✅ T-40 |
+| I-20 | Formatting + clippy cleanup | ✅ T-41 |
 
 ---
 
@@ -1251,3 +1871,9 @@ Issues I-01 through I-65 from the v1/v2/v3 tabula-rasa audits are all resolved. 
 | I-159 | V-095 | UNVERIFIED | LOW |
 | I-160 | V-102 | ABERRANT | LOW |
 | I-161 | V-041 | ABERRANT | LOW |
+| P0 | 6 | 1 | 5 | 0 |
+| P1 | 22 | 11 | 9 | 2 |
+| P2 | 27 | 21 | 4 | 0 |
+| P3 | 5 | 0 | 4 | 1 |
+| Resolved (v1+v2+v3) | 53 | 0 | 49 | 4 |
+| **Total** | **98** | **32** | **62** | **5** |

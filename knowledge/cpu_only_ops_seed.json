@@ -299,30 +299,6 @@
       "reason_code": "Logical"
     },
     {
-      "mil_name": "equal",
-      "reason_code": "Logical"
-    },
-    {
-      "mil_name": "not_equal",
-      "reason_code": "Logical"
-    },
-    {
-      "mil_name": "greater",
-      "reason_code": "Logical"
-    },
-    {
-      "mil_name": "greater_equal",
-      "reason_code": "Logical"
-    },
-    {
-      "mil_name": "less",
-      "reason_code": "Logical"
-    },
-    {
-      "mil_name": "less_equal",
-      "reason_code": "Logical"
-    },
-    {
       "mil_name": "erf",
       "reason_code": "Miscellaneous"
     },

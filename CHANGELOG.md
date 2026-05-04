@@ -200,6 +200,41 @@ Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
 
 ---
 
+## 2026-05-04 — Knowledge Seed Consistency & Constraint Integrity Sprint
+
+### Resolved (T-86, T-87, T-89, T-88, T-91)
+
+| Task | Description | Key Change |
+|------|-------------|------------|
+| T-86 | Align knowledge seed family mappings (V-001, V-002) | Fixed `ane_hw_limits_seed.json`: V6→A13 (was A14), V11→A17 (was A16). Added `test_hw_limits_seed_family_consistency()` to prevent future drift |
+| T-87 | Resolve three-way knowledge seed contradictions (V-003, V-004, V-005) | Removed 6 comparison ops from `cpu_only_ops_seed.json` (they have ANEC converters on A14+). Marked logical_and/or/not as unsupported in `ane_op_family_matrix.json` (no dedicated ANEC converter). Changed `mb.gather` to `ane_legal: true` with `limited_index_range` constraint in `legality_seed.json` |
+| T-89 | Fix Gelu mode contradictions (V-099, V-113) | Changed SIR builder from `"EXACT"` to `"TANH_APPROXIMATION"` in both `sir_build.rs:518` and `sir_build.rs:1415`. Updated test fixture in `staticize.rs`. ANEC only supports tanh approximation — EXACT mode has no converter |
+| T-88 | Replace silent Fp16 dtype default with error (V-011) | `shard_desc.rs` now returns explicit error for unrecognized dtype strings instead of silently defaulting to Fp16. Added Int8 and UInt8 as recognized dtype strings |
+| T-91 | Make zero-weight placeholders a hard error by default (V-007) | `mir_to_compat.rs` now errors by default when weights can't be resolved. Added `allow_missing_weights` parameter to `mir_graph_to_compat_with_arch()`. Added `mir_graph_to_compat_with_allow_missing()` convenience function. Error message directs users to `--allow-missing-weights` flag |
+
+### New Tasks Derived from NECROSCOPY Audit (T-86 through T-131)
+
+46 new tasks derived from the 138 violations in `docs/audit/ane-violations.md`. Tasks organized by severity:
+- CRITICAL: T-86, T-87, T-89, T-90
+- HIGH: T-88, T-91 through T-102
+- MEDIUM: T-103 through T-123
+- LOW: T-124 through T-131
+
+### New Issues Derived from NECROSCOPY Audit (I-61 through I-98)
+
+38 new issues derived from the forensic audit findings. All violations from ane-violations.md §III are now tracked as issues with detailed intent, mitigation, and Definition of Done.
+
+### New Tests Added (5 tests)
+
+- `test_hw_limits_seed_family_consistency` — verifies all revision→family mappings match between Rust code and knowledge seed JSON (T-86)
+- `test_lower_shard_to_mir_default_dtype` — updated: unrecognized dtype now produces error instead of Fp16 default (T-88)
+- `test_lower_shard_to_mir_int8_dtype` — verifies Int8 is a recognized dtype string (T-88)
+- `test_lower_shard_to_mir_uint8_dtype` — verifies UInt8 is a recognized dtype string (T-88)
+- `test_missing_weights_hard_error_by_default` — verifies missing weights produce hard error by default (T-91)
+- `test_missing_weights_allowed_with_flag` — verifies allow_missing_weights=true permits zero-fill (T-91)
+
+---
+
 ## 2026-05-04 — Test Coverage Sprint
 
 ### Resolved (T-58, T-59)

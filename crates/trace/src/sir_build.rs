@@ -515,7 +515,9 @@ impl<'a> SirBuildContext<'a> {
             TracedOp::Gelu { approximate: _ } => {
                 let input_id = self.resolve_input(&node.inputs, 0);
                 Ok(vec![(
-                    SirOp::Gelu { input: input_id, mode: "EXACT".to_string() },
+                    // V-099/V-113: ANEC ConvertElementwiseUnary(Gelu) only supports
+                    // tanh approximation — EXACT mode has no ANEC converter.
+                    SirOp::Gelu { input: input_id, mode: "TANH_APPROXIMATION".to_string() },
                     "gelu".to_string(),
                 )])
             }
@@ -1412,7 +1414,8 @@ impl<'a> SirBuildContext<'a> {
                 }
                 "gelu" | "gelu_new" => {
                     ops.push((
-                        SirOp::Gelu { input: up_id, mode: "EXACT".to_string() },
+                        // V-099/V-113: ANEC only supports tanh approximation for gelu.
+                        SirOp::Gelu { input: up_id, mode: "TANH_APPROXIMATION".to_string() },
                         "mlp_act".to_string(),
                     ));
                 }

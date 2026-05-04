@@ -454,4 +454,49 @@ mod tests {
         );
         assert_eq!(AneFamily::A16.supports_argminmax(), AneFamily::A17.supports_argminmax());
     }
+
+    // ─── T-86: Knowledge Seed Consistency Tests ─────────────────────
+
+    #[test]
+    fn test_hw_limits_seed_family_consistency() {
+        // T-86 (V-001, V-002): Verify that the knowledge seed JSON family
+        // assignments match the Rust code. If this test fails, the seed
+        // has drifted from the source-of-truth mapping in AneRevision::family().
+        let expected: Vec<(&str, AneFamily)> = vec![
+            ("V4", AneFamily::A11Legacy),
+            ("V5", AneFamily::A12),
+            ("V6", AneFamily::A13),   // V-001 fix: was "A14" in seed, must be "A13"
+            ("V7", AneFamily::A14),
+            ("V8", AneFamily::A15),
+            ("V10", AneFamily::A16),
+            ("V11", AneFamily::A17),  // V-002 fix: was "A16" in seed, must be "A17"
+            ("V17", AneFamily::A14),  // M1 is A14-class
+            ("V19", AneFamily::A18),
+            ("V20", AneFamily::A18),
+            ("V26", AneFamily::A18),
+        ];
+
+        for (rev_str, expected_family) in &expected {
+            let revision = match *rev_str {
+                "V4" => AneRevision::V4,
+                "V5" => AneRevision::V5,
+                "V6" => AneRevision::V6,
+                "V7" => AneRevision::V7,
+                "V8" => AneRevision::V8,
+                "V10" => AneRevision::V10,
+                "V11" => AneRevision::V11,
+                "V17" => AneRevision::V17,
+                "V19" => AneRevision::V19,
+                "V20" => AneRevision::V20,
+                "V26" => AneRevision::V26,
+                _ => panic!("Unknown revision string: {}", rev_str),
+            };
+            let actual_family = revision.family();
+            assert_eq!(
+                actual_family, *expected_family,
+                "Revision {} family mismatch: Rust says {:?}, expected {:?}",
+                rev_str, actual_family, expected_family
+            );
+        }
+    }
 }

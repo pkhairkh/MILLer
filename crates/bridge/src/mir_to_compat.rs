@@ -40,7 +40,7 @@ use ane_ir::mir::{ComputeUnitHint, MilDtype, MirGraph, MirNode, MirOp};
 #[allow(unused_imports)]
 // T-38: ToProto trait methods will be used for validation in future PRs
 use ane_ir::toproto::ToProto;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use std::collections::HashMap;
 
 use crate::shape_inference::{compat_input_dtype, compat_input_shape, compat_output_shape};
@@ -118,12 +118,26 @@ impl WeightResolver for EmptyWeightResolver {
 /// This function automatically materializes `MirOpCompat::Const` entries for
 /// every weight name referenced by ops like `MILLinear` and `MILLayerNorm`.
 /// The weight data is looked up via the `resolver`. If the resolver can't find
-/// a weight, zero-filled data is used (matching the MILConst fallback behavior).
+/// a weight, a hard error is returned by default (T-91/I-66). Use
+/// `mir_graph_to_compat_with_allow_missing()` to opt into zero-filled placeholders.
 pub fn mir_graph_to_compat(
     graph: &MirGraph,
     resolver: &dyn WeightResolver,
 ) -> Result<MirGraphCompat> {
-    mir_graph_to_compat_with_arch(graph, resolver, None, None)
+    mir_graph_to_compat_with_arch(graph, resolver, None, None, false)
+}
+
+/// Convert a MIR graph to compat representation, allowing missing weights.
+///
+/// When `allow_missing_weights` is true, unresolved weights produce zero-filled
+/// placeholders with a warning. This is intended for development/testing only —
+/// production models should never use zero-filled weights (T-91/I-66/V-007).
+pub fn mir_graph_to_compat_with_allow_missing(
+    graph: &MirGraph,
+    resolver: &dyn WeightResolver,
+    allow_missing_weights: bool,
+) -> Result<MirGraphCompat> {
+    mir_graph_to_compat_with_arch(graph, resolver, None, None, allow_missing_weights)
 }
 
 /// Convert a MIR graph to compat representation with architecture-specific
@@ -137,11 +151,17 @@ pub fn mir_graph_to_compat(
 /// T-36 (I-15/CQ-19): The `max_seq_len` parameter replaces the hardcoded
 /// `512` fallback in shape inference. When `None`, defaults to 32768
 /// (Qwen3-0.6B max_position_embeddings).
+///
+/// T-91 (I-66/V-007): The `allow_missing_weights` parameter controls behavior
+/// when a weight cannot be resolved. When `false` (default), missing weights
+/// are a hard error. When `true`, zero-filled placeholders are produced with
+/// a warning (for development/testing only).
 pub fn mir_graph_to_compat_with_arch(
     graph: &MirGraph,
     resolver: &dyn WeightResolver,
     architecture: Option<&ane_ir::common::ModelArchitecture>,
     max_seq_len: Option<usize>,
+    allow_missing_weights: bool,
 ) -> Result<MirGraphCompat> {
     let alias_map = build_input_alias_map(graph, architecture);
     // DEPRECATED (CQ-9): Hardcoded 32768 default is Qwen3-0.6B-specific.
@@ -241,19 +261,29 @@ pub fn mir_graph_to_compat_with_arch(
                 // failures (e.g., "Param 'x' has incorrect type for operator
                 // 'gather'. Expected tensor; got fp16").
                 if weight_name.starts_with("static_tables/") {
-                    eprintln!(
-                        "  Info: static table '{}' not resolved — skipping (arithmetic mask path used)",
+                    log::debug!(
+                        "static table '{}' not resolved — skipping (arithmetic mask path used)",
                         weight_name
                     );
                     continue;
                 }
-                // For model weights (non-static-tables), use zero-filled placeholder.
-                // Default shape [1] with FP16 gives 2 bytes minimum.
-                eprintln!(
-                    "  Warning: weight '{}' not resolved — using zero-filled placeholder",
-                    weight_name
-                );
-                (vec![0u8; 2], vec![1], MilDtypeCompat::Fp16)
+                // T-91 (I-66/V-007): Previously used zero-filled placeholder silently,
+                // producing models that compile but produce garbage inference. Now
+                // a hard error by default, with --allow-missing-weights opt-in.
+                if allow_missing_weights {
+                    log::warn!(
+                        "weight '{}' not resolved — using zero-filled placeholder (allow_missing_weights=true)",
+                        weight_name
+                    );
+                    (vec![0u8; 2], vec![1], MilDtypeCompat::Fp16)
+                } else {
+                    bail!(
+                        "Weight '{}' not found in resolver. This produces a silently broken model \
+                         with zero-filled weights. Use --allow-missing-weights to opt into zero-fill \
+                         (NOT recommended for production).",
+                        weight_name
+                    );
+                }
             }
         };
         const_ops.push(MirOpCompat::Const { name: weight_name, data, dtype, shape });
@@ -1851,7 +1881,8 @@ mod tests {
     fn test_mir_graph_to_compat_basic() {
         let graph = make_test_graph();
         let resolver = EmptyWeightResolver;
-        let compat = mir_graph_to_compat(&graph, &resolver).unwrap();
+        // EmptyWeightResolver returns None for all weights, so allow_missing_weights=true
+        let compat = mir_graph_to_compat_with_allow_missing(&graph, &resolver, true).unwrap();
 
         // 3 original ops + 1 auto-materialized weight (Linear references "weight"
         // but the existing Const was renamed to "x" via rename_compat_output,
@@ -1870,7 +1901,9 @@ mod tests {
         resolver.add("weights/weight.bin".to_string(), vec![1u8; 32 * 64 * 2], vec![32, 64]);
         resolver.add("weights/bias.bin".to_string(), vec![2u8; 32 * 2], vec![32]);
 
-        let compat = mir_graph_to_compat(&graph, &resolver).unwrap();
+        // The resolver has "weights/weight.bin" but the graph references "weight"
+        // (auto-materialized), so allow_missing_weights=true for the auto-materialized weight.
+        let compat = mir_graph_to_compat_with_allow_missing(&graph, &resolver, true).unwrap();
 
         // Check that Const ops have proper data.
         // Note: The ops list is [auto-materialized "weight", renamed "x", "bias", Linear].
@@ -1929,6 +1962,39 @@ mod tests {
         assert_eq!(mil_dtype_to_compat(&MilDtype::Fp32), MilDtypeCompat::Fp32);
         assert_eq!(mil_dtype_to_compat(&MilDtype::Int32), MilDtypeCompat::Int32);
         assert_eq!(mil_dtype_to_compat(&MilDtype::UInt8), MilDtypeCompat::UInt8);
+    }
+
+    /// T-91 (I-66/V-007): Verify that missing weights produce a hard error by default,
+    /// and that allow_missing_weights=true opts into zero-fill behavior.
+    #[test]
+    fn test_missing_weights_hard_error_by_default() {
+        let graph = make_test_graph();
+        let resolver = EmptyWeightResolver; // returns None for all weights
+
+        // Default behavior: should error because weights are missing
+        let result = mir_graph_to_compat(&graph, &resolver);
+        assert!(result.is_err(), "Expected hard error for missing weights by default");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("not found in resolver"),
+            "Error message should mention 'not found in resolver', got: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("allow-missing-weights"),
+            "Error message should mention --allow-missing-weights, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_missing_weights_allowed_with_flag() {
+        let graph = make_test_graph();
+        let resolver = EmptyWeightResolver;
+
+        // With allow_missing_weights=true, should succeed with zero-filled placeholders
+        let result = mir_graph_to_compat_with_allow_missing(&graph, &resolver, true);
+        assert!(result.is_ok(), "Should succeed with allow_missing_weights=true");
     }
 
     #[test]

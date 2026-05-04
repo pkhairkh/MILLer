@@ -21,7 +21,7 @@
 //! emitted mlpackage directory without requiring macOS or the Core ML runtime.
 //! It checks the directory structure, required files, and basic integrity.
 
-use crate::mir_to_compat::{mir_graph_to_compat, EmptyWeightResolver};
+use crate::mir_to_compat::{mir_graph_to_compat_with_allow_missing, EmptyWeightResolver};
 use ane_coreml_emit::ProtoEmitter;
 use ane_coreml_proto::mir_compat::MirGraphCompat;
 use ane_ir::mir::MirGraph;
@@ -166,7 +166,9 @@ pub fn emit_mir_graph_proto_direct(
     output_path: &str,
 ) -> Result<ProtoDirectResult> {
     let resolver = EmptyWeightResolver;
-    let compat = mir_graph_to_compat(graph, &resolver)?;
+    // EmptyWeightResolver always returns None, so allow_missing_weights=true to
+    // avoid hard error — this path is for zero-fill testing only.
+    let compat = mir_graph_to_compat_with_allow_missing(graph, &resolver, true)?;
 
     emit_proto_direct(&compat, output_path)
 }
@@ -181,7 +183,9 @@ pub fn emit_mir_graph_proto_direct_with_resolver(
     output_path: &str,
     resolver: &dyn crate::mir_to_compat::WeightResolver,
 ) -> Result<ProtoDirectResult> {
-    let compat = mir_graph_to_compat(graph, resolver)?;
+    // When a real resolver is provided, still allow missing weights for now.
+    // Production callers should check resolver.is_empty() before calling.
+    let compat = mir_graph_to_compat_with_allow_missing(graph, resolver, true)?;
     emit_proto_direct(&compat, output_path)
 }
 
