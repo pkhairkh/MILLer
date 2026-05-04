@@ -15,12 +15,12 @@ An **ANE-first** multi-level compiler and empirical Core ML lab. Emits MIL/mlpac
 
 ## Project Status
 
-The project compiles and passes **1252 tests** on Linux x86_64. End-to-end validation of emitted models (loading in Core ML runtime, predict() output, actual ANE placement) requires Apple hardware with macOS.
+The project compiles and passes **1270 tests** on Linux x86_64. End-to-end validation of emitted models (loading in Core ML runtime, predict() output, actual ANE placement) requires Apple hardware with macOS.
 
 | Verification Level | Status |
 |---|---|
 | Compiles (`cargo build`) | Yes — zero warnings |
-| Unit tests (`cargo test`) | Yes — 1252 passing |
+| Unit tests (`cargo test`) | Yes — 1270 passing |
 | Python bridge produces `.mlpackage` | Yes — via coremltools 9.0 on Linux |
 | Proto-direct emission produces `.mlpackage` | Yes — via `prost` protobuf on any platform |
 | Apple device/runtime verified | No — requires macOS with Core ML runtime |
@@ -230,7 +230,7 @@ The `verify` bridge command produces structured JSON artifacts with an overall w
 
 ```bash
 cargo build --workspace
-cargo test --workspace    # 1252 tests
+cargo test --workspace    # 1270 tests
 ```
 
 ### Generate Tasks and Compile

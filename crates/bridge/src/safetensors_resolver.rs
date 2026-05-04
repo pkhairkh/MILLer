@@ -165,6 +165,13 @@ impl SafetensorsWeightResolver {
             return (resolver, format!("HF model ID auto-discovery: {}", model_id));
         }
 
+        // T-79 (I-54): Previously returned an empty resolver without any warning,
+        // causing all weights to become zero-filled placeholders silently. Now
+        // we log a warning so the user knows weight resolution failed.
+        log::warn!(
+            "safetensors resolver is empty — all weights will be zero-filled: {}",
+            "no weights found"
+        );
         (Self::empty(), "no weights found".to_string())
     }
 
@@ -290,12 +297,17 @@ impl SafetensorsWeightResolver {
     /// Each shard takes `LM_HEAD_SHARD_SIZE` rows from the original weight's
     /// first dimension (except the last shard, which may be smaller).
     fn resolve_shard(&self, base_weight: &str, shard_index: usize) -> Option<WeightData> {
-        const LM_HEAD_SHARD_SIZE: usize = 19000;
+        // T-73 (I-48): Previously, LM_HEAD_SHARD_SIZE was hardcoded to 19000,
+        // specific to Qwen3-0.6B (vocab_size=151936, 151936/8≈18992). Other
+        // models with different vocab sizes would get wrong shard sizes. Now we
+        // derive the shard size from the actual vocab_size and a target shard
+        // count (8), with a floor of 1 to avoid division by zero.
+        const TARGET_SHARD_COUNT: usize = 8;
 
         let entry = self.tensors.get(base_weight)?;
         if entry.shape.len() != 2 {
-            eprintln!(
-                "  Warning: shard weight '{}' references non-2D tensor with shape {:?}",
+            log::warn!(
+                "shard weight '{}' references non-2D tensor with shape {:?}",
                 base_weight, entry.shape
             );
             return None;
@@ -304,23 +316,44 @@ impl SafetensorsWeightResolver {
         let vocab_size = entry.shape[0];
         let hidden_size = entry.shape[1];
 
-        let start_row = shard_index * LM_HEAD_SHARD_SIZE;
-        let end_row = (start_row + LM_HEAD_SHARD_SIZE).min(vocab_size);
+        // Derive shard size from vocab_size, aiming for ~8 shards
+        let shard_size = (vocab_size / TARGET_SHARD_COUNT).max(1);
+
+        let start_row = shard_index * shard_size;
+        let end_row = (start_row + shard_size).min(vocab_size);
 
         if start_row >= vocab_size {
-            eprintln!(
-                "  Warning: shard index {} out of range for weight '{}' (vocab_size={})",
+            log::warn!(
+                "shard index {} out of range for weight '{}' (vocab_size={})",
                 shard_index, base_weight, vocab_size
             );
             return None;
         }
 
         let shard_rows = end_row - start_row;
-        let bytes_per_row = hidden_size * 2; // FP16 = 2 bytes per element
+
+        // T-74 (I-49): Previously assumed FP16 (2 bytes per element) with
+        // `hidden_size * 2`. For F32 weights that would be 4 bytes, INT8 would
+        // be 1 byte — silently slicing the wrong portion of weight data. Now
+        // we derive the element size from the actual data length and shape.
+        let total_elements: usize = entry.shape.iter().product();
+        let bytes_per_element = if total_elements > 0 {
+            entry.data.len() / total_elements
+        } else {
+            2 // fallback to FP16 if shape is degenerate
+        };
+        let bytes_per_row = hidden_size * bytes_per_element;
         let start_byte = start_row * bytes_per_row;
         let end_byte = end_row * bytes_per_row;
 
-        let shard_data = entry.data[start_byte..end_byte].to_vec();
+        if end_byte > entry.data.len() {
+            log::warn!(
+                "shard byte range {}..{} exceeds data length {} for weight '{}' — data may be corrupted",
+                start_byte, end_byte, entry.data.len(), base_weight
+            );
+        }
+
+        let shard_data = entry.data.get(start_byte..end_byte)?.to_vec();
         Some(WeightData { data: shard_data, shape: vec![shard_rows, hidden_size] })
     }
 }
@@ -608,21 +641,89 @@ mod tests {
             TensorEntry { data: fake_data, shape: vec![vocab_size, hidden_size] },
         );
 
-        // Resolve shard 0: rows 0..19000
+        // T-73: Shard size is now derived from vocab_size / TARGET_SHARD_COUNT.
+        // For vocab_size=40000 and TARGET_SHARD_COUNT=8: shard_size = 5000
+        let shard_size = vocab_size / 8; // 5000
+
+        // Resolve shard 0: rows 0..5000
         let shard_0 = resolver.resolve("lm_head.shard_0.weight").expect("shard_0 should resolve");
-        assert_eq!(shard_0.shape, vec![19000, hidden_size]);
-        assert_eq!(shard_0.data.len(), 19000 * hidden_size * 2);
+        assert_eq!(shard_0.shape, vec![shard_size, hidden_size]);
+        assert_eq!(shard_0.data.len(), shard_size * hidden_size * 2);
 
-        // Resolve shard 2 (last): rows 38000..40000 → 2000 rows
-        let shard_2 = resolver.resolve("lm_head.shard_2.weight").expect("shard_2 should resolve");
-        assert_eq!(shard_2.shape, vec![2000, hidden_size]);
-        assert_eq!(shard_2.data.len(), 2000 * hidden_size * 2);
+        // Resolve shard 7 (last): rows 35000..40000 → 5000 rows
+        let shard_7 = resolver.resolve("lm_head.shard_7.weight").expect("shard_7 should resolve");
+        assert_eq!(shard_7.shape, vec![shard_size, hidden_size]);
+        assert_eq!(shard_7.data.len(), shard_size * hidden_size * 2);
 
-        // Out of range shard
-        assert!(resolver.resolve("lm_head.shard_3.weight").is_none());
+        // Out of range shard (shard 8 would start at row 40000 = vocab_size)
+        assert!(resolver.resolve("lm_head.shard_8.weight").is_none());
 
         // Non-shard name still works
         let original = resolver.resolve("lm_head.weight").expect("original should resolve");
         assert_eq!(original.shape, vec![vocab_size, hidden_size]);
+    }
+
+    #[test]
+    fn test_resolve_shard_weight_f32() {
+        use crate::mir_to_compat::WeightResolver;
+
+        // T-74: Test shard resolution for F32 (4 bytes/element) weights.
+        // Previously, `bytes_per_row = hidden_size * 2` which would produce
+        // wrong byte offsets for F32 weights.
+        let vocab_size = 16000usize;
+        let hidden_size = 512usize;
+        let total_elements = vocab_size * hidden_size;
+        let total_bytes = total_elements * 4; // fp32 = 4 bytes per element
+        let fake_data: Vec<u8> = (0..total_bytes).map(|i| (i % 256) as u8).collect();
+
+        let mut resolver = SafetensorsWeightResolver::empty();
+        resolver.tensors.insert(
+            "lm_head.weight".to_string(),
+            TensorEntry { data: fake_data, shape: vec![vocab_size, hidden_size] },
+        );
+
+        // Shard size = 16000 / 8 = 2000
+        let shard_size = vocab_size / 8;
+
+        let shard_0 = resolver.resolve("lm_head.shard_0.weight").expect("shard_0 should resolve");
+        assert_eq!(shard_0.shape, vec![shard_size, hidden_size]);
+        assert_eq!(shard_0.data.len(), shard_size * hidden_size * 4); // F32: 4 bytes/element
+
+        // Verify the byte offsets are correct: first row starts at byte 0
+        // and shard_0 data should be the first shard_size * hidden_size * 4 bytes
+        assert_eq!(shard_0.data[0], 0u8);
+        assert_eq!(shard_0.data[1], 1u8);
+    }
+
+    #[test]
+    fn test_resolve_shard_qwen3_vocab() {
+        use crate::mir_to_compat::WeightResolver;
+
+        // T-73 regression test: Qwen3-0.6B has vocab_size=151936.
+        // With TARGET_SHARD_COUNT=8: shard_size = 151936 / 8 = 18992.
+        // This matches the old hardcoded 19000 closely (off by 8 rows
+        // on the last shard, which is fine — the last shard is smaller anyway).
+        let vocab_size = 151936usize;
+        let hidden_size = 1024usize;
+        let total_elements = vocab_size * hidden_size;
+        let total_bytes = total_elements * 2; // fp16
+        let fake_data: Vec<u8> = vec![0u8; total_bytes];
+
+        let mut resolver = SafetensorsWeightResolver::empty();
+        resolver.tensors.insert(
+            "lm_head.weight".to_string(),
+            TensorEntry { data: fake_data, shape: vec![vocab_size, hidden_size] },
+        );
+
+        let shard_size = vocab_size / 8; // 18992
+        assert_eq!(shard_size, 18992);
+
+        let shard_0 = resolver.resolve("lm_head.shard_0.weight").expect("shard_0 should resolve");
+        assert_eq!(shard_0.shape, vec![18992, hidden_size]);
+
+        // Last shard (7) should get the remaining rows
+        let shard_7 = resolver.resolve("lm_head.shard_7.weight").expect("shard_7 should resolve");
+        let expected_last_rows = vocab_size - 7 * shard_size;
+        assert_eq!(shard_7.shape, vec![expected_last_rows, hidden_size]);
     }
 }

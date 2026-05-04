@@ -74,8 +74,10 @@ impl AneHwLimits {
     /// A runtime warning is emitted when A12 limits are selected to remind
     /// users that these are approximate.
     fn a12() -> Self {
-        eprintln!(
-            "WARNING: A12 Bionic (ANE V5) hardware limits are approximate — copied from A11 values \
+        // T-84 (I-59): Replaced eprintln! with log::warn! — library code
+        // should use structured logging, not stderr writes.
+        log::warn!(
+            "A12 Bionic (ANE V5) hardware limits are approximate — copied from A11 values \
              and not yet verified on real A12 hardware. Results may be inaccurate."
         );
         Self { revision: AneRevision::V5, ..Self::a11_legacy() }

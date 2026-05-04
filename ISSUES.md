@@ -86,7 +86,7 @@ The "depth" and "channels" values are swapped for ranks 3 and 4. This means:
 
 ### I-45 · K/V Projection Alias Maps Silently Dropped
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-70)
 **Files:** `crates/bridge/src/mir_to_compat.rs:470-471`
 **AUDIT ref:** §III (CQ-16), §IV (B-17)
 **Severity:** HIGH
@@ -97,7 +97,7 @@ The "depth" and "channels" values are swapped for ranks 3 and 4. This means:
 
 **Current behavior:** When a weight contains `q_proj`, ALL of `sir_qkv_split_q`, `sir_qkv_split_k`, and `sir_qkv_split_v` aliases point to the same Q projection linear node. This works for fused QKV but is incorrect for GQA models with separate K/V projections.
 
-**Fix:** (1) Use `k_proj` and `v_proj` patterns to build separate K/V alias entries. (2) Add tests verifying alias map contents for GQA models. (3) Consider whether fused QKV needs special handling.
+**Fix:** Used `k_proj`/`v_proj` patterns to build separate K/V alias entries.
 
 ---
 
@@ -122,7 +122,7 @@ CoreMlDataType::Float32 | CoreMlDataType::Float64 => 4,
 
 ### I-47 · Palettize Weights Pass Uses Qwen3-Specific Name Heuristics
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-72)
 **Files:** `crates/passes/src/palettize_weights.rs:129-136`
 **AUDIT ref:** §II-E, §IV
 **Severity:** HIGH
@@ -141,13 +141,13 @@ let is_attention = node.name.contains("q_proj")
 
 These are Qwen3/LLaMA-specific naming conventions. For other architectures (GPT-2, T5, BART), non-matching attention weights will be classified as MLP and receive `mlp_bits` instead of `attention_bits`, producing sub-optimal palettization decisions. This is the same model-leakage pattern as I-30/I-31 but in the palettization pass.
 
-**Fix:** Use `ModelArchitecture` for weight classification instead of hardcoded name patterns. The `ModelArchitecture` enum already has `q_proj_pattern()`, `k_proj_pattern()`, etc. methods.
+**Fix:** Added `run_palettize_weights_pass_with_arch()` using `ModelArchitecture` pattern methods.
 
 ---
 
 ### I-48 · `LM_HEAD_SHARD_SIZE = 19000` Hardcoded in SafetensorsResolver
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-73)
 **Files:** `crates/bridge/src/safetensors_resolver.rs:293`
 **AUDIT ref:** §III (CQ-17), §IV (B-19)
 **Severity:** HIGH
@@ -156,13 +156,13 @@ These are Qwen3/LLaMA-specific naming conventions. For other architectures (GPT-
 
 The vocabulary-projection sharding size is hardcoded to 19000, which is specific to Qwen3-0.6B (vocab_size=151936, 151936/8≈18992). For other models with different vocab sizes, the shard size is incorrect and may cause ANE execution planner errors (-5) or sub-optimal sharding. Same pattern as I-30/I-31.
 
-**Fix:** Derive shard size from model vocab_size or ANE HW limits. At minimum, make it a parameter with a Qwen3-0.6B default.
+**Fix:** Shard size derived from `vocab_size / TARGET_SHARD_COUNT`.
 
 ---
 
 ### I-49 · `resolve_shard` Assumes FP16 Element Size (Hardcoded 2 bytes)
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-74)
 **Files:** `crates/bridge/src/safetensors_resolver.rs:319`
 **AUDIT ref:** §III (CQ-18), §IV (B-18)
 **Severity:** HIGH
@@ -175,7 +175,7 @@ let bytes_per_row = hidden_size * 2; // FP16 = 2 bytes per element
 
 The shard slicing assumes all weights are FP16 (2 bytes per element). F32 weights that pass through without conversion would be 4 bytes per element; INT8/UInt8 would be 1 byte. The byte offset calculation `start_row * bytes_per_row` would produce wrong offsets for non-FP16 weights, silently slicing the wrong portion of the weight data.
 
-**Fix:** Use actual element size from the tensor's dtype instead of hardcoded 2.
+**Fix:** Element size derived from `data.len() / total_elements`.
 
 ---
 
@@ -330,7 +330,7 @@ The `compare_with_python_bridge()` method takes `_python_output_path` (unused) a
 
 ### I-54 · Empty SafetensorsResolver Returned Without Warning
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-79)
 **Files:** `crates/bridge/src/safetensors_resolver.rs:135-169`
 **AUDIT ref:** §III (CQ-24)
 **Severity:** MEDIUM
@@ -339,13 +339,13 @@ The `compare_with_python_bridge()` method takes `_python_output_path` (unused) a
 
 When all three resolution strategies (explicit paths, cache dir, HF model ID) fail, `from_traced_graph` returns `(Self::empty(), "no weights found")` without logging any warning. A silently-empty resolver means all weights become zero-filled placeholders, producing a model that compiles but produces garbage output at inference time — with no indication that weight resolution failed.
 
-**Fix:** Add `log::warn!("safetensors resolver is empty — all weights will be zero-filled: {}", reason)`.
+**Fix:** Added `log::warn!()` when all resolution strategies fail.
 
 ---
 
 ### I-55 · Fill Op `input_names()` Returns Empty Vec
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-80)
 **Files:** `crates/coreml-proto/src/lib.rs:1078`
 **AUDIT ref:** §III (CQ-23)
 **Severity:** MEDIUM
@@ -357,6 +357,8 @@ MirOpCompat::Fill { .. } => vec![],
 ```
 
 `Fill` takes a `shape: Vec<i32>` and `value: f32` — but `input_names()` returns an empty vec for it. The `Fill` op in Core ML's MIL format expects `shape` as an input tensor (not an attribute). When `input_names()` is used for SSA validation or dead-reference detection, the `Fill` op's shape input is not considered, potentially leading to false "unreferenced weight" warnings or missing weight materialization.
+
+**Fix:** Now returns `vec![format!("{}_shape", name)]`.
 
 ---
 
@@ -407,7 +409,7 @@ The BF16→FP16 conversion function uses `half::f16::from_f32()` which handles s
 
 ### I-59 · `eprintln!` in Library Function
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-84)
 **Files:** `crates/ir/src/ane_hw_limits.rs:77-80`
 **AUDIT ref:** §III (CQ-5)
 **Severity:** LOW
@@ -416,11 +418,13 @@ The BF16→FP16 conversion function uses `half::f16::from_f32()` which handles s
 
 Use `log::warn!()` instead of `eprintln!()` in library code.
 
+**Fix:** Replaced with `log::warn!` in `ane_hw_limits.rs`.
+
 ---
 
 ### I-60 · Deprecated `kv_cache_rewrite` Module Still Compiled
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-85)
 **Files:** `crates/passes/src/kv_cache_rewrite.rs`
 **AUDIT ref:** §III (CQ-6)
 **Severity:** LOW
@@ -428,6 +432,8 @@ Use `log::warn!()` instead of `eprintln!()` in library code.
 **Task:** T-85
 
 Gate behind feature flag or remove entirely.
+
+**Fix:** Gated behind `deprecated-kv-cache-rewrite` feature flag.
 
 ---
 
@@ -483,8 +489,8 @@ Gate behind feature flag or remove entirely.
 | Priority | Total | Open | Fixed | Retracted |
 |----------|-------|------|-------|-----------|
 | P0 | 4 | 0 | 4 | 0 |
-| P1 | 17 | 6 | 9 | 2 |
-| P2 | 15 | 10 | 3 | 0 |
-| P3 | 5 | 5 | 0 | 0 |
+| P1 | 17 | 2 | 13 | 2 |
+| P2 | 15 | 8 | 5 | 0 |
+| P3 | 5 | 2 | 3 | 0 |
 | Resolved (v1+v2) | 33 | 0 | 31 | 2 |
-| **Total** | **74** | **21** | **47** | **4** |
+| **Total** | **74** | **8** | **55** | **4** |

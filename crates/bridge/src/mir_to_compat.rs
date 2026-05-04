@@ -466,9 +466,15 @@ fn build_input_alias_map(
             ane_ir::common::ModelArchitecture::Qwen3
         }
     };
+    // T-70 (I-45): Previously, k_proj and v_proj patterns were resolved but
+    // immediately discarded with `let _ = (k_proj, v_proj)`. For GQA models
+    // with separate K/V projections, this caused ALL QKV-split aliases to
+    // point to the Q projection node, producing silently incorrect SSA
+    // references for K/V heads. Now we use k_proj/v_proj patterns to build
+    // separate K/V alias entries.
     let q_proj = arch.q_proj_pattern();
-    let _k_proj = arch.k_proj_pattern();
-    let _v_proj = arch.v_proj_pattern();
+    let k_proj = arch.k_proj_pattern();
+    let v_proj = arch.v_proj_pattern();
     let up_proj = arch.up_proj_pattern();
 
     let mut aliases = std::collections::HashMap::new();
@@ -477,16 +483,24 @@ fn build_input_alias_map(
 
     for node in &graph.nodes {
         match &node.op {
-            MirOp::MILLinear { weight, .. } if weight.contains(q_proj) => {
+            MirOp::MILLinear { weight, .. } if weight.contains(q_proj) && !weight.contains(k_proj) => {
                 if let Some(layer) = layer_index_from_weight(weight) {
                     aliases.insert(
                         format!("sir_qkv_split_q_layer_{layer}_self_attn"),
                         node.id.0.clone(),
                     );
+                }
+            }
+            MirOp::MILLinear { weight, .. } if weight.contains(k_proj) && !weight.contains(v_proj) => {
+                if let Some(layer) = layer_index_from_weight(weight) {
                     aliases.insert(
                         format!("sir_qkv_split_k_layer_{layer}_self_attn"),
                         node.id.0.clone(),
                     );
+                }
+            }
+            MirOp::MILLinear { weight, .. } if weight.contains(v_proj) => {
+                if let Some(layer) = layer_index_from_weight(weight) {
                     aliases.insert(
                         format!("sir_qkv_split_v_layer_{layer}_self_attn"),
                         node.id.0.clone(),

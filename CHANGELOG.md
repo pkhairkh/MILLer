@@ -2,14 +2,41 @@
 
 ## Current Status — 2026-05-04
 
-- **1267 tests passing**, 0 failures
+- **1270 tests passing**, 0 failures
 - IR Cleanliness Score: 89%
-- 2 minor clippy warnings (clone_on_copy, last_on_doubled_ended), 0 errors
-- **21 open issues** (0 CRITICAL, 6 HIGH, 10 MEDIUM, 5 LOW) — see [ISSUES.md](ISSUES.md)
-- **14 open tasks** (T-70, T-72 through T-85) — see [TASKS.md](TASKS.md)
+- 0 clippy warnings, 0 errors
+- **8 open issues** (0 CRITICAL, 2 HIGH, 4 MEDIUM, 2 LOW) — see [ISSUES.md](ISSUES.md)
+- **6 open tasks** (T-58, T-59, T-60, T-61, T-64, T-66) — see [TASKS.md](TASKS.md)
 
 Audit details: [docs/audit/tabula-rasa-v3.md](docs/audit/tabula-rasa-v3.md)
 Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
+
+---
+
+## 2026-05-04 — Bridge Model Leakage & Code Quality Sprint
+
+### Resolved (T-70, T-72, T-73, T-74, T-79, T-80, T-84, T-85)
+
+| Task | Description | Key Change |
+|------|-------------|------------|
+| T-70 | Fix K/V Projection Alias Map Drop | Used `k_proj`/`v_proj` patterns to build separate K/V alias entries; Q/K/V aliases now point to their respective projection nodes |
+| T-72 | Fix Palettize Qwen3 Name Heuristics | Added `run_palettize_weights_pass_with_arch()` using `ModelArchitecture` pattern methods instead of hardcoded name checks |
+| T-73 | Fix `LM_HEAD_SHARD_SIZE` Hardcoding | Shard size derived from `vocab_size / TARGET_SHARD_COUNT` (8) instead of hardcoded 19000 |
+| T-74 | Fix `resolve_shard` FP16-Only Byte Offsets | Element size derived from `data.len() / total_elements` instead of hardcoded 2; added byte-range overflow guard |
+| T-79 | Log Warning When SafetensorsResolver Is Empty | Added `log::warn!()` in `from_traced_graph` when all resolution strategies fail |
+| T-80 | Fix Fill Op `input_names()` Empty Vec | `input_names()` now returns `vec![format!("{}_shape", name)]` for Fill ops |
+| T-84 | Replace `eprintln!` With `log::warn!` | Replaced in `ane_hw_limits.rs::AneHwLimits::a12()`; added `log` dependency to `ane-ir` |
+| T-85 | Gate Deprecated `kv_cache_rewrite` | Module gated behind `deprecated-kv-cache-rewrite` feature flag in `ane-passes`; not compiled by default |
+
+### New Tests Added (7 tests)
+
+- `test_palettize_with_explicit_qwen3_architecture` — verifies architecture-aware palettization with Qwen3
+- `test_palettize_with_generic_architecture` — verifies Generic architecture with GPT-2-like patterns
+- `test_resolve_shard_weight` — updated for dynamic shard size derivation (T-73)
+- `test_resolve_shard_weight_f32` — verifies F32 shard byte offsets (T-74)
+- `test_resolve_shard_qwen3_vocab` — regression test for Qwen3-0.6B vocab size (T-73)
+- Updated Fill `input_names()` test to verify shape input name (T-80)
+- `kv_cache_rewrite` tests now gated behind `deprecated-kv-cache-rewrite` feature (T-85)
 
 ---
 

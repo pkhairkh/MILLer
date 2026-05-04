@@ -7,6 +7,7 @@
 > Tasks T-47 through T-57 from v2 audit are all resolved — see CHANGELOG.md for details.
 > Tasks T-58, T-59, T-60, T-61, T-64, T-66 remain open from v2 audit.
 > Tasks T-67, T-65, T-68, T-69, T-71 resolved in Placement & Classification Integrity Sprint.
+> Tasks T-70, T-72, T-73, T-74, T-79, T-80, T-84, T-85 resolved in Bridge Model Leakage & Code Quality Sprint.
 
 ---
 
@@ -18,13 +19,13 @@ _No open CRITICAL tasks — T-67 resolved._
 
 ## 🟠 HIGH — Do These Next Sprint
 
-### T-70 · Fix K/V Projection Alias Map Drop
+### T-70 · ~~Fix K/V Projection Alias Map Drop~~
 
-- **ISSUES ref**: I-45
-- **AUDIT ref**: §III (CQ-16), §IV (B-17)
-- **Severity**: HIGH
-- **Effort**: S (0.5 day)
-- **Detail**: `build_input_alias_map` resolves `k_proj_pattern()` and `v_proj_pattern()` but discards them with `let _ = (k_proj, v_proj)`. For GQA models with separate K/V projections, K/V tensor references are never properly wired. Currently ALL Q/K/V split aliases point to the Q projection node. Fix: Use k_proj/v_proj patterns to build separate K/V alias entries. Add tests verifying alias map contents for GQA models.
+~~**ISSUES ref**: I-45~~
+~~**AUDIT ref**: §III (CQ-16), §IV (B-17)~~
+~~**Severity**: HIGH~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Used k_proj/v_proj patterns to build separate K/V alias entries. Q/K/V split aliases now point to their respective projection nodes instead of all pointing to Q.
 
 ### T-71 · ~~Fix `Float64.element_size()` Returning 4 Instead of 8~~
 
@@ -34,29 +35,29 @@ _No open CRITICAL tasks — T-67 resolved._
 ~~**Effort**: S (0.5 day)~~
 **✅ RESOLVED** — Split match arm: `Float32 => 4, Float64 => 8`. Added comprehensive element_size test.
 
-### T-72 · Fix Palettize Qwen3 Name Heuristics
+### T-72 · ~~Fix Palettize Qwen3 Name Heuristics~~
 
-- **ISSUES ref**: I-47
-- **AUDIT ref**: §II-E
-- **Severity**: HIGH
-- **Effort**: M (1 day)
-- **Detail**: `palettize_weights` uses hardcoded Qwen3/LLaMA name patterns (`q_proj`, `k_proj`, `v_proj`, `o_proj`, `qkv`) to classify weights as attention vs MLP. Other architectures (GPT-2, T5, BART) won't match, getting wrong bit-width assignments. Fix: Use `ModelArchitecture` enum methods instead of hardcoded name patterns.
+~~**ISSUES ref**: I-47~~
+~~**AUDIT ref**: §II-E~~
+~~**Severity**: HIGH~~
+~~**Effort**: M (1 day)~~
+**✅ RESOLVED** — Added `run_palettize_weights_pass_with_arch()` that accepts `Option<&ModelArchitecture>`. Uses architecture pattern methods for weight classification instead of hardcoded Qwen3 name heuristics. Falls back to Qwen3 with warning when architecture is `None`.
 
-### T-73 · Fix `LM_HEAD_SHARD_SIZE` Hardcoding
+### T-73 · ~~Fix `LM_HEAD_SHARD_SIZE` Hardcoding~~
 
-- **ISSUES ref**: I-48
-- **AUDIT ref**: §III (CQ-17), §IV (B-19)
-- **Severity**: HIGH
-- **Effort**: S (0.5 day)
-- **Detail**: `LM_HEAD_SHARD_SIZE = 19000` is specific to Qwen3-0.6B (vocab_size=151936). Other models get wrong shard sizes. Same pattern as I-30/I-31. Fix: Derive from model vocab_size or ANE HW limits. At minimum, make it a parameter.
+~~**ISSUES ref**: I-48~~
+~~**AUDIT ref**: §III (CQ-17), §IV (B-19)~~
+~~**Severity**: HIGH~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Shard size now derived from `vocab_size / TARGET_SHARD_COUNT` (8 shards). For Qwen3-0.6B (151936): shard_size=18992, closely matching the old hardcoded 19000. Works for any vocab size.
 
-### T-74 · Fix `resolve_shard` FP16-Only Byte Offsets
+### T-74 · ~~Fix `resolve_shard` FP16-Only Byte Offsets~~
 
-- **ISSUES ref**: I-49
-- **AUDIT ref**: §III (CQ-18), §IV (B-18)
-- **Severity**: HIGH
-- **Effort**: S (0.5 day)
-- **Detail**: `resolve_shard` uses `hidden_size * 2` assuming FP16. F32 weights would be 4 bytes, INT8 would be 1 byte. Wrong byte offsets silently slice incorrect portions of weight data. Fix: Use actual dtype element_size from the tensor's metadata.
+~~**ISSUES ref**: I-49~~
+~~**AUDIT ref**: §III (CQ-18), §IV (B-18)~~
+~~**Severity**: HIGH~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Element size now derived from `data.len() / total_elements` instead of hardcoded 2. Works correctly for FP16 (2), F32 (4), INT8 (1), and any other dtype. Added byte-range overflow guard.
 
 ### T-58 · Add Tests for ir::payload, ir::shard_desc, ir::serialize
 
@@ -150,21 +151,21 @@ _No open CRITICAL tasks — T-67 resolved._
 - **Effort**: S (0.5 day)
 - **Detail**: `compare_with_python_bridge()` always returns `None` for all fields. Never called. Implement or remove.
 
-### T-79 · Log Warning When SafetensorsResolver Is Empty
+### T-79 · ~~Log Warning When SafetensorsResolver Is Empty~~
 
-- **ISSUES ref**: I-54
-- **AUDIT ref**: §III (CQ-24)
-- **Severity**: MEDIUM
-- **Effort**: S (0.5 day)
-- **Detail**: `from_traced_graph` returns empty resolver without logging any warning. All weights become zero-filled placeholders. Fix: Add `log::warn!()` when all resolution strategies fail.
+~~**ISSUES ref**: I-54~~
+~~**AUDIT ref**: §III (CQ-24)~~
+~~**Severity**: MEDIUM~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Added `log::warn!()` in `from_traced_graph` when all resolution strategies fail. Users now see a clear warning that all weights will be zero-filled.
 
-### T-80 · Fix Fill Op `input_names()` Returning Empty Vec
+### T-80 · ~~Fix Fill Op `input_names()` Returning Empty Vec~~
 
-- **ISSUES ref**: I-55
-- **AUDIT ref**: §III (CQ-23)
-- **Severity**: MEDIUM
-- **Effort**: S (0.5 day)
-- **Detail**: `MirOpCompat::Fill { .. } => vec![]` — Fill's shape is an input in Core ML MIL. Fix: Return shape input name in `input_names()`.
+~~**ISSUES ref**: I-55~~
+~~**AUDIT ref**: §III (CQ-23)~~
+~~**Severity**: MEDIUM~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — `input_names()` now returns `vec![format!("{}_shape", name)]` for Fill ops. SSA validation and dead-reference detection now account for Fill's shape dependency.
 
 ---
 
@@ -194,21 +195,21 @@ _No open CRITICAL tasks — T-67 resolved._
 - **Effort**: S (0.5 day)
 - **Detail**: Add tests for NaN, Inf, subnormals, negative zero in BF16→FP16 conversion.
 
-### T-84 · Replace `eprintln!` With `log::warn!`
+### T-84 · ~~Replace `eprintln!` With `log::warn!`~~
 
-- **ISSUES ref**: I-59
-- **AUDIT ref**: §III (CQ-5)
-- **Severity**: LOW
-- **Effort**: S (0.5 day)
-- **Detail**: Library code should use structured logging, not stderr writes.
+~~**ISSUES ref**: I-59~~
+~~**AUDIT ref**: §III (CQ-5)~~
+~~**Severity**: LOW~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Replaced `eprintln!` with `log::warn!` in `ane_hw_limits.rs::AneHwLimits::a12()`. Added `log` dependency to `ane-ir` crate.
 
-### T-85 · Gate Deprecated `kv_cache_rewrite` Behind Feature Flag
+### T-85 · ~~Gate Deprecated `kv_cache_rewrite` Behind Feature Flag~~
 
-- **ISSUES ref**: I-60
-- **AUDIT ref**: §III (CQ-6)
-- **Severity**: LOW
-- **Effort**: S (0.5 day)
-- **Detail**: Deprecated module still compiled. Gate behind feature flag or remove entirely.
+~~**ISSUES ref**: I-60~~
+~~**AUDIT ref**: §III (CQ-6)~~
+~~**Severity**: LOW~~
+~~**Effort**: S (0.5 day)~~
+**✅ RESOLVED** — Module gated behind `deprecated-kv-cache-rewrite` feature flag in `ane-passes/Cargo.toml`. Not compiled by default. The `lib.rs` re-export is also `#[cfg(feature)]` gated.
 
 ---
 
@@ -219,11 +220,11 @@ _No open CRITICAL tasks — T-67 resolved._
 | T-67 | I-41, I-42 | CRITICAL | S | ✅ Fixed |
 | T-68 | I-43 | HIGH | S | ✅ Fixed |
 | T-69 | I-44 | HIGH | S | ✅ Fixed |
-| T-70 | I-45 | HIGH | S | ⬜ |
+| T-70 | I-45 | HIGH | S | ✅ Fixed |
 | T-71 | I-46 | HIGH | S | ✅ Fixed |
-| T-72 | I-47 | HIGH | M | ⬜ |
-| T-73 | I-48 | HIGH | S | ⬜ |
-| T-74 | I-49 | HIGH | S | ⬜ |
+| T-72 | I-47 | HIGH | M | ✅ Fixed |
+| T-73 | I-48 | HIGH | S | ✅ Fixed |
+| T-74 | I-49 | HIGH | S | ✅ Fixed |
 | T-58 | I-32 | HIGH | L | ⬜ |
 | T-59 | I-33 | HIGH | L | ⬜ |
 | T-60 | I-34 | MEDIUM | S | ⬜ |
@@ -235,13 +236,13 @@ _No open CRITICAL tasks — T-67 resolved._
 | T-76 | I-51 | MEDIUM | M | ⬜ |
 | T-77 | I-52 | MEDIUM | S | ⬜ |
 | T-78 | I-53 | MEDIUM | S | ⬜ |
-| T-79 | I-54 | MEDIUM | S | ⬜ |
-| T-80 | I-55 | MEDIUM | S | ⬜ |
+| T-79 | I-54 | MEDIUM | S | ✅ Fixed |
+| T-80 | I-55 | MEDIUM | S | ✅ Fixed |
 | T-81 | I-56 | LOW | S | ⬜ |
 | T-82 | I-57 | LOW | S | ⬜ |
 | T-83 | I-58 | LOW | S | ⬜ |
-| T-84 | I-59 | LOW | S | ⬜ |
-| T-85 | I-60 | LOW | S | ⬜ |
+| T-84 | I-59 | LOW | S | ✅ Fixed |
+| T-85 | I-60 | LOW | S | ✅ Fixed |
 
 ---
 

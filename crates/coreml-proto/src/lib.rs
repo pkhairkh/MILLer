@@ -1079,7 +1079,11 @@ pub mod mir_compat {
                 | MirOpCompat::Silu { x, .. }
                 | MirOpCompat::Identity { x, .. }
                 | MirOpCompat::Tile { x, .. } => vec![x.clone()],
-                MirOpCompat::Fill { .. } => vec![],
+                // T-80 (I-55): In Core ML MIL, `fill` takes `shape` as an input
+                // tensor (not an attribute). Returning the shape input name allows
+                // SSA validation and dead-reference detection to account for the
+                // Fill op's shape dependency. The convention is `<name>_shape`.
+                MirOpCompat::Fill { name, .. } => vec![format!("{}_shape", name)],
                 MirOpCompat::FillLike { ref_tensor, .. } => vec![ref_tensor.clone()],
                 MirOpCompat::Neg { x, .. } => vec![x.clone()],
                 MirOpCompat::Gather { x, indices, .. } => vec![x.clone(), indices.clone()],
