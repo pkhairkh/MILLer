@@ -10,7 +10,7 @@
 
 ### I-41 · MILNeg Passes CPU-Only Gate — Name Mismatch in CPU_ONLY_OPS
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-67)
 **Files:** `crates/ir/src/mir.rs:1115`, `crates/passes/src/cpu_only_ops.rs:222`, `crates/passes/src/placement_validate.rs:540`
 **AUDIT ref:** §II-A, §IV (B-13)
 **Severity:** CRITICAL
@@ -25,7 +25,7 @@
 
 ### I-42 · CPU_ONLY_OPS Name Mismatches for 5 T-49 Entries — Dead Code That Never Matches
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-67)
 **Files:** `crates/passes/src/cpu_only_ops.rs:222-226`
 **AUDIT ref:** §II-A
 **Severity:** CRITICAL (for `"negative"`) / HIGH (for others)
@@ -50,7 +50,7 @@ The T-49 additions used MIL builder function names rather than `mil_op_name()` r
 
 ### I-43 · `extract_whdc()` Swaps Depth and Channels for Rank-4 NCHW Tensors
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-68)
 **Files:** `crates/passes/src/placement_validate.rs:155-169`
 **AUDIT ref:** §II-D, §IV (B-14)
 **Severity:** HIGH
@@ -71,7 +71,7 @@ The "depth" and "channels" values are swapped for ranks 3 and 4. This means:
 
 ### I-44 · Pooling Kernel Size Constraint Discarded
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-69)
 **Files:** `crates/passes/src/op_constraints.rs:160`
 **AUDIT ref:** §II-B, §IV (B-15)
 **Severity:** HIGH
@@ -103,7 +103,7 @@ The "depth" and "channels" values are swapped for ranks 3 and 4. This means:
 
 ### I-46 · `CoreMlDataType::Float64` Element Size Returns 4 Instead of 8
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-71)
 **Files:** `crates/coreml-proto/src/lib.rs:124`
 **AUDIT ref:** §IV (B-16)
 **Severity:** HIGH
@@ -248,7 +248,7 @@ Python bridge (coremltools subprocess) and Rust proto-direct path exist independ
 
 ### I-39 · CPU-Only Classification in Two Places
 
-**Status:** ⬜ Open
+**Status:** ✅ Fixed (T-65)
 **Files:** `crates/passes/src/cpu_only_ops.rs`, `crates/ir/src/mir.rs`
 **AUDIT ref:** §III (E-1)
 **Severity:** MEDIUM
@@ -482,9 +482,9 @@ Gate behind feature flag or remove entirely.
 
 | Priority | Total | Open | Fixed | Retracted |
 |----------|-------|------|-------|-----------|
-| P0 | 4 | 2 | 2 | 0 |
-| P1 | 17 | 9 | 6 | 2 |
-| P2 | 15 | 11 | 2 | 0 |
+| P0 | 4 | 0 | 4 | 0 |
+| P1 | 17 | 6 | 9 | 2 |
+| P2 | 15 | 10 | 3 | 0 |
 | P3 | 5 | 5 | 0 | 0 |
 | Resolved (v1+v2) | 33 | 0 | 31 | 2 |
-| **Total** | **74** | **27** | **41** | **4** |
+| **Total** | **74** | **21** | **47** | **4** |

@@ -121,7 +121,11 @@ impl CoreMlDataType {
     /// Size in bytes per element.
     pub fn element_size(&self) -> usize {
         match self {
-            CoreMlDataType::Float32 | CoreMlDataType::Float64 => 4,
+            // T-71: Float64 (double precision) is 8 bytes per element, not 4.
+            // Previously Float32 and Float64 shared a match arm returning 4,
+            // causing weight entries with half the required bytes for Float64.
+            CoreMlDataType::Float32 => 4,
+            CoreMlDataType::Float64 => 8,
             CoreMlDataType::Float16 => 2,
             CoreMlDataType::Int32 => 4,
             CoreMlDataType::UInt8 | CoreMlDataType::Int8 | CoreMlDataType::Bool => 1,
@@ -6750,8 +6754,18 @@ mod tests {
     fn test_coreml_data_type_element_size() {
         assert_eq!(CoreMlDataType::Float16.element_size(), 2);
         assert_eq!(CoreMlDataType::Float32.element_size(), 4);
+        // T-71: Float64 is 8 bytes (double precision), not 4
+        assert_eq!(CoreMlDataType::Float64.element_size(), 8);
         assert_eq!(CoreMlDataType::Int32.element_size(), 4);
         assert_eq!(CoreMlDataType::UInt8.element_size(), 1);
+        assert_eq!(CoreMlDataType::Int8.element_size(), 1);
+        assert_eq!(CoreMlDataType::Bool.element_size(), 1);
+        assert_eq!(CoreMlDataType::Int4.element_size(), 1);
+        assert_eq!(CoreMlDataType::UInt4.element_size(), 1);
+        assert_eq!(CoreMlDataType::E4M3.element_size(), 1);
+        assert_eq!(CoreMlDataType::E5M2.element_size(), 1);
+        assert_eq!(CoreMlDataType::UInt16.element_size(), 2);
+        assert_eq!(CoreMlDataType::Unknown.element_size(), 0);
     }
 
     #[test]

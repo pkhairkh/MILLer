@@ -1112,7 +1112,9 @@ impl MirOp {
             // Comparison ops (Equal, NotEqual, Greater, Less) ARE ANE-legal.
             // Elementwise unary / activations (ANE-legal per per-op matrix)
             | MirOp::MILAbs { .. }
-            | MirOp::MILNeg { .. }
+            // MILNeg moved to CPU-only (T-67): no ANEC converter for "neg".
+            // Per-op matrix row 197: mps.negative has no ANEC converter.
+            // Combined with I-41 fix: was incorrectly in PE branch.
             | MirOp::MILSigmoid { .. }
             | MirOp::MILTanh { .. }
             | MirOp::MILRelu { .. }
@@ -1306,7 +1308,13 @@ impl MirOp {
             | MirOp::MILSliceUpdate { .. }
             | MirOp::MILSlidingWindows { .. }
             | MirOp::MILReverse { .. }
-            | MirOp::MILArgsort { .. } => None,
+            | MirOp::MILArgsort { .. }
+            // ─── T-67: MILNeg has no ANEC converter ──────────────────
+            // Per-op matrix row 197: mps.negative has no ANEC converter.
+            // Was incorrectly assigned Some(AneEngine::PE), causing MILNeg
+            // to pass the CPU-only gate (I-41) because CPU_ONLY_OPS had
+            // "negative" instead of "neg" (I-42).
+            | MirOp::MILNeg { .. } => None,
         }
     }
 

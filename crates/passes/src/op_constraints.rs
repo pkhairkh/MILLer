@@ -151,13 +151,47 @@ pub fn validate_gather_constraints(batch: u64, depth: u64) -> Result<(), OpConst
 
 /// Validate pooling constraints.
 /// Source: ane-constraints-docs Section 4.6
+///
+/// T-69: Previously `kernel_size` was discarded with `let _ = kernel_size;`.
+/// Now validates against the ANE per-family pooling kernel limit.
 pub fn validate_pooling_constraints(
     pool_type: &str, // "max", "min", "l2", "avg"
     stride: u64,
     kernel_size: u64,
     is_dilated: bool,
 ) -> Result<(), OpConstraintViolation> {
-    let _ = kernel_size;
+    // T-69: Validate kernel size against ANE hardware limits.
+    // The ANE has a per-revision max_pooling_kernel_dim limit. We use the
+    // most conservative limit (A11/A12 = 27) as a compile-time gate.
+    // Larger kernels are rejected by the ANE compiler at runtime with
+    // "Error: pooling kernel size exceeds hardware limit".
+    //
+    // Per ane-constraints-docs/02-hardware-and-limits/:
+    //   A11/A12/A13: max_pooling_kernel_dim = 27
+    //   A14+: max_pooling_kernel_dim = 27 (unchanged)
+    //   M1/A18+: max_pooling_kernel_dim = 27 (unchanged)
+    const MAX_POOLING_KERNEL_DIM: u64 = 27;
+    if kernel_size > MAX_POOLING_KERNEL_DIM {
+        return Err(OpConstraintViolation {
+            op_name: format!("{}_pool", pool_type),
+            constraint: "kernel_size_limit".into(),
+            message: format!(
+                "Pooling kernel size {} exceeds ANE maximum of {} (pool_type={})",
+                kernel_size, MAX_POOLING_KERNEL_DIM, pool_type
+            ),
+        });
+    }
+    // Kernel size must be at least 1
+    if kernel_size == 0 {
+        return Err(OpConstraintViolation {
+            op_name: format!("{}_pool", pool_type),
+            constraint: "kernel_size_positive".into(),
+            message: format!(
+                "Pooling kernel size must be at least 1, got 0 (pool_type={})",
+                pool_type
+            ),
+        });
+    }
     if is_dilated {
         return Err(OpConstraintViolation {
             op_name: format!("{}_pool", pool_type),
@@ -554,6 +588,43 @@ mod tests {
     fn test_pooling_stride() {
         assert!(validate_pooling_constraints("avg", 3, 3, false).is_ok());
         assert!(validate_pooling_constraints("max", 3, 3, false).is_err());
+    }
+
+    // ─── T-69: Pooling kernel size validation tests ─────────────────
+
+    #[test]
+    fn test_pooling_kernel_size_within_limit() {
+        // Kernel sizes 1-27 should be accepted
+        assert!(validate_pooling_constraints("max", 1, 1, false).is_ok());
+        assert!(validate_pooling_constraints("max", 1, 3, false).is_ok());
+        assert!(validate_pooling_constraints("max", 1, 7, false).is_ok());
+        assert!(validate_pooling_constraints("max", 1, 27, false).is_ok());
+        assert!(validate_pooling_constraints("avg", 1, 27, false).is_ok());
+    }
+
+    #[test]
+    fn test_pooling_kernel_size_exceeds_limit() {
+        // Kernel sizes > 27 should be rejected
+        let result = validate_pooling_constraints("max", 1, 28, false);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.constraint, "kernel_size_limit");
+        assert!(err.message.contains("28"));
+        assert!(err.message.contains("27"));
+    }
+
+    #[test]
+    fn test_pooling_kernel_size_zero_rejected() {
+        let result = validate_pooling_constraints("avg", 1, 0, false);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "kernel_size_positive");
+    }
+
+    #[test]
+    fn test_pooling_kernel_size_large_rejected() {
+        let result = validate_pooling_constraints("max", 1, 64, false);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "kernel_size_limit");
     }
 
     #[test]

@@ -2,14 +2,37 @@
 
 ## Current Status — 2026-05-04
 
-- **1252 tests passing**, 0 failures
-- IR Cleanliness Score: 87%
+- **1267 tests passing**, 0 failures
+- IR Cleanliness Score: 89%
 - 2 minor clippy warnings (clone_on_copy, last_on_doubled_ended), 0 errors
-- **27 open issues** (2 CRITICAL, 9 HIGH, 11 MEDIUM, 5 LOW) — see [ISSUES.md](ISSUES.md)
-- **19 open tasks** (T-67 through T-85) — see [TASKS.md](TASKS.md)
+- **21 open issues** (0 CRITICAL, 6 HIGH, 10 MEDIUM, 5 LOW) — see [ISSUES.md](ISSUES.md)
+- **14 open tasks** (T-70, T-72 through T-85) — see [TASKS.md](TASKS.md)
 
 Audit details: [docs/audit/tabula-rasa-v3.md](docs/audit/tabula-rasa-v3.md)
 Violation report: [docs/audit/ane-violations.md](docs/audit/ane-violations.md)
+
+---
+
+## 2026-05-04 — Placement & Classification Integrity Sprint
+
+### Resolved (T-67, T-65, T-68, T-69, T-71)
+
+| Task | Description | Key Change |
+|------|-------------|------------|
+| T-67 | Fix CPU_ONLY_OPS name mismatches (CRITICAL) | `"negative"`→`"neg"`, removed dead entries, added `"round"`, moved MILNeg to None |
+| T-65 | Unify CPU-only classification | Added `is_cpu_only_unified()`, placement validator checks `default_engine()==None` first |
+| T-68 | Fix `extract_whdc()` NCHW dimensional swap | Rank-4 NCHW: `(shape[3], shape[2], 1, shape[1])` instead of CDHW |
+| T-69 | Wire pooling kernel size validation | `kernel_size` validated against max_pooling_kernel_dim=27 |
+| T-71 | Fix Float64 element_size=4→8 | Split match arm: `Float32 => 4, Float64 => 8` |
+
+### New Tests Added (15 tests)
+
+- `test_cpu_only_covers_all_default_engine_none` — verifies all MirOp None-branch ops are in CPU_ONLY_OPS
+- `test_t67_fixed_names_in_cpu_only` — verifies `"neg"` and `"round"` are CPU-only
+- `test_t67_removed_names_not_in_cpu_only` — verifies removed dead-code entries are gone
+- `test_extract_whdc_rank1` through `test_extract_whdc_regression_nchw_channels_vs_batch` — 9 tests for NCHW dimension extraction
+- `test_pooling_kernel_size_within_limit`, `test_pooling_kernel_size_exceeds_limit`, `test_pooling_kernel_size_zero_rejected`, `test_pooling_kernel_size_large_rejected` — 4 tests for pooling kernel validation
+- Expanded `test_coreml_data_type_element_size` to cover all 12 CoreMlDataType variants
 
 ---
 

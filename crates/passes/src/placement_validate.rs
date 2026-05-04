@@ -146,19 +146,28 @@ impl PlacementContext {
 
 /// Extract width, height, depth, channels from a shape vector.
 ///
-/// ANE tensor layout convention:
+/// T-68: Core ML MIL uses NCHW layout convention:
 /// - Rank 1: [width]
 /// - Rank 2: [height, width]
-/// - Rank 3: [depth, height, width]
-/// - Rank 4: [channels, depth, height, width]  (ChannelFirst)
-/// - Rank 5: [batch, channels, depth, height, width]
+/// - Rank 3: [channels, height, width]  (CHW)
+/// - Rank 4: [batch, channels, height, width]  (NCHW)
+/// - Rank 5: [batch, channels, depth, height, width]  (NCDHW)
+///
+/// Previous implementation incorrectly treated rank-4 as CDHW, swapping
+/// depth and channels. For `[1, 64, 128, 128]` (NCHW):
+/// - Old (wrong): w=128, h=128, d=64 (actually channels), c=1 (actually batch)
+/// - New (correct): w=128, h=128, d=1, c=64
 fn extract_whdc(shape: &[usize]) -> (u64, u64, u64, u64) {
     match shape.len() {
         0 => (0, 0, 0, 0),
         1 => (shape[0] as u64, 1, 1, 1),
         2 => (shape[1] as u64, shape[0] as u64, 1, 1),
-        3 => (shape[2] as u64, shape[1] as u64, shape[0] as u64, 1),
-        4 => (shape[3] as u64, shape[2] as u64, shape[1] as u64, shape[0] as u64),
+        // Rank 3: CHW [channels, height, width]
+        3 => (shape[2] as u64, shape[1] as u64, 1, shape[0] as u64),
+        // T-68: Rank 4: NCHW [batch, channels, height, width]
+        // depth is always 1 for 4D tensors (no depth dimension in NCHW)
+        4 => (shape[3] as u64, shape[2] as u64, 1, shape[1] as u64),
+        // Rank 5: NCDHW [batch, channels, depth, height, width]
         5 => (shape[4] as u64, shape[3] as u64, shape[2] as u64, shape[1] as u64),
         _ => {
             // Rank > 5: use last 4 dims as (w, h, d, c)
@@ -534,9 +543,18 @@ pub fn validate_placement_with_context(
 
         // Ops with no ANE engine — immediate CPU
         op => {
-            // T-22: Check the CPU_ONLY_OPS set as a hard gate.
-            // This catches ops that are on the CPU-only list but might
-            // still have a default_engine() assignment (defensive check).
+            // T-65: Use the unified CPU-only check (default_engine() == None)
+            // as the primary classification. The string-based CPU_ONLY_OPS
+            // set is checked as a secondary defense for ops that have an
+            // engine assignment but are known to lack emission code.
+            if cpu_only_ops::is_cpu_only_unified(op) {
+                return PlacementDecision::CpuOnly(format!(
+                    "{:?} has no ANE engine assignment (default_engine=None)",
+                    op_name(op)
+                ));
+            }
+            // Defensive: check CPU_ONLY_OPS for ops with engine assignments
+            // but no emission code (T-66 candidates).
             if cpu_only_ops::is_cpu_only(op.mil_op_name()) {
                 return PlacementDecision::CpuOnly(format!(
                     "{:?} is in the CPU_ONLY set ({})",
@@ -1668,5 +1686,74 @@ mod tests {
             "Expected CpuOnly with dtype constraint reason, got {:?}",
             decision
         );
+    }
+
+    // ─── T-68: extract_whdc NCHW dimension extraction tests ────────
+
+    #[test]
+    fn test_extract_whdc_rank1() {
+        let (w, h, d, c) = extract_whdc(&[128]);
+        assert_eq!((w, h, d, c), (128, 1, 1, 1));
+    }
+
+    #[test]
+    fn test_extract_whdc_rank2() {
+        let (w, h, d, c) = extract_whdc(&[64, 128]);
+        assert_eq!((w, h, d, c), (128, 64, 1, 1));
+    }
+
+    #[test]
+    fn test_extract_whdc_rank3_chw() {
+        // Rank 3: CHW [channels, height, width]
+        let (w, h, d, c) = extract_whdc(&[64, 128, 256]);
+        assert_eq!((w, h, d, c), (256, 128, 1, 64));
+    }
+
+    #[test]
+    fn test_extract_whdc_rank4_nchw() {
+        // T-68: Rank 4: NCHW [batch, channels, height, width]
+        // For [1, 64, 128, 128]: w=128, h=128, d=1, c=64
+        let (w, h, d, c) = extract_whdc(&[1, 64, 128, 128]);
+        assert_eq!((w, h, d, c), (128, 128, 1, 64));
+    }
+
+    #[test]
+    fn test_extract_whdc_rank4_nchw_large_batch() {
+        // NCHW with batch > 1: batch is NOT channels
+        let (w, h, d, c) = extract_whdc(&[4, 128, 32, 32]);
+        assert_eq!((w, h, d, c), (32, 32, 1, 128));
+    }
+
+    #[test]
+    fn test_extract_whdc_rank5_ncdhw() {
+        // Rank 5: NCDHW [batch, channels, depth, height, width]
+        let (w, h, d, c) = extract_whdc(&[1, 64, 8, 128, 128]);
+        assert_eq!((w, h, d, c), (128, 128, 8, 64));
+    }
+
+    #[test]
+    fn test_extract_whdc_empty() {
+        let (w, h, d, c) = extract_whdc(&[]);
+        assert_eq!((w, h, d, c), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn test_extract_whdc_rank6_uses_last4() {
+        // Rank > 5: last 4 dims as (w, h, d, c)
+        let (w, h, d, c) = extract_whdc(&[1, 2, 3, 4, 5, 6]);
+        assert_eq!((w, h, d, c), (6, 5, 4, 3));
+    }
+
+    /// T-68: Regression test — the old implementation would swap depth and
+    /// channels for rank-4 NCHW tensors, causing max_tensor_channels to be
+    /// checked against the batch dimension (always 1, trivially passing).
+    #[test]
+    fn test_extract_whdc_regression_nchw_channels_vs_batch() {
+        // Typical LLM linear weight: [1, 896, 1, 896] (NCHW)
+        // OLD (wrong): c=1 (batch), d=896 (channels) — channels bypass check
+        // NEW (correct): c=896, d=1 — channels properly checked
+        let (w, h, d, c) = extract_whdc(&[1, 896, 1, 896]);
+        assert_eq!(c, 896, "channels should be 896, not 1");
+        assert_eq!(d, 1, "depth should be 1 for NCHW rank-4");
     }
 }
