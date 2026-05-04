@@ -1,5 +1,27 @@
 # CHANGELOG.md — MILLer Compiler
 
+## TABULA RASA v3 Audit — 2026-05-04
+
+Full-spectrum diagnostic sweep performed. See `AUDIT.md` for complete findings.
+
+**Key metrics:**
+- 1252 tests passing, 0 failures
+- 2 minor clippy warnings (clone_on_copy, last_on_doubled_ended)
+- 0 clippy errors
+- IR Cleanliness Score: 87% (down from 93% due to new findings)
+
+**New issues filed:** I-41 through I-60 (20 new findings)
+**New tasks created:** T-67 through T-85 (19 new tasks)
+
+**Critical findings:**
+- I-41/I-42: CPU_ONLY_OPS name mismatches (T-49 regression) — 5 entries use wrong names; MILNeg passes CPU-only gate despite having no ANEC converter
+- I-43: `extract_whdc()` swaps depth↔channels for NCHW tensors, bypassing `max_tensor_channels` limit
+- I-46: `Float64.element_size()` returns 4 instead of 8, producing corrupted weight data
+- I-44: Pooling kernel_size constraint discarded (same pattern as fixed I-36)
+- I-45: K/V projection alias maps silently dropped for GQA models
+
+---
+
 ## 2026-05-04
 
 ### T-44 · Refactor `too_many_arguments` in legality_rewrite ✅

@@ -1,173 +1,181 @@
 # MILLer Compiler — Issue Tracker
 
-*Last updated: 2026-05-04 (v3 audit post-fix update — I-26, I-28, I-36, I-37 fixes applied)*
+*Last updated: 2026-05-04 (v3 audit — I-41 through I-60 added from deep source re-audit)*
 *Reference implementation: https://huggingface.co/pkhairkh/qwen3-coreml-palettized*
-*Audit source: `AUDIT.md` (generated 2026-05-04)*
+*Audit source: `AUDIT.md` (v3, generated 2026-05-04)*
 
 ---
 
 ## P0 — CRITICAL (Silent Emission Failures / Functional No-Ops)
 
-### I-21 · Four Ops With PE Engine but No ANEC Converter — ✅ Fixed
+### I-41 · MILNeg Passes CPU-Only Gate — Name Mismatch in CPU_ONLY_OPS
 
-**Status:** ✅ Fixed
-**Files:** `crates/ir/src/mir.rs`, `crates/passes/src/cpu_only_ops.rs`
-**AUDIT ref:** §II-A, §IV (B-1 through B-4)
-**Severity:** ~~CRITICAL~~ Fixed
+**Status:** ⬜ Open
+**Files:** `crates/ir/src/mir.rs:1115`, `crates/passes/src/cpu_only_ops.rs:222`, `crates/passes/src/placement_validate.rs:540`
+**AUDIT ref:** §II-A, §IV (B-13)
+**Severity:** CRITICAL
 **Effort:** S (0.5 day)
-**Task:** T-47 ✅
+**Task:** T-67
 
-`MILSliceUpdate`, `MILReverse`, `MILSlidingWindows`, and `MILArgsort` were assigned `Some(AneEngine::PE)` in `default_engine()` but mapped to `MirOpCompat::Unsupported` at emission time.
+`MILNeg` is assigned `Some(AneEngine::PE)` in `default_engine()` at mir.rs:1115, but per the per-op support matrix (Section 2.2, row 197), `mps.negative` has **no ANEC converter**. The `CPU_ONLY_OPS` set contains `"negative"` (cpu_only_ops.rs:222) but `MirOp::MILNeg`'s `mil_op_name()` returns `"neg"` (mir.rs:1345). The placement validator checks `is_cpu_only(op.mil_op_name())` which calls `is_cpu_only("neg")` → **false**. Combined with `default_engine().is_none()` returning `false` (it returns `Some(PE)`), MILNeg passes all gates and is classified as `AneAllowed` on the ANE. This will silently fail at ANE runtime since there is no `ConvertNegative` or similar converter in the ANEC dialect.
 
-**Fix applied (T-47):** Moved all four from `Some(AneEngine::PE)` to `None` in `default_engine()`. Added `"slice_update"`, `"reverse"`, `"sliding_windows"`, `"argsort"` to `CPU_ONLY_OPS`.
+**Fix:** (1) Move `MILNeg` from the PE branch to the None branch in `default_engine()`. (2) Add `"neg"` to `CPU_ONLY_OPS`. (3) Remove the dead `"negative"` entry.
 
 ---
 
-### I-22 · Palettize Weights Pass Is a Functional No-Op — ✅ Fixed
+### I-42 · CPU_ONLY_OPS Name Mismatches for 5 T-49 Entries — Dead Code That Never Matches
 
-**Status:** ✅ Fixed
-**Files:** `crates/passes/src/palettize_weights.rs`
-**AUDIT ref:** §II-E, §IV (B-5)
-**Severity:** ~~CRITICAL~~ Fixed
-**Effort:** M (1 day)
-**Task:** T-48 ✅
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/cpu_only_ops.rs:222-226`
+**AUDIT ref:** §II-A
+**Severity:** CRITICAL (for `"negative"`) / HIGH (for others)
+**Effort:** S (0.5 day)
+**Task:** T-67
 
-The `palettize_weights` pass computed `bits` values but discarded them with `_ = (weight, bits)`. No palette annotation was emitted.
+The T-49 additions used MIL builder function names rather than `mil_op_name()` return values. Five entries have no corresponding `mil_op_name()` match:
 
-**Fix applied (T-48):** Added `palette_bits: Option<usize>` field to `SirOp::LinearProjection` and `SirOp::Const`. The pass now writes computed bits into the field instead of discarding. Added bit-width validation {1,2,3,4,6,8} with clamping for invalid widths (5→4, 7→6).
+| CPU_ONLY_OPS entry | Actual `mil_op_name()` | Match? | Impact |
+|---|---|---|---|
+| `"negative"` | `"neg"` | ❌ | MILNeg silently passes CPU-only gate (see I-41) |
+| `"reverse_square_root"` | `"rsqrt"` | ❌ | Dead code — rsqrt IS ANE-legal (`anec.r_sqrt`), entry incorrectly marks it as CPU-only |
+| `"reciprocal"` | No MirOp variant | ❌ | Dead code — no op produces this name |
+| `"rint"` | `"round"` (MILRound) | ❌ | Dead code — `"rint"` never matches any `mil_op_name()` |
+| `"signbit"` | No MirOp variant | ❌ | Dead code — no op produces this name |
+
+**Fix:** (1) Add `"neg"` to `CPU_ONLY_OPS`, remove `"negative"`. (2) Remove `"reverse_square_root"` (rsqrt is ANE-legal). (3) Remove `"reciprocal"` and `"signbit"` (dead code). (4) Replace `"rint"` with `"round"`. (5) Add a test that verifies every CPU_ONLY_OPS entry matches at least one `mil_op_name()`.
 
 ---
 
 ## P1 — HIGH (Missing Enforcement / Model Leakage / Untested Paths)
 
-### I-23 · ~30 Missing Ops in CPU_ONLY_OPS Set — ✅ Fixed
+### I-43 · `extract_whdc()` Swaps Depth and Channels for Rank-4 NCHW Tensors
 
-**Status:** ✅ Fixed
-**Files:** `crates/passes/src/cpu_only_ops.rs`
-**AUDIT ref:** §II-B
-**Severity:** ~~HIGH~~ Fixed
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/placement_validate.rs:155-169`
+**AUDIT ref:** §II-D, §IV (B-14)
+**Severity:** HIGH
 **Effort:** S (0.5 day)
-**Task:** T-49 ✅
+**Task:** T-68
 
-The `CPU_ONLY_OPS` HashSet was missing entries from the canonical ANE CPU-only list.
+`extract_whdc()` treats rank-4 shapes as `[channels, depth, height, width]` (CDHW) but Core ML / MIL uses `[batch, channels, height, width]` (NCHW). For a typical `[1, 64, 128, 128]` tensor:
+- Current: w=128, h=128, d=64 (actually channels), c=1 (actually batch)
+- Correct: w=128, h=128, d=1, c=64
 
-**Fix applied (T-49):** Added ~27 missing ops to `CPU_ONLY_OPS` (including `slice_update`, `sliding_windows`, `reverse`, `argsort` from T-47 plus `return`, `is_finite`, `is_infinite`, `is_nan`, `negative`, `reciprocal`, `reverse_square_root`, `rint`, `signbit`, `strided_slice_update`, `dynamic_shape_cast`, `reinterpret_cast`, `col_to_im`, `im_to_col`, `dequantize_lut`, `extract`, `from_elements`, `func`, `get_coordinates`, `local_convolution`, `lp_norm`, `prune`, `pruning_metric`, `pruning_structure`, `variable_from_tensor`, `assign_variable`, `placeholder`, `device_hint`, `nf`, `unrealized_fold`, `create_texture_tensor`). Test assertion updated from >=93 to >=120.
+The "depth" and "channels" values are swapped for ranks 3 and 4. This means:
+1. `max_tensor_channels` limit is checked against the **batch** dimension (usually 1), silently bypassing channel limits for tensors with large channel counts
+2. `max_tensor_depth` limit is checked against the **channel** dimension, potentially causing false rejections for tensors with large channels
 
----
-
-### ~~I-24 · Broadcast FP16-Only Should Include A13~~ — **RETRACTED**
-
-**Status:** ~~⬜ Open~~ **RETRACTED**
-**Files:** ~~`crates/ir/src/ane_target.rs:43-45`, `crates/passes/src/dtype_constraints.rs:259`~~
-**AUDIT ref:** ~~§II-C, §IV (B-6)~~
-**Severity:** ~~HIGH~~ **RETRACTED**
-**Effort:** —
-**Task:** ~~T-50~~
-
-**RETRACTED during audit verification.** The per-family support matrix (`per-op-per-family-support-matrix.md` line 432) clearly shows A13 broadcast = ✅ (no FP16 restriction). The Apple ANE error message specifically says "Only fp16 is supported for A11/A12 Broadcasts" — not A13. The constraint-doc A13 section text (`per-op-per-family-support-matrix.md` line 464) erroneously claims "Same broadcast and ReduceMin constraints as A11/A12" which is incorrect for broadcast (correct for ReduceMin). The current `broadcast_fp16_only()` implementation is **correct** to exclude A13. The code comment at `ane_target.rs:119-122` explicitly documents this: "A13 lifts the FP16-only broadcast restriction (unlike A12)."
+**Fix:** For rank-4 NCHW: `(shape[3], shape[2], 1, shape[1])`. For rank-3 CHW: `(shape[2], shape[1], 1, shape[0])`. Update comment to document NCHW interpretation. Add unit tests verifying dimension extraction for NCHW shapes.
 
 ---
 
-### I-25 · ReduceMin Non-FP Dtype Not Enforced — ✅ Fixed
+### I-44 · Pooling Kernel Size Constraint Discarded
 
-**Status:** ✅ Fixed
-**Files:** `crates/passes/src/placement_validate.rs`
-**AUDIT ref:** §II-C, §IV (B-7)
-**Severity:** ~~HIGH~~ Fixed
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/op_constraints.rs:160`
+**AUDIT ref:** §II-B, §IV (B-15)
+**Severity:** HIGH
 **Effort:** S (0.5 day)
-**Task:** T-51 ✅
+**Task:** T-69
 
-The placement validator had no specific match arm for `MILReduceMin` to enforce the "ReduceMin non-FP: only A14+" rule.
+`validate_pooling_constraints()` takes a `kernel_size` parameter but discards it with `let _ = kernel_size;` (line 160). The ANE constraint docs specify per-family pooling kernel limits (`pe_max_pooling_kh`, `pe_max_pooling_kw`, depth-specific limits). Pooling kernel sizes are never validated against hardware limits. This is the same pattern as I-36 (conv constraint discarding kernel_d and stride), which was fixed in T-62.
 
-**Fix applied (T-51):** Added `MILReduceMin` match arm in `validate_placement_with_context()` that checks `target_family.supports_reducemin_all_dtypes()` when dtype is non-FP.
+**Fix:** Add kernel_size validation against revision-specific HW limits. At minimum, validate that kernel_size is within a reasonable range per the constraint docs.
 
 ---
 
-### I-26 · E4M3 Not Supported on A17 Pro (V11 Maps to A16) — ✅ Fixed
+### I-45 · K/V Projection Alias Maps Silently Dropped
 
-**Status:** ✅ Fixed
-**Files:** `crates/ir/src/ane_target.rs`, `crates/trace/src/versioned.rs`, `crates/cli/src/main.rs`, `crates/ir/src/strategy.rs`, `crates/passes/src/dtype_constraints.rs`
-**AUDIT ref:** §II-C, §IV (B-8)
-**Severity:** ~~HIGH~~ Fixed
+**Status:** ⬜ Open
+**Files:** `crates/bridge/src/mir_to_compat.rs:470-471`
+**AUDIT ref:** §III (CQ-16), §IV (B-17)
+**Severity:** HIGH
+**Effort:** S (0.5 day)
+**Task:** T-70
+
+`build_input_alias_map` resolves `k_proj_pattern()` and `v_proj_pattern()` but immediately discards them with `let _ = (k_proj, v_proj)`. Only the Q projection pattern is used (line 469) to build QKV-split aliases. For models with separate K/V projections (GQA architectures like Qwen3), the alias map only contains Q projection → QKV split mappings, while K/V tensor references are never properly wired through the alias map. This produces silently incorrect SSA references for K/V heads in the compat layer.
+
+**Current behavior:** When a weight contains `q_proj`, ALL of `sir_qkv_split_q`, `sir_qkv_split_k`, and `sir_qkv_split_v` aliases point to the same Q projection linear node. This works for fused QKV but is incorrect for GQA models with separate K/V projections.
+
+**Fix:** (1) Use `k_proj` and `v_proj` patterns to build separate K/V alias entries. (2) Add tests verifying alias map contents for GQA models. (3) Consider whether fused QKV needs special handling.
+
+---
+
+### I-46 · `CoreMlDataType::Float64` Element Size Returns 4 Instead of 8
+
+**Status:** ⬜ Open
+**Files:** `crates/coreml-proto/src/lib.rs:124`
+**AUDIT ref:** §IV (B-16)
+**Severity:** HIGH
+**Effort:** S (0.5 day)
+**Task:** T-71
+
+```rust
+CoreMlDataType::Float32 | CoreMlDataType::Float64 => 4,
+```
+
+`Float64` (double precision) is 8 bytes per element, not 4. This function is used to compute weight data sizes in `weights.rs` and `mir_to_compat.rs`. Any `Float64` constant would produce a weight entry with half the expected bytes, causing buffer over-reads when Core ML tries to load the weight from `weight.bin`. The existing unit test (`test_coreml_data_type_element_size`) does not cover Float64.
+
+**Fix:** Split the match arm: `CoreMlDataType::Float32 => 4, CoreMlDataType::Float64 => 8`. Add `assert_eq!(CoreMlDataType::Float64.element_size(), 8)` test.
+
+---
+
+### I-47 · Palettize Weights Pass Uses Qwen3-Specific Name Heuristics
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/palettize_weights.rs:129-136`
+**AUDIT ref:** §II-E, §IV
+**Severity:** HIGH
 **Effort:** M (1 day)
-**Task:** T-52 ✅
+**Task:** T-72
 
-The canonical rule says "E4M3: only A17+ (LSE_6)". `supports_e4m3()` only matched `A18`. V11 (A17 Pro) mapped to `AneFamily::A16` which doesn't support E4M3. A17 Pro users cannot use E4M3 despite hardware support because the family mapping is too coarse.
+The `run_palettize_weights_pass` uses node name patterns to classify weights:
+```rust
+let is_attention = node.name.contains("q_proj")
+    || node.name.contains("k_proj")
+    || node.name.contains("v_proj")
+    || node.name.contains("o_proj")
+    || node.name.contains("out_proj")
+    || node.name.contains("qkv");
+```
 
-**Fix applied (T-52):** Added `AneFamily::A17` variant with E4M3 conditional support (LSE_6). Remapped V11 (A17 Pro) from `AneFamily::A16` to `AneFamily::A17`. Updated all family-dependent logic: `supports_sdpa()`, `supports_layernorm()`, `supports_reducemin_all_dtypes()`, `supports_e4m3()`, `family_level()`, `family_to_default_revision()`, CLI parser, strategy KV cache benefit, dtype constraints tests. Added 10 new A17-specific unit tests.
+These are Qwen3/LLaMA-specific naming conventions. For other architectures (GPT-2, T5, BART), non-matching attention weights will be classified as MLP and receive `mlp_bits` instead of `attention_bits`, producing sub-optimal palettization decisions. This is the same model-leakage pattern as I-30/I-31 but in the palettization pass.
+
+**Fix:** Use `ModelArchitecture` for weight classification instead of hardcoded name patterns. The `ModelArchitecture` enum already has `q_proj_pattern()`, `k_proj_pattern()`, etc. methods.
 
 ---
 
-### I-27 · Tensor Dimension HW Limits Not Enforced in Placement — ✅ Fixed
+### I-48 · `LM_HEAD_SHARD_SIZE = 19000` Hardcoded in SafetensorsResolver
 
-**Status:** ✅ Fixed
-**Files:** `crates/ir/src/ane_hw_limits.rs:148-193`, `crates/passes/src/placement_validate.rs`
-**AUDIT ref:** §II-D, §IV (B-10)
-**Severity:** ~~HIGH~~ Fixed
+**Status:** ⬜ Open
+**Files:** `crates/bridge/src/safetensors_resolver.rs:293`
+**AUDIT ref:** §III (CQ-17), §IV (B-19)
+**Severity:** HIGH
 **Effort:** S (0.5 day)
-**Task:** T-53 ✅
+**Task:** T-73
 
-`AneHwLimits::validate_tensor_dims()` existed but was never called from `validate_placement_with_context()`.
+The vocabulary-projection sharding size is hardcoded to 19000, which is specific to Qwen3-0.6B (vocab_size=151936, 151936/8≈18992). For other models with different vocab sizes, the shard size is incorrect and may cause ANE execution planner errors (-5) or sub-optimal sharding. Same pattern as I-30/I-31.
 
-**Fix applied (T-53):** Wired `validate_tensor_dims()` into placement pipeline. Added `anef_revision` field to `PlacementContext`, `extract_whdc()` helper, and HW limit validation before op-specific constraints.
+**Fix:** Derive shard size from model vocab_size or ANE HW limits. At minimum, make it a parameter with a Qwen3-0.6B default.
 
 ---
 
-### I-28 · `panic!()` in Emission and Lowering Code — ✅ Fixed (partially)
+### I-49 · `resolve_shard` Assumes FP16 Element Size (Hardcoded 2 bytes)
 
-**Status:** ✅ Fixed (legality_rewrite.rs); remaining in mil_lower.rs are intentional safety-net guards
-**Files:** `crates/passes/src/legality_rewrite.rs:3903,4271`, `crates/passes/src/mil_lower.rs:943,1412,3320`
-**AUDIT ref:** §III (CQ-1, CQ-2, CQ-4)
-**Severity:** ~~HIGH~~ MEDIUM → Fixed (partial)
+**Status:** ⬜ Open
+**Files:** `crates/bridge/src/safetensors_resolver.rs:319`
+**AUDIT ref:** §III (CQ-18), §IV (B-18)
+**Severity:** HIGH
 **Effort:** S (0.5 day)
-**Task:** T-54 ✅
+**Task:** T-74
 
-~~7 `panic!()` calls in production code paths~~ **Corrected during source code verification:** The 4 `panic!()` calls in `mir_to_proto.rs` are in TEST code, not production. The 3 `panic!()` calls in `mil_lower.rs` and 2 in `legality_rewrite.rs` are intentional guards for ops that should never reach those compilation stages.
+```rust
+let bytes_per_row = hidden_size * 2; // FP16 = 2 bytes per element
+```
 
-**Fix applied (T-54):** Converted the 2 `panic!()` calls in `legality_rewrite.rs` (`sir_to_air_passthrough()`) to `anyhow::bail!()` with proper `Result` return type. Changed function signature from `(AirOp, &'static str)` to `Result<(AirOp, &'static str)>` with `?` propagation at call site. The 3 remaining `panic!()` calls in `mil_lower.rs` are intentional safety-net guards (double-checking that Where/Select never survive to MIR) and are left as-is with clear documentation.
+The shard slicing assumes all weights are FP16 (2 bytes per element). F32 weights that pass through without conversion would be 4 bytes per element; INT8/UInt8 would be 1 byte. The byte offset calculation `start_row * bytes_per_row` would produce wrong offsets for non-FP16 weights, silently slicing the wrong portion of the weight data.
 
----
-
-### ~~I-29 · `.unwrap()` in Weight File I/O~~ — **RETRACTED**
-
-**Status:** ~~⬜ Open~~ **RETRACTED**
-**Files:** ~~`crates/coreml-emit/src/weights.rs:530-652`~~
-**AUDIT ref:** ~~§III (CQ-3)~~
-**Severity:** ~~HIGH~~ **RETRACTED**
-**Effort:** —
-**Task:** ~~T-55~~
-
-**RETRACTED during source code verification.** The ~20 `.unwrap()` calls in `weights.rs:530-652` are ALL in test code. Production code in the same file already uses `Result` and `bail!()` for error propagation. There is no runtime crash risk from the `.unwrap()` calls.
-
----
-
-### I-30 · ModelArchConfig Default Hardcodes Qwen3-0.6B — ✅ Fixed
-
-**Status:** ✅ Fixed
-**Files:** `crates/ir/src/common.rs:248-258`
-**AUDIT ref:** §III (CQ-7)
-**Severity:** ~~HIGH~~ Fixed
-**Effort:** S (0.5 day)
-**Task:** T-56 ✅
-
-`ModelArchConfig::default()` hardcoded Qwen3-0.6B dimensions, causing silent Qwen3 assumptions for any caller.
-
-**Fix applied (T-56):** Added `ModelArchConfig::qwen3_0_6b()` factory method. Default impl now delegates to it with deprecation notice, forcing callers toward explicit config.
-
----
-
-### I-31 · Qwen3 Architecture Fallback in Bridge — ✅ Fixed
-
-**Status:** ✅ Fixed
-**Files:** `crates/bridge/src/mir_to_compat.rs:455`, `crates/bridge/src/shape_inference.rs:72,566`
-**AUDIT ref:** §III (CQ-8, CQ-9)
-**Severity:** ~~HIGH~~ Fixed
-**Effort:** S (0.5 day)
-**Task:** T-57 ✅
-
-Two Qwen3 default leakage points where architecture defaulted silently.
-
-**Fix applied (T-57):** Added `log::warn!()` in `mir_to_compat.rs` when architecture defaults to Qwen3. Added deprecation warnings to `compat_input_shape_default` and `compat_output_shape_default` in `shape_inference.rs`.
+**Fix:** Use actual element size from the tensor's dtype instead of hardcoded 2.
 
 ---
 
@@ -225,36 +233,6 @@ Python bridge (coremltools subprocess) and Rust proto-direct path exist independ
 
 ---
 
-### I-36 · Conv Constraint Discards kernel_d and stride — ✅ Fixed
-
-**Status:** ✅ Fixed
-**Files:** `crates/passes/src/op_constraints.rs:37`
-**AUDIT ref:** §II-D
-**Severity:** ~~MEDIUM~~ Fixed
-**Effort:** S (0.5 day)
-**Task:** T-62 ✅
-
-`validate_conv_constraints()` takes `kernel_d` and `stride` params but discards them with `let _ = (kernel_d, stride)`. Depth dimension and stride constraints per the ANE constraint docs are not validated.
-
-**Fix applied (T-62):** Added kernel_d validation: 3D conv with large kernel (kw > 7 or kh > 7) is rejected per constraint docs §4.2 ("kernel with depth > 1 is not supported for large kernel"). Added stride validation: stride[0] (batch) and stride[1] (channel) must be 1 per constraint docs §4.2 ("Conv stride must be 1 for batch / channel axis").
-
----
-
-### I-37 · Zero-Channels Bypasses Interleave Check — ✅ Fixed
-
-**Status:** ✅ Fixed
-**Files:** `crates/passes/src/placement_validate.rs:244`
-**AUDIT ref:** §II-D
-**Severity:** ~~MEDIUM~~ Fixed
-**Effort:** S (0.5 day)
-**Task:** T-63 ✅
-
-`channels.unwrap_or(0)` trivially passes interleave divisibility check because 0 is divisible by any factor. Channel-divisibility constraints are silently bypassed when channels are unknown.
-
-**Fix applied (T-63):** Replaced `channels.unwrap_or(0)` with `if let Some(channels) = ctx.channels { ... }` pattern. When channels are unknown, the interleave divisibility check is skipped (rather than silently passing with 0), and other validation continues. This prevents the false-positive pass while maintaining the test suite's behavior for layout and other checks.
-
----
-
 ### I-38 · Palette Bit-Width Validation Scattered
 
 **Status:** ⬜ Open
@@ -277,7 +255,7 @@ Python bridge (coremltools subprocess) and Rust proto-direct path exist independ
 **Effort:** M (1 day)
 **Task:** T-65
 
-CPU-only op classification is maintained in both `CPU_ONLY_OPS` HashSet and `default_engine() → None` branch. These can diverge (as they did for MILSliceUpdate, MILReverse, etc.). Derive the CPU-only set from `default_engine() == None` for single source of truth.
+CPU-only op classification is maintained in both `CPU_ONLY_OPS` HashSet and `default_engine() → None` branch. These can diverge (as they did for MILSliceUpdate, MILReverse, etc., and now for MILNeg per I-41). Derive the CPU-only set from `default_engine() == None` for single source of truth.
 
 ---
 
@@ -294,7 +272,186 @@ Ops with real ANEC converters that still map to `MirOpCompat::Unsupported`: Batc
 
 ---
 
-## Resolved Issues (v1 Audit, All Fixed)
+### I-50 · `coreml_model_destroy` FFI Unsoundness
+
+**Status:** ⬜ Open
+**Files:** `crates/coreml-ffi/src/capi.rs:186-192`
+**AUDIT ref:** §III (CQ-22)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-75
+
+`coreml_model_destroy` calls `Box::from_raw(inner)` on a handle that was never allocated with `Box::new(ModelHandleInner)`. If a future implementation of `coreml_model_load` allocates the handle differently (e.g., as a raw Core ML `MLModel*` from the C API), calling `destroy` would cause undefined behavior (use-after-free, double-free, or memory corruption). This is a latent unsoundness — current code paths never trigger it because `load` always returns an error, but the FFI contract is broken.
+
+**Fix:** Either (1) allocate handles with `Box::new(ModelHandleInner)` in `coreml_model_load`, or (2) use a different deallocation strategy (e.g., `libc::free` if using C allocation, or a tagged union for handle types).
+
+---
+
+### I-51 · Zero Tests for coreml-ffi::api Module
+
+**Status:** ⬜ Open
+**Files:** `crates/coreml-ffi/src/api.rs`
+**AUDIT ref:** §V
+**Severity:** MEDIUM
+**Effort:** M (1 day)
+**Task:** T-76
+
+The `api.rs` module has 5 `pub fn` methods (`is_available`, `version`, `compile_model`, `inspect_model_structure`, `inspect_compute_plan`) with zero test coverage. The high-level API's error handling, result construction, and platform detection logic are untested.
+
+---
+
+### I-52 · PythonBridge `timeout_secs` Field Never Enforced
+
+**Status:** ⬜ Open
+**Files:** `crates/bridge/src/subprocess.rs:28,65-69`
+**AUDIT ref:** §III (CQ-19)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-77
+
+`PythonBridge` struct has a `timeout_secs: u64` field (defaults to 300) that is never used. The `execute_raw_payload` method calls `Command::new().output()` without any timeout, meaning a hung Python subprocess will block the compiler indefinitely. This is a production code path used by the CLI and lab commands.
+
+**Fix:** Use `Command::new().stdin().stdout().stderr().spawn()` with a timeout loop, or use a crate like `wait-timeout`.
+
+---
+
+### I-53 · `compare_with_python_bridge` Is Dead Code Stub
+
+**Status:** ⬜ Open
+**Files:** `crates/coreml-emit/src/emitter.rs:129-147`
+**AUDIT ref:** §III (CQ-20)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-78
+
+The `compare_with_python_bridge()` method takes `_python_output_path` (unused) and always returns `None` for all fields. This method is dead code — never called by any production or test code. It should either be implemented (tying into I-35's cross-validation goal) or removed to avoid misleading callers.
+
+---
+
+### I-54 · Empty SafetensorsResolver Returned Without Warning
+
+**Status:** ⬜ Open
+**Files:** `crates/bridge/src/safetensors_resolver.rs:135-169`
+**AUDIT ref:** §III (CQ-24)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-79
+
+When all three resolution strategies (explicit paths, cache dir, HF model ID) fail, `from_traced_graph` returns `(Self::empty(), "no weights found")` without logging any warning. A silently-empty resolver means all weights become zero-filled placeholders, producing a model that compiles but produces garbage output at inference time — with no indication that weight resolution failed.
+
+**Fix:** Add `log::warn!("safetensors resolver is empty — all weights will be zero-filled: {}", reason)`.
+
+---
+
+### I-55 · Fill Op `input_names()` Returns Empty Vec
+
+**Status:** ⬜ Open
+**Files:** `crates/coreml-proto/src/lib.rs:1078`
+**AUDIT ref:** §III (CQ-23)
+**Severity:** MEDIUM
+**Effort:** S (0.5 day)
+**Task:** T-80
+
+```rust
+MirOpCompat::Fill { .. } => vec![],
+```
+
+`Fill` takes a `shape: Vec<i32>` and `value: f32` — but `input_names()` returns an empty vec for it. The `Fill` op in Core ML's MIL format expects `shape` as an input tensor (not an attribute). When `input_names()` is used for SSA validation or dead-reference detection, the `Fill` op's shape input is not considered, potentially leading to false "unreferenced weight" warnings or missing weight materialization.
+
+---
+
+## P3 — LOW (Minor Quality / Style / Documentation)
+
+### I-56 · `compat_input_dtype` Uses String Matching for `input_ids` Detection
+
+**Status:** ⬜ Open
+**Files:** `crates/bridge/src/shape_inference.rs:33-38`
+**AUDIT ref:** §III (CQ-25)
+**Severity:** LOW
+**Effort:** S (0.5 day)
+**Task:** T-81
+
+```rust
+if name.contains("input_ids") { MilDtypeCompat::Int32 } else { ... }
+```
+
+Uses string contains to detect input_ids tensors. If a tensor is named e.g. `my_input_ids_special`, it would be incorrectly typed as Int32 even if it's actually FP16. The correct approach would be to use the MIR node's declared dtype directly.
+
+---
+
+### I-57 · Dead-Code `mir_node_to_compat` With `#[allow(dead_code)]`
+
+**Status:** ⬜ Open
+**Files:** `crates/bridge/src/mir_to_compat.rs:565`
+**AUDIT ref:** §III (CQ-26)
+**Severity:** LOW
+**Effort:** S (0.5 day)
+**Task:** T-82
+
+The function `mir_node_to_compat` is marked as dead code, but the shape-aware version `mir_node_to_compat_with_shapes` IS used. This suggests incomplete migration — the original function should either be removed or the `#[allow(dead_code)]` should document why it's kept.
+
+---
+
+### I-58 · BF16→FP16 Conversion Missing Edge-Case Tests
+
+**Status:** ⬜ Open
+**Files:** `crates/bridge/src/safetensors_resolver.rs:370-386`
+**AUDIT ref:** §III (CQ-27)
+**Severity:** LOW
+**Effort:** S (0.5 day)
+**Task:** T-83
+
+The BF16→FP16 conversion function uses `half::f16::from_f32()` which handles subnormals and NaN payloads correctly, but there are no tests verifying NaN preservation, Infinity preservation, subnormal flushing behavior, or zero-sign preservation. The only test (`test_f32_to_f16_roundtrip`) tests 6 simple positive values.
+
+---
+
+### I-59 · `eprintln!` in Library Function
+
+**Status:** ⬜ Open
+**Files:** `crates/ir/src/ane_hw_limits.rs:77-80`
+**AUDIT ref:** §III (CQ-5)
+**Severity:** LOW
+**Effort:** S (0.5 day)
+**Task:** T-84
+
+Use `log::warn!()` instead of `eprintln!()` in library code.
+
+---
+
+### I-60 · Deprecated `kv_cache_rewrite` Module Still Compiled
+
+**Status:** ⬜ Open
+**Files:** `crates/passes/src/kv_cache_rewrite.rs`
+**AUDIT ref:** §III (CQ-6)
+**Severity:** LOW
+**Effort:** S (0.5 day)
+**Task:** T-85
+
+Gate behind feature flag or remove entirely.
+
+---
+
+## Resolved Issues (v1 + v2 Audits, All Fixed)
+
+### v2 Audit (I-21 through I-40)
+
+| ID | Description | Resolution |
+|---|---|---|
+| I-21 | Four ops with PE engine but no ANEC converter | ✅ T-47: Moved to None; added to CPU_ONLY_OPS |
+| I-22 | Palettize weights pass is a functional no-op | ✅ T-48: Added palette_bits field with validation |
+| I-23 | ~30 missing ops in CPU_ONLY_OPS set | ✅ T-49: Added ~27 missing ops (with name mismatches, see I-41/I-42) |
+| I-24 | Broadcast FP16-only should include A13 | **RETRACTED** — Code is correct; constraint-doc text has error |
+| I-25 | ReduceMin non-FP dtype not enforced | ✅ T-51: Added guard in placement validator |
+| I-26 | E4M3 not supported on A17 Pro (V11→A16) | ✅ T-52: Added A17 family variant; V11→A17 remapped |
+| I-27 | Tensor dimension HW limits not enforced | ✅ T-53: Wired into placement pipeline |
+| I-28 | `panic!()` in emission and lowering code | ✅ T-54: Converted 2 to bail!(); 3 are intentional guards |
+| I-29 | `.unwrap()` in weight file I/O | **RETRACTED** — All in test code; production uses Result/bail!() |
+| I-30 | ModelArchConfig default hardcodes Qwen3-0.6B | ✅ T-56: Added qwen3_0_6b() factory with deprecation |
+| I-31 | Qwen3 architecture fallback in bridge | ✅ T-57: Added log::warn!() and deprecation warnings |
+| I-36 | Conv constraint discards kernel_d and stride | ✅ T-62: Added kernel_d and stride validation |
+| I-37 | Zero-channels bypasses interleave check | ✅ T-63: Changed to if let Some(channels) pattern |
+
+### v1 Audit (I-01 through I-20)
 
 | ID | Description | Resolution |
 |---|---|---|
@@ -325,8 +482,9 @@ Ops with real ANEC converters that still map to `MirOpCompat::Unsupported`: Batc
 
 | Priority | Total | Open | Fixed | Retracted |
 |----------|-------|------|-------|-----------|
-| P0 | 2 | 0 | 2 | 0 |
-| P1 | 10 | 2 | 6 | 2 |
-| P2 | 8 | 6 | 2 | 0 |
-| Resolved (v1) | 20 | 0 | 20 | 0 |
-| **Total** | **40** | **8** | **30** | **2** |
+| P0 | 4 | 2 | 2 | 0 |
+| P1 | 17 | 9 | 6 | 2 |
+| P2 | 15 | 11 | 2 | 0 |
+| P3 | 5 | 5 | 0 | 0 |
+| Resolved (v1+v2) | 33 | 0 | 31 | 2 |
+| **Total** | **74** | **27** | **41** | **4** |
