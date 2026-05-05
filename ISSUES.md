@@ -38,7 +38,7 @@
 | `domain` | constraint-enforcement |
 | `severity` | critical |
 | `class` | LACUNA |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `silicon-gate`, `silent-miscompilation`, `mir`, `engine-assignment` |
 | `violation_ref` | V-001 |
 | `forensic_ref` | §2.3 (anec.layer_norm), §8.2 |
@@ -58,7 +58,7 @@
 | `domain` | pass-correctness |
 | `severity` | critical |
 | `class` | ABERRANT |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `sir-integrity`, `dead-code-risk`, `dangling-reference` |
 | `violation_ref` | V-002 |
 | `forensic_ref` | N/A |
@@ -78,7 +78,7 @@
 | `domain` | emission-correctness |
 | `severity` | critical |
 | `class` | ABERRANT |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `mlpackage-format`, `validation-bypass`, `python-bridge` |
 | `violation_ref` | V-003 |
 | `forensic_ref` | N/A |
@@ -98,7 +98,7 @@
 | `domain` | dtype-correctness |
 | `severity` | critical |
 | `class` | UNVERIFIED |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `weight-dtype`, `type-mismatch`, `safetensors` |
 | `violation_ref` | V-004, V-072, V-075 |
 | `forensic_ref` | §2.3 (anec.cast for dtype mapping) |
@@ -118,7 +118,7 @@
 | `domain` | validation |
 | `severity` | critical |
 | `class` | STUB-MIMIC |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `stub`, `dtype-validation`, `bf16-gap` |
 | `violation_ref` | V-005 |
 | `forensic_ref` | §6.6 (E4M3/E5M2 constraints) |
@@ -140,7 +140,7 @@
 | `domain` | constraint-enforcement |
 | `severity` | high |
 | `class` | LACUNA |
-| `status` | open |
+| `status` | in-progress |
 | `labels` | `silicon-gate`, `conv-transpose`, `unvalidated-constraints` |
 | `violation_ref` | V-006 |
 | `forensic_ref` | §6.3 (deconv constraints verified in binary), §8.3 (validation gap) |
@@ -160,7 +160,7 @@
 | `domain` | dtype-validation |
 | `severity` | high |
 | `class` | LACUNA |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `dtype-gate`, `placement`, `bypassed-validation` |
 | `violation_ref` | V-007 |
 | `forensic_ref` | N/A |
@@ -180,7 +180,7 @@
 | `domain` | dtype-validation |
 | `severity` | high |
 | `class` | LACUNA |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `silicon-gate`, `fp32`, `a11-a12` |
 | `violation_ref` | V-008 |
 | `forensic_ref` | §6.10 (architecture-gated constraints) |
@@ -200,7 +200,7 @@
 | `domain` | knowledge-store |
 | `severity` | high |
 | `class` | ABERRANT |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `knowledge-contradiction`, `gather`, `dual-source-of-truth` |
 | `violation_ref` | V-009 |
 | `forensic_ref` | §6.9 (gather constraints in binary) |
@@ -220,7 +220,7 @@
 | `domain` | knowledge-store |
 | `severity` | high |
 | `class` | ABERRANT |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `knowledge-contradiction`, `erf`, `seed-staleness` |
 | `violation_ref` | V-010 |
 | `forensic_ref` | §2.3 (anec.erf present), §9.2 (ActivationV7 includes GetErfLut) |
@@ -240,7 +240,7 @@
 | `domain` | knowledge-store |
 | `severity` | high |
 | `class` | LACUNA |
-| `status` | open |
+| `status` | in-progress |
 | `labels` | `knowledge-gap`, `cpu-only-ops`, `incomplete-seed` |
 | `violation_ref` | V-011 |
 | `forensic_ref` | N/A |
@@ -260,7 +260,7 @@
 | `domain` | knowledge-store |
 | `severity` | high |
 | `class` | ABERRANT |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `knowledge-contradiction`, `neg`, `gather`, `empirical-vs-theoretical` |
 | `violation_ref` | V-012 |
 | `forensic_ref` | §2.3 (anec dialect ops), §8.3 |
@@ -280,7 +280,7 @@
 | `domain` | emission-correctness |
 | `severity` | high |
 | `class` | LACUNA |
-| `status` | open |
+| `status` | in-progress |
 | `labels` | `silent-failure`, `weight-emission`, `zero-fill` |
 | `violation_ref` | V-014 |
 | `forensic_ref` | N/A |
@@ -300,7 +300,7 @@
 | `domain` | engine-assignment |
 | `severity` | high |
 | `class` | LACUNA |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `engine-assignment`, `test-coverage`, `api-hazard` |
 | `violation_ref` | V-015 |
 | `forensic_ref` | §2.3, §5.2 |
@@ -320,7 +320,7 @@
 | `domain` | ffi-api |
 | `severity` | high |
 | `class` | STUB-MIMIC |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `ffi-stub`, `false-success`, `capi` |
 | `violation_ref` | V-017 |
 | `forensic_ref` | N/A |
@@ -340,7 +340,7 @@
 | `domain` | hardware-limits |
 | `severity` | high |
 | `class` | UNVERIFIED |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `unverified-limits`, `a12`, `speculative-data` |
 | `violation_ref` | V-019 |
 | `forensic_ref` | §5.1 (H12 HAL variant exists), §5.2 (E1 MinimumFamily exists) |
@@ -360,7 +360,7 @@
 | `domain` | hardware-limits |
 | `severity` | high |
 | `class` | UNVERIFIED |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `speculative-limits`, `future-hardware`, `v26` |
 | `violation_ref` | V-020 |
 | `forensic_ref` | §5.2 (no E8+ family discriminant observed) |
@@ -380,7 +380,7 @@
 | `domain` | emission-correctness |
 | `severity` | high |
 | `class` | LACUNA |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `weight-emission`, `silent-failure`, `production-safety` |
 | `violation_ref` | V-021 |
 | `forensic_ref` | N/A |
@@ -400,7 +400,7 @@
 | `domain` | emission-correctness |
 | `severity` | high |
 | `class` | LACUNA |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `dtype-default`, `descriptor-gap`, `proto-emission` |
 | `violation_ref` | V-022 |
 | `forensic_ref` | N/A |
@@ -420,7 +420,7 @@
 | `domain` | model-config |
 | `severity` | high |
 | `class` | ABERRANT |
-| `status` | open |
+| `status` | in-progress |
 | `labels` | `qwen3-default`, `model-architecture`, `wrong-default` |
 | `violation_ref` | V-023 |
 | `forensic_ref` | N/A |
@@ -442,7 +442,7 @@
 | `domain` | constraint-enforcement |
 | `severity` | medium |
 | `class` | LACUNA |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `palettization`, `version-gate`, `option-bypass` |
 | `violation_ref` | V-025 |
 | `forensic_ref` | §6.7 (vector palettization constraints) |
@@ -460,7 +460,7 @@
 | `domain` | risk-assessment |
 | `severity` | medium |
 | `class` | STUB-MIMIC |
-| `status` | open |
+| `status` | in-progress |
 | `labels`| `stub`, `risk-metrics`, `false-certainty` |
 | `violation_ref` | V-026 |
 | `forensic_ref` | N/A |
@@ -478,7 +478,7 @@
 | `domain` | phantom-capability |
 | `severity` | medium |
 | `class` | PHANTOM |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `phantom`, `paged-attention`, `unimplemented-variant` |
 | `violation_ref` | V-027 |
 | `forensic_ref` | §2.1 (RingBufferReaderUnit/WriterUnit in binary — compiler-internal) |
@@ -496,7 +496,7 @@
 | `domain` | dtype-validation |
 | `severity` | medium |
 | `class` | PHANTOM |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `phantom-dtype`, `e5m2`, `ane-unsupported` |
 | `violation_ref` | V-028 |
 | `forensic_ref` | §6.6 ("E4M3 or E5M2 format not supported" in binary) |
@@ -514,7 +514,7 @@
 | `domain` | runtime-constraint |
 | `severity` | medium |
 | `class` | LACUNA |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `warn-only`, `iosurface`, `runtime-failure` |
 | `violation_ref` | V-030 |
 | `forensic_ref` | N/A |
@@ -532,7 +532,7 @@
 | `domain` | runtime-constraint |
 | `severity` | medium |
 | `class` | LACUNA |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `warn-only`, `surface-uniformity`, `runtime-failure` |
 | `violation_ref` | V-031 |
 | `forensic_ref` | N/A |
@@ -550,7 +550,7 @@
 | `domain` | constraint-enforcement |
 | `severity` | medium |
 | `class` | LACUNA |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `interleave`, `option-bypass`, `int4` |
 | `violation_ref` | V-034 |
 | `forensic_ref` | §6.13 (interleave factor constraints in binary) |
@@ -678,7 +678,7 @@
 | `domain` | dead-code |
 | `severity` | low |
 | `class` | PHANTOM |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `dead-code`, `deprecated-pass` |
 | `violation_ref` | V-029 |
 | `task_ref` | T-P4-03 |
@@ -694,7 +694,7 @@
 | `domain` | documentation |
 | `severity` | low |
 | `class` | ABERRANT |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `stale-docs`, `ir-reference` |
 | `violation_ref` | V-046 |
 | `task_ref` | T-P4-06 |
@@ -710,7 +710,7 @@
 | `domain` | documentation |
 | `severity` | low |
 | `class` | ABERRANT |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `stale-docs`, `bridge-protocol`, `multifunction` |
 | `violation_ref` | V-047 |
 | `task_ref` | T-P4-06 |
@@ -726,7 +726,7 @@
 | `domain` | documentation |
 | `severity` | low |
 | `class` | ABERRANT |
-| `status` | open |
+| `status` | resolved |
 | `labels` | `stale-docs`, `architecture`, `ffi-stubs` |
 | `violation_ref` | V-048 |
 | `task_ref` | T-P4-06 |
@@ -825,13 +825,13 @@
 ### M-001: Zero-Filled "Production" Models via allow_missing_weights=true
 - **Severity:** CRITICAL | **Class:** PHANTOM-SEMANTIC | **Confidence:** HIGH
 - **Location:** `crates/bridge/src/proto_direct.rs:164–189`
-- **Status:** OPEN | **Remediation:** T-P2-09
+- **Status:** RESOLVED | **Remediation:** T-P2-09
 - **Description:** Production path passes `allow_missing_weights=true`, silently producing zero-filled weights.
 
 ### M-002: MatMul Inner Dimension Mismatch Treated as Warning
 - **Severity:** CRITICAL | **Class:** UNVERIFIED-INVARIANT | **Confidence:** HIGH
 - **Location:** `crates/passes/src/mil_lower.rs:92–98`
-- **Status:** OPEN | **Remediation:** T-P5-02
+- **Status:** RESOLVED | **Remediation:** T-P5-02
 - **Description:** Mismatched inner dims produce garbage output instead of hard error.
 
 ### M-003: Shape Inference Returns Empty Vec for Unknown Operations
@@ -843,7 +843,7 @@
 ### M-004: StaticizePass Is a Pure Pass-Through (Stub Mimic)
 - **Severity:** HIGH | **Class:** STUB-MIMIC | **Confidence:** HIGH
 - **Location:** `crates/passes/src/staticize.rs:52–63`
-- **Status:** OPEN | **Remediation:** T-P4-03
+- **Status:** RESOLVED | **Remediation:** T-P4-03
 - **Description:** Returns `Ok(input)` unchanged with 1500+ line test suite.
 
 ### M-005: slanc_scales Pass Inserts Const+Mul with Uncomputed Scale Values
@@ -861,13 +861,13 @@
 ### M-007: dtype_constraints.rs Returns Ok(()) for Constrained Dtypes
 - **Severity:** HIGH | **Class:** UNVERIFIED-INVARIANT | **Confidence:** HIGH
 - **Location:** `crates/passes/src/dtype_constraints.rs:127–161`
-- **Status:** OPEN | **Remediation:** T-P2-02
+- **Status:** RESOLVED | **Remediation:** T-P2-02
 - **Description:** Int4/UInt4/UInt16/Bool gates return Ok with deferred "caller must check" comments.
 
 ### M-008: validate_cross_type_compatibility Effectively No-Op
 - **Severity:** HIGH | **Class:** UNVERIFIED-INVARIANT | **Confidence:** HIGH
 - **Location:** `crates/passes/src/dtype_constraints.rs:440–470`
-- **Status:** OPEN | **Remediation:** T-P1-05
+- **Status:** RESOLVED | **Remediation:** T-P1-05
 - **Description:** Documents ANEC constraints but never rejects anything.
 
 ### M-009: MirOpCompat::Unsupported Invisible to Weight Materialization
@@ -879,7 +879,7 @@
 ### M-010: kv_cache_rewrite Generates ANE-Illegal Ops
 - **Severity:** HIGH | **Class:** STUB-MIMIC | **Confidence:** HIGH
 - **Location:** `crates/passes/src/kv_cache_rewrite.rs:1–313`
-- **Status:** OPEN | **Remediation:** T-P1-02
+- **Status:** RESOLVED | **Remediation:** T-P1-02
 - **Description:** Generates SirOp::Where (ANE-illegal); deprecated but not removed.
 
 ### M-011: AIR legality_confidence Field Not Enforced
@@ -918,7 +918,7 @@
 ### N-001: 1-bit and 2-bit Palettization Allowed but ANEC Rejects Them
 - **Severity:** CRITICAL | **Class:** LACUNA | **Confidence:** HIGH
 - **Location:** `crates/ir/src/ane_layout.rs:164`
-- **Status:** OPEN | **Remediation:** T-P5-01
+- **Status:** RESOLVED | **Remediation:** T-P5-01
 - **Description:** VALID_PALETTE_BITS includes 1 and 2; ANEC rejects "1 and 2 bit palettes not supported."
 
 ### N-002: 35+ ANEC hal_params Not Modeled — 70% of Hardware Constraints Missing
