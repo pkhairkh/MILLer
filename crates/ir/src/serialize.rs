@@ -116,6 +116,7 @@ mod tests {
                 fallback_risk: 0.0,
                 drift_risk: 0.0,
                 precision_override: None,
+                legality_status: crate::air::LegalityStatus::Verified,
             }],
             inputs: vec![AirNodeId("input".into())],
             outputs: vec![AirNodeId("output".into())],

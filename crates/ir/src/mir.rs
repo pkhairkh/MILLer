@@ -2259,6 +2259,28 @@ pub struct MirGraph {
     pub input_shapes: std::collections::HashMap<MirNodeId, Vec<usize>>,
 }
 
+impl MirGraph {
+    /// Verify graph invariants: no duplicate node IDs, all inputs/outputs reference existing nodes.
+    pub fn verify(&self) -> Result<(), super::common::VerifyError> {
+        use std::collections::HashSet;
+        let seen_ids: HashSet<&str> = self.nodes.iter().map(|n| n.id.as_str()).collect();
+        if seen_ids.len() != self.nodes.len() {
+            return Err(super::common::VerifyError { message: "Duplicate node IDs in MirGraph".into() });
+        }
+        for input_id in &self.inputs {
+            if !seen_ids.contains(input_id.as_str()) {
+                return Err(super::common::VerifyError { message: format!("MirGraph input '{}' not found in nodes", input_id.0) });
+            }
+        }
+        for output_id in &self.outputs {
+            if !seen_ids.contains(output_id.as_str()) {
+                return Err(super::common::VerifyError { message: format!("MirGraph output '{}' not found in nodes", output_id.0) });
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::ane_engine::AneEngine;

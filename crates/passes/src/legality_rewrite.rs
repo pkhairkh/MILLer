@@ -1088,6 +1088,7 @@ impl LegalityRewritePass {
                 fallback_risk: 1.0,
                 drift_risk: 1.0,
                 precision_override: sir_node.metadata.precision_override.clone(),
+                legality_status: ane_ir::air::LegalityStatus::LikelyFallback,
             };
         }
 
@@ -1106,6 +1107,16 @@ impl LegalityRewritePass {
                 None => (0.5, 0.1, 0.05),
             };
 
+        let legality_status = if legality_confidence >= 0.95 {
+            ane_ir::air::LegalityStatus::Verified
+        } else if fallback_risk > 0.5 {
+            ane_ir::air::LegalityStatus::LikelyFallback
+        } else if legality_confidence < 0.1 {
+            ane_ir::air::LegalityStatus::Unknown
+        } else {
+            ane_ir::air::LegalityStatus::Unverified
+        };
+
         AirNode {
             id,
             op,
@@ -1115,6 +1126,7 @@ impl LegalityRewritePass {
             fallback_risk,
             drift_risk,
             precision_override: sir_node.metadata.precision_override.clone(),
+            legality_status,
         }
     }
 

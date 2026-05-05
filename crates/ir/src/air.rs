@@ -6,6 +6,25 @@
 use super::common::IrNodeId;
 use serde::{Deserialize, Serialize};
 
+// ─── Legality Status ────────────────────────────────────────────
+
+/// Legality status for an AIR node, replacing f32 risk/confidence fields.
+///
+/// Provides structured legality information instead of floating-point risk scores.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[non_exhaustive]
+pub enum LegalityStatus {
+    /// The op has been verified to run correctly on ANE.
+    Verified,
+    /// The op has not been verified on ANE (may work, may fallback).
+    #[default]
+    Unverified,
+    /// The op is likely to fall back to CPU based on known constraints.
+    LikelyFallback,
+    /// The legality is unknown (insufficient information).
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AirNodeId(pub String);
 
@@ -892,6 +911,63 @@ pub struct AirNode {
     pub fallback_risk: f32,
     pub drift_risk: f32,
     pub precision_override: Option<String>,
+    /// Structured legality status replacing f32 risk fields.
+    #[serde(default)]
+    pub legality_status: LegalityStatus,
+}
+
+/// Legacy fields for backward-compatible deserialization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyAirNodeFields {
+    id: AirNodeId,
+    op: AirOp,
+    name: String,
+    legality_confidence: f32,
+    sir_source: Option<super::sir::SirNodeId>,
+    fallback_risk: f32,
+    drift_risk: f32,
+    precision_override: Option<String>,
+}
+
+impl TryFrom<LegacyAirNodeFields> for AirNode {
+    type Error = String;
+    fn try_from(legacy: LegacyAirNodeFields) -> Result<Self, Self::Error> {
+        let legality_status = if legacy.legality_confidence >= 0.95 {
+            LegalityStatus::Verified
+        } else if legacy.fallback_risk > 0.5 {
+            LegalityStatus::LikelyFallback
+        } else if legacy.legality_confidence < 0.1 {
+            LegalityStatus::Unknown
+        } else {
+            LegalityStatus::Unverified
+        };
+        Ok(AirNode {
+            id: legacy.id,
+            op: legacy.op,
+            name: legacy.name,
+            legality_confidence: legacy.legality_confidence,
+            sir_source: legacy.sir_source,
+            fallback_risk: legacy.fallback_risk,
+            drift_risk: legacy.drift_risk,
+            precision_override: legacy.precision_override,
+            legality_status,
+        })
+    }
+}
+
+impl From<AirNode> for LegacyAirNodeFields {
+    fn from(node: AirNode) -> Self {
+        LegacyAirNodeFields {
+            id: node.id,
+            op: node.op,
+            name: node.name,
+            legality_confidence: node.legality_confidence,
+            sir_source: node.sir_source,
+            fallback_risk: node.fallback_risk,
+            drift_risk: node.drift_risk,
+            precision_override: node.precision_override,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -900,6 +976,28 @@ pub struct AirGraph {
     pub inputs: Vec<AirNodeId>,
     pub outputs: Vec<AirNodeId>,
     pub staticization_decisions: Vec<StaticizationDecision>,
+}
+
+impl AirGraph {
+    /// Verify graph invariants: no duplicate node IDs, all inputs/outputs reference existing nodes.
+    pub fn verify(&self) -> Result<(), super::common::VerifyError> {
+        use std::collections::HashSet;
+        let seen_ids: HashSet<&str> = self.nodes.iter().map(|n| n.id.as_str()).collect();
+        if seen_ids.len() != self.nodes.len() {
+            return Err(super::common::VerifyError { message: "Duplicate node IDs in AirGraph".into() });
+        }
+        for input_id in &self.inputs {
+            if !seen_ids.contains(input_id.as_str()) {
+                return Err(super::common::VerifyError { message: format!("AirGraph input '{}' not found in nodes", input_id.0) });
+            }
+        }
+        for output_id in &self.outputs {
+            if !seen_ids.contains(output_id.as_str()) {
+                return Err(super::common::VerifyError { message: format!("AirGraph output '{}' not found in nodes", output_id.0) });
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

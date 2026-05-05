@@ -172,6 +172,7 @@ mod tests {
                 fallback_risk: 0.0,
                 drift_risk: 0.0,
                 precision_override: None,
+                legality_status: ane_ir::air::LegalityStatus::Unverified,
             }],
             inputs: vec![],
             outputs: vec![],

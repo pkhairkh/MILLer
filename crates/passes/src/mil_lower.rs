@@ -4028,6 +4028,7 @@ mod tests {
                     fallback_risk: 0.1,
                     drift_risk: 0.05,
                     precision_override: None,
+                    legality_status: ane_ir::air::LegalityStatus::Unverified,
                 },
                 AirNode {
                     id: AirNodeId("output".into()),
@@ -4041,6 +4042,7 @@ mod tests {
                     fallback_risk: 0.05,
                     drift_risk: 0.02,
                     precision_override: override_dtype.map(|s| s.to_string()),
+                    legality_status: ane_ir::air::LegalityStatus::Verified,
                 },
             ],
             inputs: vec![AirNodeId("input".into())],
@@ -4138,6 +4140,7 @@ mod tests {
             fallback_risk: 0.05,
             drift_risk: 0.02,
             precision_override: None,
+            legality_status: ane_ir::air::LegalityStatus::Unverified,
         }
     }
 
@@ -4996,6 +4999,7 @@ mod tests {
                     fallback_risk: 0.1,
                     drift_risk: 0.05,
                     precision_override: None,
+                    legality_status: ane_ir::air::LegalityStatus::Unverified,
                 },
                 AirNode {
                     id: AirNodeId("output".into()),
@@ -5009,6 +5013,7 @@ mod tests {
                     fallback_risk: 0.05,
                     drift_risk: 0.02,
                     precision_override: None,
+                    legality_status: ane_ir::air::LegalityStatus::Verified,
                 },
             ],
             inputs: vec![AirNodeId("input".into())],

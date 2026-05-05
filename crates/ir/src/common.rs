@@ -486,6 +486,22 @@ pub trait IrNodeId:
     fn from_string(s: String) -> Self;
 }
 
+// ─── Verification Error ────────────────────────────────────────
+
+/// Error from IR graph verification.
+#[derive(Debug, Clone)]
+pub struct VerifyError {
+    pub message: String,
+}
+
+impl std::fmt::Display for VerifyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Verification error: {}", self.message)
+    }
+}
+
+impl std::error::Error for VerifyError {}
+
 /// Minimal trait for common graph operations across IR levels.
 ///
 /// Each IR level (SIR, AIR, MIR) implements this trait to provide

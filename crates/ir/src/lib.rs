@@ -45,5 +45,9 @@ pub mod strategy;
 pub mod task_spec;
 pub mod toproto;
 
+// Re-export key types for convenience.
+pub use common::VerifyError;
+pub use air::LegalityStatus;
+
 #[cfg(test)]
 mod mir_engine_test;

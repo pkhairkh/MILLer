@@ -1032,6 +1032,28 @@ pub struct SirGraph {
     pub outputs: Vec<SirNodeId>,
 }
 
+impl SirGraph {
+    /// Verify graph invariants: no duplicate node IDs, all inputs/outputs reference existing nodes.
+    pub fn verify(&self) -> Result<(), super::common::VerifyError> {
+        use std::collections::HashSet;
+        let seen_ids: HashSet<&str> = self.nodes.iter().map(|n| n.id.as_str()).collect();
+        if seen_ids.len() != self.nodes.len() {
+            return Err(super::common::VerifyError { message: "Duplicate node IDs in SirGraph".into() });
+        }
+        for input_id in &self.inputs {
+            if !seen_ids.contains(input_id.as_str()) {
+                return Err(super::common::VerifyError { message: format!("SirGraph input '{}' not found in nodes", input_id.0) });
+            }
+        }
+        for output_id in &self.outputs {
+            if !seen_ids.contains(output_id.as_str()) {
+                return Err(super::common::VerifyError { message: format!("SirGraph output '{}' not found in nodes", output_id.0) });
+            }
+        }
+        Ok(())
+    }
+}
+
 /// KV cache layout strategy — determines how KV cache updates are structured.
 ///
 /// The layout choice directly affects ANE provisioning behavior.
