@@ -981,7 +981,13 @@ mod tests {
         let graph = build_linear_projection_mir("test_linear", 64, 32, 1, MilDtypeCompat::Fp16, 42);
 
         let model =
-            convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
+            convert_mir_to_proto_multifunction_with_policy(
+                std::slice::from_ref(&graph),
+                &[],
+                SpecVersion::V10,
+                CoreMlComputeUnit::CpuAndNe,
+                ValidationPolicy::warn_only(),
+            ).unwrap();
 
         assert_eq!(model.functions.len(), 1);
         assert_eq!(model.functions[0].name, "main");
@@ -995,11 +1001,12 @@ mod tests {
         let (graphs, shared_names) =
             build_multifunction_shared_weights_mir("test_shared", 128, 1, MilDtypeCompat::Fp16, 42);
 
-        let model = convert_mir_to_proto_multifunction(
+        let model = convert_mir_to_proto_multifunction_with_policy(
             &graphs,
             &shared_names,
             SpecVersion::V10,
             CoreMlComputeUnit::CpuAndNe,
+            ValidationPolicy::warn_only(),
         )
         .unwrap();
 
@@ -1038,7 +1045,13 @@ mod tests {
     fn test_model_to_protobuf_bytes_linear() {
         let graph = build_linear_projection_mir("test_linear", 64, 32, 1, MilDtypeCompat::Fp16, 42);
         let model =
-            convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
+            convert_mir_to_proto_multifunction_with_policy(
+                std::slice::from_ref(&graph),
+                &[],
+                SpecVersion::V10,
+                CoreMlComputeUnit::CpuAndNe,
+                ValidationPolicy::warn_only(),
+            ).unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         assert!(!bytes.is_empty());
@@ -1061,11 +1074,12 @@ mod tests {
     fn test_model_to_protobuf_bytes_multifunction() {
         let (graphs, shared_names) =
             build_multifunction_shared_weights_mir("test_shared", 64, 1, MilDtypeCompat::Fp16, 42);
-        let model = convert_mir_to_proto_multifunction(
+        let model = convert_mir_to_proto_multifunction_with_policy(
             &graphs,
             &shared_names,
             SpecVersion::V10,
             CoreMlComputeUnit::CpuAndNe,
+            ValidationPolicy::warn_only(),
         )
         .unwrap();
 
@@ -1085,7 +1099,13 @@ mod tests {
     #[test]
     fn test_apple_proto_spec_version() {
         let graph = build_linear_projection_mir("test_rt", 32, 16, 1, MilDtypeCompat::Fp16, 99);
-        let model = convert_mir_to_proto(&graph, SpecVersion::V7, CoreMlComputeUnit::All).unwrap();
+        let model = convert_mir_to_proto_multifunction_with_policy(
+            std::slice::from_ref(&graph),
+            &[],
+            SpecVersion::V7,
+            CoreMlComputeUnit::All,
+            ValidationPolicy::warn_only(),
+        ).unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
@@ -1097,7 +1117,13 @@ mod tests {
     fn test_apple_proto_ops_preserved() {
         let graph = build_linear_projection_mir("test_ops", 16, 8, 1, MilDtypeCompat::Fp16, 7);
         let model =
-            convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
+            convert_mir_to_proto_multifunction_with_policy(
+                std::slice::from_ref(&graph),
+                &[],
+                SpecVersion::V10,
+                CoreMlComputeUnit::CpuAndNe,
+                ValidationPolicy::warn_only(),
+            ).unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
@@ -1143,7 +1169,13 @@ mod tests {
     fn test_apple_proto_weight_blob_file_references() {
         let graph = build_linear_projection_mir("test_wref", 16, 8, 1, MilDtypeCompat::Fp16, 7);
         let model =
-            convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
+            convert_mir_to_proto_multifunction_with_policy(
+                std::slice::from_ref(&graph),
+                &[],
+                SpecVersion::V10,
+                CoreMlComputeUnit::CpuAndNe,
+                ValidationPolicy::warn_only(),
+            ).unwrap();
 
         // Simulate weight entries with real offsets (as WeightBinBuilder would produce)
         let weight_entries = vec![
@@ -1206,7 +1238,13 @@ mod tests {
         // (top-level I/O populated, functions empty, MIL program key="main")
         let graph = build_linear_projection_mir("test_desc", 32, 16, 1, MilDtypeCompat::Fp16, 99);
         let model =
-            convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
+            convert_mir_to_proto_multifunction_with_policy(
+                std::slice::from_ref(&graph),
+                &[],
+                SpecVersion::V10,
+                CoreMlComputeUnit::CpuAndNe,
+                ValidationPolicy::warn_only(),
+            ).unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
@@ -1280,13 +1318,27 @@ mod tests {
             outputs: vec!["updated_state".to_string()],
             opset_version: "iOS18".to_string(),
             function_name: "decode_step".to_string(),
-            input_descs: vec![],
-            output_descs: vec![],
+            input_descs: vec![ane_coreml_proto::mir_compat::TensorDescCompat {
+                name: "new_val".to_string(),
+                shape: vec![128],
+                dtype: MilDtypeCompat::Fp16,
+            }],
+            output_descs: vec![ane_coreml_proto::mir_compat::TensorDescCompat {
+                name: "updated_state".to_string(),
+                shape: vec![128],
+                dtype: MilDtypeCompat::Fp16,
+            }],
             node_shapes: std::collections::HashMap::new(),
         };
 
         let model =
-            convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
+            convert_mir_to_proto_multifunction_with_policy(
+                std::slice::from_ref(&graph),
+                &[],
+                SpecVersion::V10,
+                CoreMlComputeUnit::CpuAndNe,
+                ValidationPolicy::warn_only(),
+            ).unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
@@ -1624,7 +1676,7 @@ mod tests {
         }];
 
         // Should succeed but log warning
-        let result = validate_iosurface_sizes(&functions);
+        let result = validate_iosurface_sizes(&functions, &ValidationPolicy::warn_only());
         assert!(result.is_ok(), "Validation should succeed with warning, not fail");
     }
 
@@ -1645,7 +1697,7 @@ mod tests {
             node_shapes: std::collections::HashMap::new(),
         }];
 
-        let result = validate_iosurface_sizes(&functions);
+        let result = validate_iosurface_sizes(&functions, &ValidationPolicy::warn_only());
         assert!(result.is_ok());
     }
 
@@ -1729,7 +1781,13 @@ mod tests {
         };
 
         let model =
-            convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
+            convert_mir_to_proto_multifunction_with_policy(
+                std::slice::from_ref(&graph),
+                &[],
+                SpecVersion::V10,
+                CoreMlComputeUnit::CpuAndNe,
+                ValidationPolicy::warn_only(),
+            ).unwrap();
 
         // Verify outputs are sorted alphabetically
         let output_names: Vec<&str> = model.functions[0].outputs.iter().map(|o| o.name.as_str()).collect();
@@ -1780,7 +1838,13 @@ mod tests {
         };
 
         let model =
-            convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
+            convert_mir_to_proto_multifunction_with_policy(
+                std::slice::from_ref(&graph),
+                &[],
+                SpecVersion::V10,
+                CoreMlComputeUnit::CpuAndNe,
+                ValidationPolicy::warn_only(),
+            ).unwrap();
 
         // Verify inputs are sorted alphabetically
         let input_names: Vec<&str> = model.functions[0].inputs.iter().map(|i| i.name.as_str()).collect();
@@ -1793,7 +1857,13 @@ mod tests {
         // T-95: Single output — sorting is a no-op but should not cause errors
         let graph = build_linear_projection_mir("test_single", 64, 32, 1, MilDtypeCompat::Fp16, 42);
         let model =
-            convert_mir_to_proto(&graph, SpecVersion::V10, CoreMlComputeUnit::CpuAndNe).unwrap();
+            convert_mir_to_proto_multifunction_with_policy(
+                std::slice::from_ref(&graph),
+                &[],
+                SpecVersion::V10,
+                CoreMlComputeUnit::CpuAndNe,
+                ValidationPolicy::warn_only(),
+            ).unwrap();
 
         assert_eq!(model.functions[0].outputs.len(), 1);
         assert_eq!(model.functions[0].outputs[0].name, "output");
@@ -1826,7 +1896,7 @@ mod tests {
             node_shapes: std::collections::HashMap::new(),
         }];
 
-        let result = validate_surface_uniformity(&functions);
+        let result = validate_surface_uniformity(&functions, &ValidationPolicy::warn_only());
         assert!(result.is_ok(), "Uniform outputs should not error");
     }
 
@@ -1855,7 +1925,7 @@ mod tests {
             node_shapes: std::collections::HashMap::new(),
         }];
 
-        let result = validate_surface_uniformity(&functions);
+        let result = validate_surface_uniformity(&functions, &ValidationPolicy::warn_only());
         assert!(result.is_ok(), "Non-uniform outputs should warn, not error");
     }
 
@@ -1876,7 +1946,7 @@ mod tests {
             node_shapes: std::collections::HashMap::new(),
         }];
 
-        let result = validate_surface_uniformity(&functions);
+        let result = validate_surface_uniformity(&functions, &ValidationPolicy::warn_only());
         assert!(result.is_ok());
     }
 
@@ -1899,7 +1969,7 @@ mod tests {
             node_shapes: std::collections::HashMap::new(),
         }];
 
-        let result = validate_flat_buffer_layout(&functions);
+        let result = validate_flat_buffer_layout(&functions, &ValidationPolicy::warn_only());
         assert!(result.is_ok(), "Canonical [1,C,1,S] layout should not error");
     }
 
@@ -1920,7 +1990,7 @@ mod tests {
             node_shapes: std::collections::HashMap::new(),
         }];
 
-        let result = validate_flat_buffer_layout(&functions);
+        let result = validate_flat_buffer_layout(&functions, &ValidationPolicy::warn_only());
         assert!(result.is_ok(), "Non-canonical layout should warn, not error");
     }
 
@@ -1941,7 +2011,7 @@ mod tests {
             node_shapes: std::collections::HashMap::new(),
         }];
 
-        let result = validate_flat_buffer_layout(&functions);
+        let result = validate_flat_buffer_layout(&functions, &ValidationPolicy::warn_only());
         assert!(result.is_ok());
     }
 
@@ -1983,13 +2053,13 @@ mod tests {
         let functions = vec![make_func_with_outputs("main", vec![TensorDesc {
             name: "tiny_out".to_string(),
             shape: vec![1],  // 1 element
-            dtype: CoreMlDataType::Fp16,  // 2 bytes per element → 2 bytes total
+            dtype: CoreMlDataType::Float16,  // 2 bytes per element → 2 bytes total
             is_state: false,
         }])];
         let result = validate_iosurface_sizes(&functions, &ValidationPolicy::strict());
         assert!(result.is_err(), "Strict mode should reject undersized IOSurface buffers");
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("below minimum"), "Error should mention 'below minimum': {err}");
+        assert!(err.contains("minimum IOSurface"), "Error should mention 'minimum IOSurface': {err}");
     }
 
     #[test]
@@ -1997,7 +2067,7 @@ mod tests {
         let functions = vec![make_func_with_outputs("main", vec![TensorDesc {
             name: "tiny_out".to_string(),
             shape: vec![1],
-            dtype: CoreMlDataType::Fp16,
+            dtype: CoreMlDataType::Float16,
             is_state: false,
         }])];
         let result = validate_iosurface_sizes(&functions, &ValidationPolicy::warn_only());
@@ -2011,20 +2081,20 @@ mod tests {
             TensorDesc {
                 name: "a".to_string(),
                 shape: vec![50],  // 50 × 2 = 100 bytes
-                dtype: CoreMlDataType::Fp16,
+                dtype: CoreMlDataType::Float16,
                 is_state: false,
             },
             TensorDesc {
                 name: "b".to_string(),
                 shape: vec![100],  // 100 × 2 = 200 bytes
-                dtype: CoreMlDataType::Fp16,
+                dtype: CoreMlDataType::Float16,
                 is_state: false,
             },
         ])];
         let result = validate_surface_uniformity(&functions, &ValidationPolicy::strict());
         assert!(result.is_err(), "Strict mode should reject non-uniform output buffers");
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("non-uniform"), "Error should mention 'non-uniform': {err}");
+        assert!(err.contains("Non-uniform"), "Error should mention 'Non-uniform': {err}");
     }
 
     #[test]
@@ -2033,13 +2103,13 @@ mod tests {
             TensorDesc {
                 name: "a".to_string(),
                 shape: vec![50],
-                dtype: CoreMlDataType::Fp16,
+                dtype: CoreMlDataType::Float16,
                 is_state: false,
             },
             TensorDesc {
                 name: "b".to_string(),
                 shape: vec![100],
-                dtype: CoreMlDataType::Fp16,
+                dtype: CoreMlDataType::Float16,
                 is_state: false,
             },
         ])];
@@ -2053,7 +2123,7 @@ mod tests {
         let functions = vec![make_func_with_outputs("main", vec![TensorDesc {
             name: "bad_layout".to_string(),
             shape: vec![2, 3, 4, 5],
-            dtype: CoreMlDataType::Fp16,
+            dtype: CoreMlDataType::Float16,
             is_state: false,
         }])];
         let result = validate_flat_buffer_layout(&functions, &ValidationPolicy::strict());
@@ -2067,7 +2137,7 @@ mod tests {
         let functions = vec![make_func_with_outputs("main", vec![TensorDesc {
             name: "bad_layout".to_string(),
             shape: vec![2, 3, 4, 5],
-            dtype: CoreMlDataType::Fp16,
+            dtype: CoreMlDataType::Float16,
             is_state: false,
         }])];
         let result = validate_flat_buffer_layout(&functions, &ValidationPolicy::warn_only());

@@ -57,6 +57,8 @@ pub struct ProtoEmitter {
     spec_version: SpecVersion,
     /// Compute unit preference.
     compute_unit: CoreMlComputeUnit,
+    /// Validation policy for ANE constraint checks.
+    validation_policy: crate::mir_to_proto::ValidationPolicy,
 }
 
 /// Result of proto-direct emission, including comparison data.
@@ -89,17 +91,41 @@ impl Default for ProtoEmitter {
 impl ProtoEmitter {
     /// Create a new proto-direct emitter targeting the latest spec version.
     pub fn new() -> Self {
-        Self { spec_version: SpecVersion::V10, compute_unit: CoreMlComputeUnit::CpuAndNe }
+        Self {
+            spec_version: SpecVersion::V10,
+            compute_unit: CoreMlComputeUnit::CpuAndNe,
+            validation_policy: crate::mir_to_proto::ValidationPolicy::default(),
+        }
     }
 
     /// Create an emitter targeting a specific spec version.
     pub fn with_spec_version(spec_version: SpecVersion) -> Self {
-        Self { spec_version, compute_unit: CoreMlComputeUnit::CpuAndNe }
+        Self {
+            spec_version,
+            compute_unit: CoreMlComputeUnit::CpuAndNe,
+            validation_policy: crate::mir_to_proto::ValidationPolicy::default(),
+        }
     }
 
     /// Create an emitter with a specific compute unit preference.
     pub fn with_compute_unit(compute_unit: CoreMlComputeUnit) -> Self {
-        Self { spec_version: SpecVersion::V10, compute_unit }
+        Self {
+            spec_version: SpecVersion::V10,
+            compute_unit,
+            validation_policy: crate::mir_to_proto::ValidationPolicy::default(),
+        }
+    }
+
+    /// Create an emitter with a specific validation policy.
+    ///
+    /// Use `ValidationPolicy::warn_only()` for development/testing where
+    /// small test tensors don't meet the 49KB IOSurface minimum.
+    pub fn with_validation_policy(validation_policy: crate::mir_to_proto::ValidationPolicy) -> Self {
+        Self {
+            spec_version: SpecVersion::V10,
+            compute_unit: CoreMlComputeUnit::CpuAndNe,
+            validation_policy,
+        }
     }
 
     /// Emit a single-function MIR graph as an mlpackage.
@@ -110,8 +136,13 @@ impl ProtoEmitter {
         graph: &MirGraphCompat,
         output_path: &str,
     ) -> Result<ProtoEmitResult> {
-        let model =
-            crate::mir_to_proto::convert_mir_to_proto(graph, self.spec_version, self.compute_unit)?;
+        let model = crate::mir_to_proto::convert_mir_to_proto_multifunction_with_policy(
+            std::slice::from_ref(graph),
+            &[],
+            self.spec_version,
+            self.compute_unit,
+            self.validation_policy.clone(),
+        )?;
         self.emit_model(&model, output_path)
     }
 
@@ -127,11 +158,12 @@ impl ProtoEmitter {
         shared_weight_names: &[String],
         output_path: &str,
     ) -> Result<ProtoEmitResult> {
-        let model = crate::mir_to_proto::convert_mir_to_proto_multifunction(
+        let model = crate::mir_to_proto::convert_mir_to_proto_multifunction_with_policy(
             graphs,
             shared_weight_names,
             self.spec_version,
             self.compute_unit,
+            self.validation_policy.clone(),
         )?;
         self.emit_model(&model, output_path)
     }

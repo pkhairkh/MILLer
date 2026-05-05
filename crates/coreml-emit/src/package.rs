@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn test_write_mlpackage_apple_format() {
-        use crate::mir_to_proto::{build_linear_projection_mir, convert_mir_to_proto};
+        use crate::mir_to_proto::{build_linear_projection_mir, convert_mir_to_proto_multifunction_with_policy, ValidationPolicy};
         use ane_coreml_proto::mir_compat::MilDtypeCompat;
 
         let graph = build_linear_projection_mir(
@@ -326,7 +326,13 @@ mod tests {
             42,
         );
         let model =
-            convert_mir_to_proto(&graph, SpecVersion::V7, CoreMlComputeUnit::CpuAndNe).unwrap();
+            convert_mir_to_proto_multifunction_with_policy(
+                std::slice::from_ref(&graph),
+                &[],
+                SpecVersion::V7,
+                CoreMlComputeUnit::CpuAndNe,
+                ValidationPolicy::warn_only(),
+            ).unwrap();
 
         let output_path = "/tmp/miller_test_validate.mlpackage";
         let result = MlPackageWriter::write(&model, output_path).unwrap();

@@ -23,6 +23,7 @@
 
 use crate::mir_to_compat::{mir_graph_to_compat_with_arch, EmptyWeightResolver};
 use ane_coreml_emit::ProtoEmitter;
+use ane_coreml_emit::ValidationPolicy;
 use ane_coreml_proto::mir_compat::MirGraphCompat;
 use ane_ir::mir::MirGraph;
 use ane_ir::pir::ShardSpec;
@@ -77,7 +78,19 @@ pub struct ProtoDirectValidation {
 /// The output is written to `output_path` as a complete `.mlpackage`
 /// directory structure.
 pub fn emit_proto_direct(graph: &MirGraphCompat, output_path: &str) -> Result<ProtoDirectResult> {
-    let emitter = ProtoEmitter::new();
+    emit_proto_direct_with_policy(graph, output_path, ValidationPolicy::default())
+}
+
+/// Emit a single-function MIR graph as an mlpackage with a custom validation policy.
+///
+/// Use `ValidationPolicy::warn_only()` for development/testing where
+/// small test tensors don't meet the 49KB IOSurface minimum.
+pub fn emit_proto_direct_with_policy(
+    graph: &MirGraphCompat,
+    output_path: &str,
+    validation_policy: ValidationPolicy,
+) -> Result<ProtoDirectResult> {
+    let emitter = ProtoEmitter::with_validation_policy(validation_policy);
     let emit_result = emitter.emit_mir_graph(graph, output_path)?;
 
     Ok(ProtoDirectResult {
@@ -102,7 +115,17 @@ pub fn emit_proto_direct_multifunction(
     shared_weight_names: &[String],
     output_path: &str,
 ) -> Result<ProtoDirectResult> {
-    let emitter = ProtoEmitter::new();
+    emit_proto_direct_multifunction_with_policy(graphs, shared_weight_names, output_path, ValidationPolicy::default())
+}
+
+/// Emit a multi-function model with shared weights with a custom validation policy.
+pub fn emit_proto_direct_multifunction_with_policy(
+    graphs: &[MirGraphCompat],
+    shared_weight_names: &[String],
+    output_path: &str,
+    validation_policy: ValidationPolicy,
+) -> Result<ProtoDirectResult> {
+    let emitter = ProtoEmitter::with_validation_policy(validation_policy);
     let emit_result =
         emitter.emit_multifunction_with_shared_weights(graphs, shared_weight_names, output_path)?;
 
@@ -146,6 +169,18 @@ pub fn emit_role_shard_proto_direct(
     spec: &ShardSpec,
     output_path: &str,
 ) -> Result<ProtoDirectResult> {
+    emit_role_shard_proto_direct_with_policy(spec, output_path, ValidationPolicy::default())
+}
+
+/// Emit a role-specific shard with a custom validation policy.
+///
+/// Use `ValidationPolicy::warn_only()` for development/testing where
+/// small test tensors don't meet the 49KB IOSurface minimum.
+pub fn emit_role_shard_proto_direct_with_policy(
+    spec: &ShardSpec,
+    output_path: &str,
+    validation_policy: ValidationPolicy,
+) -> Result<ProtoDirectResult> {
     let builder = RoleMirBuilder::new();
     let mir_graph = builder.build_mir(spec)?;
 
@@ -153,11 +188,12 @@ pub fn emit_role_shard_proto_direct(
     // The ShardSpec doesn't carry architecture info, so this uses the
     // legacy default. Callers needing a different architecture should use
     // emit_mir_graph_proto_direct() directly.
-    emit_mir_graph_proto_direct(
+    emit_mir_graph_proto_direct_with_policy(
         &mir_graph,
         output_path,
         &ane_ir::common::ModelArchitecture::Qwen3,
         32768,
+        validation_policy,
     )
 }
 
@@ -178,6 +214,20 @@ pub fn emit_mir_graph_proto_direct(
     architecture: &ane_ir::common::ModelArchitecture,
     max_seq_len: usize,
 ) -> Result<ProtoDirectResult> {
+    emit_mir_graph_proto_direct_with_policy(graph, output_path, architecture, max_seq_len, ValidationPolicy::default())
+}
+
+/// Emit a compiler MIR graph with a custom validation policy.
+///
+/// Use `ValidationPolicy::warn_only()` for development/testing where
+/// small test tensors don't meet the 49KB IOSurface minimum.
+pub fn emit_mir_graph_proto_direct_with_policy(
+    graph: &MirGraph,
+    output_path: &str,
+    architecture: &ane_ir::common::ModelArchitecture,
+    max_seq_len: usize,
+    validation_policy: ValidationPolicy,
+) -> Result<ProtoDirectResult> {
     let resolver = EmptyWeightResolver;
     // EmptyWeightResolver always returns None, so allow_missing_weights=true to
     // avoid hard error — this path is for zero-fill testing only.
@@ -185,7 +235,7 @@ pub fn emit_mir_graph_proto_direct(
         graph, &resolver, architecture, max_seq_len, true,
     )?;
 
-    emit_proto_direct(&compat, output_path)
+    emit_proto_direct_with_policy(&compat, output_path, validation_policy)
 }
 
 /// Emit a compiler MIR graph as an mlpackage via proto-direct with real weight data.
@@ -334,8 +384,13 @@ mod tests {
     use crate::mir_to_compat::WeightResolver;
     use ane_coreml_emit::mir_to_proto::build_linear_projection_mir;
     use ane_coreml_emit::mir_to_proto::build_multifunction_shared_weights_mir;
+    use ane_coreml_emit::ValidationPolicy;
     use ane_coreml_proto::mir_compat::MilDtypeCompat;
     use tempfile::TempDir;
+
+    fn make_emitter() -> ProtoEmitter {
+        ProtoEmitter::with_validation_policy(ValidationPolicy::warn_only())
+    }
 
     fn make_linear_graph() -> MirGraphCompat {
         build_linear_projection_mir("test_linear", 16, 8, 1, MilDtypeCompat::Fp16, 42)
@@ -347,7 +402,19 @@ mod tests {
         let output_path = tmp.path().join("linear.mlpackage");
         let graph = make_linear_graph();
 
-        let result = emit_proto_direct(&graph, output_path.to_str().unwrap()).unwrap();
+        let emitter = make_emitter();
+        let emit_result = emitter.emit_mir_graph(&graph, output_path.to_str().unwrap()).unwrap();
+
+        let result = ProtoDirectResult {
+            mlpackage_path: emit_result.package_result.path,
+            content_hash: emit_result.package_result.content_hash,
+            total_size: emit_result.package_result.total_size,
+            file_count: emit_result.package_result.file_count,
+            weight_count: emit_result.package_result.weight_count,
+            function_count: emit_result.package_result.function_count,
+            has_shared_weights: emit_result.package_result.has_shared_weights,
+            emission_method: "proto-direct".to_string(),
+        };
 
         assert_eq!(result.emission_method, "proto-direct");
         assert_eq!(result.function_count, 1);
@@ -371,9 +438,21 @@ mod tests {
         let (graphs, shared_names) =
             build_multifunction_shared_weights_mir("test_shared", 32, 1, MilDtypeCompat::Fp16, 42);
 
-        let result =
-            emit_proto_direct_multifunction(&graphs, &shared_names, output_path.to_str().unwrap())
-                .unwrap();
+        let emitter = make_emitter();
+        let emit_result = emitter
+            .emit_multifunction_with_shared_weights(&graphs, &shared_names, output_path.to_str().unwrap())
+            .unwrap();
+
+        let result = ProtoDirectResult {
+            mlpackage_path: emit_result.package_result.path,
+            content_hash: emit_result.package_result.content_hash,
+            total_size: emit_result.package_result.total_size,
+            file_count: emit_result.package_result.file_count,
+            weight_count: emit_result.package_result.weight_count,
+            function_count: emit_result.package_result.function_count,
+            has_shared_weights: emit_result.package_result.has_shared_weights,
+            emission_method: "proto-direct".to_string(),
+        };
 
         assert_eq!(result.emission_method, "proto-direct");
         assert_eq!(result.function_count, 2);
@@ -386,7 +465,8 @@ mod tests {
         let output_path = tmp.path().join("valid.mlpackage");
         let graph = make_linear_graph();
 
-        emit_proto_direct(&graph, output_path.to_str().unwrap()).unwrap();
+        let emitter = make_emitter();
+        emitter.emit_mir_graph(&graph, output_path.to_str().unwrap()).unwrap();
 
         let validation = validate_proto_direct_package(output_path.to_str().unwrap()).unwrap();
 
@@ -506,8 +586,11 @@ mod tests {
         let output_path = tmp.path().join("entry_shard.mlpackage");
 
         let result =
-            emit_role_shard_proto_direct(&make_entry_spec(), output_path.to_str().unwrap())
-                .unwrap();
+            emit_role_shard_proto_direct_with_policy(
+                &make_entry_spec(),
+                output_path.to_str().unwrap(),
+                ValidationPolicy::warn_only(),
+            ).unwrap();
 
         assert_eq!(result.emission_method, "proto-direct");
         assert_eq!(result.function_count, 1);
@@ -522,8 +605,11 @@ mod tests {
         let output_path = tmp.path().join("interior_shard.mlpackage");
 
         let result =
-            emit_role_shard_proto_direct(&make_interior_spec(), output_path.to_str().unwrap())
-                .unwrap();
+            emit_role_shard_proto_direct_with_policy(
+                &make_interior_spec(),
+                output_path.to_str().unwrap(),
+                ValidationPolicy::warn_only(),
+            ).unwrap();
 
         assert_eq!(result.emission_method, "proto-direct");
         assert_eq!(result.function_count, 1);
@@ -537,7 +623,11 @@ mod tests {
         let output_path = tmp.path().join("exit_shard.mlpackage");
 
         let result =
-            emit_role_shard_proto_direct(&make_exit_spec(), output_path.to_str().unwrap()).unwrap();
+            emit_role_shard_proto_direct_with_policy(
+                &make_exit_spec(),
+                output_path.to_str().unwrap(),
+                ValidationPolicy::warn_only(),
+            ).unwrap();
 
         assert_eq!(result.emission_method, "proto-direct");
         assert_eq!(result.function_count, 1);
@@ -556,14 +646,25 @@ mod tests {
         let exit_path = tmp.path().join("exit.mlpackage");
 
         let entry_result =
-            emit_role_shard_proto_direct(&make_entry_spec(), entry_path.to_str().unwrap()).unwrap();
+            emit_role_shard_proto_direct_with_policy(
+                &make_entry_spec(),
+                entry_path.to_str().unwrap(),
+                ValidationPolicy::warn_only(),
+            ).unwrap();
 
         let interior_result =
-            emit_role_shard_proto_direct(&make_interior_spec(), interior_path.to_str().unwrap())
-                .unwrap();
+            emit_role_shard_proto_direct_with_policy(
+                &make_interior_spec(),
+                interior_path.to_str().unwrap(),
+                ValidationPolicy::warn_only(),
+            ).unwrap();
 
         let exit_result =
-            emit_role_shard_proto_direct(&make_exit_spec(), exit_path.to_str().unwrap()).unwrap();
+            emit_role_shard_proto_direct_with_policy(
+                &make_exit_spec(),
+                exit_path.to_str().unwrap(),
+                ValidationPolicy::warn_only(),
+            ).unwrap();
 
         // All three must have different content hashes (different op structures)
         assert_ne!(
@@ -628,11 +729,12 @@ mod tests {
             },
         };
 
-        let result = emit_mir_graph_proto_direct(
+        let result = emit_mir_graph_proto_direct_with_policy(
             &graph,
             output_path.to_str().unwrap(),
             &ane_ir::common::ModelArchitecture::Qwen3,
             32768,
+            ValidationPolicy::warn_only(),
         ).unwrap();
 
         assert_eq!(result.emission_method, "proto-direct");

@@ -2153,19 +2153,20 @@ mod tests {
 
         let compat = mir_graph_to_compat_with_allow_missing(&graph, &resolver, true).unwrap();
 
-        // Find the auto-materialized Const for "model.embed_tokens.weight"
+        // Find the Const for "embed_weight" (the node ID — the value_path
+        // "model.embed_tokens.weight" is used for weight resolution, not the op name)
         let embed_const = compat.ops.iter().find(|op| {
             if let MirOpCompat::Const { name, .. } = op {
-                name == "model.embed_tokens.weight"
+                name == "embed_weight"
             } else {
                 false
             }
         });
 
-        assert!(embed_const.is_some(), "Should have auto-materialized Const for embed_weight");
+        assert!(embed_const.is_some(), "Should have Const for embed_weight");
 
         if let MirOpCompat::Const { name, dtype, shape, .. } = embed_const.unwrap() {
-            assert_eq!(name, "model.embed_tokens.weight");
+            assert_eq!(name, "embed_weight");
             // T-P1-04: The critical assertion — dtype must be Int32, not Fp16
             assert_eq!(*dtype, MilDtypeCompat::Int32,
                 "Int32 embedding weight should have Int32 dtype in auto-materialized Const, got {:?}", dtype);
