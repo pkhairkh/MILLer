@@ -8,7 +8,7 @@
 //! weight types:
 //! - Embedding/LM head: Blockwise quantization (int4 with per-group scales)
 //! - Attention/MLP projections: GroupedLut (4/6/8-bit with per-group scalars)
-//! - KV/mask constants: 1-bit kmeans palettization
+//! - KV/mask constants: 3-bit kmeans palettization
 //! - Q/K projections: treated more conservatively (higher bitwidth)
 //!
 //! ## Palette bit-width validation
@@ -78,7 +78,7 @@ impl Default for PalettizeConfig {
         PalettizeConfig {
             attention_bits: 4,
             mlp_bits: 4,
-            mask_kv_bits: 1,
+            mask_kv_bits: 3,
             group_size: 128,
             conservative_qk: true,
         }
@@ -481,7 +481,9 @@ mod tests {
 
     #[test]
     fn test_clamp_to_valid_bits() {
-        assert_eq!(clamp_to_valid_bits(1), 1);
+        assert_eq!(clamp_to_valid_bits(1), 3); // 1 → 3 (minimum valid)
+        assert_eq!(clamp_to_valid_bits(2), 3); // 2 → 3 (minimum valid)
+        assert_eq!(clamp_to_valid_bits(3), 3);
         assert_eq!(clamp_to_valid_bits(4), 4);
         assert_eq!(clamp_to_valid_bits(5), 4); // 5 → 4 (round down)
         assert_eq!(clamp_to_valid_bits(6), 6);
