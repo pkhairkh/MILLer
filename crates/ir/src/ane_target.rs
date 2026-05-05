@@ -128,6 +128,16 @@ impl AneFamily {
         matches!(self, AneFamily::A17 | AneFamily::A18)
     }
 
+    /// Whether this family supports E5M2 (FP8) data type on ANE.
+    ///
+    /// E5M2 has less precision than E4M3 but wider dynamic range.
+    /// Currently, no ANE family supports E5M2 natively — it is reserved
+    /// for future hardware. E4M3 remains the only supported FP8 format.
+    pub fn supports_e5m2(&self) -> bool {
+        // No current ANE family supports E5M2; reserved for future hardware
+        false
+    }
+
     /// T-117: Get the ANEC binary `MinimumFamily` discriminant for this family.
     ///
     /// The ANEC binary uses a `MinimumFamily` enum with values 0–7 to identify
@@ -342,6 +352,19 @@ mod tests {
         assert!(!AneFamily::A16.supports_e4m3());
         assert!(AneFamily::A17.supports_e4m3()); // LSE_6 adds conditional E4M3
         assert!(AneFamily::A18.supports_e4m3());
+    }
+
+    #[test]
+    fn test_supports_e5m2() {
+        // E5M2 (FP8) is NOT supported on any current ANE family — reserved for future hardware.
+        // E4M3 remains the only supported FP8 format.
+        for family in &ALL_FAMILIES {
+            assert!(
+                !family.supports_e5m2(),
+                "E5M2 should not be supported on {:?} — reserved for future hardware",
+                family
+            );
+        }
     }
 
     // ─── T-40: V17 (M1) → A14 Family Mapping Tests ────────────────

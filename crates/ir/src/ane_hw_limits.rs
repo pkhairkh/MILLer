@@ -233,6 +233,44 @@ impl AneHwLimits {
         }
         Ok(())
     }
+
+    /// Validate convolution kernel dimensions against hardware limits.
+    pub fn validate_conv_dims(
+        &self,
+        kernel_x: u64,
+        kernel_y: u64,
+        is_8bit: bool,
+    ) -> Result<(), HwLimitViolation> {
+        let max_x = if is_8bit { self.max_8b_conv_kernel_dim_x } else { self.max_f16_conv_kernel_dim_x };
+        if kernel_x > max_x {
+            return Err(HwLimitViolation {
+                param: if is_8bit { "max_8b_conv_kernel_dim_x" } else { "max_f16_conv_kernel_dim_x" }.into(),
+                value: kernel_x,
+                limit: max_x,
+            });
+        }
+        if kernel_y > self.max_conv_kernel_dim_y {
+            return Err(HwLimitViolation {
+                param: "max_conv_kernel_dim_y".into(),
+                value: kernel_y,
+                limit: self.max_conv_kernel_dim_y,
+            });
+        }
+        Ok(())
+    }
+
+    /// Validate that the channel dimension for a transpose operation
+    /// does not exceed the NE transpose C maximum.
+    pub fn validate_transpose_c_max(&self, channels: u64) -> Result<(), HwLimitViolation> {
+        if channels > self.ne_transpose_c_max {
+            return Err(HwLimitViolation {
+                param: "ne_transpose_c_max".into(),
+                value: channels,
+                limit: self.ne_transpose_c_max,
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Hardware limit violation.
@@ -348,5 +386,84 @@ mod tests {
         let limits = AneHwLimits::for_revision(AneRevision::V26);
         assert_eq!(limits.revision, AneRevision::V26);
         assert_eq!(limits.num_nes, 16);
+    }
+
+    // ─── T-P3-04: validate_conv_dims() tests ─────────────────────────
+
+    #[test]
+    fn test_conv_dims_within_limits() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // Kernel 7x7 is at the limit for both fp16 and 8-bit
+        assert!(limits.validate_conv_dims(7, 7, false).is_ok());
+        assert!(limits.validate_conv_dims(7, 7, true).is_ok());
+    }
+
+    #[test]
+    fn test_conv_dims_f16_exceeds_x() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // fp16 conv kernel x=8 exceeds max_f16_conv_kernel_dim_x=7
+        let result = limits.validate_conv_dims(8, 5, false);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.param, "max_f16_conv_kernel_dim_x");
+        assert_eq!(err.value, 8);
+    }
+
+    #[test]
+    fn test_conv_dims_8bit_exceeds_x() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // 8-bit conv kernel x=8 exceeds max_8b_conv_kernel_dim_x=7
+        let result = limits.validate_conv_dims(8, 5, true);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.param, "max_8b_conv_kernel_dim_x");
+        assert_eq!(err.value, 8);
+    }
+
+    #[test]
+    fn test_conv_dims_exceeds_y() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // Kernel y=8 exceeds max_conv_kernel_dim_y=7
+        let result = limits.validate_conv_dims(5, 8, false);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.param, "max_conv_kernel_dim_y");
+        assert_eq!(err.value, 8);
+    }
+
+    #[test]
+    fn test_conv_dims_small_kernel_ok() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // Small kernels should always pass
+        assert!(limits.validate_conv_dims(1, 1, false).is_ok());
+        assert!(limits.validate_conv_dims(3, 3, true).is_ok());
+        assert!(limits.validate_conv_dims(5, 5, false).is_ok());
+    }
+
+    // ─── T-P3-08: validate_transpose_c_max() tests ────────────────────
+
+    #[test]
+    fn test_transpose_c_max_within_limit() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // Channels at the limit should pass
+        assert!(limits.validate_transpose_c_max(limits.ne_transpose_c_max).is_ok());
+    }
+
+    #[test]
+    fn test_transpose_c_max_exceeds_limit() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // Channels over the limit should fail
+        let result = limits.validate_transpose_c_max(limits.ne_transpose_c_max + 1);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.param, "ne_transpose_c_max");
+        assert_eq!(err.limit, limits.ne_transpose_c_max);
+    }
+
+    #[test]
+    fn test_transpose_c_max_small_channels_ok() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        assert!(limits.validate_transpose_c_max(256).is_ok());
+        assert!(limits.validate_transpose_c_max(1024).is_ok());
     }
 }

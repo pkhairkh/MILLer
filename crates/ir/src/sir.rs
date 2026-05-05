@@ -984,6 +984,18 @@ pub enum SirOp {
     // applies the right pattern dynamically.
 }
 
+impl SirOp {
+    /// Validate palette_bits field if present, returning an error if invalid.
+    pub fn validate_palette_bits(&self) -> Result<(), String> {
+        let bits = match self {
+            SirOp::LinearProjection { palette_bits: Some(b), .. } => b,
+            SirOp::Const { palette_bits: Some(b), .. } => b,
+            _ => return Ok(()),
+        };
+        crate::ane_layout::validate_palette_bits(*bits)
+    }
+}
+
 // Sprint 58 (S58.2): MilDtypeRepr was removed. SIR now uses
 // `super::mir::MilDtype` directly, eliminating the duplicate type.
 
@@ -1073,6 +1085,7 @@ pub enum KvCacheLayout {
     MaskedBlend,
     /// Paged KV cache with fixed-size blocks. Not yet implemented;
     /// reserved for future paged-attention support.
+    #[cfg(feature = "paged-kv")]
     Paged,
     /// Ring buffer KV cache: fixed-size circular buffer where new K/V
     /// entries are written at `position % max_seq_len` instead of shifting.

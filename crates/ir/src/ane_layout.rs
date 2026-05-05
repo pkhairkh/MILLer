@@ -194,9 +194,10 @@ pub fn validate_palette_bits(bits: usize) -> Result<(), String> {
 /// - 3-bit palettization requires A14+ (not available on A11Legacy, A12, A13)
 /// - 6-bit palettization requires A14+ (not available on A11Legacy, A12, A13)
 ///
-/// When `family` is `None`, performs only the basic validity check (same as
-/// `validate_palette_bits`). When `family` is provided, also checks that the
-/// bit-width is available on the target hardware family.
+/// The `family` parameter is required — callers must always specify the
+/// target hardware family so that version-conditional constraints are
+/// always enforced. This prevents the V-025 bypass where `None` allowed
+/// 3-bit/6-bit on older hardware.
 ///
 /// # Examples
 ///
@@ -205,38 +206,36 @@ pub fn validate_palette_bits(bits: usize) -> Result<(), String> {
 /// use ane_ir::ane_target::AneFamily;
 ///
 /// // 4-bit is fine on all families
-/// assert!(validate_palette_bits_for_family(4, Some(AneFamily::A11Legacy)).is_ok());
+/// assert!(validate_palette_bits_for_family(4, AneFamily::A11Legacy).is_ok());
 ///
 /// // 3-bit is rejected on A11Legacy (A14+ only)
-/// assert!(validate_palette_bits_for_family(3, Some(AneFamily::A11Legacy)).is_err());
+/// assert!(validate_palette_bits_for_family(3, AneFamily::A11Legacy).is_err());
 ///
 /// // 3-bit is fine on A14+
-/// assert!(validate_palette_bits_for_family(3, Some(AneFamily::A14)).is_ok());
+/// assert!(validate_palette_bits_for_family(3, AneFamily::A14).is_ok());
 /// ```
 pub fn validate_palette_bits_for_family(
     bits: usize,
-    family: Option<crate::ane_target::AneFamily>,
+    family: crate::ane_target::AneFamily,
 ) -> Result<(), String> {
     // First, check basic validity
     validate_palette_bits(bits)?;
 
     // Then, check version-conditional constraints (T-118)
-    if let Some(family) = family {
-        let uses_a14minus = family.uses_a14minus_converters();
+    let uses_a14minus = family.uses_a14minus_converters();
 
-        // T-118: 3-bit and 6-bit palettization require A14+ hardware.
-        // The ANEC binary evidence confirms: "3-bit palettization is only
-        // supported from version {1}" and "6-bit palettization is only
-        // supported from version {1}". On A11–A13, these bit-widths cause
-        // ANEC compile-time failures.
-        if uses_a14minus && (bits == 3 || bits == 6) {
-            return Err(format!(
-                "T-118: {}-bit palettization requires A14+ hardware, but target is {:?}. \
-                 3-bit and 6-bit palette modes are not available on A11Legacy/A12/A13 \
-                 (ANEC rejects them at compile time). Use 4-bit or 8-bit instead.",
-                bits, family
-            ));
-        }
+    // T-118: 3-bit and 6-bit palettization require A14+ hardware.
+    // The ANEC binary evidence confirms: "3-bit palettization is only
+    // supported from version {1}" and "6-bit palettization is only
+    // supported from version {1}". On A11–A13, these bit-widths cause
+    // ANEC compile-time failures.
+    if uses_a14minus && (bits == 3 || bits == 6) {
+        return Err(format!(
+            "T-118: {}-bit palettization requires A14+ hardware, but target is {:?}. \
+             3-bit and 6-bit palette modes are not available on A11Legacy/A12/A13 \
+             (ANEC rejects them at compile time). Use 4-bit or 8-bit instead.",
+            bits, family
+        ));
     }
 
     Ok(())
@@ -371,7 +370,7 @@ mod tests {
     fn test_t118_3bit_rejected_on_a11legacy() {
         use crate::ane_target::AneFamily;
         // 3-bit requires A14+ — rejected on A11Legacy
-        let result = validate_palette_bits_for_family(3, Some(AneFamily::A11Legacy));
+        let result = validate_palette_bits_for_family(3, AneFamily::A11Legacy);
         assert!(result.is_err(), "3-bit should be rejected on A11Legacy");
         assert!(result.unwrap_err().contains("T-118"));
     }
@@ -379,35 +378,35 @@ mod tests {
     #[test]
     fn test_t118_3bit_rejected_on_a12() {
         use crate::ane_target::AneFamily;
-        let result = validate_palette_bits_for_family(3, Some(AneFamily::A12));
+        let result = validate_palette_bits_for_family(3, AneFamily::A12);
         assert!(result.is_err(), "3-bit should be rejected on A12");
     }
 
     #[test]
     fn test_t118_3bit_rejected_on_a13() {
         use crate::ane_target::AneFamily;
-        let result = validate_palette_bits_for_family(3, Some(AneFamily::A13));
+        let result = validate_palette_bits_for_family(3, AneFamily::A13);
         assert!(result.is_err(), "3-bit should be rejected on A13");
     }
 
     #[test]
     fn test_t118_3bit_allowed_on_a14() {
         use crate::ane_target::AneFamily;
-        let result = validate_palette_bits_for_family(3, Some(AneFamily::A14));
+        let result = validate_palette_bits_for_family(3, AneFamily::A14);
         assert!(result.is_ok(), "3-bit should be allowed on A14+");
     }
 
     #[test]
     fn test_t118_6bit_rejected_on_a11legacy() {
         use crate::ane_target::AneFamily;
-        let result = validate_palette_bits_for_family(6, Some(AneFamily::A11Legacy));
+        let result = validate_palette_bits_for_family(6, AneFamily::A11Legacy);
         assert!(result.is_err(), "6-bit should be rejected on A11Legacy");
     }
 
     #[test]
     fn test_t118_6bit_allowed_on_a14() {
         use crate::ane_target::AneFamily;
-        let result = validate_palette_bits_for_family(6, Some(AneFamily::A14));
+        let result = validate_palette_bits_for_family(6, AneFamily::A14);
         assert!(result.is_ok(), "6-bit should be allowed on A14+");
     }
 
@@ -422,23 +421,15 @@ mod tests {
             AneFamily::A15,
             AneFamily::A16,
         ] {
-            let result = validate_palette_bits_for_family(4, Some(family));
+            let result = validate_palette_bits_for_family(4, family);
             assert!(result.is_ok(), "4-bit should be allowed on {:?}", family);
         }
     }
 
     #[test]
-    fn test_t118_none_family_basic_check_only() {
-        // When family is None, only basic validity is checked
-        assert!(validate_palette_bits_for_family(3, None).is_ok(), "3-bit is in VALID_PALETTE_BITS");
-        assert!(validate_palette_bits_for_family(6, None).is_ok(), "6-bit is in VALID_PALETTE_BITS");
-        assert!(validate_palette_bits_for_family(5, None).is_err(), "5-bit is not in VALID_PALETTE_BITS");
-    }
-
-    #[test]
     fn test_t118_8bit_allowed_on_all_families() {
         use crate::ane_target::AneFamily;
-        assert!(validate_palette_bits_for_family(8, Some(AneFamily::A11Legacy)).is_ok());
-        assert!(validate_palette_bits_for_family(8, Some(AneFamily::A14)).is_ok());
+        assert!(validate_palette_bits_for_family(8, AneFamily::A11Legacy).is_ok());
+        assert!(validate_palette_bits_for_family(8, AneFamily::A14).is_ok());
     }
 }
