@@ -26,6 +26,39 @@
 //! - **`is_asymmetric_quantization_supported()`** — always false on ANE.
 //!   Quantize ops with asymmetric mode are hard-rejected.
 //!
+//! ## T-P3-09: Cross-Constraint Combinations
+//!
+//! `validate_cross_constraint_combinations()` is wired into the MILConv
+//! match arm. The following cross-constraint violations are hard-rejected:
+//!
+//! - Dilation + vector_palettize (no_dilation_with_vector_palettize)
+//! - Aliasing + vector_palettize (no_aliasing_with_vector_palettize)
+//! - Palettized weight + large stride > 4 (no_palettize_with_large_stride)
+//! - Depthwise conv (groups>1) + per_channel_palettize (no_per_channel_palettize_with_shuffle)
+//!
+//! ## T-P3-10: Architecture-Gated Constraints
+//!
+//! `validate_architecture_gated_constraints()` is wired into the Softmax,
+//! InstanceNorm, and LocalResponseNorm match arms. The following architecture
+//! gates are enforced as hard rejections (CpuOnly, not just warnings):
+//!
+//! - Softmax on A11Legacy/A12/A13 → CpuOnly (requires A14+)
+//! - LRN on A11Legacy/A12/A13 → CpuOnly (requires A14+)
+//! - InstanceNorm on A11Legacy/A12/A13 → CpuOnly (requires A14+)
+//!
+//! ## T-P3-04: Conv Dims Validation
+//!
+//! `validate_conv_dims()` and `validate_conv_channels()` are wired into the
+//! MILConv match arm. When `anef_revision` is provided in PlacementContext,
+//! kernel dimensions and channel counts are validated against per-revision
+//! hardware limits. Conv with channels exceeding 32K is rejected.
+//!
+//! ## T-P3-08: Transpose Channel Limit
+//!
+//! `validate_transpose_c_max()` is wired into the MILTranspose match arm.
+//! When `anef_revision` is provided, channels exceeding `ne_transpose_c_max`
+//! (16384 for all revisions) are rejected from ANE.
+//!
 //! ## T-32: ArgMinMax A18 Guard
 //!
 //! ArgMinMax (`MILReduceArgmax`/`MILReduceArgmin`) has no ANEC converter
@@ -78,6 +111,8 @@ pub enum PlacementDecision {
 ///     is_asymmetric_quant: false,
 ///     is_blockwise_scale: false,
 ///     is_vector_palettized: false,
+///     has_per_channel_palettize: false,
+///     has_aliasing: false,
 ///     anef_revision: None,
 /// };
 /// ```
@@ -116,7 +151,17 @@ pub struct PlacementContext {
     /// Whether the op's weights use vector palettization (not supported
     /// for deconv/ConvTranspose on ANE). When true and the op is a
     /// ConvTranspose, the op is rejected from ANE placement.
+    /// Also used for T-P3-09 cross-constraint validation: dilation +
+    /// vector_palettize and aliasing + vector_palettize combinations.
     pub is_vector_palettized: bool,
+
+    /// Whether the op's weights use per-channel palettization.
+    /// T-P3-09: Depthwise conv (shuffle) + per-channel palettize is rejected.
+    pub has_per_channel_palettize: bool,
+
+    /// Whether the op has input/output aliasing.
+    /// T-P3-09: Aliasing + vector_palettize combination is rejected.
+    pub has_aliasing: bool,
 
     /// ANE revision for hardware limit validation (T-53).
     /// When provided, tensor dimensions are validated against per-revision HW limits.
@@ -758,42 +803,117 @@ pub fn validate_placement_with_context(
             PlacementDecision::AneAllowed
         }
 
-        // T-105: Softmax — architecture-conditional rejection possible.
-        // ConvertSoftmax is a family-agnostic converter (no MinimumFamily
-        // trait in binary), but ANEC has architecture-conditional rejection
-        // strings. Some older architecture variants may reject the operation
-        // at compile time even though the converter exists. Emit a soft
-        // warning for older architectures so developers are aware.
+        // T-P3-10/T-105: Softmax — hard-reject on A11Legacy/A12/A13.
+        // ConvertSoftmax is a family-agnostic converter, but ANEC has
+        // architecture-conditional rejection strings. The forensic analysis
+        // found "Softmax is not supported by this ANE architecture" for
+        // pre-A14 families. Now wired through validate_architecture_gated_constraints()
+        // to return CpuOnly instead of just logging a warning.
         MirOp::MILSoftmax { .. } => {
-            if matches!(
-                target_family,
-                AneFamily::A11Legacy | AneFamily::A12 | AneFamily::A13
-            ) {
-                log::warn!(
-                    "MILSoftmax: ConvertSoftmax is family-agnostic but architecture-conditional \
-                     rejection is possible on {:?}. The op will be placed on ANE but may fail \
-                     at ANEC compile time on specific architecture variants.",
-                    target_family
-                );
+            if let Err(violation) = crate::op_constraints::validate_architecture_gated_constraints(op, target_family) {
+                return PlacementDecision::CpuOnly(format!(
+                    "{}: architecture gate — {}",
+                    op_name(op),
+                    violation.message
+                ));
             }
             PlacementDecision::AneAllowed
         }
 
-        // T-105: InstanceNorm — architecture-conditional rejection possible.
+        // T-P3-10/T-105: InstanceNorm — architecture-conditional rejection.
         // ConvertInstanceNorm is family-agnostic but architecture-conditional.
         // InstanceNorm is unsupported on A11Legacy in the knowledge matrix
         // and may be rejected on other older variants at ANEC compile time.
+        // Now uses validate_architecture_gated_constraints() to hard-reject
+        // on pre-A14 families where LRN is also unsupported.
         MirOp::MILInstanceNorm { .. } => {
-            if matches!(
-                target_family,
-                AneFamily::A11Legacy | AneFamily::A12 | AneFamily::A13
+            if let Err(violation) = crate::op_constraints::validate_architecture_gated_constraints(op, target_family) {
+                return PlacementDecision::CpuOnly(format!(
+                    "{}: architecture gate — {}",
+                    op_name(op),
+                    violation.message
+                ));
+            }
+            PlacementDecision::AneAllowed
+        }
+
+        // T-P3-09: Conv — cross-constraint combination validation.
+        // Some constraint violations only occur when multiple conditions are
+        // simultaneously true (e.g., dilation + palettization, aliasing + palettization).
+        // Also wires T-P3-04: conv_dims convenience validation when HW revision
+        // is available.
+        MirOp::MILConv { dilations: _, strides: _, groups: _, .. } => {
+            // T-P3-09: Cross-constraint combination checks
+            if let Err(violation) = crate::op_constraints::validate_cross_constraint_combinations(
+                op,
+                ctx.is_vector_palettized,
+                ctx.has_aliasing,
+                ctx.has_per_channel_palettize,
             ) {
-                log::warn!(
-                    "MILInstanceNorm: ConvertInstanceNorm is family-agnostic but \
-                     architecture-conditional rejection is possible on {:?}. The op will be \
-                     placed on ANE but may fail at ANEC compile time on specific architecture variants.",
-                    target_family
-                );
+                return PlacementDecision::CpuOnly(format!(
+                    "{}: cross-constraint '{}' — {}",
+                    op_name(op),
+                    violation.constraint,
+                    violation.message
+                ));
+            }
+
+            // T-P3-04: validate_conv_dims when HW revision is available.
+            // Combines tensor_dims and conv_channels validation.
+            if !input_shapes.is_empty() {
+                if let Some(revision) = ctx.anef_revision {
+                    let hw_limits = ane_ir::ane_hw_limits::AneHwLimits::for_revision(revision);
+                    // Extract kernel dimensions from weight shape (input_shapes[1])
+                    let is_8bit = matches!(ctx.dtype, Some(MilDtype::Int8 | MilDtype::UInt8));
+                    if let Some(w_shape) = input_shapes.get(1) {
+                        let (kw, kh) = match w_shape.len() {
+                            n if n >= 4 => (w_shape[n - 1] as u64, w_shape[n - 2] as u64),
+                            _ => (0, 0),
+                        };
+                        if let Err(violation) = hw_limits.validate_conv_dims(kw, kh, is_8bit) {
+                            return PlacementDecision::CpuOnly(format!(
+                                "{}: conv dims violate HW limits — {}",
+                                op_name(op),
+                                violation
+                            ));
+                        }
+                    }
+                    // Also validate conv channels from primary input shape
+                    if let Some(shape) = input_shapes.first() {
+                        let (_, _, _, c) = extract_whdc(shape);
+                        if let Err(violation) = hw_limits.validate_conv_channels(c) {
+                            return PlacementDecision::CpuOnly(format!(
+                                "{}: conv channels violate HW limits — {}",
+                                op_name(op),
+                                violation
+                            ));
+                        }
+                    }
+                }
+            }
+
+            PlacementDecision::AneAllowed
+        }
+
+        // T-P3-08: Transpose — validate channel limits when HW revision available.
+        // Transpose operations with channels exceeding ne_transpose_c_max are
+        // rejected from ANE. The TransposeEngine has a hard limit on the number
+        // of channels it can handle.
+        MirOp::MILTranspose { .. } => {
+            if !input_shapes.is_empty() {
+                if let Some(revision) = ctx.anef_revision {
+                    let hw_limits = ane_ir::ane_hw_limits::AneHwLimits::for_revision(revision);
+                    if let Some(shape) = input_shapes.first() {
+                        let (_, _, _, c) = extract_whdc(shape);
+                        if let Err(violation) = hw_limits.validate_transpose_c_max(c) {
+                            return PlacementDecision::CpuOnly(format!(
+                                "{}: transpose channels exceed HW limit — {}",
+                                op_name(op),
+                                violation
+                            ));
+                        }
+                    }
+                }
             }
             PlacementDecision::AneAllowed
         }
@@ -2062,8 +2182,11 @@ mod tests {
     // ─── T-105: Softmax and InstanceNorm placement tests ─────────────
 
     #[test]
-    fn test_t105_softmax_a11_legacy_allowed() {
-        // MILSoftmax with A11Legacy should return AneAllowed (soft warning, not hard rejection)
+    fn test_t105_softmax_a11_legacy_rejected() {
+        // T-P3-10: MILSoftmax with A11Legacy should now return CpuOnly
+        // (hard rejection via validate_architecture_gated_constraints,
+        // not just a soft warning). Softmax is not reliably supported on
+        // pre-A14 families.
         let op = MirOp::MILSoftmax {
             name: "test_softmax".into(),
             x: MirNodeId("input".into()),
@@ -2074,7 +2197,13 @@ mod tests {
         let decision = validate_placement_with_context(
             &op, &shapes, AneFamily::A11Legacy, false, &ctx,
         );
-        assert_eq!(decision, PlacementDecision::AneAllowed);
+        match decision {
+            PlacementDecision::CpuOnly(msg) => {
+                assert!(msg.contains("architecture gate"), "Expected architecture gate message, got: {}", msg);
+                assert!(msg.contains("Softmax"), "Expected Softmax mention, got: {}", msg);
+            }
+            other => panic!("Expected CpuOnly for Softmax on A11Legacy, got {:?}", other),
+        }
     }
 
     #[test]
@@ -2094,8 +2223,10 @@ mod tests {
     }
 
     #[test]
-    fn test_t105_instancenorm_a11_legacy_allowed() {
-        // MILInstanceNorm with A11Legacy should return AneAllowed (soft warning, not hard rejection)
+    fn test_t105_instancenorm_a11_legacy_rejected() {
+        // T-P3-10: MILInstanceNorm with A11Legacy should now return CpuOnly
+        // (hard rejection via validate_architecture_gated_constraints).
+        // InstanceNorm is not reliably supported on pre-A14 families.
         let op = MirOp::MILInstanceNorm {
             name: "test_instnorm".into(),
             x: MirNodeId("input".into()),
@@ -2108,7 +2239,12 @@ mod tests {
         let decision = validate_placement_with_context(
             &op, &shapes, AneFamily::A11Legacy, false, &ctx,
         );
-        assert_eq!(decision, PlacementDecision::AneAllowed);
+        match decision {
+            PlacementDecision::CpuOnly(msg) => {
+                assert!(msg.contains("architecture gate"), "Expected architecture gate message, got: {}", msg);
+            }
+            other => panic!("Expected CpuOnly for InstanceNorm on A11Legacy, got {:?}", other),
+        }
     }
 
     #[test]
@@ -2187,6 +2323,222 @@ mod tests {
                 assert!(msg.contains("axis 0"), "Error should mention axis 0");
             }
             other => panic!("Expected CpuOnly for axis=0 concat, got {:?}", other),
+        }
+    }
+
+    // ─── T-P3-09: Cross-constraint combination placement tests ──────────
+
+    #[test]
+    fn test_p309_conv_dilation_vector_palettize_rejected() {
+        // MILConv with dilation + vector_palettize should be rejected
+        let op = MirOp::MILConv {
+            name: "conv".into(),
+            x: MirNodeId("x".into()),
+            weight: MirNodeId("w".into()),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1, 1],
+            pad_amounts: vec![0, 0, 0, 0],
+            dilations: vec![2, 2], // dilation > 1
+            kernel_scale: None,
+            kernel_zero_point: None,
+            kernel_palettized_lut: None,
+        };
+        let shapes: Vec<Vec<usize>> = vec![];
+        let ctx = PlacementContext {
+            is_vector_palettized: true,
+            ..PlacementContext::empty()
+        };
+        let decision = validate_placement_with_context(
+            &op, &shapes, AneFamily::A16, false, &ctx,
+        );
+        match decision {
+            PlacementDecision::CpuOnly(msg) => {
+                assert!(msg.contains("no_dilation_with_vector_palettize"),
+                    "Expected dilation+palettize violation, got: {}", msg);
+            }
+            other => panic!("Expected CpuOnly, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_p309_conv_no_violations_allowed() {
+        // MILConv with no cross-constraint violations should be AneAllowed
+        let op = MirOp::MILConv {
+            name: "conv".into(),
+            x: MirNodeId("x".into()),
+            weight: MirNodeId("w".into()),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1, 1],
+            pad_amounts: vec![0, 0, 0, 0],
+            dilations: vec![1, 1],
+            kernel_scale: None,
+            kernel_zero_point: None,
+            kernel_palettized_lut: None,
+        };
+        let shapes: Vec<Vec<usize>> = vec![];
+        let ctx = PlacementContext::empty();
+        let decision = validate_placement_with_context(
+            &op, &shapes, AneFamily::A16, false, &ctx,
+        );
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_p309_conv_depthwise_per_channel_palettize_rejected() {
+        // Depthwise conv (groups > 1) + per_channel_palettize should be rejected
+        let op = MirOp::MILConv {
+            name: "conv".into(),
+            x: MirNodeId("x".into()),
+            weight: MirNodeId("w".into()),
+            pad_type: "valid".into(),
+            groups: 8, // depthwise
+            strides: vec![1, 1],
+            pad_amounts: vec![0, 0, 0, 0],
+            dilations: vec![1, 1],
+            kernel_scale: None,
+            kernel_zero_point: None,
+            kernel_palettized_lut: None,
+        };
+        let shapes: Vec<Vec<usize>> = vec![];
+        let ctx = PlacementContext {
+            has_per_channel_palettize: true,
+            ..PlacementContext::empty()
+        };
+        let decision = validate_placement_with_context(
+            &op, &shapes, AneFamily::A16, false, &ctx,
+        );
+        match decision {
+            PlacementDecision::CpuOnly(msg) => {
+                assert!(msg.contains("no_per_channel_palettize_with_shuffle"),
+                    "Expected shuffle+palettize violation, got: {}", msg);
+            }
+            other => panic!("Expected CpuOnly, got {:?}", other),
+        }
+    }
+
+    // ─── T-P3-08: Transpose channel limit placement tests ──────────
+
+    #[test]
+    fn test_p308_transpose_channels_within_limit() {
+        // Transpose with channels within limit should be AneAllowed
+        let op = MirOp::MILTranspose {
+            name: "transpose".into(),
+            x: MirNodeId("x".into()),
+            perm: vec![0, 2, 1, 3],
+        };
+        let shapes = vec![vec![1, 64, 128, 128]]; // channels=64, within limit
+        let ctx = PlacementContext {
+            anef_revision: Some(ane_ir::ane_target::AneRevision::V7),
+            ..PlacementContext::empty()
+        };
+        let decision = validate_placement_with_context(
+            &op, &shapes, AneFamily::A14, false, &ctx,
+        );
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_p308_transpose_channels_exceed_limit() {
+        // Transpose with channels exceeding limit should be CpuOnly
+        let op = MirOp::MILTranspose {
+            name: "transpose".into(),
+            x: MirNodeId("x".into()),
+            perm: vec![0, 2, 1, 3],
+        };
+        let shapes = vec![vec![1, 20000, 128, 128]]; // channels=20000, exceeds 16384
+        let ctx = PlacementContext {
+            anef_revision: Some(ane_ir::ane_target::AneRevision::V7),
+            ..PlacementContext::empty()
+        };
+        let decision = validate_placement_with_context(
+            &op, &shapes, AneFamily::A14, false, &ctx,
+        );
+        match decision {
+            PlacementDecision::CpuOnly(msg) => {
+                assert!(msg.contains("transpose channels exceed"),
+                    "Expected transpose channel violation, got: {}", msg);
+            }
+            other => panic!("Expected CpuOnly, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_p308_transpose_no_revision_skips_check() {
+        // Without anef_revision, transpose validation is skipped → AneAllowed
+        let op = MirOp::MILTranspose {
+            name: "transpose".into(),
+            x: MirNodeId("x".into()),
+            perm: vec![0, 2, 1, 3],
+        };
+        let shapes = vec![vec![1, 20000, 128, 128]]; // would exceed limit if checked
+        let ctx = PlacementContext::empty(); // no revision
+        let decision = validate_placement_with_context(
+            &op, &shapes, AneFamily::A14, false, &ctx,
+        );
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    // ─── T-P3-04: Conv dims validation placement tests ──────────
+
+    #[test]
+    fn test_p304_conv_dims_within_limits() {
+        // Conv with valid kernel dimensions should be AneAllowed
+        let op = MirOp::MILConv {
+            name: "conv".into(),
+            x: MirNodeId("x".into()),
+            weight: MirNodeId("w".into()),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1, 1],
+            pad_amounts: vec![0, 0, 0, 0],
+            dilations: vec![1, 1],
+            kernel_scale: None,
+            kernel_zero_point: None,
+            kernel_palettized_lut: None,
+        };
+        let shapes = vec![vec![1, 64, 128, 128], vec![64, 64, 3, 3]]; // 3x3 kernel
+        let ctx = PlacementContext {
+            anef_revision: Some(ane_ir::ane_target::AneRevision::V7),
+            ..PlacementContext::empty()
+        };
+        let decision = validate_placement_with_context(
+            &op, &shapes, AneFamily::A14, false, &ctx,
+        );
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_p304_conv_channels_exceed_limit() {
+        // Conv with channels exceeding 32K should be CpuOnly
+        let op = MirOp::MILConv {
+            name: "conv".into(),
+            x: MirNodeId("x".into()),
+            weight: MirNodeId("w".into()),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1, 1],
+            pad_amounts: vec![0, 0, 0, 0],
+            dilations: vec![1, 1],
+            kernel_scale: None,
+            kernel_zero_point: None,
+            kernel_palettized_lut: None,
+        };
+        let shapes = vec![vec![1, 40000, 8, 8]]; // 40K channels → exceeds 32K
+        let ctx = PlacementContext {
+            anef_revision: Some(ane_ir::ane_target::AneRevision::V7),
+            ..PlacementContext::empty()
+        };
+        let decision = validate_placement_with_context(
+            &op, &shapes, AneFamily::A14, false, &ctx,
+        );
+        match decision {
+            PlacementDecision::CpuOnly(msg) => {
+                assert!(msg.contains("conv channels"),
+                    "Expected conv channel violation, got: {}", msg);
+            }
+            other => panic!("Expected CpuOnly, got {:?}", other),
         }
     }
 }

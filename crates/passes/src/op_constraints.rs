@@ -1146,6 +1146,13 @@ pub fn validate_architecture_gated_constraints(
                 message: format!("LRN is not supported on {:?} (requires A14+)", family),
             })
         }
+        MirOp::MILInstanceNorm { .. } if matches!(family, AneFamily::A11Legacy | AneFamily::A12 | AneFamily::A13) => {
+            Err(OpConstraintViolation {
+                op_name: "instance_norm".into(),
+                constraint: "architecture_gate".into(),
+                message: format!("InstanceNorm is not reliably supported on {:?} (requires A14+)", family),
+            })
+        }
         _ => Ok(())
     }
 }
@@ -2174,6 +2181,35 @@ mod tests {
             k: 1.0,
         };
         let result = validate_architecture_gated_constraints(&lrn, AneFamily::A16);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_architecture_gated_instancenorm_a11_rejected() {
+        let instnorm = MirOp::MILInstanceNorm {
+            name: "instnorm".into(),
+            x: MirNodeId("x".into()),
+            gamma: Some("g".into()),
+            beta: Some("b".into()),
+            epsilon: 1e-5,
+        };
+        let result = validate_architecture_gated_constraints(&instnorm, AneFamily::A11Legacy);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.constraint, "architecture_gate");
+        assert_eq!(err.op_name, "instance_norm");
+    }
+
+    #[test]
+    fn test_architecture_gated_instancenorm_a14_ok() {
+        let instnorm = MirOp::MILInstanceNorm {
+            name: "instnorm".into(),
+            x: MirNodeId("x".into()),
+            gamma: Some("g".into()),
+            beta: Some("b".into()),
+            epsilon: 1e-5,
+        };
+        let result = validate_architecture_gated_constraints(&instnorm, AneFamily::A14);
         assert!(result.is_ok());
     }
 }

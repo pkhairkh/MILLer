@@ -2,6 +2,7 @@
 
 > Consolidated remediation task board for open and in-progress issues.
 > Completed tasks have been removed — see git history for the full audit trail.
+> Recently completed: T-P2-12 (ALLOWED_DIVERGENCES real assertions), T-P3-04 (validate_conv_dims), T-P3-08 (transpose_c_max), T-P3-09 (cross-constraint combinations wired), T-P3-10 (architecture-gated constraints wired + Softmax/InstanceNorm/LRN hard-reject on pre-A14).
 > Format: Agentic AI task specification (structured, machine-parseable, human-readable).
 > Each task is independently executable by an AI coding agent with access to this repository.
 
@@ -89,22 +90,6 @@
 
 ---
 
-### T-P2-12: Implement ALLOWED_DIVERGENCES test
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P2-12 |
-| `title` | Replace no-op ALLOWED_DIVERGENCES test with real assertions |
-| `phase` | P2 |
-| `severity` | HIGH |
-| `depends_on` | [] |
-| `files` | `crates/passes/src/cpu_only_ops.rs` |
-| `violation_refs` | [V-016] |
-| `acceptance_criteria` | 1) Test asserts that each op in ALLOWED_DIVERGENCES has `default_engine() != None` AND is in CPU_ONLY_OPS; 2) Test documents why each divergence exists; 3) Test fails if the dual-source-of-truth becomes inconsistent |
-| `agent_hints` | Replace `let _ = name;` with actual assertions. For each op, verify: (1) it appears in CPU_ONLY_OPS, (2) `MirOp::from_name(name).default_engine().is_some()`, (3) add a comment explaining the divergence reason. |
-
----
-
 ## Phase 3 — Medium-Priority Constraint Enforcement
 
 ### T-P3-03: Replace AIR risk fields with status enum
@@ -123,22 +108,6 @@
 
 ---
 
-### T-P3-04: Add validate_conv_dims convenience method
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P3-04 |
-| `title` | Add validate_conv_dims() combining validate_tensor_dims() + validate_conv_channels() |
-| `phase` | P3 |
-| `severity` | MEDIUM |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/ane_hw_limits.rs` |
-| `violation_refs` | [V-037] |
-| `acceptance_criteria` | 1) `validate_conv_dims()` method exists that calls both `validate_tensor_dims()` and `validate_conv_channels()`; 2) All conv-placement callers use `validate_conv_dims()` instead of `validate_tensor_dims()` alone; 3) Conv with 40000 channels is rejected |
-| `agent_hints` | Add `pub fn validate_conv_dims(&self, ...) -> Result<(), ...>` that calls both methods. Find all call sites in `placement_validate.rs` and `op_constraints.rs` that validate conv dimensions and update them. |
-
----
-
 ### T-P3-07: Fix PIR handoff semantics
 
 | Field | Value |
@@ -152,54 +121,6 @@
 | `violation_refs` | [V-039] |
 | `acceptance_criteria` | 1) The `attn_out` handoff uses `HandoffKind::TensorPassThrough`; 2) KV-cache persistence remains modeled through `state_declarations`; 3) Decode-step shard test passes |
 | `agent_hints` | At line ~779, change `handoff_kind: HandoffKind::StateWriteRead` to `HandoffKind::TensorPassThrough` for the `attn_out` tensor. The KV cache state should only use `StateWriteRead` in the separate `state_declarations` structure. |
-
----
-
-### T-P3-08: Add ne_transpose_c_max validation
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P3-08 |
-| `title` | Add validate_transpose_c_max() method and call in placement |
-| `phase` | P3 |
-| `severity` | MEDIUM |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/ane_hw_limits.rs`, `crates/passes/src/op_constraints.rs` |
-| `violation_refs` | [V-051] |
-| `acceptance_criteria` | 1) `validate_transpose_c_max()` method exists; 2) Transpose operations with channels exceeding the limit are rejected from ANE; 3) Test verifies rejection |
-| `agent_hints` | Add `pub fn validate_transpose_c_max(&self, channels: u64) -> Result<(), ...>` to `AneHwLimits`. Call it from the transpose validation in `op_constraints.rs`. |
-
----
-
-### T-P3-09: Add cross-constraint combination validations
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P3-09 |
-| `title` | Validate cross-constraint combinations identified from forensic analysis |
-| `phase` | P3 |
-| `severity` | MEDIUM |
-| `depends_on` | [T-P2-01] |
-| `files` | `crates/passes/src/op_constraints.rs` |
-| `violation_refs` | [V-006, F-CROSS-01, M-005] |
-| `acceptance_criteria` | 1) Dilation + vector_palettize combination is rejected; 2) Aliasing + vector_palettize combination is rejected; 3) Shuffle + per-channel_palettize combination is rejected; 4) Palettized weight + large_kernel_stride combination is rejected; 5) Z-dilation and X-dilation factor rejection added; 6) Deconv depth-axis stride rejection added |
-| `agent_hints` | These constraint combinations are present in the ANECompiler binary but not validated by MILLer. Add checks in `op_constraints.rs` for each combination. The binary error strings provide the exact rejection messages to match against. |
-
----
-
-### T-P3-10: Add architecture-gated constraint validations
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P3-10 |
-| `title` | Add per-family validation for architecture-gated constraints from forensic analysis |
-| `phase` | P3 |
-| `severity` | MEDIUM |
-| `depends_on` | [] |
-| `files` | `crates/passes/src/op_constraints.rs`, `crates/passes/src/dtype_constraints.rs` |
-| `violation_refs` | [F-ARCH-01] |
-| `acceptance_criteria` | 1) Softmax on old HW (pre-A13) is rejected or documented as risky; 2) LRN on unsupported architectures is rejected; 3) Depth-axis broadcast on affected architectures is rejected; 4) A14-class resize alignCorners=true is rejected; 5) H13+ floor for MIL compilation is documented/enforced |
-| `agent_hints` | The forensic analysis found strings like "Softmax is not supported by this ANE architecture" and "LRN is not supported on this architecture". Add per-family gates for these. Most of these are already CPU-only but the architecture gating adds an extra safety layer. |
 
 ---
 

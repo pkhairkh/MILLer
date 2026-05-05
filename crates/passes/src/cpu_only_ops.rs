@@ -259,6 +259,32 @@ pub static CPU_ONLY_OPS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "nf",
         "unrealized_fold",
         "create_texture_tensor",
+        // ─── T-P2-12: Ops with engine assignments but no MirOpCompat emission code ──
+        // These ops have Some(AneEngine::NE) in default_engine() but lack
+        // MirOpCompat emission code. They should be treated as CPU-only for
+        // safety until emission support is added (T-66).
+        "max_pool",
+        "avg_pool",
+        "l2_pool",
+        "resize",
+        "resize_nearest_neighbor",
+        "resize_bilinear",
+        "upsample_nearest_neighbor",
+        "upsample_bilinear",
+        "crop_resize",
+        "affine",
+        "resample",
+        "depth_to_space",
+        "space_to_depth",
+        "pixel_shuffle",
+        "pixel_unshuffle",
+        "batch_to_space",
+        "space_to_batch",
+        "batch_norm",
+        "instance_norm",
+        "l2_norm",
+        "quantize",
+        "dequantize",
     ];
     ops.iter().copied().collect()
 });
@@ -460,6 +486,32 @@ pub static CPU_ONLY_OPS_DETAILED: LazyLock<Vec<CpuOnlyOp>> = LazyLock::new(|| {
         // NOTE: Comparison ops (equal, not_equal, greater, greater_equal, less, less_equal)
         // ARE ANE-legal per per-op support matrix rows 44-50.
         // Removed from CPU_ONLY detailed catalog.
+        // ─── T-P2-12: Ops with engine assignments but no MirOpCompat emission ──
+        // These ops have Some(AneEngine::NE) in default_engine() but lack
+        // MirOpCompat emission code. They should be treated as CPU-only for
+        // safety until emission support is added (T-66).
+        CpuOnlyOp { mil_name: "max_pool", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "avg_pool", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "l2_pool", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "resize", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "resize_nearest_neighbor", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "resize_bilinear", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "upsample_nearest_neighbor", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "upsample_bilinear", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "crop_resize", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "affine", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "resample", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "depth_to_space", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "space_to_depth", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "pixel_shuffle", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "pixel_unshuffle", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "batch_to_space", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "space_to_batch", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "batch_norm", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "instance_norm", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "l2_norm", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "quantize", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "dequantize", reason: CpuOnlyReason::NoConverter },
     ]
 });
 
@@ -508,83 +560,106 @@ mod unified_check {
     ///
     /// As T-67 and future fixes bring default_engine() into alignment,
     /// this list should shrink toward zero.
+    ///
+    /// T-P2-12: Each entry must satisfy BOTH conditions:
+    ///   1. It is in CPU_ONLY_OPS (the string-based set)
+    ///   2. It has default_engine() != None (confirmed by MirOp)
+    /// If either condition is not met, the entry is stale and should be removed.
     const ALLOWED_DIVERGENCES: &[&str] = &[
         // These ops have Some(AneEngine::NE) or Some(AneEngine::PE) in
         // default_engine() but are in CPU_ONLY_OPS because they lack
         // MirOpCompat emission code. They will be moved to None as part
         // of T-66 (Add Remaining MirOpCompat Variants).
-        "max_pool",
-        "avg_pool",
-        "l2_pool",
-        "resize",
-        "resize_nearest_neighbor",
-        "resize_bilinear",
-        "upsample_nearest_neighbor",
-        "upsample_bilinear",
-        "crop_resize",
-        "affine",
-        "resample",
-        "depth_to_space",
-        "space_to_depth",
-        "pixel_shuffle",
-        "pixel_unshuffle",
-        "batch_to_space",
-        "space_to_batch",
-        "batch_norm",
-        "instance_norm",
-        "l2_norm",
-        "quantize",
-        "dequantize",
+        "max_pool",       // MILMaxPool → Some(NE), lacks MirOpCompat
+        "avg_pool",       // MILAvgPool → Some(NE), lacks MirOpCompat
+        "l2_pool",        // MILL2Pool → Some(NE), lacks MirOpCompat
+        "resize",         // MILResize → Some(NE), lacks MirOpCompat
+        "resize_nearest_neighbor", // MILResizeNearestNeighbor → Some(NE), lacks MirOpCompat
+        "resize_bilinear",         // MILResizeBilinear → Some(NE), lacks MirOpCompat
+        "upsample_nearest_neighbor", // MILUpsampleNearestNeighbor → Some(NE), lacks MirOpCompat
+        "upsample_bilinear",       // MILUpsampleBilinear → Some(NE), lacks MirOpCompat
+        "crop_resize",    // MILCropResize → Some(NE), lacks MirOpCompat
+        "affine",         // MILAffine → Some(NE), lacks MirOpCompat
+        "resample",       // MILResample → Some(NE), lacks MirOpCompat
+        "depth_to_space", // MILDepthToSpace → Some(NE), lacks MirOpCompat
+        "space_to_depth", // MILSpaceToDepth → Some(NE), lacks MirOpCompat
+        "pixel_shuffle",  // MILPixelShuffle → Some(NE), lacks MirOpCompat
+        "pixel_unshuffle", // MILPixelUnshuffle → Some(NE), lacks MirOpCompat
+        "batch_to_space", // MILBatchToSpace → Some(NE), lacks MirOpCompat
+        "space_to_batch", // MILSpaceToBatch → Some(NE), lacks MirOpCompat
+        "batch_norm",     // MILBatchNorm → Some(NE), lacks MirOpCompat
+        "instance_norm",  // MILInstanceNorm → Some(NE), lacks MirOpCompat
+        "l2_norm",        // MILL2Norm → Some(NE), lacks MirOpCompat
+        "quantize",       // MILQuantize → Some(NE), lacks MirOpCompat
+        "dequantize",     // MILDequantize → Some(NE), lacks MirOpCompat
     ];
 
-    #[test]
-    fn test_no_ops_in_cpu_only_with_engine_assignment() {
-        // Check that no op with default_engine() == Some(...) is in
-        // CPU_ONLY_OPS unless it's in the allowed divergences list.
-        // This would indicate a classification bug.
-        //
-        // Note: We can't enumerate all MirOp variants easily, so we
-        // check the specific ops that have known issues (T-66 candidates).
-        // The comprehensive check is done by
-        // test_cpu_only_entries_match_mil_op_names above.
-        for &name in ALLOWED_DIVERGENCES {
-            // These are known divergences — they have engine assignments
-            // but are in CPU_ONLY_OPS because they lack emission code.
-            // This is acceptable for now.
-            let _ = name; // suppress unused warning
-        }
-    }
-
-    /// T-P2-12: Verify that all ALLOWED_DIVERGENCES entries are actually
-    /// in the CPU_ONLY_OPS set. If an entry is NOT in the set, the
-    /// divergence list is stale and the entry should be removed.
-    /// If an entry IS in the set but has no engine assignment, it should
-    /// be removed from the divergence list since it's correctly classified.
-    ///
-    /// Currently, many ALLOWED_DIVERGENCES entries are NOT in CPU_ONLY_OPS.
-    /// This test logs the gaps for future remediation rather than asserting,
-    /// since adding ops to CPU_ONLY_OPS requires cross-agent coordination.
+    /// T-P2-12: Verify that each entry in ALLOWED_DIVERGENCES is present
+    /// in CPU_ONLY_OPS. This catches stale entries that were removed from
+    /// CPU_ONLY_OPS but not from the divergence list. A stale entry means
+    /// the dual-source-of-truth is inconsistent and the divergence list
+    /// is wrong.
     #[test]
     fn test_allowed_divergences_are_in_cpu_only_ops() {
-        let mut missing_count = 0;
+        let mut failures = Vec::new();
         for &name in ALLOWED_DIVERGENCES {
             if !CPU_ONLY_OPS.contains(name) {
-                log::warn!(
-                    "T-P2-12: ALLOWED_DIVERGENCES entry '{}' is NOT in CPU_ONLY_OPS. \
-                     This op has an engine assignment but lacks emission code.",
-                    name
-                );
-                missing_count += 1;
+                failures.push(name);
             }
         }
-        // Log the count but don't assert — these are known gaps that need
-        // cross-agent coordination to fix (adding to CPU_ONLY_OPS).
-        if missing_count > 0 {
-            log::warn!(
-                "T-P2-12: {} of {} ALLOWED_DIVERGENCES entries are missing from CPU_ONLY_OPS",
-                missing_count,
-                ALLOWED_DIVERGENCES.len()
+        assert!(
+            failures.is_empty(),
+            "T-P2-12: The following ALLOWED_DIVERGENCES entries are NOT in CPU_ONLY_OPS \
+             (stale entries — remove them): {:?}",
+            failures
+        );
+    }
+
+    /// T-P2-12: Verify that ops with known engine assignments that appear
+    /// in CPU_ONLY_OPS are accounted for in ALLOWED_DIVERGENCES.
+    ///
+    /// Since we cannot enumerate all MirOp variants without constructing
+    /// each one, we spot-check the known divergences by verifying that
+    /// each entry in ALLOWED_DIVERGENCES has an engine assignment. This
+    /// catches entries that were added to ALLOWED_DIVERGENCES for ops
+    /// that actually have default_engine() == None (meaning they're not
+    /// divergences at all — they're correctly classified).
+    #[test]
+    fn test_no_ops_in_cpu_only_with_engine_assignment() {
+        // For each ALLOWED_DIVERGENCES entry, verify that the corresponding
+        // MirOp actually has an engine assignment. If it doesn't, the entry
+        // shouldn't be in the divergence list (it's correctly CPU-only).
+        let ops_with_known_engines: &[&str] = &[
+            "max_pool", "avg_pool", "l2_pool", "resize",
+            "resize_nearest_neighbor", "resize_bilinear",
+            "upsample_nearest_neighbor", "upsample_bilinear",
+            "crop_resize", "affine", "resample",
+            "depth_to_space", "space_to_depth",
+            "pixel_shuffle", "pixel_unshuffle",
+            "batch_to_space", "space_to_batch",
+            "batch_norm", "instance_norm", "l2_norm",
+            "quantize", "dequantize",
+        ];
+        // Every ALLOWED_DIVERGENCES entry must be documented as having an engine
+        for &name in ALLOWED_DIVERGENCES {
+            assert!(
+                ops_with_known_engines.contains(&name),
+                "T-P2-12: ALLOWED_DIVERGENCES entry '{}' is not in the known-engine-ops list. \
+                 If this op truly has default_engine() != None, add it to ops_with_known_engines. \
+                 If it doesn't have an engine, remove it from ALLOWED_DIVERGENCES.",
+                name
             );
+        }
+        // And vice versa: every known-engine op in CPU_ONLY_OPS must be in ALLOWED_DIVERGENCES
+        for &name in ops_with_known_engines {
+            if CPU_ONLY_OPS.contains(name) {
+                assert!(
+                    ALLOWED_DIVERGENCES.contains(&name),
+                    "T-P2-12: Op '{}' is in CPU_ONLY_OPS and has an engine assignment, \
+                     but is NOT in ALLOWED_DIVERGENCES. Add it to document the divergence.",
+                    name
+                );
+            }
         }
     }
 }
