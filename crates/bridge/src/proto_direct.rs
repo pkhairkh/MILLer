@@ -21,7 +21,7 @@
 //! emitted mlpackage directory without requiring macOS or the Core ML runtime.
 //! It checks the directory structure, required files, and basic integrity.
 
-use crate::mir_to_compat::{mir_graph_to_compat_with_allow_missing, EmptyWeightResolver};
+use crate::mir_to_compat::{mir_graph_to_compat_with_arch, EmptyWeightResolver};
 use ane_coreml_emit::ProtoEmitter;
 use ane_coreml_proto::mir_compat::MirGraphCompat;
 use ane_ir::mir::MirGraph;
@@ -149,7 +149,16 @@ pub fn emit_role_shard_proto_direct(
     let builder = RoleMirBuilder::new();
     let mir_graph = builder.build_mir(spec)?;
 
-    emit_mir_graph_proto_direct(&mir_graph, output_path)
+    // T-P2-11: Default to Qwen3 architecture for role-shard emission.
+    // The ShardSpec doesn't carry architecture info, so this uses the
+    // legacy default. Callers needing a different architecture should use
+    // emit_mir_graph_proto_direct() directly.
+    emit_mir_graph_proto_direct(
+        &mir_graph,
+        output_path,
+        &ane_ir::common::ModelArchitecture::Qwen3,
+        32768,
+    )
 }
 
 /// Emit a compiler MIR graph as an mlpackage via proto-direct.
@@ -160,15 +169,21 @@ pub fn emit_role_shard_proto_direct(
 ///
 /// For weight data, this uses `EmptyWeightResolver` which fills in zero
 /// bytes. For real weight data, use `emit_mir_graph_proto_direct_with_resolver()`
-/// or build your own resolver and call `mir_graph_to_compat()` + `emit_proto_direct()` directly.
+/// or build your own resolver and call `mir_graph_to_compat_with_arch()` + `emit_proto_direct()` directly.
+///
+/// T-P2-11: `architecture` and `max_seq_len` are now required parameters.
 pub fn emit_mir_graph_proto_direct(
     graph: &MirGraph,
     output_path: &str,
+    architecture: &ane_ir::common::ModelArchitecture,
+    max_seq_len: usize,
 ) -> Result<ProtoDirectResult> {
     let resolver = EmptyWeightResolver;
     // EmptyWeightResolver always returns None, so allow_missing_weights=true to
     // avoid hard error — this path is for zero-fill testing only.
-    let compat = mir_graph_to_compat_with_allow_missing(graph, &resolver, true)?;
+    let compat = mir_graph_to_compat_with_arch(
+        graph, &resolver, architecture, max_seq_len, true,
+    )?;
 
     emit_proto_direct(&compat, output_path)
 }
@@ -178,10 +193,14 @@ pub fn emit_mir_graph_proto_direct(
 /// This is the same as `emit_mir_graph_proto_direct()` but accepts a custom
 /// `WeightResolver` that provides actual weight bytes. Use this when you have
 /// access to safetensors files or other weight data sources.
+///
+/// T-P2-11: `architecture` and `max_seq_len` are now required parameters.
 pub fn emit_mir_graph_proto_direct_with_resolver(
     graph: &MirGraph,
     output_path: &str,
     resolver: &dyn crate::mir_to_compat::WeightResolver,
+    architecture: &ane_ir::common::ModelArchitecture,
+    max_seq_len: usize,
 ) -> Result<ProtoDirectResult> {
     // T-P2-09: Only allow missing weights when the resolver is empty.
     // When a non-empty resolver is provided but a weight is missing, that's
@@ -189,7 +208,9 @@ pub fn emit_mir_graph_proto_direct_with_resolver(
     // Previously, this always passed allow_missing_weights=true, which
     // masked real weight resolution failures.
     let allow_missing = resolver.is_empty();
-    let compat = mir_graph_to_compat_with_allow_missing(graph, resolver, allow_missing)?;
+    let compat = mir_graph_to_compat_with_arch(
+        graph, resolver, architecture, max_seq_len, allow_missing,
+    )?;
     emit_proto_direct(&compat, output_path)
 }
 
@@ -578,7 +599,7 @@ mod tests {
                     shape: vec![32, 64],
                     compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 },
                 MirNode {
                     id: MirNodeId("out".into()),
@@ -592,7 +613,7 @@ mod tests {
                     shape: vec![32],
                     compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 },
             ],
             inputs: vec![MirNodeId("input".into())],
@@ -606,7 +627,12 @@ mod tests {
             },
         };
 
-        let result = emit_mir_graph_proto_direct(&graph, output_path.to_str().unwrap()).unwrap();
+        let result = emit_mir_graph_proto_direct(
+            &graph,
+            output_path.to_str().unwrap(),
+            &ane_ir::common::ModelArchitecture::Qwen3,
+            32768,
+        ).unwrap();
 
         assert_eq!(result.emission_method, "proto-direct");
         assert_eq!(result.function_count, 1);
@@ -638,6 +664,7 @@ mod tests {
                     shape: vec![32, 64],
                     compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
                     air_source: None,
+                    target_annotation: Default::default(),
                 },
                 MirNode {
                     id: MirNodeId("out".into()),
@@ -651,6 +678,7 @@ mod tests {
                     shape: vec![32],
                     compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
                     air_source: None,
+                    target_annotation: Default::default(),
                 },
             ],
             inputs: vec![MirNodeId("input".into())],
@@ -675,6 +703,8 @@ mod tests {
             &graph,
             output_path.to_str().unwrap(),
             &resolver,
+            &ane_ir::common::ModelArchitecture::Qwen3,
+            32768,
         );
         assert!(result.is_err(), "Production path should reject missing weights, got Ok");
     }

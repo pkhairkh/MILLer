@@ -432,6 +432,21 @@ enum Commands {
         #[arg(long, default_value_t = 32)]
         seq_len: usize,
 
+        /// Maximum sequence length for the model (determines KV cache dimension).
+        /// T-P2-11: Required for correct shape inference. Previously defaulted
+        /// to Qwen3-0.6B's 32768, which was wrong for other architectures.
+        /// Should match the model's max_position_embeddings.
+        #[arg(long)]
+        max_seq_len: Option<usize>,
+
+        /// Model architecture for weight-name pattern resolution.
+        /// T-P2-11: Required for correct weight resolution. Previously defaulted
+        /// to Qwen3, which produced wrong alias maps for non-Qwen3 models.
+        /// Accepted values: "qwen3" (also covers LLaMA), or "generic".
+        /// If not specified, auto-detected from the model's config.json.
+        #[arg(long)]
+        architecture: Option<String>,
+
         /// Whether to decompose composite ops (attention, MLP) during tracing.
         #[arg(long, default_value_t = true)]
         decompose: bool,
@@ -641,6 +656,8 @@ fn main() {
             ane_only,
             batch_size,
             seq_len,
+            max_seq_len,
+            architecture,
             decompose,
             with_kv_cache,
             trace_script,
@@ -656,6 +673,8 @@ fn main() {
                 ane_only,
                 batch_size,
                 seq_len,
+                max_seq_len,
+                architecture.as_deref(),
                 decompose,
                 with_kv_cache,
                 &trace_script,
@@ -3927,6 +3946,8 @@ fn run_trace_compile(
     ane_only: bool,
     batch_size: usize,
     seq_len: usize,
+    max_seq_len_override: Option<usize>,
+    architecture_override: Option<&str>,
     decompose: bool,
     with_kv_cache: bool,
     trace_script: &str,
@@ -3988,6 +4009,25 @@ fn run_trace_compile(
         traced_graph.nodes.len(),
         traced_graph.architecture,
         traced_graph.model_config.model_type,
+    );
+
+    // T-P2-11: Resolve architecture from CLI override, falling back to
+    // auto-detected architecture from the traced graph. Previously, the
+    // architecture silently defaulted to Qwen3, which produced wrong
+    // weight alias maps for non-Qwen3 models.
+    let resolved_architecture: ane_ir::common::ModelArchitecture = match architecture_override {
+        Some("qwen3") => ane_ir::common::ModelArchitecture::Qwen3,
+        Some(other) => {
+            return Err(format!(
+                "Unknown architecture '{}'. Supported values: 'qwen3'. \
+                 Omit --architecture to auto-detect from the model's config.",
+                other
+            ));
+        }
+        None => traced_graph.architecture.clone(),
+    };
+    println!("  Architecture: {} (source: {})", resolved_architecture,
+        if architecture_override.is_some() { "CLI --architecture" } else { "auto-detected" }
     );
     println!(
         "  Config: hidden_size={}, num_heads={}, num_layers={}",
@@ -4201,8 +4241,13 @@ fn run_trace_compile(
     // Compute actual_max_seq_len early — needed for the decode_step resolver.
     // The embedding function uses seq_len (prefill length), but decode_step
     // needs actual_max_seq_len (the full KV cache dimension) for its tables.
-    let actual_max_seq_len =
-        traced_graph.model_config.max_position_embeddings.max(config.max_seq_len);
+    //
+    // T-P2-11: If --max-seq-len is provided, use it directly. Otherwise, derive
+    // from the model config's max_position_embeddings. Previously, this defaulted
+    // to Qwen3-0.6B's 32768, which was wrong for other architectures.
+    let actual_max_seq_len = max_seq_len_override.unwrap_or_else(|| {
+        traced_graph.model_config.max_position_embeddings.max(config.max_seq_len)
+    });
 
     // Embedding resolver: uses seq_len (prefill length, e.g., 512)
     let mut embedding_static_table_resolver =
@@ -4384,7 +4429,7 @@ fn run_trace_compile(
     // inference: every forward pass recomputes the entire KV cache from
     // scratch, and autoregressive generation is impossible.
     let emit_result = if with_kv_cache && mirs.len() == 1 {
-        use ane_bridge::mir_to_compat::mir_graph_to_compat_with_allow_missing;
+        use ane_bridge::mir_to_compat::mir_graph_to_compat_with_arch;
         use ane_bridge::proto_direct::emit_proto_direct_multifunction;
 
         println!("  KV-cache enabled: emitting multi-function model (embedding + decode_step)");
@@ -4550,9 +4595,14 @@ fn run_trace_compile(
         // Each function uses its own resolver with the correct seq_len for static tables:
         // - embedding_resolver: tables with seq_len (prefill length)
         // - decode_resolver: tables with actual_max_seq_len (full KV cache length)
-        let embedding_compat = mir_graph_to_compat_with_allow_missing(embedding_mir, &embedding_resolver, true)
+        //
+        // T-P2-11: Use mir_graph_to_compat_with_arch with explicit architecture
+        // from the traced graph, instead of the deprecated allow_missing wrapper
+        // that defaults to Qwen3.
+        let model_arch = &resolved_architecture;
+        let embedding_compat = mir_graph_to_compat_with_arch(embedding_mir, &embedding_resolver, model_arch, actual_max_seq_len, true)
             .map_err(|e| format!("Embedding MIR compat conversion failed: {}", e))?;
-        let decode_step_compat = mir_graph_to_compat_with_allow_missing(decode_step_mir, &decode_resolver, true)
+        let decode_step_compat = mir_graph_to_compat_with_arch(decode_step_mir, &decode_resolver, model_arch, actual_max_seq_len, true)
             .map_err(|e| format!("Decode-step MIR compat conversion failed: {}", e))?;
 
         // DIAGNOSTIC: Verify compat format preserves state ops
@@ -4603,6 +4653,8 @@ fn run_trace_compile(
             &mirs[0],
             mlpackage_dir.to_str().unwrap_or(""),
             &embedding_resolver,
+            &resolved_architecture,
+            actual_max_seq_len,
         )
         .map_err(|e| format!("Proto-direct emission failed: {}", e))?
     };

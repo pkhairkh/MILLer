@@ -66,6 +66,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 1.0.69",
  "uuid",
 ]
 
@@ -100,6 +101,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "thiserror 1.0.69",
  "uuid",
 ]
 

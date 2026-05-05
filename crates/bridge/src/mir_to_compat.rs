@@ -165,11 +165,25 @@ impl WeightResolver for EmptyWeightResolver {
 /// The weight data is looked up via the `resolver`. If the resolver can't find
 /// a weight, a hard error is returned by default (T-91/I-66). Use
 /// `mir_graph_to_compat_with_allow_missing()` to opt into zero-filled placeholders.
+///
+/// **Deprecated** (T-P2-11): This function defaults to Qwen3 architecture and
+/// max_seq_len=32768. Use [`mir_graph_to_compat_with_arch`] with explicit
+/// parameters instead.
 pub fn mir_graph_to_compat(
     graph: &MirGraph,
     resolver: &dyn WeightResolver,
 ) -> Result<MirGraphCompat> {
-    mir_graph_to_compat_with_arch(graph, resolver, None, None, false)
+    log::warn!(
+        "mir_graph_to_compat: using deprecated default architecture=Qwen3, max_seq_len=32768. \
+         Use mir_graph_to_compat_with_arch() with explicit parameters instead."
+    );
+    mir_graph_to_compat_with_arch(
+        graph,
+        resolver,
+        &ane_ir::common::ModelArchitecture::Qwen3,
+        32768,
+        false,
+    )
 }
 
 /// Convert a MIR graph to compat representation, allowing missing weights.
@@ -177,47 +191,54 @@ pub fn mir_graph_to_compat(
 /// When `allow_missing_weights` is true, unresolved weights produce zero-filled
 /// placeholders with a warning. This is intended for development/testing only —
 /// production models should never use zero-filled weights (T-91/I-66/V-007).
+///
+/// **Deprecated** (T-P2-11): This function defaults to Qwen3 architecture and
+/// max_seq_len=32768. Use [`mir_graph_to_compat_with_arch`] with explicit
+/// parameters instead.
 pub fn mir_graph_to_compat_with_allow_missing(
     graph: &MirGraph,
     resolver: &dyn WeightResolver,
     allow_missing_weights: bool,
 ) -> Result<MirGraphCompat> {
-    mir_graph_to_compat_with_arch(graph, resolver, None, None, allow_missing_weights)
+    log::warn!(
+        "mir_graph_to_compat_with_allow_missing: using deprecated default architecture=Qwen3, \
+         max_seq_len=32768. Use mir_graph_to_compat_with_arch() with explicit parameters instead."
+    );
+    mir_graph_to_compat_with_arch(
+        graph,
+        resolver,
+        &ane_ir::common::ModelArchitecture::Qwen3,
+        32768,
+        allow_missing_weights,
+    )
 }
 
 /// Convert a MIR graph to compat representation with architecture-specific
 /// weight name patterns.
 ///
-/// T-36 (I-15/CQ-18): The `architecture` parameter allows the caller to
-/// specify the model architecture for weight-name pattern resolution in
-/// [`build_input_alias_map`]. When `None`, defaults to Qwen3 patterns
-/// (backward-compatible behavior).
+/// T-36 (I-15/CQ-18): The `architecture` parameter specifies the model
+/// architecture for weight-name pattern resolution in [`build_input_alias_map`].
 ///
 /// T-36 (I-15/CQ-19): The `max_seq_len` parameter replaces the hardcoded
-/// `512` fallback in shape inference. When `None`, defaults to 32768
-/// (Qwen3-0.6B max_position_embeddings).
+/// `512` fallback in shape inference.
 ///
 /// T-91 (I-66/V-007): The `allow_missing_weights` parameter controls behavior
 /// when a weight cannot be resolved. When `false` (default), missing weights
 /// are a hard error. When `true`, zero-filled placeholders are produced with
 /// a warning (for development/testing only).
+///
+/// T-P2-11: `architecture` is now required (not Optional). Callers must
+/// specify the model architecture explicitly — silent defaulting to Qwen3
+/// was a correctness hazard for non-Qwen3 models.
 pub fn mir_graph_to_compat_with_arch(
     graph: &MirGraph,
     resolver: &dyn WeightResolver,
-    architecture: Option<&ane_ir::common::ModelArchitecture>,
-    max_seq_len: Option<usize>,
+    architecture: &ane_ir::common::ModelArchitecture,
+    max_seq_len: usize,
     allow_missing_weights: bool,
 ) -> Result<MirGraphCompat> {
     let alias_map = build_input_alias_map(graph, architecture);
-    // DEPRECATED (CQ-9): Hardcoded 32768 default is Qwen3-0.6B-specific.
-    // Callers should pass explicit max_seq_len for correctness.
-    let max_seq_len = max_seq_len.unwrap_or_else(|| {
-        log::warn!(
-            "mir_graph_to_compat_with_arch: max_seq_len not provided, defaulting to 32768 \
-             (Qwen3-0.6B default). Pass explicit max_seq_len for other models."
-        );
-        32768
-    });
+    // T-P2-11: max_seq_len is now required — no more Qwen3-specific default.
 
     // Build a shape map from MirNode.id → MirNode.shape so that reshape ops
     // can resolve zero-placeholder dimensions by looking up their input node's
@@ -319,6 +340,8 @@ pub fn mir_graph_to_compat_with_arch(
                 // T-91 (I-66/V-007): Previously used zero-filled placeholder silently,
                 // producing models that compile but produce garbage inference. Now
                 // a hard error by default, with --allow-missing-weights opt-in.
+                // T-P2-05: Use typed BridgeError::UnresolvedWeight instead of
+                // anyhow::bail! for programmatic error matching.
                 if allow_missing_weights {
                     log::warn!(
                         "weight '{}' not resolved — using zero-filled placeholder (allow_missing_weights=true)",
@@ -326,12 +349,9 @@ pub fn mir_graph_to_compat_with_arch(
                     );
                     (vec![0u8; 2], vec![1], MilDtypeCompat::Fp16)
                 } else {
-                    bail!(
-                        "Weight '{}' not found in resolver. This produces a silently broken model \
-                         with zero-filled weights. Use --allow-missing-weights to opt into zero-fill \
-                         (NOT recommended for production).",
-                        weight_name
-                    );
+                    return Err(crate::BridgeError::UnresolvedWeight {
+                        path: weight_name.clone(),
+                    }.into());
                 }
             }
         };
@@ -526,33 +546,20 @@ fn compat_input_names(op: &MirOpCompat) -> Vec<String> {
 
 /// Build a map of SIR alias names to their resolved MIR node IDs.
 ///
-/// T-36 (I-15/CQ-18): Previously hardcoded Qwen3-specific weight name
-/// patterns. Now uses `ModelArchitecture` for architecture-aware pattern
-/// resolution. When `architecture` is `None`, defaults to Qwen3 patterns
-/// for backward compatibility.
+/// T-36 (I-15/CQ-18): The `architecture` parameter specifies the model
+/// architecture for weight-name pattern resolution.
+///
+/// T-P2-11: `architecture` is now required (not Optional). Callers must
+/// specify the model architecture explicitly.
 ///
 /// The alias map is used by [`remap_compat_inputs`] to redirect SIR-level
 /// input references (which use synthetic names from the SIR decomposition)
 /// to the actual MIR node IDs that produce those values.
 fn build_input_alias_map(
     graph: &MirGraph,
-    architecture: Option<&ane_ir::common::ModelArchitecture>,
+    architecture: &ane_ir::common::ModelArchitecture,
 ) -> std::collections::HashMap<String, String> {
-    // T-57: Use Qwen3 patterns when no architecture is specified.
-    // Previously this silently defaulted to Qwen3, which is a correctness
-    // hazard for non-Qwen3 models. Now we log a warning to make the
-    // assumption visible.
-    let arch = match architecture.cloned() {
-        Some(a) => a,
-        None => {
-            log::warn!(
-                "mir_to_compat: no architecture specified, defaulting to Qwen3 \
-                 weight-name patterns. Pass an explicit architecture to avoid \
-                 incorrect weight resolution for non-Qwen3 models."
-            );
-            ane_ir::common::ModelArchitecture::Qwen3
-        }
-    };
+    let arch = architecture;
     // T-70 (I-45): Previously, k_proj and v_proj patterns were resolved but
     // immediately discarded with `let _ = (k_proj, v_proj)`. For GQA models
     // with separate K/V projections, this caused ALL QKV-split aliases to

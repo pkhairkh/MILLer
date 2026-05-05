@@ -190,3 +190,38 @@ paths in `MilLowerPass`:
 
 The previous gap where 7 MIR ops were declared in the enum but had no AIR→MIR
 lowering path is now fully closed.
+
+## Emission Validation (T-P3-01)
+
+The proto-direct emission layer now enforces ANE hardware constraints via
+`ValidationPolicy`:
+
+| Constraint | Orion Reference | Strict Mode (default) |
+|------------|----------------|----------------------|
+| Output buffer >= ~49 KB | #4 | Error (`UndersizedIOSurface`) |
+| Uniform output IOSurface sizes | #2, #18 | Error (`NonUniformSurface`) |
+| [1,C,1,S] flat buffer layout | #20 | Error (`InvalidFlatBufferLayout`) |
+
+In `warn_only` mode, violations produce warnings and emission continues.
+The `ValidationPolicy` is passed to `convert_mir_to_proto_multifunction_with_policy()`.
+
+## Bridge Error Types (T-P2-05, T-P2-10)
+
+The bridge and emission layers now expose typed error enums for programmatic
+error matching:
+
+| Error Type | Variant | Meaning |
+|------------|---------|---------|
+| `BridgeError::UnresolvedWeight` | `{ path }` | Weight not found in resolver |
+| `EmissionError::MissingIODescriptor` | `{ kind, name, function }` | I/O shape/dtype unknown |
+| `EmissionError::UndersizedIOSurface` | `{ name, function, actual_bytes, min_bytes }` | Below ANE minimum |
+| `EmissionError::NonUniformSurface` | `{ name, function, actual_bytes, expected_bytes }` | Mixed output sizes |
+| `EmissionError::InvalidFlatBufferLayout` | `{ name, function, shape }` | Non-[1,C,1,S] layout |
+
+## Architecture-Aware Bridge (T-P2-11)
+
+`mir_graph_to_compat_with_arch()` now requires explicit `architecture: &ModelArchitecture`
+and `max_seq_len: usize` parameters. The deprecated wrappers `mir_graph_to_compat()` and
+`mir_graph_to_compat_with_allow_missing()` default to Qwen3 with a deprecation warning.
+The CLI `trace-compile` command accepts `--architecture` and `--max-seq-len` flags
+for explicit specification.

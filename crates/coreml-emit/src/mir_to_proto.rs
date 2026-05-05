@@ -469,12 +469,13 @@ pub fn convert_mir_to_proto_multifunction_with_policy(
                     is_state: false,
                 });
             } else {
-                anyhow::bail!(
-                    "Missing input descriptor for '{}' in function '{}'. \
-                     Cannot determine shape/dtype for Core ML proto emission. \
-                     All graph inputs must have corresponding input_descs entries.",
-                    input_name, graph.function_name
-                );
+                // T-P2-10: Use typed EmissionError::MissingIODescriptor instead of
+                // anyhow::bail! for programmatic error matching.
+                return Err(crate::EmissionError::MissingIODescriptor {
+                    kind: "input".to_string(),
+                    name: input_name.clone(),
+                    function: graph.function_name.clone(),
+                }.into());
             }
         }
         for output_name in &graph.outputs {
@@ -486,12 +487,13 @@ pub fn convert_mir_to_proto_multifunction_with_policy(
                     is_state: false,
                 });
             } else {
-                anyhow::bail!(
-                    "Missing output descriptor for '{}' in function '{}'. \
-                     Cannot determine shape/dtype for Core ML proto emission. \
-                     All graph outputs must have corresponding output_descs entries.",
-                    output_name, graph.function_name
-                );
+                // T-P2-10: Use typed EmissionError::MissingIODescriptor instead of
+                // anyhow::bail! for programmatic error matching.
+                return Err(crate::EmissionError::MissingIODescriptor {
+                    kind: "output".to_string(),
+                    name: output_name.clone(),
+                    function: graph.function_name.clone(),
+                }.into());
             }
         }
 
@@ -606,7 +608,14 @@ fn validate_iosurface_sizes(
                     MIN_IOSURFACE_BYTES
                 );
                 if policy.strict {
-                    anyhow::bail!("{}", msg);
+                    // T-P3-01: Use typed EmissionError::UndersizedIOSurface instead of
+                    // anyhow::bail! for programmatic error matching.
+                    return Err(crate::EmissionError::UndersizedIOSurface {
+                        name: output.name.clone(),
+                        function: func.name.clone(),
+                        actual_bytes: buffer_size as usize,
+                        min_bytes: MIN_IOSURFACE_BYTES as usize,
+                    }.into());
                 } else {
                     log::warn!("{}", msg);
                 }
@@ -657,7 +666,14 @@ fn validate_surface_uniformity(
                     non_uniform
                 );
                 if policy.strict {
-                    anyhow::bail!("{}", msg);
+                    // T-P3-01: Use typed EmissionError::NonUniformSurface instead of
+                    // anyhow::bail! for programmatic error matching.
+                    return Err(crate::EmissionError::NonUniformSurface {
+                        name: non_uniform[0].to_string(),
+                        function: func.name.clone(),
+                        actual_bytes: sizes.iter().find(|(_, n)| n == &non_uniform[0]).map(|(s, _)| *s).unwrap_or(0) as usize,
+                        expected_bytes: first_size as usize,
+                    }.into());
                 } else {
                     log::warn!("{}", msg);
                 }
@@ -689,7 +705,14 @@ fn validate_surface_uniformity(
                     non_uniform
                 );
                 if policy.strict {
-                    anyhow::bail!("{}", msg);
+                    // T-P3-01: Use typed EmissionError::NonUniformSurface instead of
+                    // anyhow::bail! for programmatic error matching.
+                    return Err(crate::EmissionError::NonUniformSurface {
+                        name: non_uniform[0].to_string(),
+                        function: func.name.clone(),
+                        actual_bytes: sizes.iter().find(|(_, n)| n == &non_uniform[0]).map(|(s, _)| *s).unwrap_or(0) as usize,
+                        expected_bytes: first_size as usize,
+                    }.into());
                 } else {
                     log::warn!("{}", msg);
                 }
@@ -733,7 +756,13 @@ fn validate_flat_buffer_layout(
                         output.shape
                     );
                     if policy.strict {
-                        anyhow::bail!("{}", msg);
+                        // T-P3-01: Use typed EmissionError::InvalidFlatBufferLayout instead of
+                        // anyhow::bail! for programmatic error matching.
+                        return Err(crate::EmissionError::InvalidFlatBufferLayout {
+                            name: output.name.clone(),
+                            function: func.name.clone(),
+                            shape: output.shape.iter().map(|&d| d as usize).collect(),
+                        }.into());
                     } else {
                         log::warn!("{}", msg);
                     }
