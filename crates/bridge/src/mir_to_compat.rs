@@ -54,6 +54,18 @@ pub trait WeightResolver {
     /// Resolve weight data for the given value path.
     /// Returns the raw bytes and shape of the weight tensor.
     fn resolve(&self, value_path: &str) -> Option<WeightData>;
+
+    /// Whether this resolver has no weight data at all.
+    ///
+    /// T-P2-09: Used by `emit_mir_graph_proto_direct_with_resolver` to
+    /// determine whether `allow_missing_weights` should be true.
+    /// When a resolver is empty (e.g., `EmptyWeightResolver`), missing
+    /// weights are expected and zero-fill is appropriate. When a resolver
+    /// has data but is missing a specific weight, that's a production
+    /// error — zero-filled weights produce silently broken models.
+    fn is_empty(&self) -> bool {
+        false
+    }
 }
 
 /// Weight data returned by a `WeightResolver`.
@@ -63,6 +75,14 @@ pub struct WeightData {
     pub data: Vec<u8>,
     /// Shape of the weight tensor.
     pub shape: Vec<usize>,
+    /// Data type of the weight tensor.
+    ///
+    /// T-P1-04: Previously, auto-materialized Const ops always used
+    /// `MilDtypeCompat::Fp16` regardless of the actual weight dtype.
+    /// This caused Int32 embedding weights to be tagged as Fp16, which
+    /// produces silently incorrect model descriptions. Now the resolver
+    /// carries the actual dtype, and auto-materialized Const ops use it.
+    pub dtype: MilDtypeCompat,
 }
 
 /// A simple in-memory weight resolver backed by a HashMap.
@@ -79,13 +99,31 @@ impl HashMapWeightResolver {
 
     /// Add a weight entry.
     pub fn add(&mut self, path: String, data: Vec<u8>, shape: Vec<usize>) {
-        self.weights.insert(path, WeightData { data, shape });
+        self.weights.insert(path, WeightData { data, shape, dtype: MilDtypeCompat::Fp16 });
+    }
+
+    /// Add a weight entry with explicit dtype.
+    ///
+    /// T-P1-04: Use this when the weight dtype is known and differs
+    /// from Fp16 (e.g., Int32 embedding weights).
+    pub fn add_with_dtype(
+        &mut self,
+        path: String,
+        data: Vec<u8>,
+        shape: Vec<usize>,
+        dtype: MilDtypeCompat,
+    ) {
+        self.weights.insert(path, WeightData { data, shape, dtype });
     }
 }
 
 impl WeightResolver for HashMapWeightResolver {
     fn resolve(&self, value_path: &str) -> Option<WeightData> {
         self.weights.get(value_path).cloned()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.weights.is_empty()
     }
 }
 
@@ -100,6 +138,13 @@ impl WeightResolver for EmptyWeightResolver {
         // Return Some with empty data so the conversion doesn't fail,
         // but the shape will need to come from the node's shape field.
         None
+    }
+
+    // T-P2-09: EmptyWeightResolver always returns None, so it's empty.
+    // This signals to callers that allow_missing_weights=true is appropriate
+    // since there are no weights to be missing from.
+    fn is_empty(&self) -> bool {
+        true
     }
 }
 
@@ -250,7 +295,11 @@ pub fn mir_graph_to_compat_with_arch(
     let mut const_ops = Vec::new();
     for weight_name in referenced_weights {
         let (data, shape, dtype) = match resolver.resolve(&weight_name) {
-            Some(wd) => (wd.data, wd.shape, MilDtypeCompat::Fp16),
+            // T-P1-04: Use wd.dtype instead of hardcoded MilDtypeCompat::Fp16.
+            // Previously, auto-materialized weights always used Fp16 regardless
+            // of the actual weight dtype, causing Int32 embedding weights to be
+            // tagged as Fp16 in the proto description.
+            Some(wd) => (wd.data, wd.shape, wd.dtype),
             None => {
                 // Weight not found in resolver.
                 // For static_tables paths (eye_tab, mask_tab, etc.), skip entirely
@@ -2032,6 +2081,84 @@ mod tests {
         assert_eq!(mil_dtype_to_compat(&MilDtype::Fp32), MilDtypeCompat::Fp32);
         assert_eq!(mil_dtype_to_compat(&MilDtype::Int32), MilDtypeCompat::Int32);
         assert_eq!(mil_dtype_to_compat(&MilDtype::UInt8), MilDtypeCompat::UInt8);
+    }
+
+    /// T-P1-04: Verify that auto-materialized Const ops use the actual weight dtype
+    /// from the resolver, not hardcoded Fp16. Int32 embedding weights must be tagged
+    /// as Int32 in the proto description.
+    #[test]
+    fn int32_weight_dtype_round_trip() {
+        use ane_ir::mir::{ComputeUnitHint, MilDtype, MirNode, MirNodeId, MirOp};
+
+        // Build a graph with a MILConst that references an Int32 weight
+        let graph = MirGraph {
+            nodes: vec![
+                MirNode {
+                    id: MirNodeId("embed_weight".into()),
+                    op: MirOp::MILConst {
+                        name: "embed_weight".into(),
+                        value_path: "model.embed_tokens.weight".into(),
+                        dtype: MilDtype::Int32,
+                    },
+                    dtype: MilDtype::Int32,
+                    shape: vec![1000, 1024],
+                    compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
+                    air_source: None,
+                },
+                MirNode {
+                    id: MirNodeId("output".into()),
+                    op: MirOp::MILGather {
+                        name: "gather".into(),
+                        x: MirNodeId("input".into()),
+                        indices: MirNodeId("embed_weight".into()),
+                        axis: 0,
+                    },
+                    dtype: MilDtype::Int32,
+                    shape: vec![1024],
+                    compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
+                    air_source: None,
+                },
+            ],
+            inputs: vec![MirNodeId("input".into())],
+            outputs: vec![MirNodeId("output".into())],
+            opset_version: "iOS18".into(),
+            shard_name: "main".into(),
+            input_shapes: {
+                let mut shapes = std::collections::HashMap::new();
+                shapes.insert(MirNodeId("input".into()), vec![1]);
+                shapes
+            },
+        };
+
+        // Create a resolver with Int32 weights
+        let mut resolver = HashMapWeightResolver::new();
+        resolver.add_with_dtype(
+            "model.embed_tokens.weight".to_string(),
+            vec![0u8; 1000 * 1024 * 4], // Int32 = 4 bytes per element
+            vec![1000, 1024],
+            MilDtypeCompat::Int32,
+        );
+
+        let compat = mir_graph_to_compat_with_allow_missing(&graph, &resolver, true).unwrap();
+
+        // Find the auto-materialized Const for "model.embed_tokens.weight"
+        let embed_const = compat.ops.iter().find(|op| {
+            if let MirOpCompat::Const { name, .. } = op {
+                name == "model.embed_tokens.weight"
+            } else {
+                false
+            }
+        });
+
+        assert!(embed_const.is_some(), "Should have auto-materialized Const for embed_weight");
+
+        if let MirOpCompat::Const { name, dtype, shape, .. } = embed_const.unwrap() {
+            assert_eq!(name, "model.embed_tokens.weight");
+            // T-P1-04: The critical assertion — dtype must be Int32, not Fp16
+            assert_eq!(*dtype, MilDtypeCompat::Int32,
+                "Int32 embedding weight should have Int32 dtype in auto-materialized Const, got {:?}", dtype);
+            assert_eq!(*shape, vec![1000, 1024]);
+        }
     }
 
     /// T-91 (I-66/V-007): Verify that missing weights produce a hard error by default,

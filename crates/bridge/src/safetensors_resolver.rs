@@ -27,6 +27,7 @@
 //! in the CoreML emission layer.
 
 use crate::mir_to_compat::{WeightData, WeightResolver};
+use ane_coreml_proto::mir_compat::MilDtypeCompat;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::fs;
@@ -49,6 +50,10 @@ struct TensorEntry {
     data: Vec<u8>,
     /// Shape of the tensor.
     shape: Vec<usize>,
+    /// Data type of the tensor in the safetensors file.
+    /// T-P1-04: Carried through to WeightData so that auto-materialized
+    /// Const ops use the actual dtype instead of hardcoded Fp16.
+    dtype: MilDtypeCompat,
 }
 
 impl SafetensorsWeightResolver {
@@ -64,7 +69,7 @@ impl SafetensorsWeightResolver {
 
         for path_str in safetensors_files {
             if let Err(e) = Self::load_safetensors_file(path_str, &mut tensors) {
-                eprintln!("Warning: failed to load safetensors file '{}': {}", path_str, e);
+                log::warn!("failed to load safetensors file '{}': {}", path_str, e);
             }
         }
 
@@ -191,36 +196,60 @@ impl SafetensorsWeightResolver {
             let raw_data = view.data();
             let shape = view.shape().to_vec();
 
-            // Check dtype and convert BF16 → FP16 if necessary
-            let final_data = match view.dtype() {
+            // T-P1-04: Determine the original dtype from the safetensors tensor.
+            // For float types that are converted (BF16→FP16, F32→FP16), the output
+            // dtype is Fp16. For integer types, the original dtype is preserved.
+            // Unknown types fall back to Fp16 with a warning.
+            let (final_data, dtype) = match view.dtype() {
                 safetensors::Dtype::BF16 => {
                     // BF16 and FP16 are both 16-bit but have different exponent sizes.
                     // BF16: 8-bit exponent, 7-bit mantissa
                     // FP16: 5-bit exponent, 10-bit mantissa
                     // Convert via: bf16 → f32 → fp16
-                    convert_bf16_to_fp16(raw_data)
+                    (convert_bf16_to_fp16(raw_data), MilDtypeCompat::Fp16)
                 }
                 safetensors::Dtype::F32 => {
-                    // T-102 (I-77/V-026): Previously, F32 weight data was passed
-                    // through without conversion to FP16, while BF16 was converted.
-                    // If the proto declares the weight as FP16 but the raw data is
-                    // F32 (4 bytes per element), the weight file will contain double
-                    // the expected bytes, causing buffer over-reads or misalignment
-                    // at model load time. Now we convert F32→FP16 for ANE
-                    // compatibility, same as the BF16→FP16 conversion path.
-                    convert_f32_to_fp16(raw_data)
+                    // T-102 (I-77/V-026): F32 weight data was passed through
+                    // without conversion to FP16, while BF16 was converted.
+                    // Now we convert F32→FP16 for ANE compatibility, same as
+                    // the BF16→FP16 conversion path.
+                    (convert_f32_to_fp16(raw_data), MilDtypeCompat::Fp16)
                 }
                 safetensors::Dtype::F16 => {
                     // Already in the right format
-                    raw_data.to_vec()
+                    (raw_data.to_vec(), MilDtypeCompat::Fp16)
                 }
-                _ => {
-                    // For other dtypes (int, etc.), pass through as-is
-                    raw_data.to_vec()
+                safetensors::Dtype::I32 => {
+                    // Integer weights (e.g., embedding tables) preserve their dtype.
+                    (raw_data.to_vec(), MilDtypeCompat::Int32)
+                }
+                safetensors::Dtype::I64 => {
+                    // I64 weights are not directly representable in Core ML's
+                    // MilDtypeCompat, but we map to Int32 and log a warning.
+                    log::warn!(
+                        "safetensors tensor '{}' has I64 dtype which has no direct \
+                         MilDtypeCompat mapping — using Int32. Data may be truncated.",
+                        name
+                    );
+                    (raw_data.to_vec(), MilDtypeCompat::Int32)
+                }
+                safetensors::Dtype::U8 => {
+                    (raw_data.to_vec(), MilDtypeCompat::UInt8)
+                }
+                other => {
+                    // For other dtypes (BOOL, etc.), pass through as-is
+                    // and fall back to Fp16 dtype tag with a warning.
+                    log::warn!(
+                        "safetensors tensor '{}' has unsupported dtype {:?} — \
+                         falling back to Fp16. The emitted model may have incorrect \
+                         type information for this weight.",
+                        name, other
+                    );
+                    (raw_data.to_vec(), MilDtypeCompat::Fp16)
                 }
             };
 
-            tensors.insert(name, TensorEntry { data: final_data, shape });
+            tensors.insert(name, TensorEntry { data: final_data, shape, dtype });
         }
 
         Ok(())
@@ -277,7 +306,11 @@ impl WeightResolver for SafetensorsWeightResolver {
     fn resolve(&self, value_path: &str) -> Option<WeightData> {
         // Direct lookup first
         if let Some(entry) = self.tensors.get(value_path) {
-            return Some(WeightData { data: entry.data.clone(), shape: entry.shape.clone() });
+            return Some(WeightData {
+                data: entry.data.clone(),
+                shape: entry.shape.clone(),
+                dtype: entry.dtype, // T-P1-04: carry dtype from safetensors
+            });
         }
 
         // Virtual shard weight: "lm_head.shard_N.weight"
@@ -362,7 +395,8 @@ impl SafetensorsWeightResolver {
         }
 
         let shard_data = entry.data.get(start_byte..end_byte)?.to_vec();
-        Some(WeightData { data: shard_data, shape: vec![shard_rows, hidden_size] })
+        // T-P1-04: Shard inherits dtype from the base weight tensor
+        Some(WeightData { data: shard_data, shape: vec![shard_rows, hidden_size], dtype: entry.dtype })
     }
 }
 
@@ -492,14 +526,14 @@ fn discover_hf_safetensors(model_id: &str) -> Vec<String> {
 
     let repo_dir = cache_root.join(&repo_dir_name);
     if !repo_dir.is_dir() {
-        eprintln!("  HF cache repo dir not found: {} (model_id={})", repo_dir.display(), model_id);
+        log::debug!("HF cache repo dir not found: {} (model_id={})", repo_dir.display(), model_id);
         return Vec::new();
     }
 
     // Walk the snapshots/ subdirectory to find the latest snapshot with safetensors files
     let snapshots_dir = repo_dir.join("snapshots");
     if !snapshots_dir.is_dir() {
-        eprintln!("  No snapshots/ directory in {}", repo_dir.display());
+        log::debug!("No snapshots/ directory in {}", repo_dir.display());
         return Vec::new();
     }
 
@@ -540,7 +574,7 @@ fn discover_hf_safetensors(model_id: &str) -> Vec<String> {
         }
     }
 
-    eprintln!("  No .safetensors files found in any snapshot of {}", model_id);
+        log::debug!("No .safetensors files found in any snapshot of {}", model_id);
     Vec::new()
 }
 
@@ -814,7 +848,7 @@ mod tests {
         let mut resolver = SafetensorsWeightResolver::empty();
         resolver.tensors.insert(
             "lm_head.weight".to_string(),
-            TensorEntry { data: fake_data, shape: vec![vocab_size, hidden_size] },
+            TensorEntry { data: fake_data, shape: vec![vocab_size, hidden_size], dtype: MilDtypeCompat::Fp16 },
         );
 
         // T-73: Shard size is now derived from vocab_size / TARGET_SHARD_COUNT.
@@ -855,7 +889,7 @@ mod tests {
         let mut resolver = SafetensorsWeightResolver::empty();
         resolver.tensors.insert(
             "lm_head.weight".to_string(),
-            TensorEntry { data: fake_data, shape: vec![vocab_size, hidden_size] },
+            TensorEntry { data: fake_data, shape: vec![vocab_size, hidden_size], dtype: MilDtypeCompat::Fp32 },
         );
 
         // Shard size = 16000 / 8 = 2000
@@ -888,7 +922,7 @@ mod tests {
         let mut resolver = SafetensorsWeightResolver::empty();
         resolver.tensors.insert(
             "lm_head.weight".to_string(),
-            TensorEntry { data: fake_data, shape: vec![vocab_size, hidden_size] },
+            TensorEntry { data: fake_data, shape: vec![vocab_size, hidden_size], dtype: MilDtypeCompat::Fp16 },
         );
 
         let shard_size = vocab_size / 8; // 18992

@@ -94,8 +94,8 @@
       "id": "legality_gather",
       "knowledge_type": "LegalityRule",
       "op_pattern": "mb.gather",
-      "ane_legal": true,
-      "confidence": 0.7,
+      "ane_legal": false,
+      "confidence": 0.9,
       "evidence_source": "RealModelRun",
       "evidence_count": 5,
       "scope": {
@@ -110,8 +110,92 @@
           "iOS18"
         ]
       },
-      "note": "Gather has anec.gather converter (family-agnostic). Limited to constant axis and constrained index range on ANE. Prefer SliceByIndex for dynamic-axis patterns.",
+      "note": "Gather is CPU-only in practice. Despite anec.gather converter existing (family-agnostic), the compiler falls back to CPU for gather ops. Prefer SliceByIndex for dynamic-axis patterns.",
       "limited_index_range": true
+    },
+    {
+      "id": "legality_neg",
+      "knowledge_type": "LegalityRule",
+      "op_pattern": "mb.neg",
+      "ane_legal": false,
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "macOS_15"
+        ],
+        "opset_versions": [
+          "iOS18"
+        ]
+      },
+      "note": "neg is CPU-only per cpu_only_ops.rs, despite PEFUSEDElementwiseUnary converter existing in ANEC."
+    },
+    {
+      "id": "legality_select",
+      "knowledge_type": "LegalityRule",
+      "op_pattern": "mb.select",
+      "ane_legal": false,
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "macOS_15"
+        ],
+        "opset_versions": [
+          "iOS18"
+        ]
+      },
+      "note": "select is CPU-only in practice per cpu_only_ops.rs, despite PEFUSEDSelect converter existing in ANEC."
+    },
+    {
+      "id": "legality_where",
+      "knowledge_type": "LegalityRule",
+      "op_pattern": "mb.where",
+      "ane_legal": false,
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "macOS_15"
+        ],
+        "opset_versions": [
+          "iOS18"
+        ]
+      },
+      "note": "where is CPU-only per cpu_only_ops.rs, no usable ANE converter despite PEFUSEDSelect dialect entry."
     }
   ]
 }

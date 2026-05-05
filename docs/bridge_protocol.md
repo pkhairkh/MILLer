@@ -377,12 +377,12 @@ Every bridge command result contains these fields (matching Rust BridgeResult):
 ## Multifunction Seam
 
 The `functions` field in the payload is the integration point for multifunction mlpackage emission.
-Current emission always produces a single-function package. The Python layer records function
-descriptors in the result regardless. When multifunction emission is implemented, the emitter will
-construct one MIL program per function and use `save_multifunction()` for packaging.
-
-The Rust `BridgeResult` captures `function_descriptors` from the Python result, and the CLI
-manifest builder uses these descriptors rather than hardcoding dimension values.
+Multifunction emission IS now supported — the `emit_multifunction` and
+`emit_multifunction_shared_weights` bridge commands construct one MIL program
+per function and use `prog.add_function()` to merge multiple named functions
+into a single mlpackage. The Rust `BridgeResult` captures `function_descriptors`
+from the Python result, and the CLI manifest builder uses these descriptors
+rather than hardcoding dimension values.
 
 ## Task Identity
 
@@ -411,6 +411,7 @@ The Python emission layer is now decomposed into:
 - `predict()` / profiling requires Apple hardware runtime (wired through bridge, honest error on non-Apple)
 - Compute plan inspection reports unavailable on non-Apple platforms (real code, no data)
 - Palettization produces real output but quality validation requires on-device predict()
-- No multifunction emission yet (single-function packages only)
+- Multifunction emission is now supported via `emit_multifunction` and `emit_multifunction_shared_weights` commands
+- `allow_missing_weights` now defaults to `false` for production paths (T-P2-09). When a real `WeightResolver` is provided, missing weights produce hard errors instead of silently zero-filling. This prevents the emission of models with zero-filled garbage weights.
 - Fallback suspicion is deliberately weak — no hard placement claims without device-backed evidence
 - LUT projection emission is v0: gather pattern is simplified; grouped-palette semantics are approximated by offset indexing; precision override not yet wired; lut_bitwidth does not yet influence conversion parameters
