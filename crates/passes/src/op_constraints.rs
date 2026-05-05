@@ -1,7 +1,8 @@
 //! Per-op ANE constraint validation functions.
 //! Source: ane-constraints-docs/03-placement-and-compiler/mil-to-ane-placement-constraint-system.md
 
-use ane_ir::mir::MirOp;
+use ane_ir::ane_target::AneFamily;
+use ane_ir::mir::{MirOp, MirNodeId};
 
 #[allow(unused_imports)]
 use anyhow::{bail, Result};
@@ -1074,6 +1075,79 @@ pub fn validate_anec_attribute_shapes(
     Ok(())
 }
 
+/// T-P3-09: Validate cross-constraint combinations.
+/// Some constraint violations only occur when multiple conditions are
+/// simultaneously true (e.g., dilation + palettization, aliasing + palettization).
+pub fn validate_cross_constraint_combinations(
+    op: &MirOp,
+    has_vector_palettize: bool,
+    has_aliasing: bool,
+    has_per_channel_palettize: bool,
+) -> Result<(), OpConstraintViolation> {
+    match op {
+        MirOp::MILConv { dilations, strides, groups, .. } => {
+            // Dilation + vector_palettize
+            if dilations.iter().any(|d| *d > 1) && has_vector_palettize {
+                return Err(OpConstraintViolation {
+                    op_name: "conv".into(),
+                    constraint: "no_dilation_with_vector_palettize".into(),
+                    message: "Dilation with vector palettization is not supported on ANE".into(),
+                });
+            }
+            // Aliasing + vector_palettize
+            if has_aliasing && has_vector_palettize {
+                return Err(OpConstraintViolation {
+                    op_name: "conv".into(),
+                    constraint: "no_aliasing_with_vector_palettize".into(),
+                    message: "Aliasing with vector palettization is not supported on ANE".into(),
+                });
+            }
+            // Palettized weight + large kernel stride
+            if has_vector_palettize && strides.iter().any(|s| *s > 4) {
+                return Err(OpConstraintViolation {
+                    op_name: "conv".into(),
+                    constraint: "no_palettize_with_large_stride".into(),
+                    message: "Palettized weight with large kernel stride is not supported on ANE".into(),
+                });
+            }
+            // Depthwise conv (groups > 1): Shuffle + per-channel_palettize
+            if *groups > 1 && has_per_channel_palettize {
+                return Err(OpConstraintViolation {
+                    op_name: "depthwise_conv".into(),
+                    constraint: "no_per_channel_palettize_with_shuffle".into(),
+                    message: "Shuffle with per-channel palettization is not supported on ANE".into(),
+                });
+            }
+            Ok(())
+        }
+        _ => Ok(())
+    }
+}
+
+/// T-P3-10: Validate architecture-gated constraints.
+pub fn validate_architecture_gated_constraints(
+    op: &MirOp,
+    family: AneFamily,
+) -> Result<(), OpConstraintViolation> {
+    match op {
+        MirOp::MILSoftmax { .. } if matches!(family, AneFamily::A11Legacy | AneFamily::A12 | AneFamily::A13) => {
+            Err(OpConstraintViolation {
+                op_name: "softmax".into(),
+                constraint: "architecture_gate".into(),
+                message: format!("Softmax is not reliably supported on {:?} (requires A14+)", family),
+            })
+        }
+        MirOp::MILLocalResponseNorm { .. } if matches!(family, AneFamily::A11Legacy | AneFamily::A12 | AneFamily::A13) => {
+            Err(OpConstraintViolation {
+                op_name: "local_response_norm".into(),
+                constraint: "architecture_gate".into(),
+                message: format!("LRN is not supported on {:?} (requires A14+)", family),
+            })
+        }
+        _ => Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1935,5 +2009,169 @@ mod tests {
             &[1, 1],
         );
         assert!(result.is_err());
+    }
+
+    // T-P3-09: Tests for validate_cross_constraint_combinations
+    #[test]
+    fn test_cross_constraint_dilation_with_vector_palettize() {
+        let conv = MirOp::MILConv {
+            name: "conv".into(),
+            x: MirNodeId("x".into()),
+            weight: MirNodeId("w".into()),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1, 1],
+            pad_amounts: vec![0, 0, 0, 0],
+            dilations: vec![2, 2], // dilation > 1
+            kernel_scale: None,
+            kernel_zero_point: None,
+            kernel_palettized_lut: None,
+        };
+        // Dilation + vector_palettize should be rejected
+        let result = validate_cross_constraint_combinations(&conv, true, false, false);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.constraint, "no_dilation_with_vector_palettize");
+    }
+
+    #[test]
+    fn test_cross_constraint_aliasing_with_vector_palettize() {
+        let conv = MirOp::MILConv {
+            name: "conv".into(),
+            x: MirNodeId("x".into()),
+            weight: MirNodeId("w".into()),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1, 1],
+            pad_amounts: vec![0, 0, 0, 0],
+            dilations: vec![1, 1],
+            kernel_scale: None,
+            kernel_zero_point: None,
+            kernel_palettized_lut: None,
+        };
+        // Aliasing + vector_palettize should be rejected
+        let result = validate_cross_constraint_combinations(&conv, true, true, false);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.constraint, "no_aliasing_with_vector_palettize");
+    }
+
+    #[test]
+    fn test_cross_constraint_palettize_with_large_stride() {
+        let conv = MirOp::MILConv {
+            name: "conv".into(),
+            x: MirNodeId("x".into()),
+            weight: MirNodeId("w".into()),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1, 8], // stride > 4
+            pad_amounts: vec![0, 0, 0, 0],
+            dilations: vec![1, 1],
+            kernel_scale: None,
+            kernel_zero_point: None,
+            kernel_palettized_lut: None,
+        };
+        // Vector palettize + large stride should be rejected
+        let result = validate_cross_constraint_combinations(&conv, true, false, false);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.constraint, "no_palettize_with_large_stride");
+    }
+
+    #[test]
+    fn test_cross_constraint_depthwise_conv_per_channel_palettize() {
+        let conv = MirOp::MILConv {
+            name: "conv".into(),
+            x: MirNodeId("x".into()),
+            weight: MirNodeId("w".into()),
+            pad_type: "valid".into(),
+            groups: 8, // groups > 1 (depthwise)
+            strides: vec![1, 1],
+            pad_amounts: vec![0, 0, 0, 0],
+            dilations: vec![1, 1],
+            kernel_scale: None,
+            kernel_zero_point: None,
+            kernel_palettized_lut: None,
+        };
+        // Depthwise conv + per_channel_palettize should be rejected
+        let result = validate_cross_constraint_combinations(&conv, false, false, true);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.constraint, "no_per_channel_palettize_with_shuffle");
+    }
+
+    #[test]
+    fn test_cross_constraint_no_violations() {
+        let conv = MirOp::MILConv {
+            name: "conv".into(),
+            x: MirNodeId("x".into()),
+            weight: MirNodeId("w".into()),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1, 1],
+            pad_amounts: vec![0, 0, 0, 0],
+            dilations: vec![1, 1],
+            kernel_scale: None,
+            kernel_zero_point: None,
+            kernel_palettized_lut: None,
+        };
+        // No cross-constraint violations
+        let result = validate_cross_constraint_combinations(&conv, false, false, false);
+        assert!(result.is_ok());
+    }
+
+    // T-P3-10: Tests for validate_architecture_gated_constraints
+    #[test]
+    fn test_architecture_gated_softmax_a11_rejected() {
+        let softmax = MirOp::MILSoftmax {
+            name: "sm".into(),
+            x: MirNodeId("x".into()),
+            axis: -1,
+        };
+        let result = validate_architecture_gated_constraints(&softmax, AneFamily::A11Legacy);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.constraint, "architecture_gate");
+    }
+
+    #[test]
+    fn test_architecture_gated_softmax_a14_ok() {
+        let softmax = MirOp::MILSoftmax {
+            name: "sm".into(),
+            x: MirNodeId("x".into()),
+            axis: -1,
+        };
+        let result = validate_architecture_gated_constraints(&softmax, AneFamily::A14);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_architecture_gated_lrn_a12_rejected() {
+        let lrn = MirOp::MILLocalResponseNorm {
+            name: "lrn".into(),
+            x: MirNodeId("x".into()),
+            size: 5,
+            alpha: 1.0,
+            beta: 0.75,
+            k: 1.0,
+        };
+        let result = validate_architecture_gated_constraints(&lrn, AneFamily::A12);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.constraint, "architecture_gate");
+    }
+
+    #[test]
+    fn test_architecture_gated_lrn_a16_ok() {
+        let lrn = MirOp::MILLocalResponseNorm {
+            name: "lrn".into(),
+            x: MirNodeId("x".into()),
+            size: 5,
+            alpha: 1.0,
+            beta: 0.75,
+            k: 1.0,
+        };
+        let result = validate_architecture_gated_constraints(&lrn, AneFamily::A16);
+        assert!(result.is_ok());
     }
 }

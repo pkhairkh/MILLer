@@ -22,7 +22,7 @@
 //! - RoPE: AirOp::Cos → MILCos, AirOp::Sin → MILSin
 //!
 //! All previously "declared but no lowering" MIR ops now have active AIR→MIR
-//! lowering paths (Sprint 36). The SIR→AIR decompositions in LegalityRewritePass
+//! lowering paths (Sprint 36). The SIR→AIR decompositions in AneLegalityRewritePass
 //! produce the AIR ops that feed these lowering paths.
 //!
 //! Sprint 55: AirOp::Maximum/Minimum now lower to MILMaximum/MILMinimum
@@ -344,17 +344,50 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         AirOp::Where { x, .. } | AirOp::Select { x, .. } => {
             Ok(node_shapes.get(x).cloned().unwrap_or_default())
         }
-        AirOp::StaticLUTProjection { .. } => Ok(vec![]),
+        AirOp::StaticLUTProjection { input, .. } => {
+            Ok(node_shapes.get(input).cloned().unwrap_or_default())
+        }
         // ─── Fill: shape is explicitly given; FillLike: derives from ref_tensor ───
         AirOp::Fill { shape, .. } => Ok(shape.clone()),
         AirOp::FillLike { ref_tensor, .. } => {
             Ok(node_shapes.get(ref_tensor).cloned().unwrap_or_default())
         }
         // ─── Unary ops that pass through input shape ───
+        // T-P5-04: Extended with all missing unary elementwise ops.
         AirOp::Silu { input }
         | AirOp::Neg { input }
         | AirOp::Sqrt { input }
-        | AirOp::Cast { input, .. } => Ok(node_shapes.get(input).cloned().unwrap_or_default()),
+        | AirOp::Cast { input, .. }
+        | AirOp::Abs { input }
+        | AirOp::Ceil { input }
+        | AirOp::Floor { input }
+        | AirOp::Round { input }
+        | AirOp::Log { input, .. }
+        | AirOp::Sign { input }
+        | AirOp::Square { input }
+        | AirOp::Inverse { input, .. }
+        | AirOp::Softsign { input }
+        | AirOp::Elu { input, .. }
+        | AirOp::Softplus { input }
+        | AirOp::Clip { input, .. }
+        | AirOp::Threshold { input, .. }
+        | AirOp::LeakyRelu { input, .. }
+        | AirOp::SigmoidHard { input, .. }
+        | AirOp::ThresholdedRelu { input, .. }
+        | AirOp::ClampedRelu { input, .. }
+        | AirOp::LinearActivation { input, .. }
+        | AirOp::Prelu { input, .. }
+        | AirOp::ScaledTanh { input, .. }
+        | AirOp::SoftplusParametric { input, .. }
+        | AirOp::Tan { input }
+        | AirOp::Acos { input }
+        | AirOp::Asin { input }
+        | AirOp::Atan { input }
+        | AirOp::Cosh { input }
+        | AirOp::Sinh { input }
+        | AirOp::Exp2 { input }
+        | AirOp::LogicalNot { input }
+        => Ok(node_shapes.get(input).cloned().unwrap_or_default()),
         // ─── Const: look up shape from value_path in node_shapes ───
         // Const nodes for static tables have value_paths like "static_tables/rope_tables/cos_tab"
         // which are seeded into node_shapes from weight_shapes during lowering.
@@ -398,8 +431,10 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
                 vec![]
             })
         }
-        // All remaining AIR ops: conservatively return empty shape
-        _ => Ok(vec![]),
+        // T-P5-04: Unknown ops no longer silently return empty shapes.
+        // Returning an empty shape can silently produce incorrect metadata
+        // that propagates through the entire graph. Fail explicitly instead.
+        _ => Err(anyhow::anyhow!("Shape inference failed for op: unknown variant or insufficient information")),
     }
 }
 
@@ -410,6 +445,10 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
 /// - All operand ranks ≤ 4
 ///
 /// Returns a descriptive error on violation.
+///
+/// T-P5-06: This function is no longer called from mil_lower. SDPA validation
+/// now happens in the placement validator instead. Kept for reference.
+#[allow(dead_code)]
 fn validate_sdpa_constraints(
     query_shape: &[usize],
     key_shape: &[usize],
@@ -584,8 +623,12 @@ impl MilLowerPass {
                     _ => MilDtype::Fp16,
                 },
                 None => {
-                    // Heuristic: Identity ops that are graph inputs with names
-                    // containing "ids" (e.g., input_ids) or "mask" are integer tensors.
+                    // T-P5-09: Name-based dtype heuristic — fragile.
+                    // Identity ops that are graph inputs with names containing
+                    // "ids" (e.g., input_ids) or "mask" are treated as integer
+                    // tensors. This should be replaced with explicit dtype
+                    // metadata on the AIR node (precision_override or a new
+                    // field) rather than relying on naming conventions.
                     if matches!(&air_node.op, AirOp::Identity { .. })
                         && (air_node.name.ends_with("_ids")
                             || air_node.name.contains("input_ids")
@@ -782,12 +825,13 @@ impl MilLowerPass {
                 }
                 // Attention ops (Sprint 36)
                 AirOp::ScaledDotProductAttention { query, key, value, attention_mask, scale } => {
-                    // Sprint 59: validate SDPA constraints before lowering.
-                    let q_shape = node_shapes.get(query).cloned().unwrap_or_default();
-                    let k_shape = node_shapes.get(key).cloned().unwrap_or_default();
-                    let v_shape = node_shapes.get(value).cloned().unwrap_or_default();
-                    let m_shape = attention_mask.as_ref().and_then(|m| node_shapes.get(m)).cloned();
-                    validate_sdpa_constraints(&q_shape, &k_shape, &v_shape, m_shape.as_deref())?;
+                    // T-P5-06: validate_sdpa_constraints moved out of mil_lower.
+                    // SDPA validation now happens in the placement validator instead.
+                    // let q_shape = node_shapes.get(query).cloned().unwrap_or_default();
+                    // let k_shape = node_shapes.get(key).cloned().unwrap_or_default();
+                    // let v_shape = node_shapes.get(value).cloned().unwrap_or_default();
+                    // let m_shape = attention_mask.as_ref().and_then(|m| node_shapes.get(m)).cloned();
+                    // validate_sdpa_constraints(&q_shape, &k_shape, &v_shape, m_shape.as_deref())?;
 
                     let mir_q = air_to_mir
                         .get(query)
@@ -2549,6 +2593,9 @@ impl MilLowerPass {
             // Without this guard, the seeded shape (e.g., [1, 512] for
             // input_ids) would be overwritten with [], producing wrong
             // metadata throughout the rest of the graph.
+            // T-P5-09: __placeholder__ is a name-based heuristic for detecting
+            // graph inputs. This should be replaced with explicit graph-input
+            // metadata on the AIR node rather than string matching.
             let shape = if inferred_shape.is_empty() {
                 node_shapes.get(&air_node.id).cloned().unwrap_or(inferred_shape)
             } else {
@@ -2923,6 +2970,7 @@ impl MilLowerPass {
         //   Before: [1,S,D] → lm_head → [1,S,V] → slice → [1,1,V]
         //   After:  [1,S,D] → slice → [1,1,D] → lm_head → [1,1,V]
         {
+            // T-P5-09: Name-based heuristic for lm_head detection. Fragile.
             let lm_head_idx = mir_nodes.iter().position(|n| match &n.op {
                 MirOp::MILLinear { weight, .. } => {
                     weight == "lm_head.weight" || weight.contains("lm_head.")
@@ -3067,6 +3115,7 @@ impl MilLowerPass {
         // [out_features, in_features] and transposes it at runtime.
         {
             // Re-find lm_head after the slice-before fix may have moved it
+            // T-P5-09: Name-based heuristic for lm_head detection. Fragile.
             let lm_head_idx = mir_nodes.iter().position(|n| match &n.op {
                 MirOp::MILLinear { weight, .. } => {
                     weight == "lm_head.weight" || weight.contains("lm_head.")
@@ -3904,6 +3953,7 @@ impl MilLowerPass {
             //
             // Pattern: MILMatMul where x is a "q_head_N" node and y is a "k_head_N" node
             // This is fragile but matches the naming convention from decompose_decode_step.
+            // T-P5-09: Name-based heuristic for logits matmul detection. Fragile.
             for node in mir_nodes.iter_mut() {
                 if let MirOp::MILMatMul { name, x: _, y: _, transpose_y } = &mut node.op {
                     if !*transpose_y && name.contains("_logits_") {
@@ -4010,6 +4060,35 @@ impl MilLowerPass {
             input_shapes: mir_input_shapes,
         }])
     }
+}
+
+/// T-P5-10: Post-lowering verification pass.
+/// Checks the MIR graph for common lowering errors that should not
+/// occur after a successful lowering. Returns Ok(()) if all checks
+/// pass, or Err(Vec<VerifyError>) with all detected issues.
+pub fn verify_post_lowering(graph: &MirGraph) -> Result<(), Vec<VerifyError>> {
+    let mut errors = Vec::new();
+    for node in &graph.nodes {
+        if node.shape.is_empty() && !matches!(node.op, MirOp::MILConst { .. } | MirOp::MILStateWrite { .. } | MirOp::MILCoremlUpdateState { .. }) {
+            errors.push(VerifyError::EmptyShape {
+                node_id: node.id.0.clone(),
+                op_name: node.op.mil_op_name().to_string(),
+            });
+        }
+        if node.id.0.contains("__placeholder__") {
+            errors.push(VerifyError::PlaceholderName {
+                node_id: node.id.0.clone(),
+                name: node.id.0.clone(),
+            });
+        }
+    }
+    if errors.is_empty() { Ok(()) } else { Err(errors) }
+}
+
+#[derive(Debug, Clone)]
+pub enum VerifyError {
+    EmptyShape { node_id: String, op_name: String },
+    PlaceholderName { node_id: String, name: String },
 }
 
 #[cfg(test)]

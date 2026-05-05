@@ -300,6 +300,13 @@ pub fn validate_placement_with_context(
                     ));
                 }
             }
+            // T-P3-05: E5M2 is rejected on all ANE families.
+            MilDtype::E5M2 => {
+                return PlacementDecision::CpuOnly(format!(
+                    "{}: E5M2 (FP8) is not supported on any current ANE family",
+                    op_name(op)
+                ));
+            }
             _ => {}
         }
 
