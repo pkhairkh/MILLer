@@ -65,9 +65,10 @@ pub enum AirOp {
         weight: String,
         pad_type: String,
         /// Output feature dimension for this linear projection.
-        /// When 0, the output dim is unknown and shape inference must fall back
-        /// to propagating the input shape (pre-Sprint-61 behavior).
-        output_dim: usize,
+        /// When None, the output dim is unknown and shape inference must fall back
+        /// to propagating the input shape.
+        #[serde(default)]
+        output_dim: Option<usize>,
     },
 
     // ─── Convolution ─────────────────────────────────────────────

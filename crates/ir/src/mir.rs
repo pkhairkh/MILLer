@@ -1071,6 +1071,25 @@ pub enum MirOp {
         name: String,
         x: MirNodeId,
     },
+
+    // ─── ANEC Internal Ops (T-P4-08) ────────────────────────────────
+    // These represent operations performed by the ANEC binary internally.
+    // They are not exposed as MIL builder calls and are used for
+    // internal tracking and debugging only.
+    /// ANEC-internal: fused conv+activation operation.
+    AnecFusedConvActivate {
+        name: String,
+        x: MirNodeId,
+        weight: MirNodeId,
+        activation: String,
+    },
+    /// ANEC-internal: fused linear+activation operation.
+    AnecFusedLinearActivate {
+        name: String,
+        x: MirNodeId,
+        weight: String,
+        activation: String,
+    },
 }
 
 impl MirOp {
@@ -1333,7 +1352,10 @@ impl MirOp {
             // Was incorrectly assigned Some(AneEngine::PE), causing MILNeg
             // to pass the CPU-only gate (I-41) because CPU_ONLY_OPS had
             // "negative" instead of "neg" (I-42).
-            | MirOp::MILNeg { .. } => None,
+            | MirOp::MILNeg { .. }
+            // ─── T-P4-08: ANEC internal ops (CPU-only stubs) ──────
+            | MirOp::AnecFusedConvActivate { .. }
+            | MirOp::AnecFusedLinearActivate { .. } => None,
         }
     }
 
@@ -1570,6 +1592,8 @@ impl MirOp {
             MirOp::MILStateWrite { .. } => "state_write",
             MirOp::MILTopk { .. } => "topk",
             MirOp::MILClassify { .. } => "classify",
+            MirOp::AnecFusedConvActivate { .. } => "anec_fused_conv_activate",
+            MirOp::AnecFusedLinearActivate { .. } => "anec_fused_linear_activate",
         }
     }
 }
@@ -1755,6 +1779,8 @@ impl ToProto for MirOp {
             MirOp::MILStateWrite { name, .. } => name,
             MirOp::MILTopk { name, .. } => name,
             MirOp::MILClassify { name, .. } => name,
+            MirOp::AnecFusedConvActivate { name, .. } => name,
+            MirOp::AnecFusedLinearActivate { name, .. } => name,
         }
     }
 
@@ -2089,6 +2115,9 @@ impl ToProto for MirOp {
             // ─── Metadata / Misc ─────────────────────────────────────
             MirOp::MILTopk { x, .. } => vec![x.0.clone()],
             MirOp::MILClassify { x, .. } => vec![x.0.clone()],
+            // ─── ANEC Internal Ops (T-P4-08) ─────────────────────────
+            MirOp::AnecFusedConvActivate { x, weight, .. } => vec![x.0.clone(), weight.0.clone()],
+            MirOp::AnecFusedLinearActivate { x, weight, .. } => vec![x.0.clone(), weight.clone()],
         }
     }
 

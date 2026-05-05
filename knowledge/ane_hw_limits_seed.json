@@ -19,7 +19,8 @@
       "pe_reduction_cout_limit": 16384,
       "num_nes": 1,
       "ne_transpose_c_max": 16384,
-      "max_conv_channels": 32768,
+      "large_kernel_threshold": 7,
+      "sub_variant": "Standard",
       "verified": true
     },
     {
@@ -39,7 +40,8 @@
       "pe_reduction_cout_limit": 16384,
       "num_nes": 1,
       "ne_transpose_c_max": 16384,
-      "max_conv_channels": 32768,
+      "large_kernel_threshold": 7,
+      "sub_variant": "Standard",
       "verified": false
     },
     {
@@ -59,7 +61,8 @@
       "pe_reduction_cout_limit": 16384,
       "num_nes": 1,
       "ne_transpose_c_max": 16384,
-      "max_conv_channels": 32768,
+      "large_kernel_threshold": 7,
+      "sub_variant": "Standard",
       "verified": false
     },
     {
@@ -79,7 +82,8 @@
       "pe_reduction_cout_limit": 16384,
       "num_nes": 2,
       "ne_transpose_c_max": 16384,
-      "max_conv_channels": 32768,
+      "large_kernel_threshold": 9,
+      "sub_variant": "Standard",
       "verified": true
     },
     {
@@ -99,7 +103,8 @@
       "pe_reduction_cout_limit": 16384,
       "num_nes": 2,
       "ne_transpose_c_max": 16384,
-      "max_conv_channels": 32768,
+      "large_kernel_threshold": 9,
+      "sub_variant": "Standard",
       "verified": true
     },
     {
@@ -119,7 +124,8 @@
       "pe_reduction_cout_limit": 16384,
       "num_nes": 4,
       "ne_transpose_c_max": 16384,
-      "max_conv_channels": 32768,
+      "large_kernel_threshold": 9,
+      "sub_variant": "Standard",
       "verified": true
     },
     {
@@ -139,7 +145,8 @@
       "pe_reduction_cout_limit": 16384,
       "num_nes": 4,
       "ne_transpose_c_max": 16384,
-      "max_conv_channels": 32768,
+      "large_kernel_threshold": 9,
+      "sub_variant": "Standard",
       "verified": true
     },
     {
@@ -159,7 +166,8 @@
       "pe_reduction_cout_limit": 16384,
       "num_nes": 6,
       "ne_transpose_c_max": 16384,
-      "max_conv_channels": 32768,
+      "large_kernel_threshold": 9,
+      "sub_variant": "Mac",
       "verified": true
     },
     {
@@ -179,7 +187,8 @@
       "pe_reduction_cout_limit": 16384,
       "num_nes": 8,
       "ne_transpose_c_max": 16384,
-      "max_conv_channels": 32768,
+      "large_kernel_threshold": 9,
+      "sub_variant": "Pro",
       "verified": true
     },
     {
@@ -199,7 +208,8 @@
       "pe_reduction_cout_limit": 16384,
       "num_nes": 16,
       "ne_transpose_c_max": 16384,
-      "max_conv_channels": 32768,
+      "large_kernel_threshold": 9,
+      "sub_variant": "Max",
       "verified": true
     },
     {
@@ -219,7 +229,8 @@
       "pe_reduction_cout_limit": 16384,
       "num_nes": 16,
       "ne_transpose_c_max": 16384,
-      "max_conv_channels": 32768,
+      "large_kernel_threshold": 9,
+      "sub_variant": "Max",
       "verified": false
     }
   ]

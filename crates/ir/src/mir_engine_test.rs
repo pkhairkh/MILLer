@@ -954,6 +954,25 @@ fn all_mir_op_variants() -> Vec<(String, MirOp)> {
         // ─── Metadata / Misc ─────────────────────────────────────────
         ("MILTopk".into(), MirOp::MILTopk { name: "tk".into(), x: nid("x"), k: 10, axis: -1 }),
         ("MILClassify".into(), MirOp::MILClassify { name: "cls".into(), x: nid("x") }),
+        // ─── ANEC Internal Ops (T-P4-08) ────────────────────────────
+        (
+            "AnecFusedConvActivate".into(),
+            MirOp::AnecFusedConvActivate {
+                name: "afca".into(),
+                x: nid("x"),
+                weight: nid("w"),
+                activation: "relu".into(),
+            },
+        ),
+        (
+            "AnecFusedLinearActivate".into(),
+            MirOp::AnecFusedLinearActivate {
+                name: "afla".into(),
+                x: nid("x"),
+                weight: "w".into(),
+                activation: "relu".into(),
+            },
+        ),
     ]
 }
 

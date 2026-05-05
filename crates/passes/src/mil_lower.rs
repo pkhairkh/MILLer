@@ -119,7 +119,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         // When output_dim is 0 (unknown), fall back to propagating the input shape.
         AirOp::Conv1x1AsLinear { input, output_dim, .. } => {
             Ok(match (node_shapes.get(input), output_dim) {
-                (Some(input_shape), od) if *od > 0 => {
+                (Some(input_shape), Some(od)) if *od > 0 => {
                     // Replace the last dimension with the output_dim
                     let mut out = input_shape.clone();
                     if let Some(last) = out.last_mut() {
@@ -127,8 +127,8 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
                     }
                     out
                 }
-                (Some(input_shape), 0) => {
-                    // output_dim unknown: propagate input shape (pre-Sprint-61 behavior)
+                (Some(input_shape), None) | (Some(input_shape), Some(0)) => {
+                    // output_dim unknown: propagate input shape
                     input_shape.clone()
                 }
                 _ => vec![],

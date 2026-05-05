@@ -4,6 +4,23 @@
 use crate::ane_target::AneRevision;
 use serde::{Deserialize, Serialize};
 
+/// Sub-variant within an ANE family for fine-grained differentiation.
+///
+/// Some revisions share the same AneFamily but have different hardware
+/// characteristics (e.g., A18 Pro vs A18 Max have different NE counts).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub enum AneSubVariant {
+    /// Standard variant (default).
+    #[default]
+    Standard,
+    /// Pro variant with more NEs (e.g., A18 Pro with 8 NEs).
+    Pro,
+    /// Max variant with maximum NEs (e.g., A18 Max with 16 NEs).
+    Max,
+    /// Mac variant (e.g., M1 with Mac-specific limits).
+    Mac,
+}
+
 /// Per-revision ANE hardware limits.
 /// Key hardware limit parameters that govern ANE op placement.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +47,11 @@ pub struct AneHwLimits {
     /// Whether these hardware limits have been verified on real hardware.
     /// `false` for approximate/inherited/speculative limits (A12, A13, V26).
     pub verified: bool,
+    /// Kernel size threshold above which special handling is needed.
+    /// A11-A13: 7, A14+: 9.
+    pub large_kernel_threshold: u64,
+    /// Sub-variant within an ANE family for fine-grained differentiation.
+    pub sub_variant: AneSubVariant,
 }
 
 impl AneHwLimits {
@@ -71,6 +93,8 @@ impl AneHwLimits {
             num_nes: 1,
             ne_transpose_c_max: 16384,
             verified: true,
+            large_kernel_threshold: 7,
+            sub_variant: AneSubVariant::Standard,
         }
     }
 
@@ -108,7 +132,15 @@ impl AneHwLimits {
     }
 
     fn a14() -> Self {
-        Self { revision: AneRevision::V7, max_tensor_width: 65536, num_nes: 2, verified: true, ..Self::a13() }
+        Self {
+            revision: AneRevision::V7,
+            max_tensor_width: 65536,
+            num_nes: 2,
+            verified: true,
+            large_kernel_threshold: 9,
+            sub_variant: AneSubVariant::Standard,
+            ..Self::a13()
+        }
     }
 
     fn a15() -> Self {
@@ -137,7 +169,14 @@ impl AneHwLimits {
     /// 262144 max tensor width (vs A14's 65536). The family is A14 — M1
     /// does NOT get A18's SDPA or LayerNorm support.
     fn m1() -> Self {
-        Self { revision: AneRevision::V17, max_tensor_width: 262144, num_nes: 6, verified: true, ..Self::a17() }
+        Self {
+            revision: AneRevision::V17,
+            max_tensor_width: 262144,
+            num_nes: 6,
+            verified: true,
+            sub_variant: AneSubVariant::Mac,
+            ..Self::a17()
+        }
     }
 
     /// A18 Bionic (iPhone 16, ANE V19) hardware limits.
@@ -149,11 +188,23 @@ impl AneHwLimits {
     }
 
     fn a18_pro() -> Self {
-        Self { revision: AneRevision::V19, num_nes: 8, verified: true, ..Self::a18() }
+        Self {
+            revision: AneRevision::V19,
+            num_nes: 8,
+            verified: true,
+            sub_variant: AneSubVariant::Pro,
+            ..Self::a18()
+        }
     }
 
     fn a18_max() -> Self {
-        Self { revision: AneRevision::V20, num_nes: 16, verified: true, ..Self::a18_pro() }
+        Self {
+            revision: AneRevision::V20,
+            num_nes: 16,
+            verified: true,
+            sub_variant: AneSubVariant::Max,
+            ..Self::a18_pro()
+        }
     }
 
     /// T-124 (V-031/V-088): V26 is a speculative/future revision.
