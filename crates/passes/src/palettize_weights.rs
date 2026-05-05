@@ -643,6 +643,7 @@ mod tests {
                 shape: vec![1, 3, 32, 32],
                 compute_unit_hint: None,
                 air_source: None,
+            target_annotation: Default::default(),
             },
             MirNode {
                 id: MirNodeId("conv2".into()),
@@ -663,6 +664,7 @@ mod tests {
                 shape: vec![1, 64, 16, 16],
                 compute_unit_hint: None,
                 air_source: None,
+            target_annotation: Default::default(),
             },
         ];
 
@@ -722,6 +724,7 @@ mod tests {
                 shape: vec![1, 3, 32, 32],
                 compute_unit_hint: None,
                 air_source: None,
+            target_annotation: Default::default(),
             },
         ];
 

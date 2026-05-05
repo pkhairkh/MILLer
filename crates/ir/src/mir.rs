@@ -14,6 +14,21 @@ use super::common::IrNodeId;
 pub use super::common::{ComputeUnitHint, MilDtype};
 use crate::toproto::ToProto;
 
+/// Target-specific annotation for a MIR op node.
+///
+/// Captures ANE placement attributes that are determined after
+/// engine assignment but before emission. This separates target
+/// concerns from the pure IR representation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct MirOpTargetAnnotation {
+    /// The assigned ANE engine for this op, if any.
+    pub assigned_engine: Option<super::ane_engine::AneEngine>,
+    /// Whether this op was demoted from ANE to CPU by a family override.
+    pub demoted_to_cpu: bool,
+    /// The target ANE revision, if known.
+    pub target_revision: Option<super::ane_target::AneRevision>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MirNodeId(pub String);
 
@@ -1062,7 +1077,7 @@ impl MirOp {
     /// Returns the base ANE engine assignment for this op, ignoring revision-specific
     /// constraints. This is the static per-op engine mapping used before applying
     /// family capability overrides.
-    fn base_engine(&self) -> Option<super::ane_engine::AneEngine> {
+    pub(crate) fn base_engine(&self) -> Option<super::ane_engine::AneEngine> {
         use super::ane_engine::AneEngine;
         match self {
             // ─── NE pipeline: conv/pool/matmul/attention ────────────
@@ -1355,63 +1370,7 @@ impl MirOp {
         &self,
         revision: Option<super::ane_target::AneRevision>,
     ) -> Option<super::ane_engine::AneEngine> {
-        let base = self.base_engine();
-
-        // Without a revision, return the base engine (backward-compatible).
-        let family = match revision {
-            Some(rev) => rev.family(),
-            None => return base,
-        };
-
-        // Apply family-specific overrides for ops that lack ANEC converters
-        // on certain families. These overrides demote the engine from Some(PE)
-        // to None when no converter exists for the target family.
-        match self {
-            // A18 family: ReduceArgmax/ReduceArgmin have no LSE_7 converter.
-            // The ANEC has ConvertReductionArg for LSE_0–LSE_6 (A11Legacy–A17)
-            // but there is NO LSE_7 converter. Placement validation that passes
-            // on A18 will silently fail at emission time.
-            MirOp::MILReduceArgmax { .. } | MirOp::MILReduceArgmin { .. }
-                if !family.supports_argminmax() =>
-            {
-                return None;
-            }
-
-            // A11Legacy/A12 families: ReduceL2Norm has no converter.
-            // The per-op support matrix shows reduce_l2_norm is only available
-            // on A14+ families that use A14Plus reduction converters.
-            MirOp::MILReduceL2Norm { .. } if family.uses_a14minus_converters() => {
-                return None;
-            }
-
-            // A11Legacy/A12/A13 families (uses_a14minus_converters):
-            // MILSquare has no converter on these families. Per-op matrix row 19
-            // shows the A13Minus/A14Plus split — square uses ConvertSquareA13Minus
-            // which is not available on A14Minus converter families.
-            MirOp::MILSquare { .. } if family.uses_a14minus_converters() => {
-                return None;
-            }
-
-            // ScaledDotProductAttention is only reliable on A16+ families.
-            // On older families, there is no reliable ANEC converter for SDPA.
-            // Note: In the base engine assignment, SDPA is already mapped to NE.
-            // On A16+ (supports_sdpa()), it stays NE. On older families without
-            // SDPA support, it should return None since there's no converter.
-            MirOp::MILScaledDotProductAttention { .. } if !family.supports_sdpa() => {
-                return None;
-            }
-
-            // LayerNorm is only supported on A15+ families.
-            // On pre-A15 families (A11Legacy, A12, A13, A14), there is no
-            // ANEC converter for LayerNorm — it must fall back to CPU.
-            MirOp::MILLayerNorm { .. } if !family.supports_layernorm() => {
-                return None;
-            }
-
-            _ => {}
-        }
-
-        base
+        super::ane_placement::engine_for_op(self, revision)
     }
 
     /// Returns the default ANE execution engine for this op (revision-agnostic).
@@ -2238,6 +2197,10 @@ pub struct MirNode {
     pub shape: Vec<usize>,
     pub compute_unit_hint: Option<ComputeUnitHint>,
     pub air_source: Option<super::air::AirNodeId>,
+    /// Target-specific annotation capturing ANE placement attributes.
+    /// Populated after engine assignment but before emission.
+    #[serde(default)]
+    pub target_annotation: MirOpTargetAnnotation,
 }
 
 // ComputeUnitHint moved to common.rs; re-exported via `pub use super::common::ComputeUnitHint;` above.

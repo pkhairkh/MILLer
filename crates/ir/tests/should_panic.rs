@@ -23,6 +23,7 @@ fn test_mir_graph_duplicate_node_ids_panics() {
         shape: vec![1, 128],
         compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
         air_source: None,
+        target_annotation: Default::default(),
     };
     let node2 = MirNode {
         id: nid("dup"), // Same ID!
@@ -31,6 +32,7 @@ fn test_mir_graph_duplicate_node_ids_panics() {
         shape: vec![1, 128],
         compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
         air_source: None,
+        target_annotation: Default::default(),
     };
 
     let graph = MirGraph {
@@ -67,6 +69,7 @@ fn test_mir_graph_output_references_unknown_node_panics() {
         shape: vec![1, 128],
         compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
         air_source: None,
+        target_annotation: Default::default(),
     };
 
     let graph = MirGraph {

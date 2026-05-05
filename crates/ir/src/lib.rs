@@ -29,6 +29,7 @@ pub mod air;
 pub mod ane_engine;
 pub mod ane_hw_limits;
 pub mod ane_layout;
+pub mod ane_placement;
 pub mod ane_target;
 pub mod common;
 pub mod kir;

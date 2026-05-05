@@ -141,6 +141,7 @@ mod tests {
                     shape: vec![64, 128],
                     compute_unit_hint: None,
                     air_source: None,
+                    target_annotation: Default::default(),
                 },
                 MirNode {
                     id: matmul_id.clone(),
@@ -154,6 +155,7 @@ mod tests {
                     shape: vec![1, 128],
                     compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
                     air_source: None,
+                    target_annotation: Default::default(),
                 },
             ],
             inputs: vec![input_id],
