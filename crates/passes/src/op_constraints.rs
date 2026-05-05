@@ -2,7 +2,9 @@
 //! Source: ane-constraints-docs/03-placement-and-compiler/mil-to-ane-placement-constraint-system.md
 
 use ane_ir::ane_target::AneFamily;
-use ane_ir::mir::{MirOp, MirNodeId};
+use ane_ir::mir::MirOp;
+#[cfg(test)]
+use ane_ir::mir::MirNodeId;
 
 #[allow(unused_imports)]
 use anyhow::{bail, Result};

@@ -128,6 +128,7 @@ impl Default for ShardPlan {
 ///    → embed = num_heads × head_dim
 /// 2. If no KV cache shapes, scan all StateRead ops for the largest shape
 /// 3. Fall back to `1` for each dimension with an explicit warning
+#[derive(Debug)]
 struct DerivedShapes {
     batch: usize,
     seq: usize,
@@ -210,7 +211,7 @@ impl ShardPlanPass {
     fn derive_primary_shapes(
         input: &SirGraph,
         kv_cache_shapes: &std::collections::HashMap<String, Vec<usize>>,
-    ) -> DerivedShapes {
+    ) -> Result<DerivedShapes> {
         use ane_ir::sir::SirOp;
 
         // Try KV cache shapes first — they are the most reliable source
@@ -220,7 +221,7 @@ impl ShardPlanPass {
                 let seq = shape[2].max(1);
                 let head_dim = shape[3].max(1);
                 let embed = num_heads * head_dim;
-                return DerivedShapes { batch: 1, seq, embed, vocab: 1 };
+                return Ok(DerivedShapes { batch: 1, seq, embed, vocab: 1 });
             }
         }
 
@@ -231,19 +232,23 @@ impl ShardPlanPass {
                     let batch = shape[0].max(1);
                     let seq = if shape.len() >= 3 { shape[1].max(1) } else { 1 };
                     let embed = if shape.len() >= 3 { shape[2].max(1) } else { shape[1].max(1) };
-                    return DerivedShapes { batch, seq, embed, vocab: 1 };
+                    return Ok(DerivedShapes { batch, seq, embed, vocab: 1 });
                 }
             }
         }
 
-        // No shape-bearing op found — fall back to [1, 1] with warning
-        log::warn!(
-            "T-110: No shape information found in SIR graph. \
-             Defaulting to [1, 1] for FunctionEntry shapes. \
-             This is likely incorrect for models with batch > 1 or seq > 1. \
-             Add StateRead ops or explicit shape annotations to avoid this fallback."
+        // M-006: No shape-bearing op found — this is a hard error.
+        // Returning [1,1,1,1] silently produces wrong PIR specs that are
+        // worse than failing compilation. The caller must provide shape
+        // information via StateRead ops or explicit shape annotations.
+        anyhow::bail!(
+            "M-006: No shape information found in SIR graph. \
+             Cannot derive primary shapes for PIR specs. \
+             Add StateRead ops (KV cache or otherwise) or explicit shape \
+             annotations so that FunctionEntry and Handoff tensor shapes \
+             can be determined. Silently defaulting to [1,1,1,1] would \
+             produce incorrect PIR specs."
         );
-        DerivedShapes { batch: 1, seq: 1, embed: 1, vocab: 1 }
     }
 
     /// T-114: Derive the primary dtype from the SIR graph.
@@ -410,7 +415,7 @@ impl ShardPlanPass {
         // Fall back to vec![1, 1] only with an explicit warning.
         // NOTE: This must be called AFTER the classification loop above
         // so that kv_cache_shapes is populated.
-        let shapes = Self::derive_primary_shapes(input, &kv_cache_shapes);
+        let shapes = Self::derive_primary_shapes(input, &kv_cache_shapes)?;
 
         // ─── Phase 2: Derive layer assignment from classified nodes ──────
         //
@@ -1067,6 +1072,21 @@ mod tests {
     fn make_linear_sir() -> SirGraph {
         SirGraph {
             nodes: vec![
+                SirNode {
+                    id: SirNodeId("state_read_0".into()),
+                    op: SirOp::StateRead {
+                        state_id: "hidden_state".into(),
+                        offset: 0,
+                        shape: vec![1, 512], // [batch, embed_dim]
+                    },
+                    name: "hidden_state_read".into(),
+                    metadata: SirMetadata {
+                        task_origin: TaskOrigin::Synthetic,
+                        model_id: None,
+                        quality_contract: None,
+                        precision_override: None,
+                    },
+                },
                 SirNode {
                     id: SirNodeId("weight".into()),
                     op: SirOp::Mul { x: SirNodeId(String::new()), y: SirNodeId(String::new()) },
@@ -1792,10 +1812,14 @@ mod tests {
 
     // ─── T-110: Shape derivation tests ──────────────────────────────
 
-    /// T-110: Verify that derive_primary_shapes falls back to [1,1] when
+    /// M-006: Verify that derive_primary_shapes returns an error when
     /// no shape-bearing ops exist in the graph.
+    ///
+    /// Previously this silently fell back to [1,1,1,1], producing wrong
+    /// PIR specs. Now it correctly bails so the caller knows shapes
+    /// cannot be derived.
     #[test]
-    fn test_t110_derive_shapes_fallback() {
+    fn test_m006_derive_shapes_no_info_is_error() {
         let graph = SirGraph {
             nodes: vec![SirNode {
                 id: SirNodeId("mul_0".into()),
@@ -1812,11 +1836,11 @@ mod tests {
             outputs: vec![],
         };
         let kv_cache_shapes = std::collections::HashMap::new();
-        let shapes = ShardPlanPass::derive_primary_shapes(&graph, &kv_cache_shapes);
-        assert_eq!(shapes.batch, 1, "Fallback batch should be 1");
-        assert_eq!(shapes.seq, 1, "Fallback seq should be 1");
-        assert_eq!(shapes.embed, 1, "Fallback embed should be 1");
-        assert_eq!(shapes.vocab, 1, "Fallback vocab should be 1");
+        let result = ShardPlanPass::derive_primary_shapes(&graph, &kv_cache_shapes);
+        assert!(result.is_err(), "M-006: derive_primary_shapes must return Err when no shape info is found");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("M-006"), "Error message must reference M-006");
+        assert!(err_msg.contains("No shape information"), "Error message must describe the problem");
     }
 
     /// T-110: Verify that derive_primary_shapes extracts shapes from KV cache
@@ -1861,7 +1885,7 @@ mod tests {
         };
         let mut kv_cache_shapes = std::collections::HashMap::new();
         kv_cache_shapes.insert("kv_cache_k".into(), vec![2, 32, 128, 64]);
-        let shapes = ShardPlanPass::derive_primary_shapes(&graph, &kv_cache_shapes);
+        let shapes = ShardPlanPass::derive_primary_shapes(&graph, &kv_cache_shapes).unwrap();
         assert_eq!(shapes.batch, 1, "Batch should be 1 for decode step");
         assert_eq!(shapes.seq, 128, "Seq should be 128 from KV cache shape");
         assert_eq!(shapes.embed, 32 * 64, "Embed should be num_heads * head_dim = 2048");
@@ -1892,7 +1916,7 @@ mod tests {
             outputs: vec![],
         };
         let kv_cache_shapes = std::collections::HashMap::new();
-        let shapes = ShardPlanPass::derive_primary_shapes(&graph, &kv_cache_shapes);
+        let shapes = ShardPlanPass::derive_primary_shapes(&graph, &kv_cache_shapes).unwrap();
         assert_eq!(shapes.batch, 4, "Batch should be 4 from StateRead shape");
         assert_eq!(shapes.seq, 1, "Seq should default to 1 for 2D shape (no seq dimension)");
         assert_eq!(shapes.embed, 512, "Embed should be 512 from 2D shape");

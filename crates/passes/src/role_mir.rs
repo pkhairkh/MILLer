@@ -97,11 +97,23 @@ impl RoleMirBuilder {
 
     /// Returns the effective model architecture config, falling back
     /// to the default (Qwen3-0.6B) when none was provided.
+    ///
+    /// M-035: Warns when falling back to default values so callers know
+    /// they are using model-specific defaults without having set an
+    /// explicit config.
     fn arch_config(&self) -> &ModelArchConfig {
-        self.arch_config.as_ref().unwrap_or_else(|| {
-            static DEFAULT: std::sync::OnceLock<ModelArchConfig> = std::sync::OnceLock::new();
-            DEFAULT.get_or_init(ModelArchConfig::default)
-        })
+        match self.arch_config.as_ref() {
+            Some(cfg) => cfg,
+            None => {
+                static DEFAULT: std::sync::OnceLock<ModelArchConfig> = std::sync::OnceLock::new();
+                log::warn!(
+                    "RoleMirBuilder: no arch_config provided — falling back to \
+                     ModelArchConfig::default() (Qwen3-0.6B). Set one via \
+                     with_arch_config() to avoid model-specific defaults."
+                );
+                DEFAULT.get_or_init(ModelArchConfig::default)
+            }
+        }
     }
 
     /// Build a MIR graph from a shard specification.
@@ -215,7 +227,7 @@ impl RoleMirBuilder {
                     nodes,
                     inputs: vec![input_id],
                     outputs: vec![output_id],
-                    opset_version: "iOS18".into(),
+                    opset_version: ane_ir::DEFAULT_OPSET_VERSION.into(),
                     shard_name: spec.shard_name.clone(),
                     input_shapes: input_shapes.clone(),
                 })
@@ -312,7 +324,7 @@ impl RoleMirBuilder {
                     nodes,
                     inputs: vec![input_id],
                     outputs: vec![output_id],
-                    opset_version: "iOS18".into(),
+                    opset_version: ane_ir::DEFAULT_OPSET_VERSION.into(),
                     shard_name: spec.shard_name.clone(),
                     input_shapes: input_shapes.clone(),
                 })
@@ -394,7 +406,7 @@ impl RoleMirBuilder {
                     nodes,
                     inputs: vec![input_id],
                     outputs: vec![ln_id],
-                    opset_version: "iOS18".into(),
+                    opset_version: ane_ir::DEFAULT_OPSET_VERSION.into(),
                     shard_name: spec.shard_name.clone(),
                     input_shapes: input_shapes.clone(),
                 })
@@ -503,7 +515,7 @@ impl RoleMirBuilder {
                     nodes,
                     inputs: vec![input_id],
                     outputs: vec![q_id, k_id, v_id],
-                    opset_version: "iOS18".into(),
+                    opset_version: ane_ir::DEFAULT_OPSET_VERSION.into(),
                     shard_name: spec.shard_name.clone(),
                     input_shapes: input_shapes.clone(),
                 })
@@ -601,7 +613,7 @@ impl RoleMirBuilder {
                     nodes,
                     inputs: vec![input_id],
                     outputs: vec![attn_id],
-                    opset_version: "iOS18".into(),
+                    opset_version: ane_ir::DEFAULT_OPSET_VERSION.into(),
                     shard_name: spec.shard_name.clone(),
                     input_shapes: input_shapes.clone(),
                 })
@@ -680,7 +692,7 @@ impl RoleMirBuilder {
                     nodes,
                     inputs: vec![input_id],
                     outputs: vec![output_id],
-                    opset_version: "iOS18".into(),
+                    opset_version: ane_ir::DEFAULT_OPSET_VERSION.into(),
                     shard_name: spec.shard_name.clone(),
                     input_shapes: input_shapes.clone(),
                 })
@@ -745,7 +757,7 @@ impl RoleMirBuilder {
                     nodes,
                     inputs: vec![input_id],
                     outputs: vec![gather_id],
-                    opset_version: "iOS18".into(),
+                    opset_version: ane_ir::DEFAULT_OPSET_VERSION.into(),
                     shard_name: spec.shard_name.clone(),
                     input_shapes: input_shapes.clone(),
                 })
@@ -781,7 +793,7 @@ impl RoleMirBuilder {
                     nodes,
                     inputs: vec![input_id],
                     outputs: vec![softmax_id],
-                    opset_version: "iOS18".into(),
+                    opset_version: ane_ir::DEFAULT_OPSET_VERSION.into(),
                     shard_name: spec.shard_name.clone(),
                     input_shapes: input_shapes.clone(),
                 })
@@ -843,7 +855,7 @@ impl RoleMirBuilder {
                     nodes,
                     inputs: vec![input_id],
                     outputs: vec![linear_id],
-                    opset_version: "iOS18".into(),
+                    opset_version: ane_ir::DEFAULT_OPSET_VERSION.into(),
                     shard_name: spec.shard_name.clone(),
                     input_shapes: input_shapes.clone(),
                 })

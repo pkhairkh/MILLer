@@ -16,11 +16,20 @@ use crate::knowledge_query::PassKnowledgeQuery;
 use ane_ir::air::{AirGraph, AirOp};
 use anyhow::Result;
 
-/// Default fallback risk score for operations without specific knowledge.
-const DEFAULT_FALLBACK_RISK: f32 = 0.1;
+/// Conservative default legality confidence when no knowledge is available.
+///
+/// 0.5 signals "unknown" rather than the false certainty of 1.0.
+const DEFAULT_LEGALITY_CONFIDENCE: f32 = 0.5;
 
-/// Default drift risk score for operations without specific knowledge.
-const DEFAULT_DRIFT_RISK: f32 = 0.05;
+/// Conservative default fallback risk score when no knowledge is available.
+///
+/// 0.5 signals "unknown" rather than the false safety of 0.0.
+const DEFAULT_FALLBACK_RISK: f32 = 0.5;
+
+/// Conservative default drift risk score when no knowledge is available.
+///
+/// 0.5 signals "unknown" rather than the false safety of 0.0.
+const DEFAULT_DRIFT_RISK: f32 = 0.5;
 
 /// Fallback risk penalty when compute plan evidence shows ane_placed=False.
 ///
@@ -32,6 +41,8 @@ const COMPUTE_PLAN_FALLBACK_PENALTY: f32 = 0.7;
 
 /// Risk Annotate pass implementation.
 pub struct RiskAnnotatePass {
+    /// Legality confidence to assign when no knowledge is available.
+    pub default_legality_confidence: f32,
     /// Fallback risk score to assign when no knowledge is available.
     pub default_fallback_risk: f32,
     /// Drift risk score to assign when no knowledge is available.
@@ -47,6 +58,7 @@ impl Default for RiskAnnotatePass {
 impl RiskAnnotatePass {
     pub fn new() -> Self {
         Self {
+            default_legality_confidence: DEFAULT_LEGALITY_CONFIDENCE,
             default_fallback_risk: DEFAULT_FALLBACK_RISK,
             default_drift_risk: DEFAULT_DRIFT_RISK,
         }
@@ -115,19 +127,42 @@ impl RiskAnnotatePass {
                     _ => "unknown",
                 };
 
-                // Step 1: Apply knowledge-based risk scores
+                // Step 1: Apply knowledge-based legality confidence
+                match knowledge_query.query_legality(op_pattern, None) {
+                    Some(legality_info) => {
+                        node.legality_confidence = legality_info.confidence;
+                    }
+                    None => {
+                        log::warn!(
+                            "risk_annotate: no legality knowledge for '{}', \
+                             using conservative legality_confidence={}",
+                            op_pattern,
+                            self.default_legality_confidence
+                        );
+                        node.legality_confidence = self.default_legality_confidence;
+                    }
+                }
+
+                // Step 2: Apply knowledge-based risk scores
                 match knowledge_query.query_risk(op_pattern, None) {
                     Some(risk_info) => {
                         node.fallback_risk = risk_info.fallback_risk;
                         node.drift_risk = risk_info.drift_risk;
                     }
                     None => {
+                        log::warn!(
+                            "risk_annotate: no risk knowledge for '{}', \
+                             using conservative fallback_risk={}, drift_risk={}",
+                            op_pattern,
+                            self.default_fallback_risk,
+                            self.default_drift_risk
+                        );
                         node.fallback_risk = self.default_fallback_risk;
                         node.drift_risk = self.default_drift_risk;
                     }
                 }
 
-                // Step 2: Apply compute plan placement evidence (Sprint 35)
+                // Step 3: Apply compute plan placement evidence (Sprint 35)
                 // If compute plan shows ane_placed=False, increase fallback_risk
                 if let Some(placement) =
                     knowledge_query.query_compute_plan_placement(op_pattern, None)
@@ -180,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn test_no_knowledge_uses_defaults() {
+    fn test_no_knowledge_uses_conservative_defaults() {
         let pass = RiskAnnotatePass::new();
         let graph = make_simple_graph(AirOp::MatMul {
             a: AirNodeId("a".to_string()),
@@ -188,6 +223,41 @@ mod tests {
         });
         let knowledge = NoKnowledge;
         let result = pass.run(graph, &knowledge).unwrap();
+        // All three fields should use conservative 0.5 defaults (not ideal 1.0/0.0/0.0)
+        assert_eq!(result.nodes[0].legality_confidence, DEFAULT_LEGALITY_CONFIDENCE);
+        assert_eq!(result.nodes[0].fallback_risk, DEFAULT_FALLBACK_RISK);
+        assert_eq!(result.nodes[0].drift_risk, DEFAULT_DRIFT_RISK);
+    }
+
+    #[test]
+    fn test_knowledge_overrides_defaults() {
+        let pass = RiskAnnotatePass::new();
+        let graph = make_simple_graph(AirOp::MatMul {
+            a: AirNodeId("a".to_string()),
+            b: AirNodeId("b".to_string()),
+        });
+        let knowledge = MockKnowledge::new()
+            .with_legality(true, 0.95)
+            .with_risk(0.1, 0.05);
+        let result = pass.run(graph, &knowledge).unwrap();
+        // Knowledge-provided values should override defaults
+        assert!((result.nodes[0].legality_confidence - 0.95).abs() < 0.001);
+        assert!((result.nodes[0].fallback_risk - 0.1).abs() < 0.001);
+        assert!((result.nodes[0].drift_risk - 0.05).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_legality_knowledge_only_uses_defaults_for_risk() {
+        // When only legality knowledge is available, risk fields should still
+        // use conservative defaults
+        let pass = RiskAnnotatePass::new();
+        let graph = make_simple_graph(AirOp::MatMul {
+            a: AirNodeId("a".to_string()),
+            b: AirNodeId("b".to_string()),
+        });
+        let knowledge = MockKnowledge::new().with_legality(true, 0.9);
+        let result = pass.run(graph, &knowledge).unwrap();
+        assert!((result.nodes[0].legality_confidence - 0.9).abs() < 0.001);
         assert_eq!(result.nodes[0].fallback_risk, DEFAULT_FALLBACK_RISK);
         assert_eq!(result.nodes[0].drift_risk, DEFAULT_DRIFT_RISK);
     }
@@ -202,7 +272,7 @@ mod tests {
         });
         let knowledge = MockKnowledge::new().with_compute_plan_ane("mb.matmul");
         let result = pass.run(graph, &knowledge).unwrap();
-        // Default fallback risk should be unchanged (no penalty)
+        // Conservative default fallback risk should be unchanged (no penalty)
         assert_eq!(result.nodes[0].fallback_risk, DEFAULT_FALLBACK_RISK);
     }
 

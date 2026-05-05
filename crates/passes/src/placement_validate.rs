@@ -307,6 +307,24 @@ pub fn validate_placement_with_context(
                     op_name(op)
                 ));
             }
+            // V-034 / M-007: Enforce Int4/UInt4 interleave context.
+            // is_dtype_ane_legal() approves Int4/UInt4 as legal dtypes, but they
+            // require interleave=8 on ANE. When PlacementContext.interleave is None,
+            // we cannot validate the constraint and must conservatively reject ANE
+            // placement — the op must go to CPU. When interleave is provided,
+            // validate it equals 8.
+            MilDtype::Int4 | MilDtype::UInt4 => {
+                let interleave_usize = ctx.interleave.map(|il| il.value() as usize);
+                if let Err(e) = dtype_constraints::validate_int4_uint4_ane_constraints(
+                    dtype, interleave_usize,
+                ) {
+                    return PlacementDecision::CpuOnly(format!(
+                        "{}: {}",
+                        op_name(op),
+                        e
+                    ));
+                }
+            }
             _ => {}
         }
 
