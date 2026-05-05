@@ -2,7 +2,7 @@
 
 > Consolidated remediation task board for open and in-progress issues.
 > Completed tasks have been removed — see git history for the full audit trail.
-> Recently completed: T-P2-01, T-P2-05, T-P2-12, T-P3-04, T-P3-07, T-P3-08, T-P3-09, T-P3-10, T-P3-11, T-P4-02, T-P4-03, T-P4-04, T-P4-05.
+> Recently completed: T-P2-01, T-P2-05, T-P2-12, T-P3-03, T-P3-04, T-P3-07, T-P3-08, T-P3-09, T-P3-10, T-P3-11, T-P4-01, T-P4-02, T-P4-03, T-P4-04, T-P4-05, T-P5-05.
 > Format: Agentic AI task specification (structured, machine-parseable, human-readable).
 > Each task is independently executable by an AI coding agent with access to this repository.
 
@@ -60,39 +60,11 @@
 
 ## Phase 3 — Medium-Priority Constraint Enforcement
 
-### T-P3-03: Replace AIR risk fields with status enum
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P3-03 |
-| `title` | Replace legality_confidence/fallback_risk/drift_risk with LegalityStatus enum |
-| `phase` | P3 |
-| `severity` | MEDIUM |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/air.rs`, `crates/ir/src/serialize.rs`, `crates/passes/src/risk_annotate.rs` |
-| `violation_refs` | [V-026, M-011] |
-| `acceptance_criteria` | 1) `AirNode` has `legality_status: LegalityStatus` enum instead of three f32 fields; 2) `LegalityStatus` variants: `Verified`, `Unverified`, `LikelyFallback`, `Unknown`; 3) `risk_annotate` populates from knowledge query; 4) No downstream code relies on the old fields |
-| `agent_hints` | Define `enum LegalityStatus { Verified, Unverified, LikelyFallback, Unknown }`. Replace `legality_confidence/fallback_risk/drift_risk` in `AirNode`. Update `serialize.rs` to map old values to new enum. Update `risk_annotate.rs` to use the enum. |
+(All P3 tasks completed.)
 
 ---
 
 ## Phase 4 — Low-Priority Cleanup and Polish
-
-### T-P4-01: Move hardcoded constants to knowledge store
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P4-01 |
-| `title` | Move LARGE_KERNEL_THRESHOLD and MAX_POOLING_KERNEL_DIM to ane_hw_limits_seed.json |
-| `phase` | P4 |
-| `severity` | LOW |
-| `depends_on` | [] |
-| `files` | `crates/passes/src/op_constraints.rs`, `knowledge/ane_hw_limits_seed.json`, `crates/ir/src/ane_hw_limits.rs` |
-| `violation_refs` | [V-055, V-056] |
-| `acceptance_criteria` | 1) `ane_hw_limits_seed.json` has `large_kernel_threshold` and `max_pooling_kernel_dim` fields; 2) `AneHwLimits` struct includes these fields; 3) `op_constraints.rs` loads them from the limits struct instead of using hardcoded constants |
-| `agent_hints` | Add fields to `AneHwLimits`, populate from JSON seed, and update `op_constraints.rs` to accept `&AneHwLimits` instead of using constants. |
-
----
 
 ### T-P4-07: Add HAL sub-variant modeling
 
@@ -139,8 +111,8 @@
 | `depends_on` | [] |
 | `files` | `crates/ir/src/sir.rs`, `crates/ir/src/air.rs`, `crates/ir/src/mir.rs` |
 | `violation_refs` | [M-003, M-011, M-014] |
-| `acceptance_criteria` | 1) Each verify() checks node reference integrity, required fields, dtype legality; 2) AirGraph::verify() rejects legality_confidence==0.0 in strict mode; 3) MirGraph::verify() requires non-empty shapes or Dynamic; 4) verify() called after each pass; 5) Pipeline aborts on failure |
-| `agent_hints` | Add `pub fn verify(&self) -> Result<(), Vec<VerifyError>>` to each graph type. Check: all node IDs resolve, all dtype values are valid, required fields non-empty. For AIR, check legality_confidence>0.0. For MIR, check shapes are non-empty. Call from pipeline after each pass. |
+| `acceptance_criteria` | 1) Each verify() checks node reference integrity, required fields, dtype legality; 2) AirGraph::verify() rejects LegalityStatus::Unknown in strict mode; 3) MirGraph::verify() requires non-empty shapes or Dynamic; 4) verify() called after each pass; 5) Pipeline aborts on failure |
+| `agent_hints` | Add `pub fn verify(&self) -> Result<(), Vec<VerifyError>>` to each graph type. Check: all node IDs resolve, all dtype values are valid, required fields non-empty. For AIR, check legality_status is not Unknown in strict mode. For MIR, check shapes are non-empty. Call from pipeline after each pass. |
 
 ---
 
@@ -157,22 +129,6 @@
 | `violation_refs` | [M-003, M-006, M-033] |
 | `acceptance_criteria` | 1) `infer_shape()` returns Err for unknown variants; 2) `compat_output_shape()` returns Err for unhandled MirOp; 3) `shard_plan.rs` returns Err instead of [1,1,1,1]; 4) Downstream handles Shape::Dynamic explicitly or fails |
 | `agent_hints` | Change `Ok(vec![])` to `Err(...)` in infer_shape and compat_output_shape. Change derive_primary_shapes to bail! instead of defaulting. Add a `Shape::Dynamic` variant for intentional dynamic shapes. |
-
----
-
-### T-P5-05: Rename LegalityRewritePass to AneLegalityRewritePass
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P5-05 |
-| `title` | Rename pass to reflect ANE-specific nature |
-| `phase` | P5 |
-| `severity` | MEDIUM |
-| `depends_on` | [] |
-| `files` | `crates/passes/src/legality_rewrite.rs`, `crates/passes/src/lib.rs`, `docs/ir_reference.md` |
-| `violation_refs` | [M-017] |
-| `acceptance_criteria` | 1) Pass renamed; 2) All references updated; 3) docs/ir_reference.md updated |
-| `agent_hints` | Rename the struct and module. Update all use statements. Update the pipeline construction. Update the IR reference doc. |
 
 ---
 
