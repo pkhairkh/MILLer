@@ -19,7 +19,7 @@ See [CHANGELOG.md](../CHANGELOG.md) for implementation history and verification 
 | `crates/ir/src/pir.rs` | Package IR with `FunctionEntry` (multifunction seam) |
 | `crates/ir/src/ane_target.rs` | `AneFamily`, `AneRevision`, `AneTarget` types with chip-to-family mapping |
 | `crates/ir/src/ane_engine.rs` | `AneEngine` enum (NE/PE/TransposeEngine) with per-MirOp engine assignment |
-| `crates/ir/src/ane_hw_limits.rs` | `AneHwLimits` per-revision hardware limit enforcement |
+| `crates/ir/src/ane_hw_limits.rs` | `AneHwLimits` per-revision hardware limit enforcement (has `verified: bool` field indicating whether limits have been confirmed on real hardware) |
 | `crates/ir/src/ane_layout.rs` | `AneInterleave`/`AneLayout` types for interleave and ChannelLast constraints |
 | `crates/bridge/src/subprocess.rs` | Rust→Python subprocess bridge, `BridgeResult` with full field capture |
 | `crates/cli/src/main.rs` | CLI compile, report, trace-compile commands, deterministic task hashing, spec-driven manifest |
@@ -90,4 +90,27 @@ compile output dir (mlpackage + manifest + MIR dump + knowledge)
   → {model_id}.zip
 ```
 
-Both the reporter and packager operate on the same data produced by the compile command. No `todo!()` stubs remain in these modules.
+Both the reporter and packager operate on the same data produced by the compile command. No `todo!()` stubs remain in the core compiler pipeline. The CAPI layer (`coreml-ffi`) contains stub implementations that return honest errors for unsupported operations on macOS.
+
+### Bridge Error Types
+
+The bridge (`ane-bridge`) and emission (`ane-coreml-emit`) layers expose typed error enums for programmatic error matching:
+
+- `BridgeError::UnresolvedWeight { path }` — weight not found in resolver (T-P2-05)
+- `EmissionError::MissingIODescriptor { kind, name, function }` — I/O shape/dtype unknown (T-P2-10)
+- `EmissionError::UndersizedIOSurface`, `NonUniformSurface`, `InvalidFlatBufferLayout` — ANE constraint violations (T-P3-01)
+
+These replace `anyhow::bail!` calls that produced opaque error messages, enabling callers to match on specific error kinds.
+
+### ValidationPolicy
+
+The emission layer uses `ValidationPolicy` (T-P3-01) to control ANE constraint enforcement:
+- `ValidationPolicy::strict()` (default) — violations are hard errors
+- `ValidationPolicy::warn_only()` — violations produce warnings, emission continues
+
+### Architecture-Aware Bridge
+
+The bridge layer now requires explicit architecture and max_seq_len parameters (T-P2-11):
+- `mir_graph_to_compat_with_arch(graph, resolver, &architecture, max_seq_len, allow_missing)` — preferred API
+- `mir_graph_to_compat()` and `mir_graph_to_compat_with_allow_missing()` — deprecated, default to Qwen3 with warning
+- CLI `trace-compile` accepts `--architecture` and `--max-seq-len` flags

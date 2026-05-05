@@ -341,8 +341,8 @@ Result (on Apple hardware):
       "p99_ms": 0.189,
       "min_ms": 0.098,
       "max_ms": 0.234,
-      "mean_ms": 0.128,
-      "std_dev_ms": 0.023,
+      "median_ms": 0.128,
+      "std_dev_ms": null,
       "compute_units": "CPU_AND_NE",
       "scope_note": "Device execution with CPU_AND_NE hint. Compute unit assignment is not guaranteed."
     }
@@ -377,12 +377,12 @@ Every bridge command result contains these fields (matching Rust BridgeResult):
 ## Multifunction Seam
 
 The `functions` field in the payload is the integration point for multifunction mlpackage emission.
-Current emission always produces a single-function package. The Python layer records function
-descriptors in the result regardless. When multifunction emission is implemented, the emitter will
-construct one MIL program per function and use `save_multifunction()` for packaging.
-
-The Rust `BridgeResult` captures `function_descriptors` from the Python result, and the CLI
-manifest builder uses these descriptors rather than hardcoding dimension values.
+Multifunction emission IS now supported — the `emit_multifunction` and
+`emit_multifunction_shared_weights` bridge commands construct one MIL program
+per function and use `prog.add_function()` to merge multiple named functions
+into a single mlpackage. The Rust `BridgeResult` captures `function_descriptors`
+from the Python result, and the CLI manifest builder uses these descriptors
+rather than hardcoding dimension values.
 
 ## Task Identity
 
@@ -411,6 +411,11 @@ The Python emission layer is now decomposed into:
 - `predict()` / profiling requires Apple hardware runtime (wired through bridge, honest error on non-Apple)
 - Compute plan inspection reports unavailable on non-Apple platforms (real code, no data)
 - Palettization produces real output but quality validation requires on-device predict()
-- No multifunction emission yet (single-function packages only)
+- Multifunction emission is now supported via `emit_multifunction` and `emit_multifunction_shared_weights` commands
+- `allow_missing_weights` now defaults to `false` for production paths (T-P2-09). When a real `WeightResolver` is provided, missing weights produce hard errors instead of silently zero-filling. This prevents the emission of models with zero-filled garbage weights.
+- `mir_graph_to_compat_with_arch()` now requires explicit `architecture` and `max_seq_len` parameters (T-P2-11). The deprecated `mir_graph_to_compat()` and `mir_graph_to_compat_with_allow_missing()` functions default to Qwen3 architecture with a warning — callers should migrate to the explicit API.
+- `ValidationPolicy` (T-P3-01) controls whether ANE constraint violations (undersized IOSurface, non-uniform surfaces, invalid flat buffer layout) produce errors (strict mode, default) or warnings (warn-only mode).
+- `verify_emission_semantics()` (T-P5-12) performs semantic verification of emitted mlpackages: checks I/O names, weight files, dtype mismatches, and placeholder names.
+- Profile timing reports use `median_ms` and `std_dev_ms: null` (T-P4-05). Previously `mean_ms` reported the median and `std_dev_ms` was always 0.0.
 - Fallback suspicion is deliberately weak — no hard placement claims without device-backed evidence
 - LUT projection emission is v0: gather pattern is simplified; grouped-palette semantics are approximated by offset indexing; precision override not yet wired; lut_bitwidth does not yet influence conversion parameters

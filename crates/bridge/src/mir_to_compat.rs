@@ -54,6 +54,18 @@ pub trait WeightResolver {
     /// Resolve weight data for the given value path.
     /// Returns the raw bytes and shape of the weight tensor.
     fn resolve(&self, value_path: &str) -> Option<WeightData>;
+
+    /// Whether this resolver has no weight data at all.
+    ///
+    /// T-P2-09: Used by `emit_mir_graph_proto_direct_with_resolver` to
+    /// determine whether `allow_missing_weights` should be true.
+    /// When a resolver is empty (e.g., `EmptyWeightResolver`), missing
+    /// weights are expected and zero-fill is appropriate. When a resolver
+    /// has data but is missing a specific weight, that's a production
+    /// error — zero-filled weights produce silently broken models.
+    fn is_empty(&self) -> bool {
+        false
+    }
 }
 
 /// Weight data returned by a `WeightResolver`.
@@ -63,6 +75,14 @@ pub struct WeightData {
     pub data: Vec<u8>,
     /// Shape of the weight tensor.
     pub shape: Vec<usize>,
+    /// Data type of the weight tensor.
+    ///
+    /// T-P1-04: Previously, auto-materialized Const ops always used
+    /// `MilDtypeCompat::Fp16` regardless of the actual weight dtype.
+    /// This caused Int32 embedding weights to be tagged as Fp16, which
+    /// produces silently incorrect model descriptions. Now the resolver
+    /// carries the actual dtype, and auto-materialized Const ops use it.
+    pub dtype: MilDtypeCompat,
 }
 
 /// A simple in-memory weight resolver backed by a HashMap.
@@ -79,13 +99,31 @@ impl HashMapWeightResolver {
 
     /// Add a weight entry.
     pub fn add(&mut self, path: String, data: Vec<u8>, shape: Vec<usize>) {
-        self.weights.insert(path, WeightData { data, shape });
+        self.weights.insert(path, WeightData { data, shape, dtype: MilDtypeCompat::Fp16 });
+    }
+
+    /// Add a weight entry with explicit dtype.
+    ///
+    /// T-P1-04: Use this when the weight dtype is known and differs
+    /// from Fp16 (e.g., Int32 embedding weights).
+    pub fn add_with_dtype(
+        &mut self,
+        path: String,
+        data: Vec<u8>,
+        shape: Vec<usize>,
+        dtype: MilDtypeCompat,
+    ) {
+        self.weights.insert(path, WeightData { data, shape, dtype });
     }
 }
 
 impl WeightResolver for HashMapWeightResolver {
     fn resolve(&self, value_path: &str) -> Option<WeightData> {
         self.weights.get(value_path).cloned()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.weights.is_empty()
     }
 }
 
@@ -100,6 +138,13 @@ impl WeightResolver for EmptyWeightResolver {
         // Return Some with empty data so the conversion doesn't fail,
         // but the shape will need to come from the node's shape field.
         None
+    }
+
+    // T-P2-09: EmptyWeightResolver always returns None, so it's empty.
+    // This signals to callers that allow_missing_weights=true is appropriate
+    // since there are no weights to be missing from.
+    fn is_empty(&self) -> bool {
+        true
     }
 }
 
@@ -120,11 +165,25 @@ impl WeightResolver for EmptyWeightResolver {
 /// The weight data is looked up via the `resolver`. If the resolver can't find
 /// a weight, a hard error is returned by default (T-91/I-66). Use
 /// `mir_graph_to_compat_with_allow_missing()` to opt into zero-filled placeholders.
+///
+/// **Deprecated** (T-P2-11): This function defaults to Qwen3 architecture and
+/// max_seq_len=32768. Use [`mir_graph_to_compat_with_arch`] with explicit
+/// parameters instead.
 pub fn mir_graph_to_compat(
     graph: &MirGraph,
     resolver: &dyn WeightResolver,
 ) -> Result<MirGraphCompat> {
-    mir_graph_to_compat_with_arch(graph, resolver, None, None, false)
+    log::warn!(
+        "mir_graph_to_compat: using deprecated default architecture=Qwen3, max_seq_len=32768. \
+         Use mir_graph_to_compat_with_arch() with explicit parameters instead."
+    );
+    mir_graph_to_compat_with_arch(
+        graph,
+        resolver,
+        &ane_ir::common::ModelArchitecture::Qwen3,
+        32768,
+        false,
+    )
 }
 
 /// Convert a MIR graph to compat representation, allowing missing weights.
@@ -132,47 +191,54 @@ pub fn mir_graph_to_compat(
 /// When `allow_missing_weights` is true, unresolved weights produce zero-filled
 /// placeholders with a warning. This is intended for development/testing only —
 /// production models should never use zero-filled weights (T-91/I-66/V-007).
+///
+/// **Deprecated** (T-P2-11): This function defaults to Qwen3 architecture and
+/// max_seq_len=32768. Use [`mir_graph_to_compat_with_arch`] with explicit
+/// parameters instead.
 pub fn mir_graph_to_compat_with_allow_missing(
     graph: &MirGraph,
     resolver: &dyn WeightResolver,
     allow_missing_weights: bool,
 ) -> Result<MirGraphCompat> {
-    mir_graph_to_compat_with_arch(graph, resolver, None, None, allow_missing_weights)
+    log::warn!(
+        "mir_graph_to_compat_with_allow_missing: using deprecated default architecture=Qwen3, \
+         max_seq_len=32768. Use mir_graph_to_compat_with_arch() with explicit parameters instead."
+    );
+    mir_graph_to_compat_with_arch(
+        graph,
+        resolver,
+        &ane_ir::common::ModelArchitecture::Qwen3,
+        32768,
+        allow_missing_weights,
+    )
 }
 
 /// Convert a MIR graph to compat representation with architecture-specific
 /// weight name patterns.
 ///
-/// T-36 (I-15/CQ-18): The `architecture` parameter allows the caller to
-/// specify the model architecture for weight-name pattern resolution in
-/// [`build_input_alias_map`]. When `None`, defaults to Qwen3 patterns
-/// (backward-compatible behavior).
+/// T-36 (I-15/CQ-18): The `architecture` parameter specifies the model
+/// architecture for weight-name pattern resolution in [`build_input_alias_map`].
 ///
 /// T-36 (I-15/CQ-19): The `max_seq_len` parameter replaces the hardcoded
-/// `512` fallback in shape inference. When `None`, defaults to 32768
-/// (Qwen3-0.6B max_position_embeddings).
+/// `512` fallback in shape inference.
 ///
 /// T-91 (I-66/V-007): The `allow_missing_weights` parameter controls behavior
 /// when a weight cannot be resolved. When `false` (default), missing weights
 /// are a hard error. When `true`, zero-filled placeholders are produced with
 /// a warning (for development/testing only).
+///
+/// T-P2-11: `architecture` is now required (not Optional). Callers must
+/// specify the model architecture explicitly — silent defaulting to Qwen3
+/// was a correctness hazard for non-Qwen3 models.
 pub fn mir_graph_to_compat_with_arch(
     graph: &MirGraph,
     resolver: &dyn WeightResolver,
-    architecture: Option<&ane_ir::common::ModelArchitecture>,
-    max_seq_len: Option<usize>,
+    architecture: &ane_ir::common::ModelArchitecture,
+    max_seq_len: usize,
     allow_missing_weights: bool,
 ) -> Result<MirGraphCompat> {
     let alias_map = build_input_alias_map(graph, architecture);
-    // DEPRECATED (CQ-9): Hardcoded 32768 default is Qwen3-0.6B-specific.
-    // Callers should pass explicit max_seq_len for correctness.
-    let max_seq_len = max_seq_len.unwrap_or_else(|| {
-        log::warn!(
-            "mir_graph_to_compat_with_arch: max_seq_len not provided, defaulting to 32768 \
-             (Qwen3-0.6B default). Pass explicit max_seq_len for other models."
-        );
-        32768
-    });
+    // T-P2-11: max_seq_len is now required — no more Qwen3-specific default.
 
     // Build a shape map from MirNode.id → MirNode.shape so that reshape ops
     // can resolve zero-placeholder dimensions by looking up their input node's
@@ -250,7 +316,11 @@ pub fn mir_graph_to_compat_with_arch(
     let mut const_ops = Vec::new();
     for weight_name in referenced_weights {
         let (data, shape, dtype) = match resolver.resolve(&weight_name) {
-            Some(wd) => (wd.data, wd.shape, MilDtypeCompat::Fp16),
+            // T-P1-04: Use wd.dtype instead of hardcoded MilDtypeCompat::Fp16.
+            // Previously, auto-materialized weights always used Fp16 regardless
+            // of the actual weight dtype, causing Int32 embedding weights to be
+            // tagged as Fp16 in the proto description.
+            Some(wd) => (wd.data, wd.shape, wd.dtype),
             None => {
                 // Weight not found in resolver.
                 // For static_tables paths (eye_tab, mask_tab, etc.), skip entirely
@@ -270,6 +340,8 @@ pub fn mir_graph_to_compat_with_arch(
                 // T-91 (I-66/V-007): Previously used zero-filled placeholder silently,
                 // producing models that compile but produce garbage inference. Now
                 // a hard error by default, with --allow-missing-weights opt-in.
+                // T-P2-05: Use typed BridgeError::UnresolvedWeight instead of
+                // anyhow::bail! for programmatic error matching.
                 if allow_missing_weights {
                     log::warn!(
                         "weight '{}' not resolved — using zero-filled placeholder (allow_missing_weights=true)",
@@ -277,12 +349,9 @@ pub fn mir_graph_to_compat_with_arch(
                     );
                     (vec![0u8; 2], vec![1], MilDtypeCompat::Fp16)
                 } else {
-                    bail!(
-                        "Weight '{}' not found in resolver. This produces a silently broken model \
-                         with zero-filled weights. Use --allow-missing-weights to opt into zero-fill \
-                         (NOT recommended for production).",
-                        weight_name
-                    );
+                    return Err(crate::BridgeError::UnresolvedWeight {
+                        path: weight_name.clone(),
+                    }.into());
                 }
             }
         };
@@ -477,33 +546,20 @@ fn compat_input_names(op: &MirOpCompat) -> Vec<String> {
 
 /// Build a map of SIR alias names to their resolved MIR node IDs.
 ///
-/// T-36 (I-15/CQ-18): Previously hardcoded Qwen3-specific weight name
-/// patterns. Now uses `ModelArchitecture` for architecture-aware pattern
-/// resolution. When `architecture` is `None`, defaults to Qwen3 patterns
-/// for backward compatibility.
+/// T-36 (I-15/CQ-18): The `architecture` parameter specifies the model
+/// architecture for weight-name pattern resolution.
+///
+/// T-P2-11: `architecture` is now required (not Optional). Callers must
+/// specify the model architecture explicitly.
 ///
 /// The alias map is used by [`remap_compat_inputs`] to redirect SIR-level
 /// input references (which use synthetic names from the SIR decomposition)
 /// to the actual MIR node IDs that produce those values.
 fn build_input_alias_map(
     graph: &MirGraph,
-    architecture: Option<&ane_ir::common::ModelArchitecture>,
+    architecture: &ane_ir::common::ModelArchitecture,
 ) -> std::collections::HashMap<String, String> {
-    // T-57: Use Qwen3 patterns when no architecture is specified.
-    // Previously this silently defaulted to Qwen3, which is a correctness
-    // hazard for non-Qwen3 models. Now we log a warning to make the
-    // assumption visible.
-    let arch = match architecture.cloned() {
-        Some(a) => a,
-        None => {
-            log::warn!(
-                "mir_to_compat: no architecture specified, defaulting to Qwen3 \
-                 weight-name patterns. Pass an explicit architecture to avoid \
-                 incorrect weight resolution for non-Qwen3 models."
-            );
-            ane_ir::common::ModelArchitecture::Qwen3
-        }
-    };
+    let arch = architecture;
     // T-70 (I-45): Previously, k_proj and v_proj patterns were resolved but
     // immediately discarded with `let _ = (k_proj, v_proj)`. For GQA models
     // with separate K/V projections, this caused ALL QKV-split aliases to
@@ -2032,6 +2088,84 @@ mod tests {
         assert_eq!(mil_dtype_to_compat(&MilDtype::Fp32), MilDtypeCompat::Fp32);
         assert_eq!(mil_dtype_to_compat(&MilDtype::Int32), MilDtypeCompat::Int32);
         assert_eq!(mil_dtype_to_compat(&MilDtype::UInt8), MilDtypeCompat::UInt8);
+    }
+
+    /// T-P1-04: Verify that auto-materialized Const ops use the actual weight dtype
+    /// from the resolver, not hardcoded Fp16. Int32 embedding weights must be tagged
+    /// as Int32 in the proto description.
+    #[test]
+    fn int32_weight_dtype_round_trip() {
+        use ane_ir::mir::{ComputeUnitHint, MilDtype, MirNode, MirNodeId, MirOp};
+
+        // Build a graph with a MILConst that references an Int32 weight
+        let graph = MirGraph {
+            nodes: vec![
+                MirNode {
+                    id: MirNodeId("embed_weight".into()),
+                    op: MirOp::MILConst {
+                        name: "embed_weight".into(),
+                        value_path: "model.embed_tokens.weight".into(),
+                        dtype: MilDtype::Int32,
+                    },
+                    dtype: MilDtype::Int32,
+                    shape: vec![1000, 1024],
+                    compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
+                    air_source: None,
+                },
+                MirNode {
+                    id: MirNodeId("output".into()),
+                    op: MirOp::MILGather {
+                        name: "gather".into(),
+                        x: MirNodeId("input".into()),
+                        indices: MirNodeId("embed_weight".into()),
+                        axis: 0,
+                    },
+                    dtype: MilDtype::Int32,
+                    shape: vec![1024],
+                    compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
+                    air_source: None,
+                },
+            ],
+            inputs: vec![MirNodeId("input".into())],
+            outputs: vec![MirNodeId("output".into())],
+            opset_version: "iOS18".into(),
+            shard_name: "main".into(),
+            input_shapes: {
+                let mut shapes = std::collections::HashMap::new();
+                shapes.insert(MirNodeId("input".into()), vec![1]);
+                shapes
+            },
+        };
+
+        // Create a resolver with Int32 weights
+        let mut resolver = HashMapWeightResolver::new();
+        resolver.add_with_dtype(
+            "model.embed_tokens.weight".to_string(),
+            vec![0u8; 1000 * 1024 * 4], // Int32 = 4 bytes per element
+            vec![1000, 1024],
+            MilDtypeCompat::Int32,
+        );
+
+        let compat = mir_graph_to_compat_with_allow_missing(&graph, &resolver, true).unwrap();
+
+        // Find the auto-materialized Const for "model.embed_tokens.weight"
+        let embed_const = compat.ops.iter().find(|op| {
+            if let MirOpCompat::Const { name, .. } = op {
+                name == "model.embed_tokens.weight"
+            } else {
+                false
+            }
+        });
+
+        assert!(embed_const.is_some(), "Should have auto-materialized Const for embed_weight");
+
+        if let MirOpCompat::Const { name, dtype, shape, .. } = embed_const.unwrap() {
+            assert_eq!(name, "model.embed_tokens.weight");
+            // T-P1-04: The critical assertion — dtype must be Int32, not Fp16
+            assert_eq!(*dtype, MilDtypeCompat::Int32,
+                "Int32 embedding weight should have Int32 dtype in auto-materialized Const, got {:?}", dtype);
+            assert_eq!(*shape, vec![1000, 1024]);
+        }
     }
 
     /// T-91 (I-66/V-007): Verify that missing weights produce a hard error by default,

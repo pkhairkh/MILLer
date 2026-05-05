@@ -128,18 +128,17 @@ pub extern "C" fn coreml_is_available() -> bool {
 /// `coreml_free_string()`.
 ///
 /// On non-macOS platforms, returns a null pointer.
+///
+/// T-P2-07: On macOS without the CoreML framework linked, returning "unknown"
+/// is misleading — callers may interpret it as a valid version string.
+/// We now return null on macOS as well, since we cannot determine the
+/// actual framework version without linking CoreML.framework.
 #[no_mangle]
 pub extern "C" fn coreml_version() -> *mut c_char {
-    if !cfg!(target_os = "macos") {
-        return ptr::null_mut();
-    }
-
-    // On macOS, we would query the actual framework version.
-    // For now, return a stub version string.
-    match CString::new("unknown") {
-        Ok(s) => s.into_raw(),
-        Err(_) => ptr::null_mut(),
-    }
+    // T-P2-07: Return null when we cannot determine the actual version.
+    // Previously returned "unknown" on macOS which callers might interpret
+    // as a valid version string.
+    ptr::null_mut()
 }
 
 /// Load a model from an mlpackage or mlmodelc path.
@@ -248,12 +247,10 @@ pub unsafe extern "C" fn coreml_model_info(
     }
 
     // On macOS, we would inspect the model's spec.
-    // For now, return zeroed info.
-    unsafe {
-        *out_info = CoreMlModelInfo { function_count: 0, has_state: false, spec_version: 0 };
-    }
-
-    CoreMlStatus::Ok
+    // T-P2-07: On macOS without CoreML framework, we cannot provide model info.
+    // Returning an error is more honest than returning zeroed/fabricated data
+    // that callers would misinterpret as valid.
+    CoreMlStatus::ErrorUnknown
 }
 
 /// Compile an mlpackage to mlmodelc.
@@ -472,10 +469,10 @@ mod tests {
 
     #[test]
     fn test_coreml_version_non_macos() {
-        if !cfg!(target_os = "macos") {
-            let version = coreml_version();
-            assert!(version.is_null());
-        }
+        // T-P2-07: coreml_version now always returns null since we cannot
+        // determine the actual framework version without linking CoreML.framework.
+        let version = coreml_version();
+        assert!(version.is_null());
     }
 
     // ─── coreml_model_load tests ────────────────────────────────────────

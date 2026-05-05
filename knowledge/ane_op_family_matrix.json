@@ -728,7 +728,9 @@
       },
       "key_constraints": [
         "rank_le_5"
-      ]
+      ],
+      "practical_status": "cpu_only",
+      "empirical_note": "PEFUSEDElementwiseUnary converter exists for neg in ANEC, but cpu_only_ops.rs marks neg as CPU-only. The theoretical converter is not invoked by the placement pass; the op always falls back to CPU. Likely excluded because neg has no dedicated ANE hardware path despite sharing the generic unary dialect."
     },
     {
       "mil_name": "sigmoid",
@@ -969,7 +971,9 @@
       },
       "key_constraints": [
         "rank_le_5"
-      ]
+      ],
+      "practical_status": "cpu_only",
+      "empirical_note": "PEFUSEDSelect converter exists in ANEC for where, but cpu_only_ops.rs marks where as CPU-only with NoANECConverter reason. The converter exists in the binary but is never invoked during placement; the op always falls back to CPU. The select/where ANE path may be reserved for internal fusion patterns only."
     },
     {
       "mil_name": "select",
@@ -987,7 +991,9 @@
       },
       "key_constraints": [
         "rank_le_5"
-      ]
+      ],
+      "practical_status": "cpu_only",
+      "empirical_note": "PEFUSEDSelect converter exists in ANEC for select, but cpu_only_ops.rs marks select as CPU-only with NoANECConverter reason. The converter exists in the binary but is never invoked during placement; the op always falls back to CPU. The select/where ANE path may be reserved for internal fusion patterns only."
     },
     {
       "mil_name": "reduce_sum",
@@ -1251,7 +1257,9 @@
       "key_constraints": [
         "rank_le_5",
         "limited_index_range"
-      ]
+      ],
+      "practical_status": "cpu_only",
+      "empirical_note": "PEFUSEDGather converter exists in ANEC and shows family support in the binary, but cpu_only_ops.rs marks gather as CPU-only. The compiler placement pass always falls back to CPU for gather. The ANEC gather converter may be used only for internal/fused patterns; standalone gather ops are CPU-only. Prefer SliceByIndex for ANE-compatible indexing."
     },
     {
       "mil_name": "topk",

@@ -1,414 +1,829 @@
 {
-  "version": 1,
-  "source": "ane-constraints-docs/04-operation-support/per-op-per-family-support-matrix.md",
   "cpu_only_ops": [
     {
+      "ane_legal": false,
       "mil_name": "acos",
       "reason_code": "TrigInverse"
     },
     {
+      "ane_legal": false,
       "mil_name": "acosh",
       "reason_code": "TrigInverse"
     },
     {
+      "ane_legal": false,
       "mil_name": "asin",
       "reason_code": "TrigInverse"
     },
     {
+      "ane_legal": false,
       "mil_name": "asinh",
       "reason_code": "TrigInverse"
     },
     {
+      "ane_legal": false,
       "mil_name": "atan",
       "reason_code": "TrigInverse"
     },
     {
+      "ane_legal": false,
       "mil_name": "atanh",
       "reason_code": "TrigInverse"
     },
     {
+      "ane_legal": false,
       "mil_name": "atan2",
       "reason_code": "TrigInverse"
     },
     {
+      "ane_legal": false,
       "mil_name": "tan",
       "reason_code": "TrigInverse"
     },
     {
+      "ane_legal": false,
       "mil_name": "sinh",
       "reason_code": "Hyperbolic"
     },
     {
+      "ane_legal": false,
       "mil_name": "cosh",
       "reason_code": "Hyperbolic"
     },
     {
+      "ane_legal": false,
       "mil_name": "and",
       "reason_code": "Logical"
     },
     {
+      "ane_legal": false,
       "mil_name": "or",
       "reason_code": "Logical"
     },
     {
+      "ane_legal": false,
       "mil_name": "xor",
       "reason_code": "Logical"
     },
     {
+      "ane_legal": false,
       "mil_name": "nand",
       "reason_code": "Logical"
     },
     {
+      "ane_legal": false,
       "mil_name": "nor",
       "reason_code": "Logical"
     },
     {
+      "ane_legal": false,
       "mil_name": "xnor",
       "reason_code": "Logical"
     },
     {
+      "ane_legal": false,
       "mil_name": "bitwise_and",
       "reason_code": "Logical"
     },
     {
+      "ane_legal": false,
       "mil_name": "bitwise_or",
       "reason_code": "Logical"
     },
     {
+      "ane_legal": false,
       "mil_name": "bitwise_xor",
       "reason_code": "Logical"
     },
     {
+      "ane_legal": false,
       "mil_name": "bitwise_not",
       "reason_code": "Logical"
     },
     {
+      "ane_legal": false,
       "mil_name": "left_shift",
       "reason_code": "Logical"
     },
     {
+      "ane_legal": false,
       "mil_name": "right_shift",
       "reason_code": "Logical"
     },
     {
+      "ane_legal": false,
       "mil_name": "popcount",
       "reason_code": "Logical"
     },
     {
+      "ane_legal": false,
       "mil_name": "create_complex",
       "reason_code": "ComplexNumber"
     },
     {
+      "ane_legal": false,
       "mil_name": "real_part",
       "reason_code": "ComplexNumber"
     },
     {
+      "ane_legal": false,
       "mil_name": "imaginary_part",
       "reason_code": "ComplexNumber"
     },
     {
+      "ane_legal": false,
       "mil_name": "conjugate",
       "reason_code": "ComplexNumber"
     },
     {
+      "ane_legal": false,
       "mil_name": "fast_fourier_transform",
       "reason_code": "Fft"
     },
     {
+      "ane_legal": false,
       "mil_name": "hermitean_to_real_fft",
       "reason_code": "Fft"
     },
     {
+      "ane_legal": false,
       "mil_name": "real_to_hermitean_fft",
       "reason_code": "Fft"
     },
     {
+      "ane_legal": false,
       "mil_name": "matrix_decomposition_lu",
       "reason_code": "MatrixAlgebra"
     },
     {
+      "ane_legal": false,
       "mil_name": "matrix_inverse",
       "reason_code": "MatrixAlgebra"
     },
     {
+      "ane_legal": false,
       "mil_name": "matrix_solver_lu",
       "reason_code": "MatrixAlgebra"
     },
     {
+      "ane_legal": false,
       "mil_name": "gru",
       "reason_code": "Rnn"
     },
     {
+      "ane_legal": false,
       "mil_name": "lstm",
       "reason_code": "Rnn"
     },
     {
+      "ane_legal": false,
       "mil_name": "rnn_activation",
       "reason_code": "Rnn"
     },
     {
+      "ane_legal": false,
       "mil_name": "singlegate_rnn",
       "reason_code": "Rnn"
     },
     {
+      "ane_legal": false,
       "mil_name": "bias_add_grad",
       "reason_code": "Gradient"
     },
     {
+      "ane_legal": false,
       "mil_name": "conv_grad",
       "reason_code": "Gradient"
     },
     {
+      "ane_legal": false,
       "mil_name": "pooling_max_gradient",
       "reason_code": "Gradient"
     },
     {
+      "ane_legal": false,
       "mil_name": "pooling_avg_gradient",
       "reason_code": "Gradient"
     },
     {
+      "ane_legal": false,
       "mil_name": "relu_grad",
       "reason_code": "Gradient"
     },
     {
+      "ane_legal": false,
       "mil_name": "sigmoid_grad",
       "reason_code": "Gradient"
     },
     {
+      "ane_legal": false,
       "mil_name": "tanh_grad",
       "reason_code": "Gradient"
     },
     {
+      "ane_legal": false,
       "mil_name": "linear_grad",
       "reason_code": "Gradient"
     },
     {
+      "ane_legal": false,
       "mil_name": "cumulative_maximum",
       "reason_code": "Cumulative"
     },
     {
+      "ane_legal": false,
       "mil_name": "cumulative_minimum",
       "reason_code": "Cumulative"
     },
     {
+      "ane_legal": false,
       "mil_name": "cumulative_product",
       "reason_code": "Cumulative"
     },
     {
+      "ane_legal": false,
       "mil_name": "cumulative_sum",
       "reason_code": "Cumulative"
     },
     {
+      "ane_legal": false,
       "mil_name": "random_normal",
       "reason_code": "Random"
     },
     {
+      "ane_legal": false,
       "mil_name": "random_truncated_normal",
       "reason_code": "Random"
     },
     {
+      "ane_legal": false,
       "mil_name": "random_uniform",
       "reason_code": "Random"
     },
     {
+      "ane_legal": false,
       "mil_name": "random_categorical",
       "reason_code": "Random"
     },
     {
+      "ane_legal": false,
       "mil_name": "random_bernoulli",
       "reason_code": "Random"
     },
     {
+      "ane_legal": false,
       "mil_name": "if",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "for",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "while_loop",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "call",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "condition",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "yield",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "scatter",
       "reason_code": "Scatter"
     },
     {
+      "ane_legal": false,
       "mil_name": "scatter_along_axis",
       "reason_code": "Scatter"
     },
     {
+      "ane_legal": false,
       "mil_name": "scatter_nd",
       "reason_code": "Scatter"
     },
     {
+      "ane_legal": false,
       "mil_name": "sparse_tensor_storage",
       "reason_code": "Sparse"
     },
     {
+      "ane_legal": false,
       "mil_name": "materialize_sparse_tensor",
       "reason_code": "Sparse"
     },
     {
+      "ane_legal": false,
       "mil_name": "buffer_tensor",
       "reason_code": "Sparse"
     },
     {
+      "ane_legal": false,
       "mil_name": "shape",
       "reason_code": "ShapeQuery"
     },
     {
+      "ane_legal": false,
       "mil_name": "rank",
       "reason_code": "ShapeQuery"
     },
     {
+      "ane_legal": false,
       "mil_name": "size",
       "reason_code": "ShapeQuery"
     },
     {
+      "ane_legal": false,
       "mil_name": "dimension_size",
       "reason_code": "ShapeQuery"
     },
     {
+      "ane_legal": false,
       "mil_name": "logical_and",
       "reason_code": "Logical"
     },
     {
+      "ane_legal": false,
       "mil_name": "logical_or",
       "reason_code": "Logical"
     },
     {
+      "ane_legal": false,
       "mil_name": "logical_xor",
       "reason_code": "Logical"
     },
     {
+      "ane_legal": false,
       "mil_name": "logical_not",
       "reason_code": "Logical"
     },
     {
-      "mil_name": "erf",
-      "reason_code": "Miscellaneous"
-    },
-    {
+      "ane_legal": false,
       "mil_name": "non_maximum_suppression",
       "reason_code": "Miscellaneous"
     },
     {
+      "ane_legal": false,
       "mil_name": "dict",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "has_key",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "dict_read",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "dict_write",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "list_read",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "list_write",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "list_gather",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "list_scatter",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "make_list",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "list_length",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "read_cell",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "write_cell",
       "reason_code": "ControlFlow"
     },
     {
+      "ane_legal": false,
       "mil_name": "constexpr_blockwise_shift_scale",
       "reason_code": "Miscellaneous"
     },
     {
+      "ane_legal": false,
       "mil_name": "constexpr_sparse_blockwise_shift_scale",
       "reason_code": "Miscellaneous"
     },
     {
+      "ane_legal": false,
       "mil_name": "band_part",
       "reason_code": "Miscellaneous"
     },
     {
+      "ane_legal": false,
       "mil_name": "one_hot",
       "reason_code": "Miscellaneous"
     },
     {
+      "ane_legal": false,
       "mil_name": "softplus",
       "reason_code": "Miscellaneous"
     },
     {
+      "ane_legal": false,
       "mil_name": "softsign",
       "reason_code": "Miscellaneous"
     },
     {
+      "ane_legal": false,
       "mil_name": "modulo",
       "reason_code": "Miscellaneous"
     },
     {
+      "ane_legal": false,
       "mil_name": "non_zero",
       "reason_code": "Miscellaneous"
     },
     {
+      "ane_legal": false,
       "mil_name": "clamp",
       "reason_code": "Miscellaneous"
     },
     {
+      "ane_legal": false,
       "mil_name": "prelu",
       "reason_code": "Miscellaneous"
     },
     {
+      "ane_legal": false,
       "mil_name": "topk_grad",
       "reason_code": "Gradient"
     },
     {
+      "ane_legal": false,
       "mil_name": "gather_grad",
       "reason_code": "Gradient"
     },
     {
+      "ane_legal": false,
       "mil_name": "scatter_along_axis_grad",
       "reason_code": "Gradient"
     },
     {
+      "ane_legal": false,
       "mil_name": "reverse_sequence",
       "reason_code": "Miscellaneous"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "rnn",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "Rnn"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "cumsum",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "Cumulative"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "cond",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "range1d",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "Miscellaneous"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "fill",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "fill_like",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "select",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "where",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "gather",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "gather_along_axis",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "gather_nd",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "relu6",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "sigmoid_hard",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "thresholded_relu",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "clamped_relu",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "linear_activation",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "scaled_tanh",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "softplus_parametric",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "threshold",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "inverse",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "einsum",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "slice_update",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "sliding_windows",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "reverse",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "argsort",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "return",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "ControlFlow"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "is_finite",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "TypeCheck"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "is_infinite",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "TypeCheck"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "is_nan",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "TypeCheck"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "neg",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "round",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "NoANECConverter"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "strided_slice_update",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "Transform"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "dynamic_shape_cast",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "Transform"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "reinterpret_cast",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "Transform"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "col_to_im",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "Transform"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "im_to_col",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "Transform"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "dequantize_lut",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "extract",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "from_elements",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "func",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "get_coordinates",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "local_convolution",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "lp_norm",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "prune",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "pruning_metric",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "pruning_structure",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "variable_from_tensor",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "assign_variable",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "placeholder",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "device_hint",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "nf",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "unrealized_fold",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
+    },
+    {
+      "ane_legal": false,
+      "mil_name": "create_texture_tensor",
+      "notes": "Added from cpu_only_ops.rs ground truth",
+      "reason_code": "SparseBuffer"
     }
-  ]
+  ],
+  "source": "ane-constraints-docs/04-operation-support/per-op-per-family-support-matrix.md",
+  "version": 1
 }
