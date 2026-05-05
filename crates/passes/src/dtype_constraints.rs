@@ -123,10 +123,14 @@ pub fn is_dtype_ane_legal(
         MilDtype::Int8 | MilDtype::UInt8 => Ok(()),
         // Int16 — limited support
         MilDtype::Int16 => Ok(()), // supported for some ops
-        // Int4 — constrained: legal but requires interleave factor 8
-        MilDtype::Int4 => Ok(()), // constrained: caller must also check interleave==8
-        // UInt4 — constrained: legal but requires interleave factor 8
-        MilDtype::UInt4 => Ok(()), // constrained: caller must also check interleave==8
+        // Int4 — constrained: legal but requires interleave factor 8.
+        // V-034/M-007: is_dtype_ane_legal() approves the dtype as legal, but the
+        // interleave=8 requirement must be validated separately via
+        // validate_int4_uint4_ane_constraints() in the placement pipeline.
+        MilDtype::Int4 => Ok(()),
+        // UInt4 — constrained: legal but requires interleave factor 8.
+        // Same as Int4: validate_int4_uint4_ane_constraints() enforces interleave=8.
+        MilDtype::UInt4 => Ok(()),
         // E4M3 (FP8) — architecture-dependent
         // NOT supported on most families; limited support on A17/A18 only.
         // Per the per-op support matrix: E4M3/E5M2 row shows ❌ for A11-A16,
@@ -416,6 +420,64 @@ pub fn dtype_requires_interleave_8(dtype: &MilDtype) -> bool {
     matches!(dtype, MilDtype::Int4 | MilDtype::UInt4)
 }
 
+/// Validate Int4/UInt4 ANE placement constraints with interleave context.
+///
+/// V-034 / M-007: Int4 and UInt4 require interleave factor 8 on ANE per the
+/// constraint "Tensor with the int4 format must have an interleave factor of 8".
+/// Previously, `is_dtype_ane_legal()` approved Int4/UInt4 with a deferred
+/// "caller must check interleave" comment, but the interleave check was never
+/// wired into the placement pipeline. When `interleave` is None (i.e., no
+/// PlacementContext.interleave available), we cannot validate the constraint
+/// and must conservatively reject ANE placement — the op must go to CPU.
+///
+/// # Arguments
+/// * `dtype` — The dtype of the tensor (only Int4/UInt4 are relevant)
+/// * `interleave` — The interleave factor from PlacementContext, if available.
+///   Provided as `usize`; pass `None` when the interleave context is unavailable.
+///
+/// # Returns
+/// * `Ok(())` if dtype is not Int4/UInt4, or if interleave is Some(8)
+/// * `Err(Int4ConstraintViolation)` if Int4/UInt4 with no interleave context,
+///   or if the interleave factor is not 8
+pub fn validate_int4_uint4_ane_constraints(
+    dtype: &MilDtype,
+    interleave: Option<usize>,
+) -> Result<(), DtypeConstraintError> {
+    match dtype {
+        MilDtype::Int4 => match interleave {
+            None => {
+                log::warn!(
+                    "Int4 dtype on ANE-targeted op has no interleave context — \
+                     cannot validate interleave=8 requirement. \
+                     Op must be routed to CPU. (V-034, M-007)"
+                );
+                Err(DtypeConstraintError::Int4ConstraintViolation {
+                    message: "Int4 format requires interleave factor 8, but no interleave \
+                              context was provided — cannot validate ANE constraint (V-034, M-007)"
+                        .into(),
+                })
+            }
+            Some(il) => validate_int4_interleave(il),
+        },
+        MilDtype::UInt4 => match interleave {
+            None => {
+                log::warn!(
+                    "UInt4 dtype on ANE-targeted op has no interleave context — \
+                     cannot validate interleave=8 requirement. \
+                     Op must be routed to CPU. (V-034, M-007)"
+                );
+                Err(DtypeConstraintError::Int4ConstraintViolation {
+                    message: "UInt4 format requires interleave factor 8, but no interleave \
+                              context was provided — cannot validate ANE constraint (V-034, M-007)"
+                        .into(),
+                })
+            }
+            Some(il) => validate_uint4_interleave(il),
+        },
+        _ => Ok(()),
+    }
+}
+
 // ─── T-97: Cross-Type Validation and Dtype Rejection ─────────────────────
 //
 // These functions address four validation gaps identified in the NECROSCOPY
@@ -428,6 +490,9 @@ pub fn dtype_requires_interleave_8(dtype: &MilDtype) -> bool {
 /// Validate cross-type compatibility for ANE operations.
 ///
 /// T-97 (I-98/V-125): ANEC explicitly rejects BF16/F16 cross-type operations.
+/// T-P1-05: Previously this function was a stub that returned `Ok(())` for
+/// everything. Now it properly validates cross-type violations.
+///
 /// Binary forensic evidence confirms 9 constraint strings documenting cross-type
 /// rejections, including:
 /// - "detected operation with BF16 inputs and F16 result type which is not supported"
@@ -441,19 +506,22 @@ pub fn validate_cross_type_compatibility(
     input_dtype: &MilDtype,
     output_dtype: &MilDtype,
 ) -> Result<(), DtypeConstraintError> {
-    // BF16 input → F16 output: rejected by ANEC
+    // T-P1-05: FP16 input → FP32 output (upcast) is rejected for ANE compute.
+    // ANEC constraint: "detected operation with F16 inputs and BF16 result type
+    // which is not supported" — while BF16 is not in our enum, the analogous
+    // cross-type case is FP16→FP32 which forces an upcast that ANE cannot do.
     if matches!(input_dtype, MilDtype::Fp16) && matches!(output_dtype, MilDtype::Fp32) {
-        // This is FP16→FP32 which is an upcast; ANEC may reject on some architectures
-        // but it's not a cross-type violation per se. Allow but log warning.
-        log::warn!(
-            "FP16→FP32 dtype conversion may be rejected by ANEC on some architectures"
-        );
+        return Err(DtypeConstraintError::CrossTypeViolation {
+            input_dtype: format!("{:?}", input_dtype),
+            output_dtype: format!("{:?}", output_dtype),
+            message: "FP16 input with FP32 output is not supported on ANE (cross-type violation). \
+                      ANEC rejects cross-type operations between incompatible float widths."
+                .into(),
+        });
     }
 
-    // Note: BF16 is not in MilDtype enum (ANE doesn't support BF16 at all),
-    // but we validate the principle that cross-type operations between
-    // incompatible float widths are rejected. The primary cross-type case
-    // for MILLer is FP32 compute where FP16 is expected.
+    // FP32 input → FP16 output (downcast) is allowed — this is the normal
+    // ANE behavior where FP32 weights are cast down to FP16 for compute.
 
     // Integer input → Float output cross-type (without explicit quantize/dequantize)
     // is rejected by ANEC for some combinations.
@@ -835,6 +903,20 @@ mod tests {
         assert!(validate_cross_type_compatibility(&MilDtype::Fp16, &MilDtype::Fp16).is_ok());
         assert!(validate_cross_type_compatibility(&MilDtype::Fp32, &MilDtype::Fp32).is_ok());
         assert!(validate_cross_type_compatibility(&MilDtype::Int8, &MilDtype::Int8).is_ok());
+        // FP32→FP16 is allowed (downcast)
+        assert!(validate_cross_type_compatibility(&MilDtype::Fp32, &MilDtype::Fp16).is_ok());
+    }
+
+    #[test]
+    fn test_cross_type_fp16_to_fp32_rejected() {
+        // T-P1-05: FP16 input → FP32 output is a cross-type violation
+        let result = validate_cross_type_compatibility(&MilDtype::Fp16, &MilDtype::Fp32);
+        assert!(result.is_err(), "FP16→FP32 should be a cross-type violation");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("cross-type") || msg.contains("FP16") || msg.contains("FP32"),
+            "Error should mention cross-type violation: {}", msg
+        );
     }
 
     #[test]
@@ -947,6 +1029,87 @@ mod tests {
         assert!(
             msg.contains("Bool") && msg.contains("Select/Where"),
             "Error should mention Bool Select/Where constraint: {}", msg
+        );
+    }
+
+    // ─── V-034 / M-007: Int4/UInt4 interleave context tests ──────────
+
+    #[test]
+    fn test_int4_no_interleave_context_rejected() {
+        // V-034/M-007: Int4 without interleave context must be rejected (CpuOnly)
+        let result = validate_int4_uint4_ane_constraints(&MilDtype::Int4, None);
+        assert!(result.is_err(), "Int4 without interleave context should be rejected");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("interleave factor 8") && msg.contains("V-034"),
+            "Error should mention interleave=8 and V-034: {}", msg
+        );
+    }
+
+    #[test]
+    fn test_uint4_no_interleave_context_rejected() {
+        // V-034/M-007: UInt4 without interleave context must be rejected (CpuOnly)
+        let result = validate_int4_uint4_ane_constraints(&MilDtype::UInt4, None);
+        assert!(result.is_err(), "UInt4 without interleave context should be rejected");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("interleave factor 8") && msg.contains("V-034"),
+            "Error should mention interleave=8 and V-034: {}", msg
+        );
+    }
+
+    #[test]
+    fn test_int4_interleave_8_ok() {
+        // Int4 with interleave=8 should pass
+        assert!(
+            validate_int4_uint4_ane_constraints(&MilDtype::Int4, Some(8)).is_ok(),
+            "Int4 with interleave=8 should be allowed on ANE"
+        );
+    }
+
+    #[test]
+    fn test_uint4_interleave_8_ok() {
+        // UInt4 with interleave=8 should pass
+        assert!(
+            validate_int4_uint4_ane_constraints(&MilDtype::UInt4, Some(8)).is_ok(),
+            "UInt4 with interleave=8 should be allowed on ANE"
+        );
+    }
+
+    #[test]
+    fn test_int4_wrong_interleave_rejected() {
+        // Int4 with interleave != 8 should be rejected
+        let result = validate_int4_uint4_ane_constraints(&MilDtype::Int4, Some(4));
+        assert!(result.is_err(), "Int4 with interleave=4 should be rejected");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("interleave factor 8"),
+            "Error should mention interleave factor 8: {}", msg
+        );
+    }
+
+    #[test]
+    fn test_uint4_wrong_interleave_rejected() {
+        // UInt4 with interleave != 8 should be rejected
+        let result = validate_int4_uint4_ane_constraints(&MilDtype::UInt4, Some(1));
+        assert!(result.is_err(), "UInt4 with interleave=1 should be rejected");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("interleave factor 8"),
+            "Error should mention interleave factor 8: {}", msg
+        );
+    }
+
+    #[test]
+    fn test_non_int4_uint4_ok_without_interleave() {
+        // Non-Int4/UInt4 dtypes should pass even without interleave context
+        assert!(
+            validate_int4_uint4_ane_constraints(&MilDtype::Fp16, None).is_ok(),
+            "Fp16 should always pass interleave check"
+        );
+        assert!(
+            validate_int4_uint4_ane_constraints(&MilDtype::Int8, None).is_ok(),
+            "Int8 should always pass interleave check"
         );
     }
 }

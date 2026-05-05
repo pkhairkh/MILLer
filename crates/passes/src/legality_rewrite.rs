@@ -368,17 +368,17 @@ pub struct DecodeWeights<'a> {
 }
 
 /// Legality Rewrite pass implementation.
-pub struct LegalityRewritePass {
+pub struct AneLegalityRewritePass {
     // No configuration needed for the linear projection case
 }
 
-impl Default for LegalityRewritePass {
+impl Default for AneLegalityRewritePass {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl LegalityRewritePass {
+impl AneLegalityRewritePass {
     pub fn new() -> Self {
         Self {}
     }
@@ -1332,7 +1332,7 @@ impl LegalityRewritePass {
             // Shared scale constant: 1/√d_k
             // Uses scalar:// resolution so the value is correctly serialized as fp16.
             // Duplicates are removed by the global AirNodeId dedup at the end
-            // of LegalityRewritePass::run().
+            // of AneLegalityRewritePass::run().
             let scale_const_id = AirNodeId("shared_attn_scale".to_string());
             nodes.push(Self::make_air_node(
                 scale_const_id.clone(),
@@ -2035,7 +2035,7 @@ impl LegalityRewritePass {
             // Shared scalar one constant: 1.0 for mask_keep = 1.0 - mask_write
             // Uses the same shared_scalar_one as the arithmetic mask path.
             // Duplicates are removed by the global AirNodeId dedup at the end
-            // of LegalityRewritePass::run().
+            // of AneLegalityRewritePass::run().
             let one_const_id = AirNodeId("shared_scalar_one".to_string());
             nodes.push(Self::make_air_node(
                 one_const_id.clone(),
@@ -2694,7 +2694,7 @@ impl LegalityRewritePass {
         //
         // We use the same AirNodeId across all layers. Each layer unconditionally
         // emits the shared Const node, and the global AirNodeId dedup at the end
-        // of LegalityRewritePass::run() removes duplicates, keeping only the first
+        // of AneLegalityRewritePass::run() removes duplicates, keeping only the first
         // occurrence. The AirNodeId uses "shared_rope_{tables_ref}" as a prefix
         // instead of the per-layer {base} prefix.
         let cos_tab_sir_id = ane_ir::sir::SirNodeId(format!("sir_static_cos_tab_{}", tables_ref));
@@ -2710,7 +2710,7 @@ impl LegalityRewritePass {
             AirNodeId(cos_tab_sir_id.0.clone())
         } else {
             // Emit shared cos_tab Const. Duplicates across layers are
-            // removed by the global AirNodeId dedup in LegalityRewritePass::run().
+            // removed by the global AirNodeId dedup in AneLegalityRewritePass::run().
             nodes.push(Self::make_air_node(
                 shared_cos_id.clone(),
                 AirOp::Const {
@@ -2728,7 +2728,7 @@ impl LegalityRewritePass {
             AirNodeId(sin_tab_sir_id.0.clone())
         } else {
             // Emit shared sin_tab Const. Duplicates across layers are
-            // removed by the global AirNodeId dedup in LegalityRewritePass::run().
+            // removed by the global AirNodeId dedup in AneLegalityRewritePass::run().
             nodes.push(Self::make_air_node(
                 shared_sin_id.clone(),
                 AirOp::Const {
@@ -2755,7 +2755,7 @@ impl LegalityRewritePass {
                 AirNodeId(arange_sir_id.0.clone())
             } else {
                 // Emit shared arange_tab Const. Duplicates across layers are
-                // removed by the global AirNodeId dedup in LegalityRewritePass::run().
+                // removed by the global AirNodeId dedup in AneLegalityRewritePass::run().
                 nodes.push(Self::make_air_node(
                     shared_arange_id.clone(),
                     AirOp::Const {
@@ -4914,7 +4914,7 @@ mod tests {
     #[test]
     fn test_knowledge_influences_legality_pass_output() {
         let sir = make_linear_sir();
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
 
         let no_knowledge = NoKnowledge;
         let air_no_knowledge = pass.run(sir.clone(), &no_knowledge, None).unwrap();
@@ -4976,7 +4976,7 @@ mod tests {
     #[test]
     fn test_no_knowledge_default_confidence() {
         let sir = make_linear_sir();
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let no_knowledge = NoKnowledge;
         let air = pass.run(sir, &no_knowledge, None).unwrap();
 
@@ -4997,7 +4997,7 @@ mod tests {
     #[test]
     fn test_linear_projection_lowers_to_conv1x1aslinear_not_matmul() {
         let sir = make_linear_sir();
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
         // Should produce Conv1x1AsLinear, NOT MatMul
@@ -5027,7 +5027,7 @@ mod tests {
             }
         }
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let no_knowledge = NoKnowledge;
         let air = pass.run(sir_adapted, &no_knowledge, None).unwrap();
 
@@ -5086,7 +5086,7 @@ mod tests {
             outputs: vec![SirNodeId("attn".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
         // Should have: 3 reshape (Q/K/V) + 3 transpose (Q/K/V) + 3 split (Q/K/V)
@@ -5171,7 +5171,7 @@ mod tests {
             false,  // has_qk_norm
         );
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         let has_state_read = air.nodes.iter().any(|n| matches!(n.op, AirOp::StateReadFixed { .. }));
@@ -5239,7 +5239,7 @@ mod tests {
             outputs: vec![SirNodeId("norm".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
         let has_reduce_mean = air.nodes.iter().any(|n| matches!(n.op, AirOp::ReduceMean { .. }));
@@ -5274,7 +5274,7 @@ mod tests {
             outputs: vec![SirNodeId("rope".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
         // Sprint 67: Cos/Sin are ANE-illegal — they should NEVER appear.
@@ -5328,7 +5328,7 @@ mod tests {
             outputs: vec![SirNodeId("sampler".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
         let has_topk = air.nodes.iter().any(|n| matches!(n.op, AirOp::Topk { .. }));
@@ -5369,7 +5369,7 @@ mod tests {
 
         // batch=2, embed_dim=128, num_heads=4, head_dim=32, seq_len=16
         let ctx = DecompositionContext::for_attention(2, 128, 4, 32, 16);
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // Find the Q reshape: should have [batch, seq, heads, head_dim] = [2, 16, 4, 32]
@@ -5460,7 +5460,7 @@ mod tests {
             outputs: vec![SirNodeId("attn".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
         // Without context, reshape should have zero-filled target shapes
@@ -5520,7 +5520,7 @@ mod tests {
 
         // batch=1, embed_dim=128, num_heads=4, head_dim=32, kv_len=64
         let ctx = DecompositionContext::for_decode_step(1, 128, 4, 32, 64);
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // Q slice: begin=[0,0], end=[1,128]
@@ -5633,7 +5633,7 @@ mod tests {
             outputs: vec![SirNodeId("decode".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
         // Without context, state read shapes should be zero
@@ -5759,7 +5759,7 @@ mod tests {
         // Qwen3-0.6B dimensions
         let ctx = DecompositionContext::for_attention_full(1, 1024, 16, 128, 512, 8, 3072, 151936);
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // Must contain Reshape ops (3D→4D and 4D→3D)
@@ -5847,7 +5847,7 @@ mod tests {
 
         let ctx = DecompositionContext::for_attention_full(1, 1024, 16, 128, 512, 8, 3072, 151936);
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // The 4D reshape must use kv_heads=8, producing [1, 512, 8, 128]
@@ -5897,7 +5897,7 @@ mod tests {
             outputs: vec![SirNodeId("sir_6_layer_0_self_attn".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
         // Without context, axes=[3] on a 3D tensor is invalid.
@@ -6069,7 +6069,7 @@ mod tests {
 
         let ctx = DecompositionContext::for_attention_full(1, 1024, 16, 128, 512, 8, 3072, 151936);
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // Count reshape ops — should have:
@@ -6474,7 +6474,7 @@ mod tests {
             outputs: vec![SirNodeId("decode_0".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // ── Structural invariants ──
@@ -6694,7 +6694,7 @@ mod tests {
             outputs: vec![SirNodeId("attn_0".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // ── Structural invariants ──
@@ -6866,7 +6866,7 @@ mod tests {
             outputs: vec![SirNodeId("decode_layer_1".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // ── Structural invariants (especially SSA dedup) ──
@@ -7062,7 +7062,7 @@ mod tests {
             outputs: vec![add_id],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // ── Structural invariants ──
@@ -7171,7 +7171,7 @@ mod tests {
             outputs: vec![SirNodeId("decode_0".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // ── Structural invariants ──
@@ -7443,7 +7443,7 @@ mod tests {
             outputs: vec![SirNodeId("lm_head".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // Verify every Conv1x1AsLinear has the correct output_dim
@@ -7522,7 +7522,7 @@ mod tests {
             outputs: vec![SirNodeId("decode_0".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // Check that the RMSNorm-derived AIR nodes carry the precision_override
@@ -7586,7 +7586,7 @@ mod tests {
             outputs: vec![SirNodeId("tile_0".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
         // Verify structural invariants (SSA, reference integrity)
@@ -7641,7 +7641,7 @@ mod tests {
             151936, // vocab_size
         );
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         validate_air_graph_structural_invariants(&air);
@@ -7716,7 +7716,7 @@ mod tests {
             outputs: vec![SirNodeId("tile_0".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         // No ctx — should fall back to 0 placeholders
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
@@ -7800,7 +7800,7 @@ mod tests {
             outputs: vec![SirNodeId("select_0".into()), SirNodeId("where_0".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
         // Verify structural invariants
@@ -7829,7 +7829,7 @@ mod tests {
     fn test_empty_graph_roundtrip() {
         let sir = SirGraph { nodes: vec![], inputs: vec![], outputs: vec![] };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
         assert_eq!(air.nodes.len(), 0, "Empty SIR should produce empty AIR");
@@ -7925,7 +7925,7 @@ mod tests {
             outputs: vec![SirNodeId("transpose_0".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, None).unwrap();
 
         // Verify structural invariants
@@ -8010,7 +8010,7 @@ mod tests {
             outputs: vec![SirNodeId("decode_0".into())],
         };
 
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // ── Structural invariants ──
@@ -8096,7 +8096,7 @@ mod tests {
 
         // batch=2, embed_dim=128, num_heads=4, head_dim=32, seq_len=16
         let ctx = DecompositionContext::for_attention(2, 128, 4, 32, 16);
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // Verify no AirOp::Concat with axis != 1 (non-channel) exists.
@@ -8154,7 +8154,7 @@ mod tests {
 
         // batch=1, embed_dim=128, num_heads=4, head_dim=32, seq_len=16
         let ctx = DecompositionContext::for_decode_step(1, 128, 4, 32, 16);
-        let pass = LegalityRewritePass::new();
+        let pass = AneLegalityRewritePass::new();
         let air = pass.run(sir, &NoKnowledge, Some(&ctx)).unwrap();
 
         // Verify no AirOp::Concat with axis != 1 (non-channel) exists

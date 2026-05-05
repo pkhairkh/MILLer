@@ -21,6 +21,7 @@
 use ane_ir::ane_layout::clamp_to_valid_palette_bits;
 use ane_ir::common::ModelArchitecture;
 use ane_ir::sir::{SirGraph, SirOp};
+use anyhow::{bail, Result};
 
 /// Re-export centralized palette bit-width validation from `ane_ir::ane_layout`.
 ///
@@ -117,11 +118,23 @@ fn clamp_to_valid_bits(bits: usize) -> usize {
 ///
 /// This function will not panic — invalid bit-widths are clamped to the
 /// nearest valid ANE-supported value and a warning is recorded.
+/// T-P2-11: ModelArchitecture is now required. Use
+/// [`run_palettize_weights_pass_with_arch`] instead, which requires an
+/// explicit architecture parameter.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use run_palettize_weights_pass_with_arch with an explicit ModelArchitecture. \
+           T-P2-11: defaulting to Qwen3 produced incorrect weight classification for non-Qwen3 models."
+)]
 pub fn run_palettize_weights_pass(
-    graph: &mut SirGraph,
-    config: &PalettizeConfig,
-) -> PalettizeResult {
-    run_palettize_weights_pass_with_arch(graph, config, None)
+    _graph: &mut SirGraph,
+    _config: &PalettizeConfig,
+) -> Result<PalettizeResult> {
+    bail!(
+        "run_palettize_weights_pass requires an explicit ModelArchitecture. \
+         Use run_palettize_weights_pass_with_arch() instead. \
+         T-P2-11: defaulting to Qwen3 produced incorrect weight classification."
+    );
 }
 
 /// Architecture-aware version of [`run_palettize_weights_pass`].
@@ -134,8 +147,8 @@ pub fn run_palettize_weights_pass(
 pub fn run_palettize_weights_pass_with_arch(
     graph: &mut SirGraph,
     config: &PalettizeConfig,
-    architecture: Option<&ModelArchitecture>,
-) -> PalettizeResult {
+    architecture: &ModelArchitecture,
+) -> Result<PalettizeResult> {
     let mut result = PalettizeResult {
         weights_annotated: 0,
         grouped_lut_applied: 0,
@@ -143,19 +156,10 @@ pub fn run_palettize_weights_pass_with_arch(
         bits_clamped: 0,
     };
 
-    // T-72: Use architecture-specific patterns for weight classification.
-    // When no architecture is specified, default to Qwen3 with a warning.
-    let arch = match architecture.cloned() {
-        Some(a) => a,
-        None => {
-            log::warn!(
-                "palettize_weights: no architecture specified, defaulting to Qwen3 \
-                 weight-name patterns. Pass an explicit architecture to avoid \
-                 incorrect weight classification for non-Qwen3 models."
-            );
-            ModelArchitecture::Qwen3
-        }
-    };
+    // T-P2-11: ModelArchitecture is now required. Previously defaulted to
+    // Qwen3 with a warning when None was passed, which silently produced
+    // incorrect weight classification for non-Qwen3 models.
+    let arch = architecture;
 
     let q_pat = arch.q_proj_pattern();
     let k_pat = arch.k_proj_pattern();
@@ -248,7 +252,7 @@ pub fn run_palettize_weights_pass_with_arch(
         }
     }
 
-    result
+    Ok(result)
 }
 
 /// T-98 (V-110): Populate quantized conv weight attributes on MILConv nodes.
@@ -392,7 +396,7 @@ mod tests {
     fn test_palettize_annotates_weights() {
         let mut graph = make_test_graph();
         let config = PalettizeConfig::default();
-        let result = run_palettize_weights_pass(&mut graph, &config);
+        let result = run_palettize_weights_pass_with_arch(&mut graph, &config, &ModelArchitecture::Qwen3).unwrap();
 
         assert!(result.grouped_lut_applied >= 2, "Should annotate at least 2 LinearProjection ops");
         assert!(result.consts_palettized >= 1, "Should palettize at least 1 mask constant");
@@ -429,7 +433,7 @@ mod tests {
         config.conservative_qk = true;
         config.attention_bits = 4;
 
-        let result = run_palettize_weights_pass(&mut graph, &config);
+        let result = run_palettize_weights_pass_with_arch(&mut graph, &config, &ModelArchitecture::Qwen3).unwrap();
         assert!(result.grouped_lut_applied >= 1);
 
         // With conservative_qk and attention_bits=4: Q/K get 4+2=6 bits
@@ -453,7 +457,7 @@ mod tests {
         config.conservative_qk = true;
         config.attention_bits = 3; // 3 + 2 = 5 (invalid!)
 
-        let result = run_palettize_weights_pass(&mut graph, &config);
+        let result = run_palettize_weights_pass_with_arch(&mut graph, &config, &ModelArchitecture::Qwen3).unwrap();
         assert!(result.bits_clamped >= 1, "Should clamp at least 1 invalid bit-width");
 
         // 5-bit should be clamped to 4
@@ -499,7 +503,7 @@ mod tests {
         config.mlp_bits = 6;
         config.conservative_qk = false;
 
-        let _result = run_palettize_weights_pass(&mut graph, &config);
+        let _result = run_palettize_weights_pass_with_arch(&mut graph, &config, &ModelArchitecture::Qwen3).unwrap();
 
         // down_proj is MLP — should get mlp_bits
         for node in &graph.nodes {
@@ -522,8 +526,8 @@ mod tests {
         let result = run_palettize_weights_pass_with_arch(
             &mut graph,
             &config,
-            Some(&ModelArchitecture::Qwen3),
-        );
+            &ModelArchitecture::Qwen3,
+        ).unwrap();
 
         assert!(result.grouped_lut_applied >= 2);
         // Q projection should get 6 bits (4+2 conservative)
@@ -597,7 +601,7 @@ mod tests {
         config.attention_bits = 6;
         config.mlp_bits = 4;
 
-        let result = run_palettize_weights_pass_with_arch(&mut graph, &config, Some(&gpt2_arch));
+        let result = run_palettize_weights_pass_with_arch(&mut graph, &config, &gpt2_arch).unwrap();
 
         assert!(result.grouped_lut_applied >= 2);
 

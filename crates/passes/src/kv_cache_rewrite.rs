@@ -31,6 +31,14 @@
 
 use ane_ir::sir::{KvCacheLayout, SirGraph, SirNode, SirNodeId, SirOp};
 
+// T-P1-02: This pass generates ANE-illegal Where ops with dangling references.
+// The compile_error! prevents the module from being used when the feature is enabled.
+// Remove this compile_error! only after the Where op generation is fixed or replaced.
+compile_error!(
+    "kv_cache_rewrite is disabled: generates ANE-illegal Where ops with dangling \
+     references (T-P1-02). KV masking is handled by arithmetic masks in legality_rewrite."
+);
+
 /// Result of the KV cache rewrite pass.
 #[derive(Debug, Clone)]
 pub struct KvCacheRewriteResult {
@@ -127,6 +135,15 @@ pub fn run_kv_cache_rewrite_pass(
 
             // Where: select between new values and cached values based on valid mask
             let mask_id = SirNodeId(format!("valid_mask_{}", layer_idx));
+            // T-P1-02: Assert that mask_id exists in the graph. The Where op
+            // references `mask_id` which is never added as a node, creating a
+            // dangling reference. This assertion catches the bug at runtime.
+            let all_ids: std::collections::HashSet<_> = graph.nodes.iter().map(|n| n.id.clone()).collect();
+            assert!(
+                all_ids.contains(&mask_id),
+                "T-P1-02: kv_cache_rewrite generated Where with dangling condition reference: {:?}",
+                mask_id
+            );
             let where_id = SirNodeId(format!("sir_{}_where", base_name));
             let where_node = SirNode {
                 id: where_id.clone(),

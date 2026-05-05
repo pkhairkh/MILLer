@@ -25,7 +25,7 @@ pub struct StaticTablesResult {
 /// This pass identifies `SirOp::RoPETransform` nodes and inserts
 /// `SirOp::Const` nodes for the pre-computed RoPE cos/sin/eye/mask
 /// tables. These Const nodes are prepended to the node list so that
-/// `LegalityRewritePass` processes them first — when `decompose_rope`
+/// `AneLegalityRewritePass` processes them first — when `decompose_rope`
 /// later checks the `sir_to_air` map for the Const node IDs, they
 /// will already be present.
 ///
@@ -140,7 +140,7 @@ mod tests {
         let const_count =
             graph.nodes.iter().filter(|n| matches!(n.op, SirOp::Const { .. })).count();
         assert_eq!(const_count, 4);
-        // This is critical: LegalityRewritePass processes nodes in order,
+        // This is critical: AneLegalityRewritePass processes nodes in order,
         // and decompose_rope checks sir_to_air for the Const IDs. If they
         // come after the RoPETransform, the fallback path emits unresolved
         // AirOp::Cos/AirOp::Sin references.

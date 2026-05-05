@@ -955,7 +955,7 @@ fn run_compile_full(
     use ane_ir::task_spec::load_synthetic_task;
     use ane_passes::canonicalize::CanonicalizePass;
     use ane_passes::knowledge_query::NoKnowledge;
-    use ane_passes::legality_rewrite::{DecompositionContext, LegalityRewritePass};
+    use ane_passes::legality_rewrite::{DecompositionContext, AneLegalityRewritePass};
     use ane_passes::mil_lower::MilLowerPass;
     use ane_passes::precision_policy::PrecisionPolicyPass;
     use ane_passes::risk_annotate::RiskAnnotatePass;
@@ -1098,7 +1098,7 @@ fn run_compile_full(
         println!("  PrecisionPolicy: no adaptations (all nodes use default fp16)");
     }
 
-    // Step 5: Run LegalityRewritePass (SIR→AIR)
+    // Step 5: Run AneLegalityRewritePass (SIR→AIR)
     // Construct DecompositionContext from task spec for truthful AIR shapes (Sprint 56)
     let decomp_ctx: Option<DecompositionContext> = match &spec.op {
         ane_ir::task_spec::TaskOp::Attention {
@@ -1165,20 +1165,20 @@ fn run_compile_full(
         )),
         _ => None,
     };
-    println!("[5/12] Running LegalityRewritePass (SIR→AIR)...");
-    let legality = LegalityRewritePass::new();
+    println!("[5/12] Running AneLegalityRewritePass (SIR→AIR)...");
+    let legality = AneLegalityRewritePass::new();
     let air = match &knowledge_store {
         Some(store) => {
             let query = StoreKnowledgeQuery::new(store);
             legality
                 .run(sir.clone(), &query, decomp_ctx.as_ref())
-                .map_err(|e| format!("LegalityRewritePass failed: {}", e))?
+                .map_err(|e| format!("AneLegalityRewritePass failed: {}", e))?
         }
         None => {
             let no_knowledge = NoKnowledge;
             legality
                 .run(sir.clone(), &no_knowledge, decomp_ctx.as_ref())
-                .map_err(|e| format!("LegalityRewritePass failed: {}", e))?
+                .map_err(|e| format!("AneLegalityRewritePass failed: {}", e))?
         }
     };
     println!(
@@ -1873,7 +1873,7 @@ fn run_compile_full_sharded(
         // T-107: StaticizePass removed from pipeline — was a phantom no-op pass
         use ane_passes::canonicalize::CanonicalizePass;
         use ane_passes::knowledge_query::NoKnowledge;
-        use ane_passes::legality_rewrite::{DecompositionContext, LegalityRewritePass};
+        use ane_passes::legality_rewrite::{DecompositionContext, AneLegalityRewritePass};
         use ane_passes::precision_policy::PrecisionPolicyPass;
         use ane_passes::risk_annotate::RiskAnnotatePass;
         use ane_passes::static_tables::run_static_tables_pass;
@@ -1914,7 +1914,7 @@ fn run_compile_full_sharded(
             println!("    PrecisionPolicy: {} adaptation(s)", precision_policy.adaptations.len());
         }
 
-        let legality = LegalityRewritePass::new();
+        let legality = AneLegalityRewritePass::new();
         // Construct DecompositionContext from the original task spec for sharded paths (Sprint 56)
         let shard_decomp_ctx: Option<DecompositionContext> = match &spec.op {
             ane_ir::task_spec::TaskOp::ShardedDecodeStep {
@@ -1947,7 +1947,7 @@ fn run_compile_full_sharded(
             Some(store) => {
                 let query = StoreKnowledgeQuery::new(store);
                 legality.run(shard_sir.clone(), &query, shard_decomp_ctx.as_ref()).map_err(|e| {
-                    format!("LegalityRewritePass failed for shard {}: {}", shard_spec.shard_name, e)
+                    format!("AneLegalityRewritePass failed for shard {}: {}", shard_spec.shard_name, e)
                 })?
             }
             None => {
@@ -1955,7 +1955,7 @@ fn run_compile_full_sharded(
                 legality.run(shard_sir.clone(), &no_knowledge, shard_decomp_ctx.as_ref()).map_err(
                     |e| {
                         format!(
-                            "LegalityRewritePass failed for shard {}: {}",
+                            "AneLegalityRewritePass failed for shard {}: {}",
                             shard_spec.shard_name, e
                         )
                     },
@@ -3942,7 +3942,7 @@ fn run_trace_compile(
         ChainedResolver, RopeTableConfig, StaticTableResolver,
     };
     use ane_passes::knowledge_query::NoKnowledge;
-    use ane_passes::legality_rewrite::{DecompositionContext, LegalityRewritePass};
+    use ane_passes::legality_rewrite::{DecompositionContext, AneLegalityRewritePass};
     use ane_passes::mil_lower::MilLowerPass;
     use ane_passes::shard_plan::ShardPlan;
     use ane_passes::static_tables::run_static_tables_pass;
@@ -4073,9 +4073,9 @@ fn run_trace_compile(
         );
     }
 
-    // Step 5: Run LegalityRewritePass (SIR→AIR)
-    println!("[5/10] Running LegalityRewritePass (SIR→AIR)...");
-    let legality = LegalityRewritePass::new();
+    // Step 5: Run AneLegalityRewritePass (SIR→AIR)
+    println!("[5/10] Running AneLegalityRewritePass (SIR→AIR)...");
+    let legality = AneLegalityRewritePass::new();
     let no_knowledge = NoKnowledge;
     // Use head_dim from the model config if available. Otherwise, extract it
     // from the traced graph's AttentionBlock or RopeTransform nodes, which
@@ -4126,7 +4126,7 @@ fn run_trace_compile(
     );
     let air = legality
         .run(sir.clone(), &no_knowledge, Some(&decomp_ctx))
-        .map_err(|e| format!("LegalityRewritePass failed: {}", e))?;
+        .map_err(|e| format!("AneLegalityRewritePass failed: {}", e))?;
     println!(
         "  AIR: {} nodes, {} inputs, {} outputs",
         air.nodes.len(),
@@ -4412,7 +4412,7 @@ fn run_trace_compile(
         let head_dim_val = head_dim;
         let hidden_size = traced_graph.model_config.hidden_size;
 
-        // Build decode_step MIR via the LegalityRewritePass with
+        // Build decode_step MIR via the AneLegalityRewritePass with
         // full transformer decode step ops for each layer. This produces
         // the correct mb.read_state / mb.coreml_update_state pattern.
         //
@@ -4443,7 +4443,7 @@ fn run_trace_compile(
 
         let decode_step_air = legality
             .run(decode_step_sir.clone(), &no_knowledge, Some(&decode_decomp_ctx))
-            .map_err(|e| format!("LegalityRewritePass for decode_step failed: {}", e))?;
+            .map_err(|e| format!("AneLegalityRewritePass for decode_step failed: {}", e))?;
 
         // DIAGNOSTIC: Verify that the decode_step AIR contains state ops
         let ds_state_reads = decode_step_air
@@ -4465,7 +4465,7 @@ fn run_trace_compile(
         if ds_state_reads == 0 || ds_state_writes == 0 {
             return Err(format!(
                 "BUG: Decode-step AIR has no state ops (reads={}, writes={}). \
-                 The LegalityRewritePass must decompose DecodeStep into StateReadFixed/StateWriteFixed.",
+                 The AneLegalityRewritePass must decompose DecodeStep into StateReadFixed/StateWriteFixed.",
                 ds_state_reads, ds_state_writes
             ));
         }
@@ -4719,7 +4719,7 @@ fn run_trace_compile(
 ///   8. lm_head:          LinearProjection(normed, lm_head.weight) → logits
 /// ```
 ///
-/// The `LegalityRewritePass` decomposes each `DecodeStep` into the
+/// The `AneLegalityRewritePass` decomposes each `DecodeStep` into the
 /// correct `mb.read_state` / `mb.coreml_update_state` pattern with
 /// split-based per-head attention (no Tile/SDPA) and masked-blend
 /// KV cache writes.

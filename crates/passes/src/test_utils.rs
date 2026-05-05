@@ -49,6 +49,26 @@ impl MockKnowledge {
         self
     }
 
+    /// Configure the mock to return a legality result with custom evidence count.
+    ///
+    /// Use this when tests need to verify behavior that depends on the
+    /// number of independent observations (e.g., Verified status requires
+    /// evidence_count >= 2).
+    pub fn with_legality_and_evidence(
+        mut self,
+        ane_legal: bool,
+        confidence: f32,
+        evidence_count: usize,
+    ) -> Self {
+        self.legality = Some(LegalityInfo {
+            ane_legal,
+            confidence,
+            evidence_count,
+            source_id: Some("mock_legality".to_string()),
+        });
+        self
+    }
+
     /// Configure the mock to return a risk result.
     pub fn with_risk(mut self, fallback_risk: f32, drift_risk: f32) -> Self {
         self.risk = Some(RiskInfo {

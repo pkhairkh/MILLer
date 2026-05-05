@@ -57,7 +57,17 @@ pub fn compat_input_shape(name: &str, shape: &[usize], max_seq_len: usize) -> Ve
     if !shape.is_empty() {
         return shape.to_vec();
     }
+    // M-018: Name-based shape heuristic — `name.contains("input_ids")` assumes
+    // Qwen3-style token ID inputs with shape [1, max_seq_len]. This is fragile
+    // and will produce incorrect shapes for non-Qwen3 models or tensors that
+    // happen to contain "input_ids" in their name but have different shapes.
+    // TODO: Replace with explicit shape/dtype fields from SIR→AIR→MIR (T-P5-04).
     if name.contains("input_ids") {
+        log::warn!
+            ("M-018: compat_input_shape: using name-based heuristic \
+             name.contains(\"input_ids\") to infer shape [1, {}]. This is fragile \
+             and may produce incorrect results for non-Qwen3 models. Node name: {:?}",
+             max_seq_len, name);
         vec![1, max_seq_len]
     } else {
         vec![1]
@@ -104,7 +114,17 @@ pub fn compat_output_shape(
     if !shape.is_empty() {
         return shape.to_vec();
     }
+    // M-018: Name-based shape heuristic — `name.contains("input_ids")` assumes
+    // Qwen3-style token ID inputs with shape [1, max_seq_len]. This is fragile
+    // and will produce incorrect shapes for non-Qwen3 models or tensors that
+    // happen to contain "input_ids" in their name but have different shapes.
+    // TODO: Replace with explicit shape/dtype fields from SIR→AIR→MIR (T-P5-04).
     if name.contains("input_ids") {
+        log::warn!
+            ("M-018: compat_output_shape: using name-based heuristic \
+             name.contains(\"input_ids\") to infer shape [1, {}]. This is fragile \
+             and may produce incorrect results for non-Qwen3 models. Node name: {:?}",
+             max_seq_len, name);
         return vec![1, max_seq_len];
     }
     match op {
@@ -423,8 +443,19 @@ pub fn compat_output_shape(
                 vec![]
             }
         }
-        // Identity for graph inputs (placeholder): use known input shape
-        MirOp::MILIdentity { x, .. } if x.0 == "__placeholder__" => vec![1, max_seq_len],
+        // M-041: Magic-string shape heuristic — `"__placeholder__"` is a Qwen3-specific
+        // sentinel for graph input placeholders, hardcoded to [1, max_seq_len]. This is
+        // implicit semantics via node naming and will produce incorrect shapes for
+        // non-Qwen3 models or any placeholder with a different shape.
+        // TODO: Replace with explicit shape/dtype fields from SIR→AIR→MIR (T-P5-04).
+        MirOp::MILIdentity { x, .. } if x.0 == "__placeholder__" => {
+            log::warn!
+                ("M-041: compat_output_shape: using magic string \"__placeholder__\" \
+                 heuristic to infer shape [1, {}]. This is fragile and may produce \
+                 incorrect results for non-Qwen3 models. Node name: {:?}",
+                 max_seq_len, name);
+            vec![1, max_seq_len]
+        }
         // Identity: propagate input shape
         MirOp::MILIdentity { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
         // ─── Stack: like Concat but inserts a new dimension at `axis` ───

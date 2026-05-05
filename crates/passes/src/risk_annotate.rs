@@ -20,16 +20,33 @@
 //! deserialization, which meant it stayed at the default `Unverified`
 //! even after this pass updated the f32 risk scores — creating an
 //! inconsistency between the f32 fields and the structured enum.
+//!
+//! M-011/V-026: default risk scores changed from 0.1/0.05 to 0.5/0.5
+//! to signal "unknown" rather than the false safety of near-zero.
+//! The legality_confidence field is now also updated from legality
+//! knowledge, with a conservative 0.5 default when no knowledge
+//! is available.
 
 use crate::knowledge_query::{LegalityInfo, PassKnowledgeQuery};
 use ane_ir::air::{AirGraph, AirOp, LegalityStatus};
 use anyhow::Result;
 
-/// Default fallback risk score for operations without specific knowledge.
-const DEFAULT_FALLBACK_RISK: f32 = 0.1;
+/// Conservative default legality confidence when no knowledge is available.
+///
+/// 0.5 signals "unknown" rather than the false certainty of 1.0.
+const DEFAULT_LEGALITY_CONFIDENCE: f32 = 0.5;
 
-/// Default drift risk score for operations without specific knowledge.
-const DEFAULT_DRIFT_RISK: f32 = 0.05;
+/// Conservative default fallback risk score when no knowledge is available.
+///
+/// 0.5 signals "unknown" rather than the false safety of 0.0.
+/// M-011/V-026: changed from 0.1 to avoid false confidence.
+const DEFAULT_FALLBACK_RISK: f32 = 0.5;
+
+/// Conservative default drift risk score when no knowledge is available.
+///
+/// 0.5 signals "unknown" rather than the false safety of 0.0.
+/// M-011/V-026: changed from 0.05 to avoid false confidence.
+const DEFAULT_DRIFT_RISK: f32 = 0.5;
 
 /// Fallback risk penalty when compute plan evidence shows ane_placed=False.
 ///
@@ -55,21 +72,24 @@ const COMPUTE_PLAN_FALLBACK_PENALTY: f32 = 0.7;
 ///    ≥ 0.5) → `LikelyFallback`
 ///    The legality knowledge store explicitly flags this op as ANE-illegal.
 ///
-/// 3. **High fallback_risk** (≥ 0.5) after all adjustments →
-///    `LikelyFallback`
-///    Accumulated risk evidence pushes the op into the fallback regime.
+/// 3. **No knowledge from any source** → `Unknown`
+///    If legality, risk, and compute plan queries all returned None,
+///    we truly have insufficient information to make any claim.
+///    This MUST come before the fallback_risk threshold check because
+///    conservative defaults (0.5) are not evidence of actual risk.
 ///
-/// 4. **Strong positive legality evidence** (ane_legal=true, confidence
+/// 4. **High fallback_risk from actual knowledge** (≥ 0.5 AND
+///    had_risk_knowledge=true) → `LikelyFallback`
+///    Real risk evidence (not default values) pushes the op into the
+///    fallback regime.
+///
+/// 5. **Strong positive legality evidence** (ane_legal=true, confidence
 ///    ≥ 0.95, ≥ 2 observations) → `Verified`
 ///    Multiple independent observations confirm the op runs correctly.
 ///
-/// 5. **Strong positive metrics** (legality_confidence ≥ 0.95 AND
+/// 6. **Strong positive metrics** (legality_confidence ≥ 0.95 AND
 ///    fallback_risk < 0.1 AND drift_risk < 0.1) → `Verified`
 ///    The combination of high confidence and low risk qualifies the op.
-///
-/// 6. **No knowledge from any source** → `Unknown`
-///    If legality, risk, and compute plan queries all returned None,
-///    we truly have insufficient information to make any claim.
 ///
 /// 7. **Default** → `Unverified`
 ///    Some knowledge exists but it is not conclusive enough for a
@@ -96,15 +116,26 @@ fn determine_legality_status(
         }
     }
 
-    // Priority 3: High fallback risk after all adjustments (risk
-    // knowledge + compute plan penalty). Risk evidence pushes the
-    // op into the fallback regime even without a direct legality
-    // violation.
-    if node.fallback_risk >= 0.5 {
+    // Priority 3: No knowledge from any source.
+    // If the risk store returned nothing AND the legality store
+    // returned nothing, we have genuinely insufficient information
+    // to classify this op. This MUST come before the fallback_risk
+    // threshold check because conservative defaults (0.5) are not
+    // evidence of actual risk — they signal "unknown".
+    if !had_risk_knowledge && legality_info.is_none() {
+        return LegalityStatus::Unknown;
+    }
+
+    // Priority 4: High fallback risk from actual knowledge.
+    // Only fires when had_risk_knowledge is true, meaning the
+    // fallback_risk value came from the knowledge store (not from
+    // the conservative default). The compute plan penalty also
+    // sets compute_plan_not_ane=true, handled by priority 1 above.
+    if had_risk_knowledge && node.fallback_risk >= 0.5 {
         return LegalityStatus::LikelyFallback;
     }
 
-    // Priority 4: Strong positive evidence from the legality store.
+    // Priority 5: Strong positive evidence from the legality store.
     // Multiple independent observations at high confidence confirm
     // the op runs correctly on ANE. This is more reliable than
     // just having high legality_confidence alone.
@@ -114,21 +145,13 @@ fn determine_legality_status(
         }
     }
 
-    // Priority 5: Strong positive signal from combined metrics.
+    // Priority 6: Strong positive signal from combined metrics.
     // High legality_confidence from the legality pass combined with
     // very low risk scores from this pass. This catches cases where
     // legality_rewrite set high confidence and risk_annotate found
     // no contradicting risk evidence.
     if node.legality_confidence >= 0.95 && node.fallback_risk < 0.1 && node.drift_risk < 0.1 {
         return LegalityStatus::Verified;
-    }
-
-    // Priority 6: No knowledge from any source.
-    // If the risk store returned nothing AND the legality store
-    // returned nothing AND there is no compute plan data, we have
-    // genuinely insufficient information to classify this op.
-    if !had_risk_knowledge && legality_info.is_none() {
-        return LegalityStatus::Unknown;
     }
 
     // Default: some knowledge exists but it is not conclusive enough
@@ -139,6 +162,8 @@ fn determine_legality_status(
 
 /// Risk Annotate pass implementation.
 pub struct RiskAnnotatePass {
+    /// Legality confidence to assign when no knowledge is available.
+    pub default_legality_confidence: f32,
     /// Fallback risk score to assign when no knowledge is available.
     pub default_fallback_risk: f32,
     /// Drift risk score to assign when no knowledge is available.
@@ -154,6 +179,7 @@ impl Default for RiskAnnotatePass {
 impl RiskAnnotatePass {
     pub fn new() -> Self {
         Self {
+            default_legality_confidence: DEFAULT_LEGALITY_CONFIDENCE,
             default_fallback_risk: DEFAULT_FALLBACK_RISK,
             default_drift_risk: DEFAULT_DRIFT_RISK,
         }
@@ -175,6 +201,10 @@ impl RiskAnnotatePass {
     /// evidence sources (legality, risk, compute plan), ensuring
     /// the structured enum is always consistent with the f32 risk
     /// scores written by this pass.
+    ///
+    /// M-011/V-026: also updates `legality_confidence` from legality
+    /// knowledge, with a conservative default when no knowledge is
+    /// available. Uses conservative 0.5 defaults for all fields.
     pub fn run(
         &self,
         input: AirGraph,
@@ -227,12 +257,26 @@ impl RiskAnnotatePass {
                     _ => "unknown",
                 };
 
-                // Step 0: Query legality knowledge for this op.
-                // This is used both to inform risk scoring and to derive
-                // the structured legality_status.
-                let legality_info = knowledge_query.query_legality(op_pattern, None);
+                // Step 1: Apply knowledge-based legality confidence.
+                // Store the legality_info for later status derivation.
+                let legality_info = match knowledge_query.query_legality(op_pattern, None) {
+                    Some(info) => {
+                        node.legality_confidence = info.confidence;
+                        Some(info)
+                    }
+                    None => {
+                        log::warn!(
+                            "risk_annotate: no legality knowledge for '{}', \
+                             using conservative legality_confidence={}",
+                            op_pattern,
+                            self.default_legality_confidence
+                        );
+                        node.legality_confidence = self.default_legality_confidence;
+                        None
+                    }
+                };
 
-                // Step 1: Apply knowledge-based risk scores
+                // Step 2: Apply knowledge-based risk scores
                 let had_risk_knowledge = match knowledge_query.query_risk(op_pattern, None) {
                     Some(risk_info) => {
                         node.fallback_risk = risk_info.fallback_risk;
@@ -240,13 +284,20 @@ impl RiskAnnotatePass {
                         true
                     }
                     None => {
+                        log::warn!(
+                            "risk_annotate: no risk knowledge for '{}', \
+                             using conservative fallback_risk={}, drift_risk={}",
+                            op_pattern,
+                            self.default_fallback_risk,
+                            self.default_drift_risk
+                        );
                         node.fallback_risk = self.default_fallback_risk;
                         node.drift_risk = self.default_drift_risk;
                         false
                     }
                 };
 
-                // Step 2: Apply compute plan placement evidence (Sprint 35)
+                // Step 3: Apply compute plan placement evidence (Sprint 35)
                 // If compute plan shows ane_placed=False, increase fallback_risk
                 let mut compute_plan_not_ane = false;
                 if let Some(placement) =
@@ -262,7 +313,7 @@ impl RiskAnnotatePass {
                     }
                 }
 
-                // Step 3: Derive legality_status from all combined evidence (Sprint 61)
+                // Step 4: Derive legality_status from all combined evidence (Sprint 61)
                 node.legality_status = determine_legality_status(
                     &node,
                     compute_plan_not_ane,
@@ -309,10 +360,10 @@ mod tests {
         }
     }
 
-    // ─── f32 risk score tests (existing, unchanged behavior) ─────────
+    // ─── f32 risk score tests ────────────────────────────────────
 
     #[test]
-    fn test_no_knowledge_uses_defaults() {
+    fn test_no_knowledge_uses_conservative_defaults() {
         let pass = RiskAnnotatePass::new();
         let graph = make_simple_graph(AirOp::MatMul {
             a: AirNodeId("a".to_string()),
@@ -320,6 +371,41 @@ mod tests {
         });
         let knowledge = NoKnowledge;
         let result = pass.run(graph, &knowledge).unwrap();
+        // All three fields should use conservative 0.5 defaults (not ideal 1.0/0.0/0.0)
+        assert_eq!(result.nodes[0].legality_confidence, DEFAULT_LEGALITY_CONFIDENCE);
+        assert_eq!(result.nodes[0].fallback_risk, DEFAULT_FALLBACK_RISK);
+        assert_eq!(result.nodes[0].drift_risk, DEFAULT_DRIFT_RISK);
+    }
+
+    #[test]
+    fn test_knowledge_overrides_defaults() {
+        let pass = RiskAnnotatePass::new();
+        let graph = make_simple_graph(AirOp::MatMul {
+            a: AirNodeId("a".to_string()),
+            b: AirNodeId("b".to_string()),
+        });
+        let knowledge = MockKnowledge::new()
+            .with_legality(true, 0.95)
+            .with_risk(0.1, 0.05);
+        let result = pass.run(graph, &knowledge).unwrap();
+        // Knowledge-provided values should override defaults
+        assert!((result.nodes[0].legality_confidence - 0.95).abs() < 0.001);
+        assert!((result.nodes[0].fallback_risk - 0.1).abs() < 0.001);
+        assert!((result.nodes[0].drift_risk - 0.05).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_legality_knowledge_only_uses_defaults_for_risk() {
+        // When only legality knowledge is available, risk fields should still
+        // use conservative defaults
+        let pass = RiskAnnotatePass::new();
+        let graph = make_simple_graph(AirOp::MatMul {
+            a: AirNodeId("a".to_string()),
+            b: AirNodeId("b".to_string()),
+        });
+        let knowledge = MockKnowledge::new().with_legality(true, 0.9);
+        let result = pass.run(graph, &knowledge).unwrap();
+        assert!((result.nodes[0].legality_confidence - 0.9).abs() < 0.001);
         assert_eq!(result.nodes[0].fallback_risk, DEFAULT_FALLBACK_RISK);
         assert_eq!(result.nodes[0].drift_risk, DEFAULT_DRIFT_RISK);
     }
@@ -334,7 +420,7 @@ mod tests {
         });
         let knowledge = MockKnowledge::new().with_compute_plan_ane("mb.matmul");
         let result = pass.run(graph, &knowledge).unwrap();
-        // Default fallback risk should be unchanged (no penalty)
+        // Conservative default fallback risk should be unchanged (no penalty)
         assert_eq!(result.nodes[0].fallback_risk, DEFAULT_FALLBACK_RISK);
     }
 
@@ -473,6 +559,26 @@ mod tests {
     }
 
     #[test]
+    fn test_conservative_default_risk_with_legality_sets_likely_fallback() {
+        // When legality knowledge exists but risk knowledge does not,
+        // the conservative default fallback_risk=0.5 should NOT trigger
+        // LikelyFallback (it's just a default, not evidence). But with
+        // legality knowledge present, the status is Unverified, not Unknown.
+        let pass = RiskAnnotatePass::new();
+        let graph = make_simple_graph(AirOp::MatMul {
+            a: AirNodeId("a".to_string()),
+            b: AirNodeId("b".to_string()),
+        });
+        let knowledge = MockKnowledge::new().with_legality(true, 0.9);
+        let result = pass.run(graph, &knowledge).unwrap();
+        assert_eq!(
+            result.nodes[0].legality_status,
+            LegalityStatus::Unverified,
+            "Conservative default risk with legality knowledge should produce Unverified, not LikelyFallback"
+        );
+    }
+
+    #[test]
     fn test_moderate_risk_knowledge_sets_unverified() {
         // When risk knowledge exists but fallback_risk < 0.5, the op
         // is Unverified — we have some information but it's not strong
@@ -496,12 +602,13 @@ mod tests {
         // When legality_confidence >= 0.95 and both risk scores are
         // very low (< 0.1), the op is Verified.
         let pass = RiskAnnotatePass::new();
-        let mut graph = make_simple_graph(AirOp::MatMul {
+        let graph = make_simple_graph(AirOp::MatMul {
             a: AirNodeId("a".to_string()),
             b: AirNodeId("b".to_string()),
         });
-        graph.nodes[0].legality_confidence = 0.97;
-        let knowledge = MockKnowledge::new().with_risk(0.05, 0.02);
+        let knowledge = MockKnowledge::new()
+            .with_legality(true, 0.97)
+            .with_risk(0.05, 0.02);
         let result = pass.run(graph, &knowledge).unwrap();
         assert_eq!(
             result.nodes[0].legality_status,
@@ -516,12 +623,13 @@ mod tests {
         // very low (< 0.1), the op stays Unverified rather than
         // Verified — the risk evidence prevents full verification.
         let pass = RiskAnnotatePass::new();
-        let mut graph = make_simple_graph(AirOp::MatMul {
+        let graph = make_simple_graph(AirOp::MatMul {
             a: AirNodeId("a".to_string()),
             b: AirNodeId("b".to_string()),
         });
-        graph.nodes[0].legality_confidence = 0.97;
-        let knowledge = MockKnowledge::new().with_risk(0.2, 0.1);
+        let knowledge = MockKnowledge::new()
+            .with_legality(true, 0.97)
+            .with_risk(0.2, 0.1);
         let result = pass.run(graph, &knowledge).unwrap();
         assert_eq!(
             result.nodes[0].legality_status,
@@ -531,25 +639,24 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_plan_ane_keeps_existing_status() {
-        // When compute plan shows ane_placed=True, it should not
-        // override the status derived from other evidence. With
-        // only default risk scores and no legality info, the result
-        // should be Unknown (no knowledge from any source).
+    fn test_strong_legality_evidence_sets_verified() {
+        // Priority 4: ane_legal=true, confidence >= 0.95, >= 2 observations
+        // should produce Verified even without risk knowledge being low.
+        // (The risk knowledge provides 0.1 fallback_risk, which is < 0.5
+        // but not < 0.1, so this tests the priority 4 path specifically.)
         let pass = RiskAnnotatePass::new();
         let graph = make_simple_graph(AirOp::MatMul {
             a: AirNodeId("a".to_string()),
             b: AirNodeId("b".to_string()),
         });
-        let knowledge = MockKnowledge::new().with_compute_plan_ane("mb.matmul");
+        let knowledge = MockKnowledge::new()
+            .with_legality_and_evidence(true, 0.97, 3)
+            .with_risk(0.1, 0.05);
         let result = pass.run(graph, &knowledge).unwrap();
-        // Compute plan ane_placed=True doesn't add positive knowledge
-        // for status derivation (it only contributes as a negative
-        // signal). No risk or legality knowledge → Unknown.
         assert_eq!(
             result.nodes[0].legality_status,
-            LegalityStatus::Unknown,
-            "Compute plan ANE + no other knowledge should produce Unknown"
+            LegalityStatus::Verified,
+            "Strong legality evidence (high conf, multiple obs) should produce Verified"
         );
     }
 

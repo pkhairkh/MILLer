@@ -12,7 +12,7 @@ use ane_ir::mir::{MilDtype, MirGraph, MirOp};
 use ane_ir::pir::PirGraph;
 use ane_ir::sir::{SirGraph, SirOp};
 use ane_passes::knowledge_query::NoKnowledge;
-use ane_passes::legality_rewrite::{DecompositionContext, LegalityRewritePass};
+use ane_passes::legality_rewrite::{DecompositionContext, AneLegalityRewritePass};
 use ane_passes::mil_lower::MilLowerPass;
 use ane_passes::shard_plan::ShardPlan;
 use ane_trace::graph::TracedGraph;
@@ -122,7 +122,7 @@ fn main() {
         has_qk_norm: false, // discovered dynamically per attention block
         uses_gqa: cfg.uses_gqa,
     };
-    let legality_pass = LegalityRewritePass::new();
+    let legality_pass = AneLegalityRewritePass::new();
     let air = legality_pass.run(sir.clone(), &kq, Some(&decomp_ctx)).unwrap_or_else(|e| {
         eprintln!("AIR lowering failed: {}", e);
         std::process::exit(1);

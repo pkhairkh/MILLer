@@ -66,7 +66,10 @@ impl CanonicalizePass {
 
         for node in &graph.nodes {
             if let SirOp::Identity { input } = &node.op {
-                // Preserve graph input placeholders
+                // Preserve graph input placeholders.
+                // NOTE (M-018): The "__placeholder__" sentinel marks graph input
+                // signature nodes. This is a structural convention (not a model-specific
+                // heuristic) — all SIR builders use this sentinel for input placeholders.
                 if input.0 == "__placeholder__" {
                     continue;
                 }

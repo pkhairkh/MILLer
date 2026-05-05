@@ -30,6 +30,12 @@ pub struct NormStabilizationResult {
     pub scales_applied: usize,
     /// Number of new Mul + Const op pairs inserted.
     pub ops_inserted: usize,
+    /// Whether the scale factors were actually computed from weight metadata.
+    ///
+    /// When `false`, the inserted Const+Mul ops use placeholder scale values
+    /// that are NOT derived from real weight tensors. Downstream passes must
+    /// treat these as structural scaffolding, not validated numeric constants.
+    pub computed_scales: bool,
 }
 
 /// Run the normalization stabilization pass on a SIR graph.
@@ -47,7 +53,11 @@ pub struct NormStabilizationResult {
 /// # Returns
 /// Statistics about how many scales were applied.
 pub fn run_slanc_scales_pass(graph: &mut SirGraph) -> NormStabilizationResult {
-    let mut result = NormStabilizationResult { scales_applied: 0, ops_inserted: 0 };
+    let mut result = NormStabilizationResult {
+        scales_applied: 0,
+        ops_inserted: 0,
+        computed_scales: false, // M-005: current impl inserts structural ops only
+    };
 
     // Collect indices of RMSNorm nodes that need pre-scales
     let rms_norm_indices: Vec<usize> = graph
@@ -67,6 +77,13 @@ pub fn run_slanc_scales_pass(graph: &mut SirGraph) -> NormStabilizationResult {
     // ops and mark them for later weight-dependent computation.
     for idx in rms_norm_indices {
         let node = &graph.nodes[idx];
+
+        log::warn!(
+            "slanc_scales: inserting UNCOMPUTED scale placeholder for RMSNorm node `{}` \
+             — Const+Mul ops are structural scaffolding, not derived from weight metadata",
+            node.id.0
+        );
+
         let (input_id, weight_name, epsilon, axes) = match &node.op {
             SirOp::RMSNorm { input, weight, epsilon, axes } => {
                 (input.clone(), weight.clone(), *epsilon, axes.clone())
@@ -154,6 +171,7 @@ mod tests {
 
         assert_eq!(result.scales_applied, 1);
         assert_eq!(result.ops_inserted, 2); // Const + Mul pair
+        assert!(!result.computed_scales, "computed_scales must be false — scales are not derived from weights");
 
         // Verify the RMSNorm now takes input from the Mul op
         let rms_node = graph.nodes.iter().find(|n| n.id.0 == "rms_0").unwrap();
@@ -224,5 +242,41 @@ mod tests {
         let result = run_slanc_scales_pass(&mut graph);
         assert_eq!(result.scales_applied, 2);
         assert_eq!(result.ops_inserted, 4); // 2 × (Const + Mul) pairs
+        assert!(!result.computed_scales, "computed_scales must be false — scales are not derived from weights");
+    }
+
+    #[test]
+    fn test_norm_stabilization_computed_scales_field() {
+        // Verify that computed_scales is false when no real weight computation occurs.
+        let mut graph = SirGraph {
+            nodes: vec![SirNode {
+                id: SirNodeId("rms_0".to_string()),
+                op: SirOp::RMSNorm {
+                    input: SirNodeId("input_0".to_string()),
+                    weight: "norm_weight_0".to_string(),
+                    epsilon: 1e-6,
+                    axes: vec![2],
+                },
+                name: "rms_norm_0".to_string(),
+                metadata: SirMetadata {
+                    task_origin: TaskOrigin::Synthetic,
+                    model_id: None,
+                    quality_contract: None,
+                    precision_override: None,
+                },
+            }],
+            inputs: vec![SirNodeId("input_0".to_string())],
+            outputs: vec![SirNodeId("rms_0".to_string())],
+        };
+
+        let result = run_slanc_scales_pass(&mut graph);
+
+        // The current implementation inserts Const+Mul ops as structural
+        // placeholders without computing actual scale values from weights,
+        // so computed_scales MUST be false (STUB-MIMIC compliance).
+        assert!(!result.computed_scales,
+            "computed_scales should be false: current pass does not compute scales from weight metadata");
+        assert_eq!(result.scales_applied, 1, "one RMSNorm should have been pre-scaled");
+        assert_eq!(result.ops_inserted, 2, "one Const+Mul pair should be inserted");
     }
 }
