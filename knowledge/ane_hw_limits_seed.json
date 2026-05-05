@@ -1,237 +1,468 @@
 {
   "version": 1,
-  "source": "ane-constraints-docs/02-hardware-and-limits/hardware-versions-limits-and-op-support.md",
-  "hw_limits": [
+  "description": "Per-revision ANE hardware limit parameters. Source: ane-constraints-docs/02-hardware-and-limits/hardware-versions-limits-and-op-support.md",
+  "entries": [
     {
-      "revision": "V4",
-      "family": "A11Legacy",
-      "max_tensor_width": 16384,
-      "max_tensor_height": 4096,
-      "max_tensor_depth": 2048,
-      "max_tensor_channels": 65536,
-      "max_tensor_rank": 5,
-      "max_8b_conv_kernel_dim_x": 7,
-      "max_f16_conv_kernel_dim_x": 7,
-      "max_conv_kernel_dim_y": 7,
-      "max_pooling_kernel_dim": 27,
-      "max_conv_channels": 32768,
-      "pe_max_tile_height": 2048,
-      "pe_reduction_cout_limit": 16384,
-      "num_nes": 1,
-      "ne_transpose_c_max": 16384,
-      "large_kernel_threshold": 7,
-      "sub_variant": "Standard",
-      "verified": true
+      "id": "hw_limits_V4_A11Legacy_Standard",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneHwLimits",
+      "confidence": 1.0,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "revision": "V4",
+        "family": "A11Legacy",
+        "sub_variant": "Standard",
+        "max_tensor_width": 16384,
+        "max_tensor_height": 4096,
+        "max_tensor_depth": 2048,
+        "max_tensor_channels": 65536,
+        "max_tensor_rank": 5,
+        "max_8b_conv_kernel_dim_x": 7,
+        "max_f16_conv_kernel_dim_x": 7,
+        "max_conv_kernel_dim_y": 7,
+        "max_pooling_kernel_dim": 27,
+        "max_conv_channels": 32768,
+        "pe_max_tile_height": 2048,
+        "pe_reduction_cout_limit": 16384,
+        "num_nes": 1,
+        "ne_transpose_c_max": 16384,
+        "large_kernel_threshold": 7,
+        "verified": true
+      }
     },
     {
-      "revision": "V5",
-      "family": "A12",
-      "max_tensor_width": 16384,
-      "max_tensor_height": 4096,
-      "max_tensor_depth": 2048,
-      "max_tensor_channels": 65536,
-      "max_tensor_rank": 5,
-      "max_8b_conv_kernel_dim_x": 7,
-      "max_f16_conv_kernel_dim_x": 7,
-      "max_conv_kernel_dim_y": 7,
-      "max_pooling_kernel_dim": 27,
-      "max_conv_channels": 32768,
-      "pe_max_tile_height": 2048,
-      "pe_reduction_cout_limit": 16384,
-      "num_nes": 1,
-      "ne_transpose_c_max": 16384,
-      "large_kernel_threshold": 7,
-      "sub_variant": "Standard",
-      "verified": false
+      "id": "hw_limits_V5_A12_Standard",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneHwLimits",
+      "confidence": 0.7,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A12"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "revision": "V5",
+        "family": "A12",
+        "sub_variant": "Standard",
+        "max_tensor_width": 16384,
+        "max_tensor_height": 4096,
+        "max_tensor_depth": 2048,
+        "max_tensor_channels": 65536,
+        "max_tensor_rank": 5,
+        "max_8b_conv_kernel_dim_x": 7,
+        "max_f16_conv_kernel_dim_x": 7,
+        "max_conv_kernel_dim_y": 7,
+        "max_pooling_kernel_dim": 27,
+        "max_conv_channels": 32768,
+        "pe_max_tile_height": 2048,
+        "pe_reduction_cout_limit": 16384,
+        "num_nes": 1,
+        "ne_transpose_c_max": 16384,
+        "large_kernel_threshold": 7,
+        "verified": false
+      }
     },
     {
-      "revision": "V6",
-      "family": "A13",
-      "max_tensor_width": 32768,
-      "max_tensor_height": 8192,
-      "max_tensor_depth": 2048,
-      "max_tensor_channels": 65536,
-      "max_tensor_rank": 5,
-      "max_8b_conv_kernel_dim_x": 7,
-      "max_f16_conv_kernel_dim_x": 7,
-      "max_conv_kernel_dim_y": 7,
-      "max_pooling_kernel_dim": 27,
-      "max_conv_channels": 32768,
-      "pe_max_tile_height": 2048,
-      "pe_reduction_cout_limit": 16384,
-      "num_nes": 1,
-      "ne_transpose_c_max": 16384,
-      "large_kernel_threshold": 7,
-      "sub_variant": "Standard",
-      "verified": false
+      "id": "hw_limits_V6_A13_Standard",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneHwLimits",
+      "confidence": 0.7,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A13"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "revision": "V6",
+        "family": "A13",
+        "sub_variant": "Standard",
+        "max_tensor_width": 32768,
+        "max_tensor_height": 8192,
+        "max_tensor_depth": 2048,
+        "max_tensor_channels": 65536,
+        "max_tensor_rank": 5,
+        "max_8b_conv_kernel_dim_x": 7,
+        "max_f16_conv_kernel_dim_x": 7,
+        "max_conv_kernel_dim_y": 7,
+        "max_pooling_kernel_dim": 27,
+        "max_conv_channels": 32768,
+        "pe_max_tile_height": 2048,
+        "pe_reduction_cout_limit": 16384,
+        "num_nes": 1,
+        "ne_transpose_c_max": 16384,
+        "large_kernel_threshold": 7,
+        "verified": false
+      }
     },
     {
-      "revision": "V7",
-      "family": "A14",
-      "max_tensor_width": 65536,
-      "max_tensor_height": 8192,
-      "max_tensor_depth": 2048,
-      "max_tensor_channels": 65536,
-      "max_tensor_rank": 5,
-      "max_8b_conv_kernel_dim_x": 7,
-      "max_f16_conv_kernel_dim_x": 7,
-      "max_conv_kernel_dim_y": 7,
-      "max_pooling_kernel_dim": 27,
-      "max_conv_channels": 32768,
-      "pe_max_tile_height": 2048,
-      "pe_reduction_cout_limit": 16384,
-      "num_nes": 2,
-      "ne_transpose_c_max": 16384,
-      "large_kernel_threshold": 9,
-      "sub_variant": "Standard",
-      "verified": true
+      "id": "hw_limits_V7_A14_Standard",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneHwLimits",
+      "confidence": 1.0,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A14"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "revision": "V7",
+        "family": "A14",
+        "sub_variant": "Standard",
+        "max_tensor_width": 65536,
+        "max_tensor_height": 8192,
+        "max_tensor_depth": 2048,
+        "max_tensor_channels": 65536,
+        "max_tensor_rank": 5,
+        "max_8b_conv_kernel_dim_x": 7,
+        "max_f16_conv_kernel_dim_x": 7,
+        "max_conv_kernel_dim_y": 7,
+        "max_pooling_kernel_dim": 27,
+        "max_conv_channels": 32768,
+        "pe_max_tile_height": 2048,
+        "pe_reduction_cout_limit": 16384,
+        "num_nes": 2,
+        "ne_transpose_c_max": 16384,
+        "large_kernel_threshold": 9,
+        "verified": true
+      }
     },
     {
-      "revision": "V8",
-      "family": "A15",
-      "max_tensor_width": 65536,
-      "max_tensor_height": 8192,
-      "max_tensor_depth": 2048,
-      "max_tensor_channels": 65536,
-      "max_tensor_rank": 5,
-      "max_8b_conv_kernel_dim_x": 7,
-      "max_f16_conv_kernel_dim_x": 7,
-      "max_conv_kernel_dim_y": 7,
-      "max_pooling_kernel_dim": 27,
-      "max_conv_channels": 32768,
-      "pe_max_tile_height": 2048,
-      "pe_reduction_cout_limit": 16384,
-      "num_nes": 2,
-      "ne_transpose_c_max": 16384,
-      "large_kernel_threshold": 9,
-      "sub_variant": "Standard",
-      "verified": true
+      "id": "hw_limits_V8_A15_Standard",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneHwLimits",
+      "confidence": 1.0,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A15"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "revision": "V8",
+        "family": "A15",
+        "sub_variant": "Standard",
+        "max_tensor_width": 65536,
+        "max_tensor_height": 8192,
+        "max_tensor_depth": 2048,
+        "max_tensor_channels": 65536,
+        "max_tensor_rank": 5,
+        "max_8b_conv_kernel_dim_x": 7,
+        "max_f16_conv_kernel_dim_x": 7,
+        "max_conv_kernel_dim_y": 7,
+        "max_pooling_kernel_dim": 27,
+        "max_conv_channels": 32768,
+        "pe_max_tile_height": 2048,
+        "pe_reduction_cout_limit": 16384,
+        "num_nes": 2,
+        "ne_transpose_c_max": 16384,
+        "large_kernel_threshold": 9,
+        "verified": true
+      }
     },
     {
-      "revision": "V10",
-      "family": "A16",
-      "max_tensor_width": 131072,
-      "max_tensor_height": 16384,
-      "max_tensor_depth": 2048,
-      "max_tensor_channels": 65536,
-      "max_tensor_rank": 5,
-      "max_8b_conv_kernel_dim_x": 7,
-      "max_f16_conv_kernel_dim_x": 7,
-      "max_conv_kernel_dim_y": 7,
-      "max_pooling_kernel_dim": 27,
-      "max_conv_channels": 32768,
-      "pe_max_tile_height": 2048,
-      "pe_reduction_cout_limit": 16384,
-      "num_nes": 4,
-      "ne_transpose_c_max": 16384,
-      "large_kernel_threshold": 9,
-      "sub_variant": "Standard",
-      "verified": true
+      "id": "hw_limits_V10_A16_Standard",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneHwLimits",
+      "confidence": 1.0,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A16"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "revision": "V10",
+        "family": "A16",
+        "sub_variant": "Standard",
+        "max_tensor_width": 131072,
+        "max_tensor_height": 16384,
+        "max_tensor_depth": 2048,
+        "max_tensor_channels": 65536,
+        "max_tensor_rank": 5,
+        "max_8b_conv_kernel_dim_x": 7,
+        "max_f16_conv_kernel_dim_x": 7,
+        "max_conv_kernel_dim_y": 7,
+        "max_pooling_kernel_dim": 27,
+        "max_conv_channels": 32768,
+        "pe_max_tile_height": 2048,
+        "pe_reduction_cout_limit": 16384,
+        "num_nes": 4,
+        "ne_transpose_c_max": 16384,
+        "large_kernel_threshold": 9,
+        "verified": true
+      }
     },
     {
-      "revision": "V11",
-      "family": "A17",
-      "max_tensor_width": 131072,
-      "max_tensor_height": 16384,
-      "max_tensor_depth": 2048,
-      "max_tensor_channels": 65536,
-      "max_tensor_rank": 5,
-      "max_8b_conv_kernel_dim_x": 7,
-      "max_f16_conv_kernel_dim_x": 7,
-      "max_conv_kernel_dim_y": 7,
-      "max_pooling_kernel_dim": 27,
-      "max_conv_channels": 32768,
-      "pe_max_tile_height": 2048,
-      "pe_reduction_cout_limit": 16384,
-      "num_nes": 4,
-      "ne_transpose_c_max": 16384,
-      "large_kernel_threshold": 9,
-      "sub_variant": "Standard",
-      "verified": true
+      "id": "hw_limits_V11_A17_Standard",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneHwLimits",
+      "confidence": 1.0,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A17"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "revision": "V11",
+        "family": "A17",
+        "sub_variant": "Standard",
+        "max_tensor_width": 131072,
+        "max_tensor_height": 16384,
+        "max_tensor_depth": 2048,
+        "max_tensor_channels": 65536,
+        "max_tensor_rank": 5,
+        "max_8b_conv_kernel_dim_x": 7,
+        "max_f16_conv_kernel_dim_x": 7,
+        "max_conv_kernel_dim_y": 7,
+        "max_pooling_kernel_dim": 27,
+        "max_conv_channels": 32768,
+        "pe_max_tile_height": 2048,
+        "pe_reduction_cout_limit": 16384,
+        "num_nes": 4,
+        "ne_transpose_c_max": 16384,
+        "large_kernel_threshold": 9,
+        "verified": true
+      }
     },
     {
-      "revision": "V17",
-      "family": "A14",
-      "max_tensor_width": 262144,
-      "max_tensor_height": 16384,
-      "max_tensor_depth": 2048,
-      "max_tensor_channels": 65536,
-      "max_tensor_rank": 5,
-      "max_8b_conv_kernel_dim_x": 7,
-      "max_f16_conv_kernel_dim_x": 7,
-      "max_conv_kernel_dim_y": 7,
-      "max_pooling_kernel_dim": 27,
-      "max_conv_channels": 32768,
-      "pe_max_tile_height": 2048,
-      "pe_reduction_cout_limit": 16384,
-      "num_nes": 6,
-      "ne_transpose_c_max": 16384,
-      "large_kernel_threshold": 9,
-      "sub_variant": "Mac",
-      "verified": true
+      "id": "hw_limits_V17_A14_Mac",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneHwLimits",
+      "confidence": 1.0,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A14"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "revision": "V17",
+        "family": "A14",
+        "sub_variant": "Mac",
+        "max_tensor_width": 262144,
+        "max_tensor_height": 16384,
+        "max_tensor_depth": 2048,
+        "max_tensor_channels": 65536,
+        "max_tensor_rank": 5,
+        "max_8b_conv_kernel_dim_x": 7,
+        "max_f16_conv_kernel_dim_x": 7,
+        "max_conv_kernel_dim_y": 7,
+        "max_pooling_kernel_dim": 27,
+        "max_conv_channels": 32768,
+        "pe_max_tile_height": 2048,
+        "pe_reduction_cout_limit": 16384,
+        "num_nes": 6,
+        "ne_transpose_c_max": 16384,
+        "large_kernel_threshold": 9,
+        "verified": true
+      }
     },
     {
-      "revision": "V19",
-      "family": "A18",
-      "max_tensor_width": 262144,
-      "max_tensor_height": 16384,
-      "max_tensor_depth": 2048,
-      "max_tensor_channels": 65536,
-      "max_tensor_rank": 5,
-      "max_8b_conv_kernel_dim_x": 7,
-      "max_f16_conv_kernel_dim_x": 7,
-      "max_conv_kernel_dim_y": 7,
-      "max_pooling_kernel_dim": 27,
-      "max_conv_channels": 32768,
-      "pe_max_tile_height": 2048,
-      "pe_reduction_cout_limit": 16384,
-      "num_nes": 8,
-      "ne_transpose_c_max": 16384,
-      "large_kernel_threshold": 9,
-      "sub_variant": "Pro",
-      "verified": true
+      "id": "hw_limits_V19_A18_Pro",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneHwLimits",
+      "confidence": 1.0,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "revision": "V19",
+        "family": "A18",
+        "sub_variant": "Pro",
+        "max_tensor_width": 262144,
+        "max_tensor_height": 16384,
+        "max_tensor_depth": 2048,
+        "max_tensor_channels": 65536,
+        "max_tensor_rank": 5,
+        "max_8b_conv_kernel_dim_x": 7,
+        "max_f16_conv_kernel_dim_x": 7,
+        "max_conv_kernel_dim_y": 7,
+        "max_pooling_kernel_dim": 27,
+        "max_conv_channels": 32768,
+        "pe_max_tile_height": 2048,
+        "pe_reduction_cout_limit": 16384,
+        "num_nes": 8,
+        "ne_transpose_c_max": 16384,
+        "large_kernel_threshold": 9,
+        "verified": true
+      }
     },
     {
-      "revision": "V20",
-      "family": "A18",
-      "max_tensor_width": 262144,
-      "max_tensor_height": 16384,
-      "max_tensor_depth": 2048,
-      "max_tensor_channels": 65536,
-      "max_tensor_rank": 5,
-      "max_8b_conv_kernel_dim_x": 7,
-      "max_f16_conv_kernel_dim_x": 7,
-      "max_conv_kernel_dim_y": 7,
-      "max_pooling_kernel_dim": 27,
-      "max_conv_channels": 32768,
-      "pe_max_tile_height": 2048,
-      "pe_reduction_cout_limit": 16384,
-      "num_nes": 16,
-      "ne_transpose_c_max": 16384,
-      "large_kernel_threshold": 9,
-      "sub_variant": "Max",
-      "verified": true
+      "id": "hw_limits_V20_A18_Max",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneHwLimits",
+      "confidence": 1.0,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "revision": "V20",
+        "family": "A18",
+        "sub_variant": "Max",
+        "max_tensor_width": 262144,
+        "max_tensor_height": 16384,
+        "max_tensor_depth": 2048,
+        "max_tensor_channels": 65536,
+        "max_tensor_rank": 5,
+        "max_8b_conv_kernel_dim_x": 7,
+        "max_f16_conv_kernel_dim_x": 7,
+        "max_conv_kernel_dim_y": 7,
+        "max_pooling_kernel_dim": 27,
+        "max_conv_channels": 32768,
+        "pe_max_tile_height": 2048,
+        "pe_reduction_cout_limit": 16384,
+        "num_nes": 16,
+        "ne_transpose_c_max": 16384,
+        "large_kernel_threshold": 9,
+        "verified": true
+      }
     },
     {
-      "revision": "V26",
-      "family": "A18",
-      "max_tensor_width": 262144,
-      "max_tensor_height": 16384,
-      "max_tensor_depth": 2048,
-      "max_tensor_channels": 65536,
-      "max_tensor_rank": 5,
-      "max_8b_conv_kernel_dim_x": 7,
-      "max_f16_conv_kernel_dim_x": 7,
-      "max_conv_kernel_dim_y": 7,
-      "max_pooling_kernel_dim": 27,
-      "max_conv_channels": 32768,
-      "pe_max_tile_height": 2048,
-      "pe_reduction_cout_limit": 16384,
-      "num_nes": 16,
-      "ne_transpose_c_max": 16384,
-      "large_kernel_threshold": 9,
-      "sub_variant": "Max",
-      "verified": false
+      "id": "hw_limits_V26_A18_Max",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneHwLimits",
+      "confidence": 0.7,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "revision": "V26",
+        "family": "A18",
+        "sub_variant": "Max",
+        "max_tensor_width": 262144,
+        "max_tensor_height": 16384,
+        "max_tensor_depth": 2048,
+        "max_tensor_channels": 65536,
+        "max_tensor_rank": 5,
+        "max_8b_conv_kernel_dim_x": 7,
+        "max_f16_conv_kernel_dim_x": 7,
+        "max_conv_kernel_dim_y": 7,
+        "max_pooling_kernel_dim": 27,
+        "max_conv_channels": 32768,
+        "pe_max_tile_height": 2048,
+        "pe_reduction_cout_limit": 16384,
+        "num_nes": 16,
+        "ne_transpose_c_max": 16384,
+        "large_kernel_threshold": 9,
+        "verified": false
+      }
     }
   ]
 }

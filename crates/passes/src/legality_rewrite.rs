@@ -4767,6 +4767,8 @@ impl AneLegalityRewritePass {
             | SirOp::StateWrite { .. } => {
                 unreachable!("composite ops should be handled by explicit decompositions above")
             }
+            // Future SirOp variants added via #[non_exhaustive]
+            _ => unreachable!("unrecognized SirOp variant in legalize_sir_op"),
         })
     }
 }
@@ -6350,6 +6352,7 @@ mod tests {
             AirOp::Topk { input, .. } => vec![input.clone()],
             AirOp::Classify { input } => vec![input.clone()],
             AirOp::StaticLUTProjection { input, .. } => vec![input.clone()],
+            _ => vec![], // non-exhaustive: unknown ops have no refs
         }
     }
 

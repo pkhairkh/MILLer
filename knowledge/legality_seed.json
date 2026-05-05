@@ -4,198 +4,160 @@
   "entries": [
     {
       "id": "legality_matmul_fp16",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "LegalityRule",
-      "op_pattern": "mb.matmul",
-      "ane_legal": true,
       "confidence": 0.7,
       "evidence_source": "RealModelRun",
       "evidence_count": 5,
       "scope": {
-        "device_classes": [
-          "M2",
-          "M2_Pro",
-          "M3"
-        ],
-        "os_versions": [
-          "macOS_15"
-        ],
-        "opset_versions": [
-          "iOS18"
-        ]
+        "device_classes": ["M2", "M2_Pro", "M3"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.matmul",
+        "ane_legal": true
       }
     },
     {
       "id": "legality_conv1x1_fp16",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "LegalityRule",
-      "op_pattern": "mb.conv(groups=1, kernel=1x1)",
-      "ane_legal": true,
       "confidence": 0.8,
       "evidence_source": "RealModelRun",
       "evidence_count": 10,
       "scope": {
-        "device_classes": [
-          "M2",
-          "M2_Pro",
-          "M3"
-        ],
-        "os_versions": [
-          "macOS_15"
-        ],
-        "opset_versions": [
-          "iOS18"
-        ]
+        "device_classes": ["M2", "M2_Pro", "M3"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.conv(groups=1, kernel=1x1)",
+        "ane_legal": true
       }
     },
     {
       "id": "legality_softmax_axis_last",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "LegalityRule",
-      "op_pattern": "mb.softmax(axis=-1)",
-      "ane_legal": true,
       "confidence": 0.6,
       "evidence_source": "RealModelRun",
       "evidence_count": 3,
       "scope": {
-        "device_classes": [
-          "M2",
-          "M2_Pro"
-        ],
-        "os_versions": [
-          "macOS_15"
-        ],
-        "opset_versions": [
-          "iOS18"
-        ]
+        "device_classes": ["M2", "M2_Pro"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.softmax(axis=-1)",
+        "ane_legal": true
       }
     },
     {
       "id": "legality_elementwise_fp16",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "LegalityRule",
-      "op_pattern": "mb.add|mb.mul|mb.abs|mb.maximum|mb.minimum",
-      "ane_legal": true,
       "confidence": 0.9,
       "evidence_source": "SyntheticRun",
       "evidence_count": 20,
       "scope": {
-        "device_classes": [
-          "M2",
-          "M2_Pro",
-          "M3",
-          "M4"
-        ],
-        "os_versions": [
-          "macOS_15"
-        ],
-        "opset_versions": [
-          "iOS18"
-        ]
+        "device_classes": ["M2", "M2_Pro", "M3", "M4"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.add|mb.mul|mb.abs|mb.maximum|mb.minimum",
+        "ane_legal": true
       }
     },
     {
       "id": "legality_gather",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "LegalityRule",
-      "op_pattern": "mb.gather",
-      "ane_legal": false,
       "confidence": 0.9,
       "evidence_source": "RealModelRun",
       "evidence_count": 5,
       "scope": {
-        "device_classes": [
-          "M2",
-          "M3"
-        ],
-        "os_versions": [
-          "macOS_15"
-        ],
-        "opset_versions": [
-          "iOS18"
-        ]
+        "device_classes": ["M2", "M3"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
       },
-      "note": "Gather is CPU-only in practice. Despite anec.gather converter existing (family-agnostic), the compiler falls back to CPU for gather ops. Prefer SliceByIndex for dynamic-axis patterns.",
-      "limited_index_range": true
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.gather",
+        "ane_legal": false,
+        "note": "Gather is CPU-only in practice. Despite anec.gather converter existing (family-agnostic), the compiler falls back to CPU for gather ops. Prefer SliceByIndex for dynamic-axis patterns.",
+        "limited_index_range": true
+      }
     },
     {
       "id": "legality_neg",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "LegalityRule",
-      "op_pattern": "mb.neg",
-      "ane_legal": false,
       "confidence": 0.9,
       "evidence_source": "SourceCode",
       "evidence_count": 1,
       "scope": {
-        "device_classes": [
-          "A11Legacy",
-          "A12",
-          "A13",
-          "A14",
-          "A15",
-          "A16",
-          "A17",
-          "A18"
-        ],
-        "os_versions": [
-          "macOS_15"
-        ],
-        "opset_versions": [
-          "iOS18"
-        ]
+        "device_classes": ["A11Legacy", "A12", "A13", "A14", "A15", "A16", "A17", "A18"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
       },
-      "note": "neg is CPU-only per cpu_only_ops.rs, despite PEFUSEDElementwiseUnary converter existing in ANEC."
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.neg",
+        "ane_legal": false,
+        "note": "neg is CPU-only per cpu_only_ops.rs, despite PEFUSEDElementwiseUnary converter existing in ANEC."
+      }
     },
     {
       "id": "legality_select",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "LegalityRule",
-      "op_pattern": "mb.select",
-      "ane_legal": false,
       "confidence": 0.9,
       "evidence_source": "SourceCode",
       "evidence_count": 1,
       "scope": {
-        "device_classes": [
-          "A11Legacy",
-          "A12",
-          "A13",
-          "A14",
-          "A15",
-          "A16",
-          "A17",
-          "A18"
-        ],
-        "os_versions": [
-          "macOS_15"
-        ],
-        "opset_versions": [
-          "iOS18"
-        ]
+        "device_classes": ["A11Legacy", "A12", "A13", "A14", "A15", "A16", "A17", "A18"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
       },
-      "note": "select is CPU-only in practice per cpu_only_ops.rs, despite PEFUSEDSelect converter existing in ANEC."
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.select",
+        "ane_legal": false,
+        "note": "select is CPU-only in practice per cpu_only_ops.rs, despite PEFUSEDSelect converter existing in ANEC."
+      }
     },
     {
       "id": "legality_where",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "LegalityRule",
-      "op_pattern": "mb.where",
-      "ane_legal": false,
       "confidence": 0.9,
       "evidence_source": "SourceCode",
       "evidence_count": 1,
       "scope": {
-        "device_classes": [
-          "A11Legacy",
-          "A12",
-          "A13",
-          "A14",
-          "A15",
-          "A16",
-          "A17",
-          "A18"
-        ],
-        "os_versions": [
-          "macOS_15"
-        ],
-        "opset_versions": [
-          "iOS18"
-        ]
+        "device_classes": ["A11Legacy", "A12", "A13", "A14", "A15", "A16", "A17", "A18"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
       },
-      "note": "where is CPU-only per cpu_only_ops.rs, no usable ANE converter despite PEFUSEDSelect dialect entry."
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.where",
+        "ane_legal": false,
+        "note": "where is CPU-only per cpu_only_ops.rs, no usable ANE converter despite PEFUSEDSelect dialect entry."
+      }
     }
   ]
 }

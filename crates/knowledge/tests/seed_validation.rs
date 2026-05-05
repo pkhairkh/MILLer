@@ -130,7 +130,11 @@ fn test_entries_pattern_files_have_valid_structure() {
     }
 }
 
-// ─── Test: Flat-format files have valid structure ────────────────────
+// ─── Test: Converted-format files have valid entries structure ────────
+//
+// These seed files were converted from flat format to the entries[]
+// KnowledgeUnit schema. Each entry must have id, knowledge_type, and
+// a payload object with type-specific fields.
 
 #[test]
 fn test_flat_format_files_have_valid_structure() {
@@ -139,88 +143,125 @@ fn test_flat_format_files_have_valid_structure() {
         return;
     };
 
-    // cpu_only_ops_seed.json: must have cpu_only_ops[] array
+    // cpu_only_ops_seed.json: entries[] with CpuOnlyOps knowledge_type
     let cpu_path = Path::new(&dir).join("cpu_only_ops_seed.json");
     if cpu_path.exists() {
         let json_str = fs::read_to_string(&cpu_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-        let ops = parsed.get("cpu_only_ops").and_then(|e| e.as_array());
-        assert!(ops.is_some(), "cpu_only_ops_seed.json: missing 'cpu_only_ops' array");
-        let ops = ops.unwrap();
-        assert!(!ops.is_empty(), "cpu_only_ops_seed.json: 'cpu_only_ops' array is empty");
-        for (i, op) in ops.iter().enumerate() {
+        let entries = parsed.get("entries").and_then(|e| e.as_array());
+        assert!(entries.is_some(), "cpu_only_ops_seed.json: missing 'entries' array");
+        let entries = entries.unwrap();
+        assert!(!entries.is_empty(), "cpu_only_ops_seed.json: 'entries' array is empty");
+        for (i, entry) in entries.iter().enumerate() {
             assert!(
-                op.get("mil_name").and_then(|v| v.as_str()).is_some(),
-                "cpu_only_ops_seed.json: cpu_only_ops[{}] missing 'mil_name'",
+                entry.get("id").and_then(|v| v.as_str()).is_some(),
+                "cpu_only_ops_seed.json: entries[{}] missing 'id'",
+                i
+            );
+            assert_eq!(
+                entry.get("knowledge_type").and_then(|v| v.as_str()),
+                Some("CpuOnlyOps"),
+                "cpu_only_ops_seed.json: entries[{}] knowledge_type should be CpuOnlyOps",
+                i
+            );
+            // mil_name and reason_code are in payload
+            let payload = entry.get("payload").and_then(|v| v.as_object());
+            assert!(payload.is_some(), "cpu_only_ops_seed.json: entries[{}] missing 'payload'", i);
+            let payload = payload.unwrap();
+            assert!(
+                payload.get("mil_name").and_then(|v| v.as_str()).is_some(),
+                "cpu_only_ops_seed.json: entries[{}].payload missing 'mil_name'",
                 i
             );
             assert!(
-                op.get("reason_code").and_then(|v| v.as_str()).is_some(),
-                "cpu_only_ops_seed.json: cpu_only_ops[{}] missing 'reason_code'",
+                payload.get("reason_code").and_then(|v| v.as_str()).is_some(),
+                "cpu_only_ops_seed.json: entries[{}].payload missing 'reason_code'",
                 i
             );
         }
     }
 
-    // ane_hw_limits_seed.json: must have hw_limits[] array
+    // ane_hw_limits_seed.json: entries[] with AneHwLimits knowledge_type
     let hw_path = Path::new(&dir).join("ane_hw_limits_seed.json");
     if hw_path.exists() {
         let json_str = fs::read_to_string(&hw_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-        let limits = parsed.get("hw_limits").and_then(|e| e.as_array());
-        assert!(limits.is_some(), "ane_hw_limits_seed.json: missing 'hw_limits' array");
-        let limits = limits.unwrap();
-        assert!(!limits.is_empty(), "ane_hw_limits_seed.json: 'hw_limits' array is empty");
-        for (i, limit) in limits.iter().enumerate() {
+        let entries = parsed.get("entries").and_then(|e| e.as_array());
+        assert!(entries.is_some(), "ane_hw_limits_seed.json: missing 'entries' array");
+        let entries = entries.unwrap();
+        assert!(!entries.is_empty(), "ane_hw_limits_seed.json: 'entries' array is empty");
+        for (i, entry) in entries.iter().enumerate() {
+            assert_eq!(
+                entry.get("knowledge_type").and_then(|v| v.as_str()),
+                Some("AneHwLimits"),
+                "ane_hw_limits_seed.json: entries[{}] knowledge_type should be AneHwLimits",
+                i
+            );
+            let payload = entry.get("payload").and_then(|v| v.as_object());
+            assert!(payload.is_some(), "ane_hw_limits_seed.json: entries[{}] missing 'payload'", i);
+            let payload = payload.unwrap();
             assert!(
-                limit.get("revision").and_then(|v| v.as_str()).is_some(),
-                "ane_hw_limits_seed.json: hw_limits[{}] missing 'revision'",
+                payload.get("revision").and_then(|v| v.as_str()).is_some(),
+                "ane_hw_limits_seed.json: entries[{}].payload missing 'revision'",
                 i
             );
             assert!(
-                limit.get("family").and_then(|v| v.as_str()).is_some(),
-                "ane_hw_limits_seed.json: hw_limits[{}] missing 'family'",
+                payload.get("family").and_then(|v| v.as_str()).is_some(),
+                "ane_hw_limits_seed.json: entries[{}].payload missing 'family'",
                 i
             );
         }
     }
 
-    // ane_op_family_matrix.json: must have ane_landing_ops[] array
+    // ane_op_family_matrix.json: entries[] with AneOpFamilyMatrix knowledge_type
     let matrix_path = Path::new(&dir).join("ane_op_family_matrix.json");
     if matrix_path.exists() {
         let json_str = fs::read_to_string(&matrix_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-        let ops = parsed.get("ane_landing_ops").and_then(|e| e.as_array());
-        assert!(ops.is_some(), "ane_op_family_matrix.json: missing 'ane_landing_ops' array");
-        let ops = ops.unwrap();
-        assert!(!ops.is_empty(), "ane_op_family_matrix.json: 'ane_landing_ops' array is empty");
-        for (i, op) in ops.iter().enumerate() {
+        let entries = parsed.get("entries").and_then(|e| e.as_array());
+        assert!(entries.is_some(), "ane_op_family_matrix.json: missing 'entries' array");
+        let entries = entries.unwrap();
+        assert!(!entries.is_empty(), "ane_op_family_matrix.json: 'entries' array is empty");
+        for (i, entry) in entries.iter().enumerate() {
+            assert_eq!(
+                entry.get("knowledge_type").and_then(|v| v.as_str()),
+                Some("AneOpFamilyMatrix"),
+                "ane_op_family_matrix.json: entries[{}] knowledge_type should be AneOpFamilyMatrix",
+                i
+            );
+            let payload = entry.get("payload").and_then(|v| v.as_object());
+            assert!(payload.is_some(), "ane_op_family_matrix.json: entries[{}] missing 'payload'", i);
+            let payload = payload.unwrap();
             assert!(
-                op.get("mil_name").and_then(|v| v.as_str()).is_some(),
-                "ane_op_family_matrix.json: ane_landing_ops[{}] missing 'mil_name'",
+                payload.get("mil_name").and_then(|v| v.as_str()).is_some(),
+                "ane_op_family_matrix.json: entries[{}].payload missing 'mil_name'",
                 i
             );
             assert!(
-                op.get("families").and_then(|v| v.as_object()).is_some(),
-                "ane_op_family_matrix.json: ane_landing_ops[{}] missing 'families' object",
+                payload.get("families").and_then(|v| v.as_object()).is_some(),
+                "ane_op_family_matrix.json: entries[{}].payload missing 'families' object",
                 i
             );
         }
     }
 
-    // palettization_constraints_seed.json: must have expected sub-objects
+    // palettization_constraints_seed.json: entries[] with PalettizationConstraints knowledge_type
     let pal_path = Path::new(&dir).join("palettization_constraints_seed.json");
     if pal_path.exists() {
         let json_str = fs::read_to_string(&pal_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-        assert!(
-            parsed.get("conv_palette_minimums").is_some(),
-            "palettization_constraints_seed.json: missing 'conv_palette_minimums'"
-        );
-        assert!(
-            parsed.get("hard_rejections").is_some(),
-            "palettization_constraints_seed.json: missing 'hard_rejections'"
-        );
+        let entries = parsed.get("entries").and_then(|e| e.as_array());
+        assert!(entries.is_some(), "palettization_constraints_seed.json: missing 'entries' array");
+        let entries = entries.unwrap();
+        assert!(!entries.is_empty(), "palettization_constraints_seed.json: 'entries' array is empty");
+        for (i, entry) in entries.iter().enumerate() {
+            assert_eq!(
+                entry.get("knowledge_type").and_then(|v| v.as_str()),
+                Some("PalettizationConstraints"),
+                "palettization_constraints_seed.json: entries[{}] knowledge_type should be PalettizationConstraints",
+                i
+            );
+        }
     }
 }
 
@@ -282,12 +323,8 @@ fn test_store_load_seeds_from_directory_no_error() {
         .load_seeds_from_directory(&dir)
         .expect("load_seeds_from_directory should not error");
 
-    // Currently, entries in the seed files lack required KnowledgeUnit
-    // fields (version, timestamp, conflict_priority, payload), so they
-    // are skipped. This is expected — the test just verifies no error.
-    //
-    // When the migration is complete (entries wrapped in KnowledgeEntry
-    // format), loaded should be > 0.
+    // After the seed file migration to KnowledgeUnit schema, all entries
+    // should load successfully. loaded should be > 0.
     eprintln!(
         "Loaded {} seed entries from knowledge/ (some may be skipped due to schema mismatch)",
         loaded
@@ -324,7 +361,7 @@ fn test_expected_seed_files_present() {
     }
 }
 
-// ─── Test: precision_hazard_seed.json uses op_pattern (not op) ────────
+// ─── Test: precision_hazard_seed.json uses op_pattern in payload ─────
 
 #[test]
 fn test_precision_hazard_uses_op_pattern_field() {
@@ -343,10 +380,18 @@ fn test_precision_hazard_uses_op_pattern_field() {
 
     let entries = parsed.get("entries").and_then(|e| e.as_array()).unwrap();
     for (i, entry) in entries.iter().enumerate() {
+        // op_pattern is now inside the payload object
+        let payload = entry.get("payload").and_then(|v| v.as_object());
+        assert!(
+            payload.is_some(),
+            "precision_hazard_seed.json: entries[{}] missing 'payload' object",
+            i
+        );
+        let payload = payload.unwrap();
         // Must use "op_pattern", not the old "op" field name
         assert!(
-            entry.get("op_pattern").is_some(),
-            "precision_hazard_seed.json: entries[{}] missing 'op_pattern' field (was 'op' before T-129)",
+            payload.get("op_pattern").is_some(),
+            "precision_hazard_seed.json: entries[{}].payload missing 'op_pattern' field (was 'op' before T-129)",
             i
         );
         assert!(

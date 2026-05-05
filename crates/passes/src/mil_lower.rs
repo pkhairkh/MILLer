@@ -2579,6 +2579,8 @@ impl MilLowerPass {
                         .unwrap_or_else(|| MirNodeId(input.0.clone()));
                     MirOp::MILClassify { name: air_node.name.clone(), x: mi }
                 }
+                // Future AirOp variants added via #[non_exhaustive]
+                op => anyhow::bail!("mil_lower: unsupported AirOp variant: {:?}", op),
             };
 
             // Sprint 57: infer the output shape from the AIR op and propagate

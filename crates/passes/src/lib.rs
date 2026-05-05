@@ -10,22 +10,12 @@
 //!
 //! - **slanc_scales**: Normalization stabilization via pre-scale insertion for fp16 safety
 //! - **static_tables**: Pre-compute RoPE, causal mask, and identity tables as constants
-//! - **kv_cache_rewrite**: ~~Transform naive KV cache to masked-blend layout~~ DEPRECATED — generates ANE-illegal `Where` ops; KV masking is now handled by arithmetic masks in `legality_rewrite`
 //! - **palettize_weights**: Annotate weight tensors with mixed quantization strategies
 
 pub mod canonicalize;
 pub mod cpu_only_ops;
 pub mod dtype_constraints;
 pub mod knowledge_query;
-// T-85 (I-60): Deprecated kv_cache_rewrite module gated behind feature flag.
-// The module uses ANE-illegal `Where` ops and is not invoked by any active
-// compilation pipeline. Enable the `deprecated-kv-cache-rewrite` feature
-// only for reference/testing purposes.
-#[cfg(feature = "deprecated-kv-cache-rewrite")]
-#[deprecated(
-    note = "Generates ANE-illegal Where ops. KV masking is now handled by arithmetic masks in legality_rewrite."
-)]
-pub mod kv_cache_rewrite;
 pub mod legality_rewrite;
 pub mod mil_lower;
 pub mod op_constraints;

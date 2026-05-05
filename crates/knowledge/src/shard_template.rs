@@ -383,6 +383,8 @@ fn parse_evidence_source(s: &str) -> EvidenceSource {
         "RuntimeAnomaly" => EvidenceSource::RuntimeAnomaly,
         "ManualEntry" => EvidenceSource::ManualEntry,
         "CrossValidated" => EvidenceSource::CrossValidated,
+        "ComputePlan" => EvidenceSource::ComputePlan,
+        "SourceCode" => EvidenceSource::SourceCode,
         _ => EvidenceSource::ManualEntry, // Default for unknown sources
     }
 }

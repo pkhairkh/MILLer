@@ -3,13 +3,6 @@ name = "ane-passes"
 version = "0.1.0"
 edition = "2021"
 
-[features]
-# T-85 (I-60): Gate deprecated kv_cache_rewrite module behind a feature flag.
-# The module uses ANE-illegal `Where` ops and is not invoked by any active
-# compilation pipeline. Enable this feature only for reference/testing.
-default = []
-deprecated-kv-cache-rewrite = []
-
 [dependencies]
 ane-ir = { workspace = true }
 anyhow = { workspace = true }

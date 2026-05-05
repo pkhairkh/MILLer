@@ -2803,6 +2803,8 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             // ANEC binary handles them internally during model compilation.
             MirOp::AnecFusedConvActivate { name, .. } => unsupported("anec_fused_conv_activate", &name, &op_json),
             MirOp::AnecFusedLinearActivate { name, .. } => unsupported("anec_fused_linear_activate", &name, &op_json),
+            // Future MirOp variants added via #[non_exhaustive]
+            _ => unsupported("unknown_mir_op", "", &op_json),
         }
     }
 }

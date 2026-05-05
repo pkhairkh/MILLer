@@ -97,6 +97,7 @@ pub fn initial_confidence(source: &EvidenceSource, evidence_count: usize) -> f32
         EvidenceSource::ManualEntry => 0.5,
         EvidenceSource::CrossValidated => 0.6,
         EvidenceSource::ComputePlan => 0.9,
+        EvidenceSource::SourceCode => 0.3,
     };
 
     // Slight bonus for multiple evidence points

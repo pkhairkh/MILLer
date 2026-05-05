@@ -58,6 +58,9 @@ pub enum EvidenceSource {
     /// This is deterministic for a given hardware+OS combination,
     /// so observations from this source carry confidence 0.9.
     ComputePlan,
+    /// Evidence derived from source code analysis (e.g., cpu_only_ops.rs).
+    /// Moderate confidence: static analysis, not runtime observation.
+    SourceCode,
 }
 
 impl std::fmt::Display for EvidenceSource {
@@ -71,6 +74,7 @@ impl std::fmt::Display for EvidenceSource {
             EvidenceSource::ManualEntry => write!(f, "ManualEntry"),
             EvidenceSource::CrossValidated => write!(f, "CrossValidated"),
             EvidenceSource::ComputePlan => write!(f, "ComputePlan"),
+            EvidenceSource::SourceCode => write!(f, "SourceCode"),
         }
     }
 }

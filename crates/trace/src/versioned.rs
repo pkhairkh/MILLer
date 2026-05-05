@@ -796,7 +796,8 @@ impl OpSupportMatrix {
                 OpSupport::CpuOnly("RNN/LSTM/GRU have no direct ANEC converter".to_string())
             }
 
-            // ─── Elementwise ops handled individually ────────────────
+            // ─── Future SirOp variants added via #[non_exhaustive] ────
+            _ => OpSupport::Unsupported("Unknown SirOp variant".to_string()),
         }
     }
 }

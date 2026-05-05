@@ -1,2090 +1,4707 @@
 {
-  "version": "1.0.0",
-  "source": "ane-constraints-docs/04-operation-support/",
-  "description": "Per-family ANE op legality matrix. Each entry documents whether a MIL op can land on the ANE for a given AneFamily, and what constraints apply.",
-  "ane_landing_ops": [
-    {
-      "mil_name": "linear",
-      "anec_dialect": "ANELinear",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "input_rank_lt_5",
-        "fp16_or_fp32_weight"
-      ]
-    },
-    {
-      "mil_name": "matmul",
-      "anec_dialect": "ANEMatMul",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "fp16_inputs"
-      ]
-    },
-    {
-      "mil_name": "einsum",
-      "anec_dialect": "ANEMatMul",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "partial",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "limited_equation_set",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "conv",
-      "anec_dialect": "ANEConv",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "kernel_limit_per_family",
-        "dilation_limit_per_family"
-      ]
-    },
-    {
-      "mil_name": "conv_transpose",
-      "anec_dialect": "ANEConv",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "no_dilation"
-      ]
-    },
-    {
-      "mil_name": "scaled_dot_product_attention",
-      "anec_dialect": "ANEScaledDotProductAttention",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unreliable",
-        "A13": "unreliable",
-        "A14": "unreliable",
-        "A15": "unreliable",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "3_or_4_inputs",
-        "operand_rank_le_4",
-        "k_v_shape_equality",
-        "reliable_only_a16_plus"
-      ]
-    },
-    {
-      "mil_name": "max_pool",
-      "anec_dialect": "ANEPool",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "avg_pool",
-      "anec_dialect": "ANEPool",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "l2_pool",
-      "anec_dialect": "ANEPool",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "resize",
-      "anec_dialect": "ANEResize",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "partial",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "bilinear_or_nearest",
-        "rank_4_only"
-      ]
-    },
-    {
-      "mil_name": "resize_nearest_neighbor",
-      "anec_dialect": "ANEResize",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_4_only"
-      ]
-    },
-    {
-      "mil_name": "resize_bilinear",
-      "anec_dialect": "ANEResize",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_4_only"
-      ]
-    },
-    {
-      "mil_name": "upsample_nearest_neighbor",
-      "anec_dialect": "ANEResize",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_4_only"
-      ]
-    },
-    {
-      "mil_name": "upsample_bilinear",
-      "anec_dialect": "ANEResize",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_4_only"
-      ]
-    },
-    {
-      "mil_name": "crop_resize",
-      "anec_dialect": "ANEResize",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_4_only"
-      ]
-    },
-    {
-      "mil_name": "resample",
-      "anec_dialect": "ANEResample",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "depth_to_space",
-      "anec_dialect": "ANEDepthSpace",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_4_only"
-      ]
-    },
-    {
-      "mil_name": "space_to_depth",
-      "anec_dialect": "ANEDepthSpace",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_4_only"
-      ]
-    },
-    {
-      "mil_name": "pixel_shuffle",
-      "anec_dialect": "ANEDepthSpace",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_4_only"
-      ]
-    },
-    {
-      "mil_name": "pixel_unshuffle",
-      "anec_dialect": "ANEDepthSpace",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_4_only"
-      ]
-    },
-    {
-      "mil_name": "batch_to_space",
-      "anec_dialect": "ANEBatchSpace",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "space_to_batch",
-      "anec_dialect": "ANEBatchSpace",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "add",
-      "anec_dialect": "PEFUSEDElementwiseBinary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "fp16_only_broadcast",
-        "A12": "fp16_only_broadcast",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "broadcast_fp16_only_pre_a13",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "mul",
-      "anec_dialect": "PEFUSEDElementwiseBinary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "fp16_only_broadcast",
-        "A12": "fp16_only_broadcast",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "broadcast_fp16_only_pre_a13",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "sub",
-      "anec_dialect": "PEFUSEDElementwiseBinary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "fp16_only_broadcast",
-        "A12": "fp16_only_broadcast",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "broadcast_fp16_only_pre_a13",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "maximum",
-      "anec_dialect": "PEFUSEDElementwiseBinary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "a14_plus_elementwise_binary",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "minimum",
-      "anec_dialect": "PEFUSEDElementwiseBinary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "a14_plus_elementwise_binary",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "real_div",
-      "anec_dialect": "PEFUSEDElementwiseBinary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "a14_plus_elementwise_binary",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "floor_div",
-      "anec_dialect": "PEFUSEDElementwiseBinary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "a14_plus_elementwise_binary",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "mod",
-      "anec_dialect": "PEFUSEDElementwiseBinary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "a14_plus_elementwise_binary",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "pow",
-      "anec_dialect": "PEFUSEDElementwiseBinary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "a14_plus_elementwise_binary",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "equal",
-      "anec_dialect": "PEFUSEDCompare",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "a14_plus",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "not_equal",
-      "anec_dialect": "PEFUSEDCompare",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "a14_plus",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "greater",
-      "anec_dialect": "PEFUSEDCompare",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "a14_plus",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "greater_equal",
-      "anec_dialect": "PEFUSEDCompare",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "a14_plus",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "less",
-      "anec_dialect": "PEFUSEDCompare",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "a14_plus",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "less_equal",
-      "anec_dialect": "PEFUSEDCompare",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "a14_plus",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "abs",
-      "anec_dialect": "PEFUSEDElementwiseUnary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "neg",
-      "anec_dialect": "PEFUSEDElementwiseUnary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ],
-      "practical_status": "cpu_only",
-      "empirical_note": "PEFUSEDElementwiseUnary converter exists for neg in ANEC, but cpu_only_ops.rs marks neg as CPU-only. The theoretical converter is not invoked by the placement pass; the op always falls back to CPU. Likely excluded because neg has no dedicated ANE hardware path despite sharing the generic unary dialect."
-    },
-    {
-      "mil_name": "sigmoid",
-      "anec_dialect": "PEFUSEDActivation",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "tanh",
-      "anec_dialect": "PEFUSEDActivation",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "relu",
-      "anec_dialect": "PEFUSEDActivation",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "gelu",
-      "anec_dialect": "PEFUSEDActivation",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "tanh_approx_preferred"
-      ]
-    },
-    {
-      "mil_name": "silu",
-      "anec_dialect": "PEFUSEDActivation",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "leaky_relu",
-      "anec_dialect": "PEFUSEDActivation",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "clip",
-      "anec_dialect": "PEFUSEDActivation",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "exp",
-      "anec_dialect": "PEFUSEDElementwiseUnary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "precision_hazard_fp16"
-      ]
-    },
-    {
-      "mil_name": "sqrt",
-      "anec_dialect": "PEFUSEDElementwiseUnary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "rsqrt",
-      "anec_dialect": "PEFUSEDElementwiseUnary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "precision_hazard_fp16"
-      ]
-    },
-    {
-      "mil_name": "cast",
-      "anec_dialect": "PEFUSEDConvert",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "limited_type_pairs"
-      ]
-    },
-    {
-      "mil_name": "softmax",
-      "anec_dialect": "PEFUSEDSoftmax",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "axis_must_be_inner_dim"
-      ],
-      "architecture_conditional": true,
-      "architecture_conditional_note": "ConvertSoftmax is family-agnostic (no MinimumFamily in binary) but ANEC has architecture-conditional rejection strings. Older variants (A11Legacy/A12/A13) may reject at compile time. T-105 adds soft-warning at placement for these families."
-    },
-    {
-      "mil_name": "where",
-      "anec_dialect": "PEFUSEDSelect",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ],
-      "practical_status": "cpu_only",
-      "empirical_note": "PEFUSEDSelect converter exists in ANEC for where, but cpu_only_ops.rs marks where as CPU-only with NoANECConverter reason. The converter exists in the binary but is never invoked during placement; the op always falls back to CPU. The select/where ANE path may be reserved for internal fusion patterns only."
-    },
-    {
-      "mil_name": "select",
-      "anec_dialect": "PEFUSEDSelect",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ],
-      "practical_status": "cpu_only",
-      "empirical_note": "PEFUSEDSelect converter exists in ANEC for select, but cpu_only_ops.rs marks select as CPU-only with NoANECConverter reason. The converter exists in the binary but is never invoked during placement; the op always falls back to CPU. The select/where ANE path may be reserved for internal fusion patterns only."
-    },
-    {
-      "mil_name": "reduce_sum",
-      "anec_dialect": "PEFUSEDReduce",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "limited_axes"
-      ]
-    },
-    {
-      "mil_name": "reduce_mean",
-      "anec_dialect": "PEFUSEDReduce",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "limited_axes"
-      ]
-    },
-    {
-      "mil_name": "reduce_max",
-      "anec_dialect": "PEFUSEDReduce",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "limited_axes"
-      ]
-    },
-    {
-      "mil_name": "reduce_min",
-      "anec_dialect": "PEFUSEDReduce",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "limited_axes"
-      ]
-    },
-    {
-      "mil_name": "layer_norm",
-      "anec_dialect": "PEFUSEDLayerNorm",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "unsupported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "a15_plus_only",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "batch_norm",
-      "anec_dialect": "PEFUSEDBatchNorm",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "instance_norm",
-      "anec_dialect": "PEFUSEDInstanceNorm",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ],
-      "architecture_conditional": true,
-      "architecture_conditional_note": "ConvertInstanceNorm is family-agnostic but architecture-conditional. A11Legacy is explicitly unsupported. Older variants (A12/A13) may reject at compile time. T-105 adds soft-warning at placement for these families."
-    },
-    {
-      "mil_name": "reshape",
-      "anec_dialect": "PEFUSEDReshape",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "no_dynamic_shape"
-      ]
-    },
-    {
-      "mil_name": "transpose",
-      "anec_dialect": "TRANSPOSE",
-      "engine": "TransposeEngine",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "concat",
-      "anec_dialect": "PEFUSEDConcat",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "limited_concat_count"
-      ]
-    },
-    {
-      "mil_name": "split",
-      "anec_dialect": "PEFUSEDSplit",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "slice_by_index",
-      "anec_dialect": "PEFUSEDSlice",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "partial",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "limited_stride_support"
-      ]
-    },
-    {
-      "mil_name": "pad",
-      "anec_dialect": "PEFUSEDPad",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "constant_or_reflection_mode"
-      ]
-    },
-    {
-      "mil_name": "gather",
-      "anec_dialect": "PEFUSEDGather",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "limited_index_range"
-      ],
-      "practical_status": "cpu_only",
-      "empirical_note": "PEFUSEDGather converter exists in ANEC and shows family support in the binary, but cpu_only_ops.rs marks gather as CPU-only. The compiler placement pass always falls back to CPU for gather. The ANEC gather converter may be used only for internal/fused patterns; standalone gather ops are CPU-only. Prefer SliceByIndex for ANE-compatible indexing."
-    },
-    {
-      "mil_name": "topk",
-      "anec_dialect": "PEFUSEDTopK",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "limited_k"
-      ]
-    },
-    {
-      "mil_name": "quantize",
-      "anec_dialect": "PEFUSEDQuantize",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "dequantize",
-      "anec_dialect": "PEFUSEDDequantize",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "tile",
-      "anec_dialect": "PEFUSEDTile",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "reverse",
-      "anec_dialect": "PEFUSEDReverse",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "expand_dims",
-      "anec_dialect": "PEFUSEDExpandDims",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "squeeze",
-      "anec_dialect": "PEFUSEDSqueeze",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "slice_update",
-      "anec_dialect": "PEFUSEDSliceUpdate",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "cos",
-      "anec_dialect": "PEFUSEDElementwiseUnary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "sin",
-      "anec_dialect": "PEFUSEDElementwiseUnary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "logical_and",
-      "anec_dialect": "PEFUSEDLogicalBinary",
-      "engine": "none",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "unsupported",
-        "A15": "unsupported",
-        "A16": "unsupported",
-        "A17": "unsupported",
-        "A18": "unsupported"
-      },
-      "key_constraints": [
-        "no_anec_converter"
-      ]
-    },
-    {
-      "mil_name": "logical_or",
-      "anec_dialect": "PEFUSEDLogicalBinary",
-      "engine": "none",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "unsupported",
-        "A15": "unsupported",
-        "A16": "unsupported",
-        "A17": "unsupported",
-        "A18": "unsupported"
-      },
-      "key_constraints": [
-        "no_anec_converter"
-      ]
-    },
-    {
-      "mil_name": "logical_not",
-      "anec_dialect": "PEFUSEDLogicalUnary",
-      "engine": "none",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "unsupported",
-        "A15": "unsupported",
-        "A16": "unsupported",
-        "A17": "unsupported",
-        "A18": "unsupported"
-      },
-      "key_constraints": [
-        "no_anec_converter"
-      ]
-    },
-    {
-      "mil_name": "prelu",
-      "anec_dialect": "PEFUSEDActivation",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "elu",
-      "anec_dialect": "PEFUSEDActivation",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "softsign",
-      "anec_dialect": "PEFUSEDActivation",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "thresholded_relu",
-      "anec_dialect": "PEFUSEDActivation",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "relu6",
-      "anec_dialect": "PEFUSEDActivation",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "scaled_tanh",
-      "anec_dialect": "PEFUSEDActivation",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "sigmoid_hard",
-      "anec_dialect": "PEFUSEDActivation",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "reduce_prod",
-      "anec_dialect": "PEFUSEDReduce",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "reduce_argmax",
-      "anec_dialect": "PEFUSEDReduce",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "reduce_argmin",
-      "anec_dialect": "PEFUSEDReduce",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "affine",
-      "anec_dialect": "ANEResize",
-      "engine": "NE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_4_only"
-      ]
-    },
-    {
-      "mil_name": "flatten2d",
-      "anec_dialect": "PEFUSEDReshape",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "stack",
-      "anec_dialect": "PEFUSEDStack",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "l2_norm",
-      "anec_dialect": "PEFUSEDNorm",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "gather_nd",
-      "anec_dialect": "PEFUSEDGather",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "unsupported",
-        "A13": "unsupported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "a14_plus",
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "argsort",
-      "anec_dialect": "PEFUSEDArgSort",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "identity",
-      "anec_dialect": "PEFUSEDIdentity",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "supported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "logical_xor",
-      "anec_dialect": "PEFUSEDLogicalBinary",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "sliding_windows",
-      "anec_dialect": "PEFUSEDSlidingWindows",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "slice_by_size",
-      "anec_dialect": "PEFUSEDSlice",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5"
-      ]
-    },
-    {
-      "mil_name": "reshape_like",
-      "anec_dialect": "PEFUSEDReshape",
-      "engine": "PE",
-      "families": {
-        "A11Legacy": "unsupported",
-        "A12": "supported",
-        "A13": "supported",
-        "A14": "supported",
-        "A15": "supported",
-        "A16": "supported",
-        "A17": "supported",
-        "A18": "supported"
-      },
-      "key_constraints": [
-        "rank_le_5",
-        "no_dynamic_shape"
-      ]
-    }
-  ],
-  "cpu_only_ops": [
-    {
-      "mil_name": "scatter",
-      "reason_code": "Scatter"
-    },
-    {
-      "mil_name": "scatter_along_axis",
-      "reason_code": "Scatter"
-    },
-    {
-      "mil_name": "scatter_nd",
-      "reason_code": "Scatter"
-    },
-    {
-      "mil_name": "non_maximum_suppression",
-      "reason_code": "Scatter"
-    },
-    {
-      "mil_name": "rnn",
-      "reason_code": "RNN"
-    },
-    {
-      "mil_name": "gru",
-      "reason_code": "RNN"
-    },
-    {
-      "mil_name": "lstm",
-      "reason_code": "RNN"
-    },
-    {
-      "mil_name": "cond",
-      "reason_code": "ControlFlow"
-    },
-    {
-      "mil_name": "while_loop",
-      "reason_code": "ControlFlow"
-    },
-    {
-      "mil_name": "make_list",
-      "reason_code": "ControlFlow"
-    },
-    {
-      "mil_name": "list_length",
-      "reason_code": "ControlFlow"
-    },
-    {
-      "mil_name": "list_write",
-      "reason_code": "ControlFlow"
-    },
-    {
-      "mil_name": "list_read",
-      "reason_code": "ControlFlow"
-    },
-    {
-      "mil_name": "list_gather",
-      "reason_code": "ControlFlow"
-    },
-    {
-      "mil_name": "list_scatter",
-      "reason_code": "ControlFlow"
-    },
-    {
-      "mil_name": "random_bernoulli",
-      "reason_code": "Random"
-    },
-    {
-      "mil_name": "random_normal",
-      "reason_code": "Random"
-    },
-    {
-      "mil_name": "random_uniform",
-      "reason_code": "Random"
-    },
-    {
-      "mil_name": "random_categorical",
-      "reason_code": "Random"
-    },
-    {
-      "mil_name": "cumsum",
-      "reason_code": "Cumulative"
-    },
-    {
-      "mil_name": "constexpr_affine_dequantize",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "constexpr_blockwise_shift_scale",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "constexpr_lut_to_dense",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "constexpr_sparse_to_dense",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "constexpr_cast",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "constexpr_lut_to_sparse",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "constexpr_sparse_blockwise_shift_scale",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "classify",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "read_state",
-      "reason_code": "ControlFlow"
-    },
-    {
-      "mil_name": "coreml_update_state",
-      "reason_code": "ControlFlow"
-    },
-    {
-      "mil_name": "state_write",
-      "reason_code": "ControlFlow"
-    },
-    {
-      "mil_name": "const",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "reverse_sequence",
-      "reason_code": "Cumulative"
-    },
-    {
-      "mil_name": "one_hot",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "non_zero",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "band_part",
-      "reason_code": "MatrixAlgebra"
-    },
-    {
-      "mil_name": "range_1d",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "shape",
-      "reason_code": "ShapeQuery"
-    },
-    {
-      "mil_name": "crop",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "fill",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "fill_like",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "gather_along_axis",
-      "reason_code": "Scatter"
-    },
-    {
-      "mil_name": "local_response_norm",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "reduce_sum_square",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "reduce_l2_norm",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "reduce_l1_norm",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "reduce_log_sum_exp",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "reduce_log_sum",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "softplus",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "softplus_parametric",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "clamped_relu",
-      "reason_code": "NoConverter"
-    },
-    {
-      "mil_name": "linear_activation",
-      "reason_code": "NoConverter"
+  "version": 1,
+  "description": "Per-family ANE op legality matrix. Source: ane-constraints-docs/04-operation-support/",
+  "entries": [
+    {
+      "id": "ane_op_family_linear",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "linear",
+        "anec_dialect": "ANELinear",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "input_rank_lt_5",
+          "fp16_or_fp32_weight"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_matmul",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "matmul",
+        "anec_dialect": "ANEMatMul",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "fp16_inputs"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_einsum",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "einsum",
+        "anec_dialect": "ANEMatMul",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "partial",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "limited_equation_set",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_conv",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "conv",
+        "anec_dialect": "ANEConv",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "kernel_limit_per_family",
+          "dilation_limit_per_family"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_conv_transpose",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "conv_transpose",
+        "anec_dialect": "ANEConv",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "no_dilation"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_scaled_dot_product_attention",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "scaled_dot_product_attention",
+        "anec_dialect": "ANEScaledDotProductAttention",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unreliable",
+          "A13": "unreliable",
+          "A14": "unreliable",
+          "A15": "unreliable",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "3_or_4_inputs",
+          "operand_rank_le_4",
+          "k_v_shape_equality",
+          "reliable_only_a16_plus"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_max_pool",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "max_pool",
+        "anec_dialect": "ANEPool",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_avg_pool",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "avg_pool",
+        "anec_dialect": "ANEPool",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_l2_pool",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "l2_pool",
+        "anec_dialect": "ANEPool",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_resize",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "resize",
+        "anec_dialect": "ANEResize",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "partial",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "bilinear_or_nearest",
+          "rank_4_only"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_resize_nearest_neighbor",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "resize_nearest_neighbor",
+        "anec_dialect": "ANEResize",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_4_only"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_resize_bilinear",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "resize_bilinear",
+        "anec_dialect": "ANEResize",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_4_only"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_upsample_nearest_neighbor",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "upsample_nearest_neighbor",
+        "anec_dialect": "ANEResize",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_4_only"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_upsample_bilinear",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "upsample_bilinear",
+        "anec_dialect": "ANEResize",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_4_only"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_crop_resize",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "crop_resize",
+        "anec_dialect": "ANEResize",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_4_only"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_resample",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "resample",
+        "anec_dialect": "ANEResample",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_depth_to_space",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "depth_to_space",
+        "anec_dialect": "ANEDepthSpace",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_4_only"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_space_to_depth",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "space_to_depth",
+        "anec_dialect": "ANEDepthSpace",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_4_only"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_pixel_shuffle",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "pixel_shuffle",
+        "anec_dialect": "ANEDepthSpace",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_4_only"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_pixel_unshuffle",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "pixel_unshuffle",
+        "anec_dialect": "ANEDepthSpace",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_4_only"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_batch_to_space",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "batch_to_space",
+        "anec_dialect": "ANEBatchSpace",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_space_to_batch",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "space_to_batch",
+        "anec_dialect": "ANEBatchSpace",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_add",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "add",
+        "anec_dialect": "PEFUSEDElementwiseBinary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "fp16_only_broadcast",
+          "A12": "fp16_only_broadcast",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "broadcast_fp16_only_pre_a13",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_mul",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "mul",
+        "anec_dialect": "PEFUSEDElementwiseBinary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "fp16_only_broadcast",
+          "A12": "fp16_only_broadcast",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "broadcast_fp16_only_pre_a13",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_sub",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "sub",
+        "anec_dialect": "PEFUSEDElementwiseBinary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "fp16_only_broadcast",
+          "A12": "fp16_only_broadcast",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "broadcast_fp16_only_pre_a13",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_maximum",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "maximum",
+        "anec_dialect": "PEFUSEDElementwiseBinary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "a14_plus_elementwise_binary",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_minimum",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "minimum",
+        "anec_dialect": "PEFUSEDElementwiseBinary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "a14_plus_elementwise_binary",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_real_div",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "real_div",
+        "anec_dialect": "PEFUSEDElementwiseBinary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "a14_plus_elementwise_binary",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_floor_div",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "floor_div",
+        "anec_dialect": "PEFUSEDElementwiseBinary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "a14_plus_elementwise_binary",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_mod",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "mod",
+        "anec_dialect": "PEFUSEDElementwiseBinary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "a14_plus_elementwise_binary",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_pow",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "pow",
+        "anec_dialect": "PEFUSEDElementwiseBinary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "a14_plus_elementwise_binary",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_equal",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "equal",
+        "anec_dialect": "PEFUSEDCompare",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "a14_plus",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_not_equal",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "not_equal",
+        "anec_dialect": "PEFUSEDCompare",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "a14_plus",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_greater",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "greater",
+        "anec_dialect": "PEFUSEDCompare",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "a14_plus",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_greater_equal",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "greater_equal",
+        "anec_dialect": "PEFUSEDCompare",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "a14_plus",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_less",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "less",
+        "anec_dialect": "PEFUSEDCompare",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "a14_plus",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_less_equal",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "less_equal",
+        "anec_dialect": "PEFUSEDCompare",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "a14_plus",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_abs",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "abs",
+        "anec_dialect": "PEFUSEDElementwiseUnary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_neg",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "neg",
+        "anec_dialect": "PEFUSEDElementwiseUnary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ],
+        "practical_status": "cpu_only",
+        "empirical_note": "PEFUSEDElementwiseUnary converter exists for neg in ANEC, but cpu_only_ops.rs marks neg as CPU-only. The theoretical converter is not invoked by the placement pass; the op always falls back to CPU. Likely excluded because neg has no dedicated ANE hardware path despite sharing the generic unary dialect."
+      }
+    },
+    {
+      "id": "ane_op_family_sigmoid",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "sigmoid",
+        "anec_dialect": "PEFUSEDActivation",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_tanh",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "tanh",
+        "anec_dialect": "PEFUSEDActivation",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_relu",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "relu",
+        "anec_dialect": "PEFUSEDActivation",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_gelu",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "gelu",
+        "anec_dialect": "PEFUSEDActivation",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "tanh_approx_preferred"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_silu",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "silu",
+        "anec_dialect": "PEFUSEDActivation",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_leaky_relu",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "leaky_relu",
+        "anec_dialect": "PEFUSEDActivation",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_clip",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "clip",
+        "anec_dialect": "PEFUSEDActivation",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_exp",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "exp",
+        "anec_dialect": "PEFUSEDElementwiseUnary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "precision_hazard_fp16"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_sqrt",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "sqrt",
+        "anec_dialect": "PEFUSEDElementwiseUnary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_rsqrt",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "rsqrt",
+        "anec_dialect": "PEFUSEDElementwiseUnary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "precision_hazard_fp16"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_cast",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "cast",
+        "anec_dialect": "PEFUSEDConvert",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "limited_type_pairs"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_softmax",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "softmax",
+        "anec_dialect": "PEFUSEDSoftmax",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "axis_must_be_inner_dim"
+        ],
+        "architecture_conditional": true,
+        "architecture_conditional_note": "ConvertSoftmax is family-agnostic (no MinimumFamily in binary) but ANEC has architecture-conditional rejection strings. Older variants (A11Legacy/A12/A13) may reject at compile time. T-105 adds soft-warning at placement for these families."
+      }
+    },
+    {
+      "id": "ane_op_family_where",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "where",
+        "anec_dialect": "PEFUSEDSelect",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ],
+        "practical_status": "cpu_only",
+        "empirical_note": "PEFUSEDSelect converter exists in ANEC for where, but cpu_only_ops.rs marks where as CPU-only with NoANECConverter reason. The converter exists in the binary but is never invoked during placement; the op always falls back to CPU. The select/where ANE path may be reserved for internal fusion patterns only."
+      }
+    },
+    {
+      "id": "ane_op_family_select",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "select",
+        "anec_dialect": "PEFUSEDSelect",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ],
+        "practical_status": "cpu_only",
+        "empirical_note": "PEFUSEDSelect converter exists in ANEC for select, but cpu_only_ops.rs marks select as CPU-only with NoANECConverter reason. The converter exists in the binary but is never invoked during placement; the op always falls back to CPU. The select/where ANE path may be reserved for internal fusion patterns only."
+      }
+    },
+    {
+      "id": "ane_op_family_reduce_sum",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "reduce_sum",
+        "anec_dialect": "PEFUSEDReduce",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "limited_axes"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_reduce_mean",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "reduce_mean",
+        "anec_dialect": "PEFUSEDReduce",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "limited_axes"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_reduce_max",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "reduce_max",
+        "anec_dialect": "PEFUSEDReduce",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "limited_axes"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_reduce_min",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "reduce_min",
+        "anec_dialect": "PEFUSEDReduce",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "limited_axes"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_layer_norm",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "layer_norm",
+        "anec_dialect": "PEFUSEDLayerNorm",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "unsupported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "a15_plus_only",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_batch_norm",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "batch_norm",
+        "anec_dialect": "PEFUSEDBatchNorm",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_instance_norm",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "instance_norm",
+        "anec_dialect": "PEFUSEDInstanceNorm",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ],
+        "architecture_conditional": true,
+        "architecture_conditional_note": "ConvertInstanceNorm is family-agnostic but architecture-conditional. A11Legacy is explicitly unsupported. Older variants (A12/A13) may reject at compile time. T-105 adds soft-warning at placement for these families."
+      }
+    },
+    {
+      "id": "ane_op_family_reshape",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "reshape",
+        "anec_dialect": "PEFUSEDReshape",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "no_dynamic_shape"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_transpose",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "transpose",
+        "anec_dialect": "TRANSPOSE",
+        "engine": "TransposeEngine",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_concat",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "concat",
+        "anec_dialect": "PEFUSEDConcat",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "limited_concat_count"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_split",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "split",
+        "anec_dialect": "PEFUSEDSplit",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_slice_by_index",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "slice_by_index",
+        "anec_dialect": "PEFUSEDSlice",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "partial",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "limited_stride_support"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_pad",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "pad",
+        "anec_dialect": "PEFUSEDPad",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "constant_or_reflection_mode"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_gather",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "gather",
+        "anec_dialect": "PEFUSEDGather",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "limited_index_range"
+        ],
+        "practical_status": "cpu_only",
+        "empirical_note": "PEFUSEDGather converter exists in ANEC and shows family support in the binary, but cpu_only_ops.rs marks gather as CPU-only. The compiler placement pass always falls back to CPU for gather. The ANEC gather converter may be used only for internal/fused patterns; standalone gather ops are CPU-only. Prefer SliceByIndex for ANE-compatible indexing."
+      }
+    },
+    {
+      "id": "ane_op_family_topk",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "topk",
+        "anec_dialect": "PEFUSEDTopK",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "limited_k"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_quantize",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "quantize",
+        "anec_dialect": "PEFUSEDQuantize",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_dequantize",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "dequantize",
+        "anec_dialect": "PEFUSEDDequantize",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_tile",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "tile",
+        "anec_dialect": "PEFUSEDTile",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_reverse",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "reverse",
+        "anec_dialect": "PEFUSEDReverse",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_expand_dims",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "expand_dims",
+        "anec_dialect": "PEFUSEDExpandDims",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_squeeze",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "squeeze",
+        "anec_dialect": "PEFUSEDSqueeze",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_slice_update",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "slice_update",
+        "anec_dialect": "PEFUSEDSliceUpdate",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_cos",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "cos",
+        "anec_dialect": "PEFUSEDElementwiseUnary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_sin",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "sin",
+        "anec_dialect": "PEFUSEDElementwiseUnary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_logical_and",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "logical_and",
+        "anec_dialect": "PEFUSEDLogicalBinary",
+        "engine": "none",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "unsupported",
+          "A15": "unsupported",
+          "A16": "unsupported",
+          "A17": "unsupported",
+          "A18": "unsupported"
+        },
+        "key_constraints": [
+          "no_anec_converter"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_logical_or",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "logical_or",
+        "anec_dialect": "PEFUSEDLogicalBinary",
+        "engine": "none",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "unsupported",
+          "A15": "unsupported",
+          "A16": "unsupported",
+          "A17": "unsupported",
+          "A18": "unsupported"
+        },
+        "key_constraints": [
+          "no_anec_converter"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_logical_not",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "logical_not",
+        "anec_dialect": "PEFUSEDLogicalUnary",
+        "engine": "none",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "unsupported",
+          "A15": "unsupported",
+          "A16": "unsupported",
+          "A17": "unsupported",
+          "A18": "unsupported"
+        },
+        "key_constraints": [
+          "no_anec_converter"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_prelu",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "prelu",
+        "anec_dialect": "PEFUSEDActivation",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_elu",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "elu",
+        "anec_dialect": "PEFUSEDActivation",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_softsign",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "softsign",
+        "anec_dialect": "PEFUSEDActivation",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_thresholded_relu",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "thresholded_relu",
+        "anec_dialect": "PEFUSEDActivation",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_relu6",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "relu6",
+        "anec_dialect": "PEFUSEDActivation",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_scaled_tanh",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "scaled_tanh",
+        "anec_dialect": "PEFUSEDActivation",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_sigmoid_hard",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "sigmoid_hard",
+        "anec_dialect": "PEFUSEDActivation",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_reduce_prod",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "reduce_prod",
+        "anec_dialect": "PEFUSEDReduce",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_reduce_argmax",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "reduce_argmax",
+        "anec_dialect": "PEFUSEDReduce",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_reduce_argmin",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "reduce_argmin",
+        "anec_dialect": "PEFUSEDReduce",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_affine",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "affine",
+        "anec_dialect": "ANEResize",
+        "engine": "NE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_4_only"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_flatten2d",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "flatten2d",
+        "anec_dialect": "PEFUSEDReshape",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_stack",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "stack",
+        "anec_dialect": "PEFUSEDStack",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_l2_norm",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "l2_norm",
+        "anec_dialect": "PEFUSEDNorm",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_gather_nd",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "gather_nd",
+        "anec_dialect": "PEFUSEDGather",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "unsupported",
+          "A13": "unsupported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "a14_plus",
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_argsort",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "argsort",
+        "anec_dialect": "PEFUSEDArgSort",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_identity",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "identity",
+        "anec_dialect": "PEFUSEDIdentity",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "supported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_logical_xor",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "logical_xor",
+        "anec_dialect": "PEFUSEDLogicalBinary",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_sliding_windows",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "sliding_windows",
+        "anec_dialect": "PEFUSEDSlidingWindows",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_slice_by_size",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "slice_by_size",
+        "anec_dialect": "PEFUSEDSlice",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5"
+        ]
+      }
+    },
+    {
+      "id": "ane_op_family_reshape_like",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "AneOpFamilyMatrix",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13",
+          "A14",
+          "A15",
+          "A16",
+          "A17",
+          "A18"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "reshape_like",
+        "anec_dialect": "PEFUSEDReshape",
+        "engine": "PE",
+        "families": {
+          "A11Legacy": "unsupported",
+          "A12": "supported",
+          "A13": "supported",
+          "A14": "supported",
+          "A15": "supported",
+          "A16": "supported",
+          "A17": "supported",
+          "A18": "supported"
+        },
+        "key_constraints": [
+          "rank_le_5",
+          "no_dynamic_shape"
+        ]
+      }
     }
   ]
 }

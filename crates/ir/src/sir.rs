@@ -39,6 +39,7 @@ fn default_qk_norm_type() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SirOp {
     // ─── Composite / High-Level Semantic Ops ─────────────────────
     LinearProjection {

@@ -190,6 +190,15 @@ impl ModelArchitecture {
     }
 }
 
+impl std::fmt::Display for ModelArchitecture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ModelArchitecture::Qwen3 => write!(f, "Qwen3"),
+            ModelArchitecture::Generic { .. } => write!(f, "Generic"),
+        }
+    }
+}
+
 /// Model architecture configuration for the compilation pipeline.
 ///
 /// Carries model-specific constants that were previously hardcoded throughout

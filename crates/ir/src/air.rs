@@ -39,6 +39,7 @@ impl IrNodeId for AirNodeId {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum AirOp {
     // ─── Constants ───────────────────────────────────────────────
     Const {

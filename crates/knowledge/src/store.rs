@@ -128,15 +128,15 @@ pub struct KnowledgeStore {
     /// Root directory of the store.
     path: PathBuf,
     /// In-memory index of all entries.
-    index: HashMap<String, KnowledgeEntry>,
+    pub(crate) index: HashMap<String, KnowledgeEntry>,
     /// The store metadata.
     store_index: StoreIndex,
     /// Secondary index: knowledge type → entry IDs.
     /// Allows O(1) lookup of all entries of a given type instead of O(n) scan.
-    type_index: HashMap<KnowledgeType, Vec<String>>,
+    pub(crate) type_index: HashMap<KnowledgeType, Vec<String>>,
     /// Secondary index: evidence source → entry IDs.
     /// Allows O(1) lookup of entries by source instead of O(n) scan.
-    source_index: HashMap<String, Vec<String>>,
+    pub(crate) source_index: HashMap<String, Vec<String>>,
 }
 
 impl KnowledgeStore {

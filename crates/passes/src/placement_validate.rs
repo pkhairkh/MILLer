@@ -950,6 +950,8 @@ fn op_name(op: &MirOp) -> &'static str {
         // T-P4-08: ANEC internal ops
         MirOp::AnecFusedConvActivate { .. } => "AnecFusedConvActivate",
         MirOp::AnecFusedLinearActivate { .. } => "AnecFusedLinearActivate",
+        // Future variants added via #[non_exhaustive]
+        _ => "<unknown>",
     }
 }
 

@@ -51,6 +51,17 @@ pub enum DeviceClass {
     Unknown(String),
 }
 
+impl std::fmt::Display for DeviceClass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeviceClass::NeuralEngine => write!(f, "NeuralEngine"),
+            DeviceClass::CPU => write!(f, "CPU"),
+            DeviceClass::GPU => write!(f, "GPU"),
+            DeviceClass::Unknown(s) => write!(f, "Unknown({})", s),
+        }
+    }
+}
+
 impl DeviceClass {
     /// Parse from the string returned by MLComputePlan.
     pub fn from_coreml_string(s: &str) -> Self {
@@ -420,7 +431,7 @@ fn compute_proof_hash(placements: &[PlacementEntry]) -> String {
         hasher.update(p.function_name.as_bytes());
         hasher.update(p.op_name.as_bytes());
         hasher.update(p.op_type.as_bytes());
-        hasher.update(format!("{:?}", p.device_class).as_bytes());
+        hasher.update(format!("{}", p.device_class).as_bytes());
     }
 
     format!("{:x}", hasher.finalize())

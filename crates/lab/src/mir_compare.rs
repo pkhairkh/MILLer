@@ -420,6 +420,8 @@ pub fn mir_op_type_name(op: &MirOp) -> &'static str {
         MirOp::MILClassify { .. } => "MILClassify",
         MirOp::AnecFusedConvActivate { .. } => "AnecFusedConvActivate",
         MirOp::AnecFusedLinearActivate { .. } => "AnecFusedLinearActivate",
+        // Future MirOp variants added via #[non_exhaustive]
+        _ => "<unknown>",
     }
 }
 
@@ -781,6 +783,8 @@ fn mir_op_name(op: &MirOp) -> Option<String> {
         MirOp::MILClassify { name, .. } => Some(name.clone()),
         MirOp::AnecFusedConvActivate { name, .. } => Some(name.clone()),
         MirOp::AnecFusedLinearActivate { name, .. } => Some(name.clone()),
+        // Future MirOp variants added via #[non_exhaustive]
+        _ => None,
     }
 }
 

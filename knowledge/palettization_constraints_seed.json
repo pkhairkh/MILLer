@@ -1,36 +1,178 @@
 {
-  "version": "1.0.0",
-  "source": "ane-constraints-docs/05-palettization/palette-bit-widths-and-lut-formats.md",
-  "description": "Palettization constraint knowledge seed. Documents hard constraints on weight palettization (LUT compression) for ANE execution.",
-  "conv_palette_minimums": {
-    "conv_standard_min_bits": 4,
-    "conv_alternate_min_bits": 3,
-    "conv_never_bits": 1,
-    "notes": "Standard conv palettization requires at least 4-bit LUT. Alternate path supports 3-bit minimum. 1-bit and 2-bit palettization are not supported by ANE hardware."
-  },
-  "palette_upcast": {
-    "from_3bit_to_4bit": true,
-    "affected_families": ["A11Legacy", "A12", "A13"],
-    "notes": "On A11-A13, 3-bit palettized weights are silently upcast to 4-bit by the ANECompiler, increasing model size. This does not happen on A14+."
-  },
-  "vector_palettization_incompatibilities": [
-    "deconvolution",
-    "dilated_kernels",
-    "per_cout_quantization",
-    "large_kernel_stride"
-  ],
-  "hard_rejections": {
-    "blockwise_scale": {
-      "constraint": "ANE doesn't support blockwise scale",
-      "detail": "ConstexprBlockwiseShiftScale cannot execute on the ANE. Models with blockwise scale must fall back to CPU or use affine dequantization instead."
+  "version": 1,
+  "description": "Palettization constraint knowledge seed. Source: ane-constraints-docs/05-palettization/palette-bit-widths-and-lut-formats.md",
+  "entries": [
+    {
+      "id": "palettization_conv_palette_minimums",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "PalettizationConstraints",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "constraint_type": "conv_palette_minimums",
+        "conv_standard_min_bits": 4,
+        "conv_alternate_min_bits": 3,
+        "conv_never_bits": 1,
+        "notes": "Standard conv palettization requires at least 4-bit LUT. Alternate path supports 3-bit minimum. 1-bit and 2-bit palettization are not supported by ANE hardware."
+      }
     },
-    "asymmetric_quant": {
-      "constraint": "Asym quantization is not supported",
-      "detail": "ANECompiler rejects asymmetric quantization (zero_point != 0) for ANE-placed ops. Only symmetric quantization is allowed."
+    {
+      "id": "palettization_palette_upcast",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "PalettizationConstraints",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "A11Legacy",
+          "A12",
+          "A13"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "constraint_type": "palette_upcast",
+        "from_3bit_to_4bit": true,
+        "affected_families": [
+          "A11Legacy",
+          "A12",
+          "A13"
+        ],
+        "notes": "On A11-A13, 3-bit palettized weights are silently upcast to 4-bit by the ANECompiler, increasing model size. This does not happen on A14+."
+      }
     },
-    "bf16_model_dtype": {
-      "constraint": "bf16 is not a valid CoreML model data type",
-      "detail": "Core ML does not support bf16 as a model data type. Attempting to create a bf16 model will fail at conversion time."
+    {
+      "id": "palettization_vector_incompatibilities",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "PalettizationConstraints",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "constraint_type": "vector_palettization_incompatibilities",
+        "incompatible_patterns": [
+          "deconvolution",
+          "dilated_kernels",
+          "per_cout_quantization",
+          "large_kernel_stride"
+        ]
+      }
+    },
+    {
+      "id": "palettization_rejection_blockwise_scale",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "PalettizationConstraints",
+      "confidence": 1.0,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "constraint_type": "hard_rejection",
+        "rejection_key": "blockwise_scale",
+        "constraint": "ANE doesn't support blockwise scale",
+        "detail": "ConstexprBlockwiseShiftScale cannot execute on the ANE. Models with blockwise scale must fall back to CPU or use affine dequantization instead."
+      }
+    },
+    {
+      "id": "palettization_rejection_asymmetric_quant",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "PalettizationConstraints",
+      "confidence": 1.0,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "constraint_type": "hard_rejection",
+        "rejection_key": "asymmetric_quant",
+        "constraint": "Asym quantization is not supported",
+        "detail": "ANECompiler rejects asymmetric quantization (zero_point != 0) for ANE-placed ops. Only symmetric quantization is allowed."
+      }
+    },
+    {
+      "id": "palettization_rejection_bf16_model_dtype",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "PalettizationConstraints",
+      "confidence": 1.0,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "constraint_type": "hard_rejection",
+        "rejection_key": "bf16_model_dtype",
+        "constraint": "bf16 is not a valid CoreML model data type",
+        "detail": "Core ML does not support bf16 as a model data type. Attempting to create a bf16 model will fail at conversion time."
+      }
     }
-  }
+  ]
 }

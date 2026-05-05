@@ -28,7 +28,9 @@ pub fn scopes_overlap(a: &KnowledgeScope, b: &KnowledgeScope) -> bool {
     let os_overlap = a.os_versions.iter().any(|v| b.os_versions.contains(v))
         || a.os_versions.contains(&"unknown".to_string())
         || b.os_versions.contains(&"unknown".to_string());
-    let opset_overlap = a.opset_versions.iter().any(|v| b.opset_versions.contains(v));
+    let opset_overlap = a.opset_versions.iter().any(|v| b.opset_versions.contains(v))
+        || a.opset_versions.contains(&"unknown".to_string())
+        || b.opset_versions.contains(&"unknown".to_string());
 
     devices_overlap && os_overlap && opset_overlap
 }

@@ -43,6 +43,7 @@ impl IrNodeId for MirNodeId {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum MirOp {
     // ─── Constants ───────────────────────────────────────────────
     MILConst {
