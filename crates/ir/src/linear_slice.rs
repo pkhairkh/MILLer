@@ -129,7 +129,10 @@ pub fn lower_linear_projection_to_mir(
         "e4m3" => MilDtype::E4M3,
         "e5m2" => MilDtype::E5M2,
         "uint16" => MilDtype::UInt16,
-        _ => MilDtype::Fp16,
+        _ => {
+            log::warn!("linear_slice: unrecognized dtype string '{}', defaulting to Fp16", dtype);
+            MilDtype::Fp16
+        }
     };
 
     let weight_id = MirNodeId("weight".into());

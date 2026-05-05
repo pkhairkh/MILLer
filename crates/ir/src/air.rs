@@ -894,13 +894,6 @@ pub enum AirOp {
         input: AirNodeId,
     },
 
-    // ─── Legacy: kept for backward compat with existing code ─────
-    StaticLUTProjection {
-        input: AirNodeId,
-        indices: String,
-        lut: String,
-        group_size: usize,
-    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -977,7 +970,6 @@ pub struct AirGraph {
     pub nodes: Vec<AirNode>,
     pub inputs: Vec<AirNodeId>,
     pub outputs: Vec<AirNodeId>,
-    pub staticization_decisions: Vec<StaticizationDecision>,
 }
 
 impl AirGraph {
@@ -1000,11 +992,4 @@ impl AirGraph {
         }
         Ok(())
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StaticizationDecision {
-    pub original_dynamic: String,
-    pub resolved_static: String,
-    pub method: String,
 }

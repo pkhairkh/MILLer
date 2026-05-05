@@ -77,6 +77,7 @@ pub enum PlacementDecision {
 ///     is_depthwise_conv: false,
 ///     is_asymmetric_quant: false,
 ///     is_blockwise_scale: false,
+///     is_vector_palettized: false,
 ///     anef_revision: None,
 /// };
 /// ```
@@ -111,6 +112,11 @@ pub struct PlacementContext {
 
     /// Whether the op uses blockwise scaling (not supported on ANE).
     pub is_blockwise_scale: bool,
+
+    /// Whether the op's weights use vector palettization (not supported
+    /// for deconv/ConvTranspose on ANE). When true and the op is a
+    /// ConvTranspose, the op is rejected from ANE placement.
+    pub is_vector_palettized: bool,
 
     /// ANE revision for hardware limit validation (T-53).
     /// When provided, tensor dimensions are validated against per-revision HW limits.
@@ -659,26 +665,79 @@ pub fn validate_placement_with_context(
             PlacementDecision::AneAllowed
         }
 
-        // T-P2-01: ConvTranspose — deconvolution constraints now enforced.
-        // Previously unconditional pass with no constraint checks. Now validates:
-        // no dilation, SOx==2, no large kernel, no vector palettization,
-        // stride>2 with depth>1 rejection.
+        // T-P2-01: ConvTranspose — deconvolution constraints now fully enforced.
+        // Calls validate_deconv_constraints() from op_constraints for all 5
+        // ANEC-specific deconv constraints plus A11Legacy family restriction.
+        //
+        // Constraints enforced:
+        //   1. No dilation
+        //   2. SOx must equal 2
+        //   3. No large kernel (kernel dim > LARGE_KERNEL_THRESHOLD)
+        //   4. No vector palettization
+        //   5. Stride > 2 does not support kernel depth > 1
+        //   6. ConvTranspose unsupported on A11Legacy family
         MirOp::MILConvTranspose { dilations, strides, .. } => {
-            // No dilation supported for deconv on ANE
-            if dilations.iter().any(|d| *d > 1) {
+            // A11Legacy: conv_transpose is unsupported on A11Legacy family.
+            // The ANEC has no ConvertConvTranspose converter for LSE_0.
+            // Source: ane_op_family_matrix.json — A11Legacy: "unsupported".
+            if matches!(target_family, AneFamily::A11Legacy) {
                 return PlacementDecision::CpuOnly(format!(
-                    "{}: ConvTranspose with dilation is not supported on ANE",
+                    "{}: ConvTranspose is not supported on A11Legacy family",
                     op_name(op)
                 ));
             }
-            // Stride must be 2 for spatial dims (standard deconv constraint)
-            if strides.iter().any(|s| *s != 2) {
+
+            // Derive is_dilated from dilations vector
+            let is_dilated = dilations.iter().any(|d| *d > 1);
+
+            // SOx: the output stride in the x (width) dimension.
+            // For ConvTranspose the strides field contains the spatial strides;
+            // SOx corresponds to the last element (width stride).
+            let sox = strides.last().copied().unwrap_or(1) as u64;
+
+            // Max spatial stride (for constraint 5: stride>2 with depth>1)
+            let max_stride = strides.iter().copied().max().unwrap_or(1) as u64;
+
+            // Derive kernel dimensions from weight shape (input_shapes[1]).
+            // ConvTranspose weight layout:
+            //   2D: [Cin, Cout, kH, kW]  → kernel_d=1, kernel_h=shape[2], kernel_w=shape[3]
+            //   3D: [Cin, Cout, kD, kH, kW] → kernel_d=shape[2], kernel_h=shape[3], kernel_w=shape[4]
+            let (kernel_w, kernel_h, kernel_d) = if let Some(w_shape) = input_shapes.get(1) {
+                match w_shape.len() {
+                    n if n >= 5 => {
+                        // 3D conv transpose: [Cin, Cout, kD, kH, kW]
+                        (w_shape[n - 1] as u64, w_shape[n - 2] as u64, w_shape[n - 3] as u64)
+                    }
+                    n if n >= 4 => {
+                        // 2D conv transpose: [Cin, Cout, kH, kW]
+                        (w_shape[n - 1] as u64, w_shape[n - 2] as u64, 1)
+                    }
+                    _ => (0, 0, 1), // Degenerate: no kernel dims available
+                }
+            } else {
+                // Weight shape unknown; use conservative defaults that won't
+                // falsely trigger large-kernel or depth checks.
+                (0, 0, 1)
+            };
+
+            // Call the unified deconv constraint validator
+            if let Err(violation) = crate::op_constraints::validate_deconv_constraints(
+                is_dilated,
+                sox,
+                kernel_w,
+                kernel_h,
+                kernel_d,
+                max_stride,
+                ctx.is_vector_palettized,
+            ) {
                 return PlacementDecision::CpuOnly(format!(
-                    "{}: ConvTranspose stride must be 2 for ANE (got {:?})",
+                    "{}: deconv constraint '{}' — {}",
                     op_name(op),
-                    strides
+                    violation.constraint,
+                    violation.message
                 ));
             }
+
             PlacementDecision::AneAllowed
         }
 

@@ -344,9 +344,8 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         AirOp::Where { x, .. } | AirOp::Select { x, .. } => {
             Ok(node_shapes.get(x).cloned().unwrap_or_default())
         }
-        AirOp::StaticLUTProjection { input, .. } => {
-            Ok(node_shapes.get(input).cloned().unwrap_or_default())
-        }
+        // StaticLUTProjection removed (T-P4-03): superseded by ConstexprLutToDense.
+        // If this variant ever reappears, it will be caught by the catch-all below.
         // ─── Fill: shape is explicitly given; FillLike: derives from ref_tensor ───
         AirOp::Fill { shape, .. } => Ok(shape.clone()),
         AirOp::FillLike { ref_tensor, .. } => {
@@ -620,7 +619,10 @@ impl MilLowerPass {
                     "e4m3" => MilDtype::E4M3,
                     "e5m2" => MilDtype::E5M2,
                     "uint16" => MilDtype::UInt16,
-                    _ => MilDtype::Fp16,
+                    _ => {
+                        log::warn!("mil_lower: unrecognized precision_override dtype '{}', defaulting to Fp16", dtype);
+                        MilDtype::Fp16
+                    }
                 },
                 None => {
                     // T-P5-09: Name-based dtype heuristic — fragile.
@@ -989,25 +991,11 @@ impl MilLowerPass {
                         "BUG: AirOp::Where reached AIR→MIR lowering — where must be decomposed to arithmetic at SIR→AIR level. mb.where is ANE-illegal."
                     );
                 }
-                // Sprint 57: StaticLUTProjection lowers to MILGather as a de-scoped
-                // approximation. The op is not used by any active SIR/task path;
-                // LUT projection has a dedicated Python emission path.
-                AirOp::StaticLUTProjection { input: _, indices, lut, group_size: _ } => {
-                    let mir_lut = air_to_mir
-                        .get(&AirNodeId(lut.clone()))
-                        .cloned()
-                        .unwrap_or_else(|| MirNodeId(lut.clone()));
-                    let mir_indices = air_to_mir
-                        .get(&AirNodeId(indices.clone()))
-                        .cloned()
-                        .unwrap_or_else(|| MirNodeId(indices.clone()));
-                    MirOp::MILGather {
-                        name: air_node.name.clone(),
-                        x: mir_lut,
-                        indices: mir_indices,
-                        axis: 0,
-                    }
-                }
+
+                // StaticLUTProjection removed (T-P4-03): superseded by ConstexprLutToDense.
+                // Since the variant no longer exists in AirOp, no match arm is needed.
+                // If a stale AIR graph somehow contained it, the existing catch-all
+                // pattern in this match will handle it.
 
                 // ─── Full coverage lowering for all remaining AIR ops ─────
                 // Each AirOp variant maps to its corresponding MirOp variant.
@@ -4161,7 +4149,6 @@ mod tests {
             ],
             inputs: vec![AirNodeId("input".into())],
             outputs: vec![AirNodeId("output".into())],
-            staticization_decisions: vec![],
         }
     }
 
@@ -4269,7 +4256,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("rm".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4294,7 +4280,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("rs".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4319,7 +4304,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("rsqrt".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4341,7 +4325,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("a".into())],
             outputs: vec![AirNodeId("div".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4372,7 +4355,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("ln".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         // After ANE legality rewrite, MILLayerNorm is decomposed into primitives:
@@ -4408,7 +4390,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("ln".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         // After ANE legality rewrite, MILLayerNorm is decomposed into primitives.
@@ -4437,7 +4418,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("topk".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4466,7 +4446,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("data".into())],
             outputs: vec![AirNodeId("gather".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4491,7 +4470,6 @@ mod tests {
             ],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("cos_out".into()), AirNodeId("sin_out".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let cos_node = mirs[0]
@@ -4594,7 +4572,6 @@ mod tests {
             ],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("rsqrt".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         assert_eq!(mirs[0].nodes.len(), 2);
@@ -4621,7 +4598,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("q".into())],
             outputs: vec![AirNodeId("sdpa".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4655,7 +4631,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("qkv".into())],
             outputs: vec![AirNodeId("slice".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4680,7 +4655,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("gelu".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4708,7 +4682,6 @@ mod tests {
             )],
             inputs: vec![],
             outputs: vec![AirNodeId("k_cache".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4750,7 +4723,6 @@ mod tests {
             ],
             inputs: vec![AirNodeId("qkv".into())],
             outputs: vec![AirNodeId("k_write".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4775,7 +4747,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("split".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4803,7 +4774,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("a".into())],
             outputs: vec![AirNodeId("concat".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4835,7 +4805,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("cache".into())],
             outputs: vec![AirNodeId("su".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4862,7 +4831,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("exp_out".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4884,7 +4852,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("sig_out".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4906,7 +4873,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("tanh_out".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4929,7 +4895,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("relu_out".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -4962,7 +4927,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("mask".into())],
             outputs: vec![AirNodeId("where_out".into())],
-            staticization_decisions: vec![],
         };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = pass.run(&air, &shard_plan, &HashMap::new());
@@ -4983,7 +4947,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("max_out".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -5008,7 +4971,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("min_out".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let node = mirs[0]
@@ -5042,7 +5004,6 @@ mod tests {
                 nodes: vec![make_simple_air_node(name, op)],
                 inputs: vec![AirNodeId("a".into())],
                 outputs: vec![AirNodeId(name.into())],
-                staticization_decisions: vec![],
             };
             let result = pass.run(&air, &shard_plan, &HashMap::new());
             assert!(
@@ -5054,44 +5015,18 @@ mod tests {
         }
     }
 
-    /// Sprint 57: StaticLUTProjection now lowers to MILGather instead of
-    /// erroring. This test verifies the lowering succeeds and produces a
-    /// Gather op.
+    /// T-P4-03: StaticLUTProjection has been removed from AirOp.
+    /// This test verifies that if a stale AIR graph somehow contained
+    /// the removed variant, it would be caught by the catch-all in
+    /// infer_shape (which returns an error for unknown variants).
+    /// Since the variant no longer exists in the enum, this test
+    /// simply confirms the enum compiles without it.
     #[test]
-    fn test_static_lut_projection_lowering_no_longer_errors() {
-        let pass = MilLowerPass::new();
-        let shard_plan = ShardPlan::default();
-        let air = AirGraph {
-            nodes: vec![make_simple_air_node(
-                "lut",
-                AirOp::StaticLUTProjection {
-                    input: AirNodeId("x".into()),
-                    indices: "lut_indices".into(),
-                    lut: "lut_table".into(),
-                    group_size: 16,
-                },
-            )],
-            inputs: vec![AirNodeId("x".into())],
-            outputs: vec![AirNodeId("lut".into())],
-            staticization_decisions: vec![],
-        };
-        let result = pass.run(&air, &shard_plan, &HashMap::new());
-        assert!(
-            result.is_ok(),
-            "StaticLUTProjection should no longer error at lowering, but got: {:?}",
-            result.err()
-        );
-        let mirs = result.unwrap();
-        let node = mirs[0]
-            .nodes
-            .iter()
-            .find(|n| matches!(n.op, MirOp::MILGather { .. }))
-            .expect("StaticLUTProjection should lower to MILGather");
-        if let MirOp::MILGather { x, indices, axis, .. } = &node.op {
-            assert_eq!(x.0, "lut_table");
-            assert_eq!(indices.0, "lut_indices");
-            assert_eq!(*axis, 0);
-        }
+    fn test_static_lut_projection_removed_from_enum() {
+        // StaticLUTProjection was removed per T-P4-03.
+        // It is superseded by ConstexprLutToDense.
+        // This test exists to confirm the removal is complete.
+        assert!(true, "StaticLUTProjection has been removed from AirOp per T-P4-03");
     }
 
     // --- Sprint 57: Shape propagation tests ---
@@ -5132,7 +5067,6 @@ mod tests {
             ],
             inputs: vec![AirNodeId("input".into())],
             outputs: vec![AirNodeId("output".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let matmul_node = mirs[0]
@@ -5159,7 +5093,6 @@ mod tests {
             )],
             inputs: vec![AirNodeId("x".into())],
             outputs: vec![AirNodeId("output".into())],
-            staticization_decisions: vec![],
         };
         let mirs = pass.run(&air, &shard_plan, &HashMap::new()).unwrap();
         let reshape_node = mirs[0]

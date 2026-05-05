@@ -120,7 +120,6 @@ mod tests {
             }],
             inputs: vec![AirNodeId("input".into())],
             outputs: vec![AirNodeId("output".into())],
-            staticization_decisions: vec![],
         }
     }
 

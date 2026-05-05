@@ -1,25 +1,27 @@
-//! Normalization Stabilization Pass
+//! Normalization Stabilization Pass — **STUB-MIMIC (M-005)**
 //!
-//! Computes per-layer scale factors that absorb the interaction between
-//! RMSNorm weights, projection weights, and residual connections into
-//! a single fp16-friendly pre-scale. This prevents fp16 underflow/
-//! overflow in heavily quantized graphs.
+//! **WARNING**: This pass is a structural scaffold only. It inserts
+//! `Const + Mul` ops before RMSNorm nodes, but the scale values are
+//! **NOT computed from weight metadata** — they are placeholder strings
+//! that will resolve to uncomputed/zero values. This can silently
+//! corrupt the graph if downstream passes treat these as real constants.
 //!
-//! The pass walks the SIR graph, identifies RMSNorm nodes, and for each
-//! one inserts a `Mul` op with a `Const` scale factor before the norm.
-//! This pre-scale normalizes the input range so that the subsequent
-//! RMSNorm computation stays within fp16-safe bounds.
+//! The `computed_scales` field in the result is always `false` to
+//! honestly reflect this limitation.
 //!
-//! # Scale Computation
+//! This pass is NOT wired into the compilation pipeline. It exists
+//! as a structural placeholder for future implementation.
+//!
+//! # Intended Scale Computation (not yet implemented)
 //!
 //! For each RMSNorm node:
-//! 1. Computes `h_in` scale = 1/norm(input_norm_weight * [I || W_D_prev])
-//! 2. Computes `h_mid` scale = 1/norm(post_attn_norm_weight * [I || W_O])
+//! 1. `h_in` scale = 1/norm(input_norm_weight * [I || W_D_prev])
+//! 2. `h_mid` scale = 1/norm(post_attn_norm_weight * [I || W_O])
 //! 3. For Q/K paths: per-group scale = 1/norm(norm_weight[group] * W[group]^T)
 //! 4. For output: `h_out` = 1/norm(final_norm_weight * [I || W_D_last])
 //!
-//! These scales are then emitted as `Const` + `Mul` ops inserted before
-//! the RMSNorm in the SIR graph.
+//! When implemented, these scales should be emitted as `Const + Mul`
+//! ops inserted before the RMSNorm in the SIR graph.
 
 use ane_ir::sir::{SirGraph, SirNode, SirNodeId, SirOp};
 
@@ -40,18 +42,25 @@ pub struct NormStabilizationResult {
 
 /// Run the normalization stabilization pass on a SIR graph.
 ///
-/// This pass identifies RMSNorm nodes and inserts Mul + Const ops
-/// before them to pre-scale the input. The scale factor is determined
-/// by the normalization stabilization strategy.
+/// **STUB-MIMIC WARNING (M-005)**: This pass inserts `Const + Mul` ops
+/// with **uncomputed scale values**. The Const ops contain placeholder
+/// value_path strings, not actual tensor data derived from weight metadata.
+/// The `computed_scales` field in the result will always be `false`.
 ///
-/// For traced models, the scales are computed from the weight metadata;
-/// for synthetic models, unit scales are used.
+/// Do NOT use this pass in production pipelines until real scale
+/// computation is implemented.
 ///
 /// # Arguments
 /// * `graph` - The SIR graph to transform (modified in place)
 ///
 /// # Returns
 /// Statistics about how many scales were applied.
+#[deprecated(
+    since = "0.6.0",
+    note = "M-005: This pass inserts Const+Mul ops with uncomputed scale values. \
+           Do not use in production until real weight-derived computation is implemented. \
+           The inserted ops silently corrupt the graph if treated as real constants."
+)]
 pub fn run_slanc_scales_pass(graph: &mut SirGraph) -> NormStabilizationResult {
     let mut result = NormStabilizationResult {
         scales_applied: 0,
@@ -140,6 +149,7 @@ pub fn run_slanc_scales_pass(graph: &mut SirGraph) -> NormStabilizationResult {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // M-005: Tests intentionally call deprecated function
 mod tests {
     use super::*;
     use ane_ir::sir::{SirMetadata, TaskOrigin};

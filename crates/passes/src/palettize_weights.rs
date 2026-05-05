@@ -21,7 +21,7 @@
 use ane_ir::ane_layout::clamp_to_valid_palette_bits;
 use ane_ir::common::ModelArchitecture;
 use ane_ir::sir::{SirGraph, SirOp};
-use anyhow::{bail, Result};
+use anyhow::Result;
 
 /// Re-export centralized palette bit-width validation from `ane_ir::ane_layout`.
 ///
@@ -118,32 +118,6 @@ fn clamp_to_valid_bits(bits: usize) -> usize {
 ///
 /// This function will not panic — invalid bit-widths are clamped to the
 /// nearest valid ANE-supported value and a warning is recorded.
-/// T-P2-11: ModelArchitecture is now required. Use
-/// [`run_palettize_weights_pass_with_arch`] instead, which requires an
-/// explicit architecture parameter.
-#[deprecated(
-    since = "0.1.0",
-    note = "Use run_palettize_weights_pass_with_arch with an explicit ModelArchitecture. \
-           T-P2-11: defaulting to Qwen3 produced incorrect weight classification for non-Qwen3 models."
-)]
-pub fn run_palettize_weights_pass(
-    _graph: &mut SirGraph,
-    _config: &PalettizeConfig,
-) -> Result<PalettizeResult> {
-    bail!(
-        "run_palettize_weights_pass requires an explicit ModelArchitecture. \
-         Use run_palettize_weights_pass_with_arch() instead. \
-         T-P2-11: defaulting to Qwen3 produced incorrect weight classification."
-    );
-}
-
-/// Architecture-aware version of [`run_palettize_weights_pass`].
-///
-/// T-72 (I-47): Previously, the pass used hardcoded Qwen3/LLaMA name
-/// patterns (`q_proj`, `k_proj`, etc.) to classify weights. Other
-/// architectures (GPT-2, T5, BART) wouldn't match, getting wrong
-/// bit-width assignments. Now uses `ModelArchitecture` for
-/// architecture-aware pattern resolution.
 pub fn run_palettize_weights_pass_with_arch(
     graph: &mut SirGraph,
     config: &PalettizeConfig,

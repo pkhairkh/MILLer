@@ -669,7 +669,6 @@ fn dump_air_stats(air: &AirGraph) {
         air.inputs.iter().map(|i| &i.0).take(5).collect::<Vec<_>>(),
         air.outputs.iter().map(|o| &o.0).take(5).collect::<Vec<_>>()
     );
-    println!("  AIR staticization_decisions: {}", air.staticization_decisions.len());
 }
 
 fn dump_mir_stats(mir: &MirGraph) {

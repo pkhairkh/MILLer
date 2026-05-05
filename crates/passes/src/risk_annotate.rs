@@ -329,7 +329,6 @@ impl RiskAnnotatePass {
             nodes: annotated_nodes,
             inputs: input.inputs,
             outputs: input.outputs,
-            staticization_decisions: input.staticization_decisions,
         })
     }
 }
@@ -356,7 +355,6 @@ mod tests {
             }],
             inputs: vec![],
             outputs: vec![],
-            staticization_decisions: vec![],
         }
     }
 

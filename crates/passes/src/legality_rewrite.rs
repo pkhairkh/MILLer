@@ -1060,7 +1060,6 @@ impl AneLegalityRewritePass {
             nodes: air_nodes,
             inputs: air_inputs,
             outputs: air_outputs,
-            staticization_decisions: vec![],
         })
     }
 
@@ -6351,7 +6350,7 @@ mod tests {
             AirOp::StateWriteFixed { value, .. } => vec![value.clone()],
             AirOp::Topk { input, .. } => vec![input.clone()],
             AirOp::Classify { input } => vec![input.clone()],
-            AirOp::StaticLUTProjection { input, .. } => vec![input.clone()],
+            // StaticLUTProjection removed (T-P4-03): superseded by ConstexprLutToDense.
             _ => vec![], // non-exhaustive: unknown ops have no refs
         }
     }
@@ -7838,7 +7837,6 @@ mod tests {
         assert_eq!(air.nodes.len(), 0, "Empty SIR should produce empty AIR");
         assert_eq!(air.inputs.len(), 0);
         assert_eq!(air.outputs.len(), 0);
-        assert_eq!(air.staticization_decisions.len(), 0);
     }
 
     /// T-37: Passthrough ops roundtrip. Verify that simple 1:1 SIR→AIR
