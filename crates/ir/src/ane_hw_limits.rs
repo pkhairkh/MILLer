@@ -50,6 +50,12 @@ pub struct AneHwLimits {
     /// Kernel size threshold above which special handling is needed.
     /// A11-A13: 7, A14+: 9.
     pub large_kernel_threshold: u64,
+    /// T-P4-01: Threshold above which ANE activates "large kernel" mode
+    /// with additional constraints (W/H must be multiple of 8, no groups,
+    /// no dilation, no depth, stride ≤ 2). Value is 16 for all revisions
+    /// based on binary forensic evidence: "kernel width and height should
+    /// be multiple of 8 for large kernel" when W or H exceeds this.
+    pub large_kernel_mode_threshold: u64,
     /// Sub-variant within an ANE family for fine-grained differentiation.
     pub sub_variant: AneSubVariant,
 }
@@ -94,6 +100,7 @@ impl AneHwLimits {
             ne_transpose_c_max: 16384,
             verified: true,
             large_kernel_threshold: 7,
+            large_kernel_mode_threshold: 16,
             sub_variant: AneSubVariant::Standard,
         }
     }
@@ -168,6 +175,11 @@ impl AneHwLimits {
     /// but has Mac-specific hardware limits: 6 NEs (vs A14 Bionic's 2),
     /// 262144 max tensor width (vs A14's 65536). The family is A14 — M1
     /// does NOT get A18's SDPA or LayerNorm support.
+    ///
+    /// T-P6-02: Previously inherited from a17() which gave M1 A16/A17-class
+    /// limits (e.g., max_tensor_height: 16384 from A16). Fixed to inherit
+    /// from a14() since M1 has A14-class constraint profile, then override
+    /// only the Mac-specific values (revision, max_tensor_width, num_nes).
     fn m1() -> Self {
         Self {
             revision: AneRevision::V17,
@@ -175,7 +187,7 @@ impl AneHwLimits {
             num_nes: 6,
             verified: true,
             sub_variant: AneSubVariant::Mac,
-            ..Self::a17()
+            ..Self::a14()
         }
     }
 
@@ -365,6 +377,26 @@ mod tests {
         assert_eq!(AneRevision::V17.family(), AneFamily::A14);
         assert!(!AneRevision::V17.family().supports_sdpa());
         assert!(!AneRevision::V17.family().supports_layernorm());
+
+        // T-P6-02: M1 inherits from A14, NOT A17.
+        // A14 has max_tensor_height = 8192 (from A13), while A16 has 16384.
+        // If M1 inherited from A17/A16, it would get max_tensor_height = 16384
+        // which is wrong for A14-class silicon.
+        let a14_limits = AneHwLimits::for_revision(AneRevision::V7);
+        // M1 and A14 should share the same base limits (except for the overrides)
+        assert_eq!(
+            limits.max_tensor_height, a14_limits.max_tensor_height,
+            "T-P6-02: M1 max_tensor_height should match A14, not A17/A16"
+        );
+        assert_eq!(
+            limits.max_conv_kernel_dim_y, a14_limits.max_conv_kernel_dim_y,
+            "T-P6-02: M1 max_conv_kernel_dim_y should match A14"
+        );
+        // M1 overrides: larger tensor width, more NEs
+        assert!(limits.max_tensor_width > a14_limits.max_tensor_width,
+            "M1 should have larger max_tensor_width than A14 Bionic");
+        assert!(limits.num_nes > a14_limits.num_nes,
+            "M1 should have more NEs than A14 Bionic");
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 > Consolidated remediation task board for open and in-progress issues.
 > Completed tasks have been removed — see git history for the full audit trail.
-> Recently completed: T-P2-12 (ALLOWED_DIVERGENCES real assertions), T-P3-04 (validate_conv_dims), T-P3-08 (transpose_c_max), T-P3-09 (cross-constraint combinations wired), T-P3-10 (architecture-gated constraints wired + Softmax/InstanceNorm/LRN hard-reject on pre-A14).
+> Recently completed: T-P2-01, T-P2-05, T-P2-12, T-P3-04, T-P3-07, T-P3-08, T-P3-09, T-P3-10, T-P3-11, T-P4-02, T-P4-03, T-P4-04, T-P4-05.
 > Format: Agentic AI task specification (structured, machine-parseable, human-readable).
 > Each task is independently executable by an AI coding agent with access to this repository.
 
@@ -26,22 +26,6 @@
 
 ## Phase 2 — High-Priority Validation Gaps
 
-### T-P2-01: Wire deconv constraint validation into placement validator
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P2-01 |
-| `title` | Call validate_deconv_constraints() from placement_validate for MILConvTranspose |
-| `phase` | P2 |
-| `severity` | HIGH |
-| `depends_on` | [] |
-| `files` | `crates/passes/src/placement_validate.rs`, `crates/passes/src/op_constraints.rs` |
-| `violation_refs` | [V-006] |
-| `acceptance_criteria` | 1) MILConvTranspose match arm calls `validate_deconv_constraints()`; 2) A11Legacy family restriction is checked; 3) Tests for each of the 5 deconv constraints pass; 4) Dilated deconv returns `CpuOnly` instead of `AneAllowed` |
-| `agent_hints` | Replace `MirOp::MILConvTranspose { .. } => PlacementDecision::AneAllowed` at line ~589 with a validation block. Import `validate_deconv_constraints` from `op_constraints`. Also check `ane_op_family_matrix` for A11Legacy exclusion. |
-
----
-
 ### T-P2-04: Fix knowledge store contradictions
 
 | Field | Value |
@@ -55,22 +39,6 @@
 | `violation_refs` | [V-011, M-013] |
 | `acceptance_criteria` | 1) `cpu_only_ops_seed.json`: all ops from `cpu_only_ops.rs` CPU_ONLY_OPS set included; 2) `ane_op_family_matrix.json`: entries with empirical CPU-only status gain `practical_status: "cpu_only"` field; 3) Seed validation tests pass |
 | `agent_hints` | Run `cpu_only_ops.rs` test to get the full CPU_ONLY_OPS set. Use that as the ground truth. For the matrix, add an `empirical_note` field rather than changing `supported` to avoid losing theoretical converter info. |
-
----
-
-### T-P2-05: Error on unresolvable MILConst instead of zero-filling
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P2-05 |
-| `title` | Return error when WeightResolver returns None for MILConst |
-| `phase` | P2 |
-| `severity` | HIGH |
-| `depends_on` | [] |
-| `files` | `crates/bridge/src/mir_to_compat.rs` |
-| `violation_refs` | [V-014] |
-| `acceptance_criteria` | 1) When WeightResolver returns `None` for a MILConst value_path, the function returns `Err(...)` instead of creating zero-filled data; 2) `allow_missing_weights` gate is the only path that permits zero-fill; 3) New test verifies error on missing weight |
-| `agent_hints` | Change the `None` branch at line ~939 to return `Err(BridgeError::UnresolvedWeight { path })` unless `allow_missing_weights` is true. The `allow_missing_weights` path should still exist but must be explicitly opted into. |
 
 ---
 
@@ -108,38 +76,6 @@
 
 ---
 
-### T-P3-07: Fix PIR handoff semantics
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P3-07 |
-| `title` | Change Interior→Exit attn_out handoff from StateWriteRead to TensorPassThrough |
-| `phase` | P3 |
-| `severity` | MEDIUM |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/pir.rs` |
-| `violation_refs` | [V-039] |
-| `acceptance_criteria` | 1) The `attn_out` handoff uses `HandoffKind::TensorPassThrough`; 2) KV-cache persistence remains modeled through `state_declarations`; 3) Decode-step shard test passes |
-| `agent_hints` | At line ~779, change `handoff_kind: HandoffKind::StateWriteRead` to `HandoffKind::TensorPassThrough` for the `attn_out` tensor. The KV cache state should only use `StateWriteRead` in the separate `state_declarations` structure. |
-
----
-
-### T-P3-11: Add palette_bits construction-time validation
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P3-11 |
-| `title` | Validate palette_bits at construction time in SirOp::LinearProjection and SirOp::Const |
-| `phase` | P3 |
-| `severity` | MEDIUM |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/sir.rs` |
-| `violation_refs` | [V-035] |
-| `acceptance_criteria` | 1) `palette_bits: Option<usize>` values are validated against {3,4,6,8} at construction; 2) Invalid values like `Some(5)` are rejected; 3) `clamp_to_valid_palette_bits()` logs a warning when clamping |
-| `agent_hints` | Add a `validate_palette_bits()` call in the constructors or use a newtype `PaletteBits(usize)` with a `TryFrom<usize>` impl. Also add `log::warn!` to `clamp_to_valid_palette_bits()`. |
-
----
-
 ## Phase 4 — Low-Priority Cleanup and Polish
 
 ### T-P4-01: Move hardcoded constants to knowledge store
@@ -155,70 +91,6 @@
 | `violation_refs` | [V-055, V-056] |
 | `acceptance_criteria` | 1) `ane_hw_limits_seed.json` has `large_kernel_threshold` and `max_pooling_kernel_dim` fields; 2) `AneHwLimits` struct includes these fields; 3) `op_constraints.rs` loads them from the limits struct instead of using hardcoded constants |
 | `agent_hints` | Add fields to `AneHwLimits`, populate from JSON seed, and update `op_constraints.rs` to accept `&AneHwLimits` instead of using constants. |
-
----
-
-### T-P4-02: Replace magic zero with Option<usize>
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P4-02 |
-| `title` | Change Conv1x1AsLinear::output_dim from usize to Option<usize> |
-| `phase` | P4 |
-| `severity` | LOW |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/air.rs` |
-| `violation_refs` | [V-053] |
-| `acceptance_criteria` | 1) `output_dim: Option<usize>` with `None` meaning "unknown"; 2) All match arms updated; 3) Shape inference handles `None` correctly |
-| `agent_hints` | Change the field type and update all construction and match sites. `None` is cleaner than `0` as a sentinel. |
-
----
-
-### T-P4-03: Remove dead code
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P4-03 |
-| `title` | Remove StaticizePass, AirOp::StaticLUTProjection, _DEFAULT_OPSET_MAP |
-| `phase` | P4 |
-| `severity` | LOW |
-| `depends_on` | [] |
-| `files` | `crates/passes/src/staticize.rs`, `crates/passes/src/lib.rs`, `crates/ir/src/air.rs`, `python/mil_emitter.py` |
-| `violation_refs` | [V-029, V-058, V-062] |
-| `acceptance_criteria` | 1) `staticize.rs` removed from crate; 2) `AirOp::StaticLUTProjection` removed from enum; 3) `_DEFAULT_OPSET_MAP` removed from `mil_emitter.py`; 4) All references updated; 5) `cargo test` passes |
-| `agent_hints` | Remove the files/enums/constants. Update `lib.rs` to remove the module import. Update all match arms that reference `StaticLUTProjection`. Remove dead Python constant. |
-
----
-
-### T-P4-04: Fix logging consistency
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P4-04 |
-| `title` | Replace eprintln! with log::warn! in safetensors_resolver |
-| `phase` | P4 |
-| `severity` | LOW |
-| `depends_on` | [] |
-| `files` | `crates/bridge/src/safetensors_resolver.rs` |
-| `violation_refs` | [V-063] |
-| `acceptance_criteria` | 1) All `eprintln!` calls replaced with `log::warn!` or `log::error!`; 2) Messages are consistent with the rest of the codebase's logging style |
-| `agent_hints` | Replace `eprintln!("Warning: ...")` with `log::warn!("...")` and `eprintln!("  ...")` with `log::debug!("...")`. |
-
----
-
-### T-P4-05: Fix profile reporting
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P4-05 |
-| `title` | Rename mean_ms to median_ms or compute actual mean in bridge.py |
-| `phase` | P4 |
-| `severity` | LOW |
-| `depends_on` | [] |
-| `files` | `python/bridge.py` |
-| `violation_refs` | [V-045] |
-| `acceptance_criteria` | 1) Either `mean_ms` is renamed to `median_ms` or actual mean is computed; 2) `std_dev_ms` is either computed or renamed to `std_dev_ms: null`; 3) Downstream consumers updated |
-| `agent_hints` | Rename `"mean_ms"` to `"median_ms"` and set `"std_dev_ms": None` (or compute it from the raw data if available). |
 
 ---
 
