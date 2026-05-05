@@ -4024,9 +4024,23 @@ fn run_trace_compile(
                 other
             ));
         }
-        None => traced_graph.architecture.clone(),
+        None => {
+            let arch_str = traced_graph.architecture.to_lowercase();
+            match arch_str.as_str() {
+                "qwen2" | "qwen3" | "llama" | "llamaforcausallm" => ane_ir::common::ModelArchitecture::Qwen3,
+                _ => ane_ir::common::ModelArchitecture::Generic {
+                    q_proj_pattern: ".self_attn.q_proj.weight".to_string(),
+                    k_proj_pattern: ".self_attn.k_proj.weight".to_string(),
+                    v_proj_pattern: ".self_attn.v_proj.weight".to_string(),
+                    o_proj_pattern: ".self_attn.o_proj.weight".to_string(),
+                    gate_proj_pattern: ".mlp.gate_proj.weight".to_string(),
+                    up_proj_pattern: ".mlp.up_proj.weight".to_string(),
+                    down_proj_pattern: ".mlp.down_proj.weight".to_string(),
+                },
+            }
+        }
     };
-    println!("  Architecture: {} (source: {})", resolved_architecture,
+    println!("  Architecture: {:?} (source: {})", resolved_architecture,
         if architecture_override.is_some() { "CLI --architecture" } else { "auto-detected" }
     );
     println!(

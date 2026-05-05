@@ -2797,6 +2797,12 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
                 mir_compat::MirOpCompat::Topk { name, x: nid(x), k: k as i64, axis: axis as i64 }
             }
             MirOp::MILClassify { name, .. } => unsupported("classify", &name, &op_json),
+            // ─── ANEC Internal Ops (T-P4-08) ──────────────────────────────
+            // These are ANE-internal operations that do not map to MIL builder
+            // calls. They are emitted as no-ops in proto emission because the
+            // ANEC binary handles them internally during model compilation.
+            MirOp::AnecFusedConvActivate { name, .. } => unsupported("anec_fused_conv_activate", &name, &op_json),
+            MirOp::AnecFusedLinearActivate { name, .. } => unsupported("anec_fused_linear_activate", &name, &op_json),
         }
     }
 }

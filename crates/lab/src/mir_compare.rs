@@ -235,6 +235,8 @@ pub fn mir_to_mil_name(mir_op_type: &str) -> Option<&'static str> {
         "MILRandomUniform" => Some("random_uniform"),
         "MILRandomCategorical" => Some("random_categorical"),
         "MILClassify" => Some("classify"),
+        "AnecFusedConvActivate" => Some("anec_fused_conv_activate"),
+        "AnecFusedLinearActivate" => Some("anec_fused_linear_activate"),
         _ => None,
     }
 }
@@ -416,6 +418,8 @@ pub fn mir_op_type_name(op: &MirOp) -> &'static str {
         MirOp::MILRandomUniform { .. } => "MILRandomUniform",
         MirOp::MILRandomCategorical { .. } => "MILRandomCategorical",
         MirOp::MILClassify { .. } => "MILClassify",
+        MirOp::AnecFusedConvActivate { .. } => "AnecFusedConvActivate",
+        MirOp::AnecFusedLinearActivate { .. } => "AnecFusedLinearActivate",
     }
 }
 
@@ -775,6 +779,8 @@ fn mir_op_name(op: &MirOp) -> Option<String> {
         MirOp::MILRandomUniform { name, .. } => Some(name.clone()),
         MirOp::MILRandomCategorical { name, .. } => Some(name.clone()),
         MirOp::MILClassify { name, .. } => Some(name.clone()),
+        MirOp::AnecFusedConvActivate { name, .. } => Some(name.clone()),
+        MirOp::AnecFusedLinearActivate { name, .. } => Some(name.clone()),
     }
 }
 

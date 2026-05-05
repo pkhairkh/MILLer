@@ -2114,6 +2114,7 @@ mod tests {
                     shape: vec![1000, 1024],
                     compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
                     air_source: None,
+                    target_annotation: Default::default(),
                 },
                 MirNode {
                     id: MirNodeId("output".into()),
@@ -2127,6 +2128,7 @@ mod tests {
                     shape: vec![1024],
                     compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
                     air_source: None,
+                    target_annotation: Default::default(),
                 },
             ],
             inputs: vec![MirNodeId("input".into())],

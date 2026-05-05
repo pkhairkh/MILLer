@@ -331,6 +331,7 @@ pub fn validate_proto_direct_package(mlpackage_path: &str) -> Result<ProtoDirect
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mir_to_compat::WeightResolver;
     use ane_coreml_emit::mir_to_proto::build_linear_projection_mir;
     use ane_coreml_emit::mir_to_proto::build_multifunction_shared_weights_mir;
     use ane_coreml_proto::mir_compat::MilDtypeCompat;
