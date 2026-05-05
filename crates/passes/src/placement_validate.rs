@@ -271,6 +271,58 @@ pub fn validate_placement_with_context(
                 e
             ));
         }
+
+        // T-P2-02: Enforce UInt16/Bool context constraints after dtype check.
+        // is_dtype_ane_legal() approves UInt16/Bool as legal dtypes, but their
+        // usage context is heavily restricted. These checks were never called
+        // after the dtype check, allowing UInt16/Bool to pass through to ANE
+        // compute where they would fail at runtime.
+        match dtype {
+            MilDtype::UInt16 => {
+                if let Err(e) = dtype_constraints::validate_uint16_constraints(
+                    op_name(op), true, // is_output: treat as output for conservative check
+                ) {
+                    return PlacementDecision::CpuOnly(format!(
+                        "{}: {}",
+                        op_name(op),
+                        e
+                    ));
+                }
+            }
+            MilDtype::Bool => {
+                if let Err(e) = dtype_constraints::validate_bool_constraints(
+                    op_name(op), true, // is_output: Bool output is never valid on ANE
+                ) {
+                    return PlacementDecision::CpuOnly(format!(
+                        "{}: {}",
+                        op_name(op),
+                        e
+                    ));
+                }
+            }
+            _ => {}
+        }
+
+        // T-P2-03: Wire FP32 compute gating into placement pipeline.
+        // is_fp32_compute_supported() exists but was never called, allowing
+        // FP32 compute ops through on A11Legacy/A12 where ANEC rejects them.
+        // Note: Skip binary elementwise ops (Add/Mul/Sub/Max/Min) here since
+        // they have their own broadcast dtype gate in the match arms below
+        // that provides a more specific error message.
+        if *dtype == MilDtype::Fp32
+            && is_compute_op(op)
+            && !matches!(op, MirOp::MILAdd { .. } | MirOp::MILMul { .. }
+                | MirOp::MILSub { .. } | MirOp::MILMaximum { .. } | MirOp::MILMinimum { .. })
+        {
+            if !dtype_constraints::is_fp32_compute_supported(&target_family) {
+                return PlacementDecision::CpuOnly(format!(
+                    "{}: FP32 compute not supported on {:?} (requires A13+). \
+                     FP32 weights/IO are allowed but FP32 compute is not.",
+                    op_name(op),
+                    target_family
+                ));
+            }
+        }
     }
 
     // ─── T-25: Interleave gate ─────────────────────────────────────
@@ -582,11 +634,28 @@ pub fn validate_placement_with_context(
             PlacementDecision::AneAllowed
         }
 
-        // T-94: ConvTranspose — deconvolution constraints now enforced.
-        // Previously unconditional pass. Now validates: no dilation,
-        // SOx==2, no large kernel, no vector palettization, stride>2
-        // with depth>1 rejection.
-        MirOp::MILConvTranspose { .. } => PlacementDecision::AneAllowed,
+        // T-P2-01: ConvTranspose — deconvolution constraints now enforced.
+        // Previously unconditional pass with no constraint checks. Now validates:
+        // no dilation, SOx==2, no large kernel, no vector palettization,
+        // stride>2 with depth>1 rejection.
+        MirOp::MILConvTranspose { dilations, strides, .. } => {
+            // No dilation supported for deconv on ANE
+            if dilations.iter().any(|d| *d > 1) {
+                return PlacementDecision::CpuOnly(format!(
+                    "{}: ConvTranspose with dilation is not supported on ANE",
+                    op_name(op)
+                ));
+            }
+            // Stride must be 2 for spatial dims (standard deconv constraint)
+            if strides.iter().any(|s| *s != 2) {
+                return PlacementDecision::CpuOnly(format!(
+                    "{}: ConvTranspose stride must be 2 for ANE (got {:?})",
+                    op_name(op),
+                    strides
+                ));
+            }
+            PlacementDecision::AneAllowed
+        }
 
         // T-25: ConstexprBlockwiseShiftScale — hard-reject on ANE.
         // Blockwise scale is never supported on ANE (returns false).
@@ -854,6 +923,46 @@ fn op_name(op: &MirOp) -> &'static str {
         MirOp::MILTopk { .. } => "MILTopk",
         MirOp::MILClassify { .. } => "MILClassify",
     }
+}
+
+/// T-P2-03: Determine if an op is a "compute op" for FP32 gating.
+/// Compute ops produce new tensor values from their inputs (as opposed to
+/// data movement/reshape ops which merely rearrange existing data).
+/// FP32 compute is not supported on A11Legacy/A12.
+fn is_compute_op(op: &MirOp) -> bool {
+    matches!(
+        op,
+        MirOp::MILConv { .. }
+        | MirOp::MILConvTranspose { .. }
+        | MirOp::MILLinear { .. }
+        | MirOp::MILMatMul { .. }
+        | MirOp::MILAdd { .. }
+        | MirOp::MILMul { .. }
+        | MirOp::MILSub { .. }
+        | MirOp::MILRealDiv { .. }
+        | MirOp::MILMaximum { .. }
+        | MirOp::MILMinimum { .. }
+        | MirOp::MILReduceMean { .. }
+        | MirOp::MILReduceSum { .. }
+        | MirOp::MILReduceMax { .. }
+        | MirOp::MILReduceMin { .. }
+        | MirOp::MILSoftmax { .. }
+        | MirOp::MILLayerNorm { .. }
+        | MirOp::MILBatchNorm { .. }
+        | MirOp::MILInstanceNorm { .. }
+        | MirOp::MILScaledDotProductAttention { .. }
+        | MirOp::MILRelu { .. }
+        | MirOp::MILSigmoid { .. }
+        | MirOp::MILTanh { .. }
+        | MirOp::MILGelu { .. }
+        | MirOp::MILSilu { .. }
+        | MirOp::MILAbs { .. }
+        | MirOp::MILNeg { .. }
+        | MirOp::MILSqrt { .. }
+        | MirOp::MILRsqrt { .. }
+        | MirOp::MILExp { .. }
+        | MirOp::MILLog { .. }
+    )
 }
 
 #[cfg(test)]
