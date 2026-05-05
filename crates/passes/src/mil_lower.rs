@@ -88,11 +88,12 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
                             broadcast_shape(batch_a, batch_b).unwrap_or_else(|| batch_a.to_vec())
                         };
                         let mut out = batch;
-                        // Validate inner dims when both are concrete (> 0)
+                        // T-P5-02: Validate inner dims — hard error instead of warning.
                         if lhs_cols > 0 && rhs_rows > 0 && lhs_cols != rhs_rows {
-                            eprintln!(
-                                "[WARN] MatMul inner dims mismatch: lhs_cols={} != rhs_rows={} \
-                                 for shapes {:?} × {:?}",
+                            anyhow::bail!(
+                                "MatMul inner dims mismatch: lhs_cols={} != rhs_rows={} \
+                                 for shapes {:?} × {:?}. This will produce incorrect results \
+                                 or be rejected by ANE at runtime.",
                                 lhs_cols, rhs_rows, a_shape, b_shape
                             );
                         }
@@ -159,7 +160,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
                 } else {
                     // Shapes are incompatible — warn and fall back to x's shape
                     // (Core ML will reject the model anyway).
-                    eprintln!(
+                    log::warn!(
                         "[WARN] Broadcast incompatibility: {} * {} — \
                          shapes are not broadcast-compatible. \
                          Core ML will reject this model.",

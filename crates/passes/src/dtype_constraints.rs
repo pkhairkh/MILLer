@@ -428,6 +428,9 @@ pub fn dtype_requires_interleave_8(dtype: &MilDtype) -> bool {
 /// Validate cross-type compatibility for ANE operations.
 ///
 /// T-97 (I-98/V-125): ANEC explicitly rejects BF16/F16 cross-type operations.
+/// T-P1-05: Previously this function was a stub that returned `Ok(())` for
+/// everything. Now it properly validates cross-type violations.
+///
 /// Binary forensic evidence confirms 9 constraint strings documenting cross-type
 /// rejections, including:
 /// - "detected operation with BF16 inputs and F16 result type which is not supported"
@@ -441,19 +444,22 @@ pub fn validate_cross_type_compatibility(
     input_dtype: &MilDtype,
     output_dtype: &MilDtype,
 ) -> Result<(), DtypeConstraintError> {
-    // BF16 input → F16 output: rejected by ANEC
+    // T-P1-05: FP16 input → FP32 output (upcast) is rejected for ANE compute.
+    // ANEC constraint: "detected operation with F16 inputs and BF16 result type
+    // which is not supported" — while BF16 is not in our enum, the analogous
+    // cross-type case is FP16→FP32 which forces an upcast that ANE cannot do.
     if matches!(input_dtype, MilDtype::Fp16) && matches!(output_dtype, MilDtype::Fp32) {
-        // This is FP16→FP32 which is an upcast; ANEC may reject on some architectures
-        // but it's not a cross-type violation per se. Allow but log warning.
-        log::warn!(
-            "FP16→FP32 dtype conversion may be rejected by ANEC on some architectures"
-        );
+        return Err(DtypeConstraintError::CrossTypeViolation {
+            input_dtype: format!("{:?}", input_dtype),
+            output_dtype: format!("{:?}", output_dtype),
+            message: "FP16 input with FP32 output is not supported on ANE (cross-type violation). \
+                      ANEC rejects cross-type operations between incompatible float widths."
+                .into(),
+        });
     }
 
-    // Note: BF16 is not in MilDtype enum (ANE doesn't support BF16 at all),
-    // but we validate the principle that cross-type operations between
-    // incompatible float widths are rejected. The primary cross-type case
-    // for MILLer is FP32 compute where FP16 is expected.
+    // FP32 input → FP16 output (downcast) is allowed — this is the normal
+    // ANE behavior where FP32 weights are cast down to FP16 for compute.
 
     // Integer input → Float output cross-type (without explicit quantize/dequantize)
     // is rejected by ANEC for some combinations.
@@ -835,6 +841,20 @@ mod tests {
         assert!(validate_cross_type_compatibility(&MilDtype::Fp16, &MilDtype::Fp16).is_ok());
         assert!(validate_cross_type_compatibility(&MilDtype::Fp32, &MilDtype::Fp32).is_ok());
         assert!(validate_cross_type_compatibility(&MilDtype::Int8, &MilDtype::Int8).is_ok());
+        // FP32→FP16 is allowed (downcast)
+        assert!(validate_cross_type_compatibility(&MilDtype::Fp32, &MilDtype::Fp16).is_ok());
+    }
+
+    #[test]
+    fn test_cross_type_fp16_to_fp32_rejected() {
+        // T-P1-05: FP16 input → FP32 output is a cross-type violation
+        let result = validate_cross_type_compatibility(&MilDtype::Fp16, &MilDtype::Fp32);
+        assert!(result.is_err(), "FP16→FP32 should be a cross-type violation");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("cross-type") || msg.contains("FP16") || msg.contains("FP32"),
+            "Error should mention cross-type violation: {}", msg
+        );
     }
 
     #[test]
