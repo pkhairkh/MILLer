@@ -1,0 +1,45 @@
+{
+    "model": {
+        "id": "Qwen/Qwen3-0.6B",
+        "trace_command": "trace-compile",
+        "dtype": "fp16",
+        "batch_size": 1,
+        "seq_len": 32,
+        "max_seq_len": 2048
+    },
+    "compiler": {
+        "binary": "ane-compile",
+        "crate": "ane-cli",
+        "build_mode": "release",
+        "pipeline": "TOML spec / HF trace → SIR → AIR → MIR → Bridge/MIL → .mlpackage",
+        "emission_paths": ["python-bridge", "proto-direct"]
+    },
+    "synthetic_families": [
+        "linear_projection",
+        "sharded_linear_pipeline",
+        "decode_step",
+        "sharded_decode_step",
+        "lut_projection",
+        "mlp_block",
+        "attention"
+    ],
+    "bridge_commands": [
+        "emit_linear_projection",
+        "emit_llp_block",
+        "emit_attention",
+        "emit_stateful_decode_step",
+        "emit_lut_projection",
+        "emit_multifunction",
+        "emit_shard_decode_step"
+    ],
+    "knowledge": {
+        "seed_schema_version": 1,
+        "evidence_sources": ["SourceCode", "RealModelRun", "SyntheticRun"],
+        "validate_seeds": true,
+        "validate_import": true
+    },
+    "thresholds": {
+        "min_synthetic_pass_rate_pct": 100,
+        "min_bridge_emitter_pass_rate_pct": 100
+    }
+}
