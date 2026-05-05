@@ -1,10 +1,7 @@
 # TASKS.md — MILLer Remediation Task Board
 
-> Consolidated remediation task board derived from three audit sources:
-> - ANEVIOLATIONS.md (ANE constraint-grounded audit — V-prefix issues)
-> - MLIRVIOLATIONS.md (MLIR-method violation audit — M-prefix issues)
-> - Binary-research forensic analysis (ANE binary cross-reference — N-prefix issues)
->
+> Consolidated remediation task board for open and in-progress issues.
+> Completed tasks have been removed — see git history for the full audit trail.
 > Format: Agentic AI task specification (structured, machine-parseable, human-readable).
 > Each task is independently executable by an AI coding agent with access to this repository.
 
@@ -16,95 +13,13 @@
 |-------|---------|
 | `id` | Unique task identifier (`T-<phase><seq>`) |
 | `title` | Imperative, agent-actionable summary |
-| `phase` | Execution phase (P1=immediate, P2=high-priority, P3=medium, P4=low) |
+| `phase` | Execution phase (P2=high-priority, P3=medium, P4=low, P5=architectural) |
 | `severity` | Worst violation severity if task is skipped |
 | `depends_on` | Tasks that must complete first |
 | `files` | Primary files to modify |
-| `violation_refs` | Cross-references to ANEVIOLATIONS.md entries |
+| `violation_refs` | Cross-references to ISSUES.md entries |
 | `acceptance_criteria` | Verifiable conditions for task completion |
 | `agent_hints` | Specific guidance for AI agent execution |
-
----
-
-## Phase 1 — Critical Fixes (Silent Miscompilation)
-
-### T-P1-01: Add LayerNorm family-specific engine override
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P1-01 |
-| `title` | Add MILLayerNorm family override in default_engine_for_revision() |
-| `phase` | P1 |
-| `severity` | CRITICAL |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/mir.rs` |
-| `violation_refs` | [V-001] |
-| `acceptance_criteria` | 1) `default_engine_for_revision(Some(rev))` returns `None` for LayerNorm when `AneFamily::from_revision(rev).supports_layernorm() == false`; 2) Existing tests pass; 3) New test covers pre-A15 LayerNorm returning None; 4) `default_engine()` deprecated or documented as unsafe |
-| `agent_hints` | Mirror the SDPA pattern at mir.rs ~line 1404–1408. Insert a check for `family.supports_layernorm()` before the final `Some(base)` return. When `supports_layernorm()` is false, return `None`. Also deprecate `default_engine()` or add `#[deprecated]` note. |
-
----
-
-### T-P1-02: Gate or remove kv_cache_rewrite pass
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P1-02 |
-| `title` | Remove or hard-guard the kv_cache_rewrite pass to prevent ANE-illegal Where emission |
-| `phase` | P1 |
-| `severity` | CRITICAL |
-| `depends_on` | [] |
-| `files` | `crates/passes/src/kv_cache_rewrite.rs`, `crates/passes/src/lib.rs` |
-| `violation_refs` | [V-002] |
-| `acceptance_criteria` | 1) The pass is either removed from the crate or guarded by `#[cfg(feature = "kv-cache-rewrite")]` with a compile-time warning; 2) No code path can generate SirOp::Where with dangling SirNodeId references; 3) `cargo test` passes |
-| `agent_hints` | The pass is already feature-gated (`deprecated-kv-cache-rewrite`) and documented as dead code. Remove the `RingBuffer` fallthrough to `MaskedBlend` or remove the entire module. If keeping, add an assertion that generated SirNodeIds are present in the graph. |
-
----
-
-### T-P1-03: Fix bridge.py proto-direct validation path
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P1-03 |
-| `title` | Correct the mlpackage directory path in handle_validate_proto_direct() |
-| `phase` | P1 |
-| `severity` | CRITICAL |
-| `depends_on` | [] |
-| `files` | `python/bridge.py` |
-| `violation_refs` | [V-003] |
-| `acceptance_criteria` | 1) `handle_validate_proto_direct()` checks `Data/com.apple.CoreML/model.mlmodel` instead of `Model/com.apple.CoreML/model.mlmodel`; 2) Proto-direct emitted packages pass validation; 3) Python tests pass |
-| `agent_hints` | One-line fix: change `Model` to `Data` at line ~730. Verify against `crates/coreml-emit/src/package.rs` line 83 which writes to `Data/`. Apple's mlpackage format uses `Data/` for model descriptors. |
-
----
-
-### T-P1-04: Derive auto-materialized weight dtype from resolved WeightData
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P1-04 |
-| `title` | Replace hardcoded MilDtypeCompat::Fp16 with actual dtype in auto-materialized Const ops |
-| `phase` | P1 |
-| `severity` | CRITICAL |
-| `depends_on` | [] |
-| `files` | `crates/bridge/src/mir_to_compat.rs`, `crates/bridge/src/safetensors_resolver.rs` |
-| `violation_refs` | [V-004, V-072, V-075] |
-| `acceptance_criteria` | 1) Auto-materialized Const ops use the actual dtype from WeightData instead of hardcoded Fp16; 2) Int32 embedding weights are tagged as Int32, not Fp16; 3) WeightData struct carries dtype information; 4) `cargo test` passes; 5) New test verifies non-FP16 weight dtype round-trip |
-| `agent_hints` | Add a `dtype: MilDtypeCompat` field to `WeightData` in `safetensors_resolver.rs`. Populate it based on the safetensors tensor dtype. In `mir_to_compat.rs` line ~253, use `wd.dtype` instead of `MilDtypeCompat::Fp16`. Handle the Fp16/BF16/Fp32 conversion case separately. |
-
----
-
-### T-P1-05: Implement or remove validate_cross_type_compatibility
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P1-05 |
-| `title` | Implement cross-type compatibility checks or remove the stub function |
-| `phase` | P1 |
-| `severity` | CRITICAL |
-| `depends_on` | [] |
-| `files` | `crates/passes/src/dtype_constraints.rs` |
-| `violation_refs` | [V-005] |
-| `acceptance_criteria` | 1) Either the function implements the 9 documented cross-type rejection checks (requires BF16 in MilDtype) OR the function is removed and all callers fail explicitly; 2) No code path claims to validate cross-type compatibility without actually doing so; 3) `cargo test` passes |
-| `agent_hints` | The doc comment lists 9 ANEC constraint strings. Two options: (A) Add `MilDtype::Bf16` variant and implement all 9 checks, or (B) Remove the function and replace its call sites with `Err(CrossTypeNotSupported)` for any mixed-dtype scenario. Option B is simpler and more honest. |
 
 ---
 
@@ -126,38 +41,6 @@
 
 ---
 
-### T-P2-02: Enforce UInt16/Bool context constraints in placement
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P2-02 |
-| `title` | Add follow-up UInt16/Bool constraint checks after is_dtype_ane_legal() |
-| `phase` | P2 |
-| `severity` | HIGH |
-| `depends_on` | [] |
-| `files` | `crates/passes/src/placement_validate.rs`, `crates/passes/src/dtype_constraints.rs` |
-| `violation_refs` | [V-007] |
-| `acceptance_criteria` | 1) After `is_dtype_ane_legal()` returns `Ok(())` for UInt16 or Bool, the placement validator calls `validate_uint16_constraints()` / `validate_bool_constraints()`; 2) UInt16/Bool ops without valid context are rejected from ANE placement |
-| `agent_hints` | In `placement_validate.rs`, after the dtype check at line ~267, add a match on the dtype. For UInt16/Bool, call the corresponding validation functions from `dtype_constraints.rs`. If they fail, return `CpuOnly`. |
-
----
-
-### T-P2-03: Wire FP32 compute gating into placement pipeline
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P2-03 |
-| `title` | Call is_fp32_compute_supported() when FP32 dtype is used for compute operations |
-| `phase` | P2 |
-| `severity` | HIGH |
-| `depends_on` | [] |
-| `files` | `crates/passes/src/placement_validate.rs` |
-| `violation_refs` | [V-008] |
-| `acceptance_criteria` | 1) When dtype is FP32 and the op is a compute op (not just I/O), `is_fp32_compute_supported(family)` is checked; 2) FP32 compute on A11Legacy/A12 returns `CpuOnly`; 3) Test verifies FP32 rejection on A11/A12 |
-| `agent_hints` | After `is_dtype_ane_legal()` returns `Ok(())` for FP32, check if the op is a compute op and if so call `is_fp32_compute_supported(family)`. Requires the PlacementContext to carry the AneFamily. |
-
----
-
 ### T-P2-04: Fix knowledge store contradictions
 
 | Field | Value |
@@ -168,8 +51,8 @@
 | `severity` | HIGH |
 | `depends_on` | [] |
 | `files` | `knowledge/legality_seed.json`, `knowledge/cpu_only_ops_seed.json`, `knowledge/ane_op_family_matrix.json` |
-| `violation_refs` | [V-009, V-010, V-011, V-012, V-013] |
-| `acceptance_criteria` | 1) `legality_seed.json`: gather `ane_legal` set to `false`; 2) `cpu_only_ops_seed.json`: `erf` removed, 70+ missing ops added from `cpu_only_ops.rs`; 3) `ane_op_family_matrix.json`: `neg`, `gather`, `select`, `where` entries gain `practical_status: "cpu_only"` field with explanation; 4) Seed validation tests pass |
+| `violation_refs` | [V-011, M-013] |
+| `acceptance_criteria` | 1) `cpu_only_ops_seed.json`: all ops from `cpu_only_ops.rs` CPU_ONLY_OPS set included; 2) `ane_op_family_matrix.json`: entries with empirical CPU-only status gain `practical_status: "cpu_only"` field; 3) Seed validation tests pass |
 | `agent_hints` | Run `cpu_only_ops.rs` test to get the full CPU_ONLY_OPS set. Use that as the ground truth. For the matrix, add an `empirical_note` field rather than changing `supported` to avoid losing theoretical converter info. |
 
 ---
@@ -182,91 +65,11 @@
 | `title` | Return error when WeightResolver returns None for MILConst |
 | `phase` | P2 |
 | `severity` | HIGH |
-| `depends_on` | [T-P1-04] |
+| `depends_on` | [] |
 | `files` | `crates/bridge/src/mir_to_compat.rs` |
 | `violation_refs` | [V-014] |
 | `acceptance_criteria` | 1) When WeightResolver returns `None` for a MILConst value_path, the function returns `Err(...)` instead of creating zero-filled data; 2) `allow_missing_weights` gate is the only path that permits zero-fill; 3) New test verifies error on missing weight |
 | `agent_hints` | Change the `None` branch at line ~939 to return `Err(BridgeError::UnresolvedWeight { path })` unless `allow_missing_weights` is true. The `allow_missing_weights` path should still exist but must be explicitly opted into. |
-
----
-
-### T-P2-06: Deprecate default_engine() and add revision-aware tests
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P2-06 |
-| `title` | Deprecate default_engine(), add tests for default_engine_for_revision() |
-| `phase` | P2 |
-| `severity` | HIGH |
-| `depends_on` | [T-P1-01] |
-| `files` | `crates/ir/src/mir.rs`, `crates/ir/src/mir_engine_test.rs` |
-| `violation_refs` | [V-015] |
-| `acceptance_criteria` | 1) `default_engine()` is marked `#[deprecated]` with explanation; 2) `mir_engine_test.rs` adds tests for `default_engine_for_revision(Some(rev))` for each AneRevision; 3) All family-specific overrides are tested |
-| `agent_hints` | Add `#[deprecated(since = "0.x", note = "Use default_engine_for_revision(Some(rev)) instead. This method returns incorrect results for family-restricted ops.")]` to `default_engine()`. Add a test matrix: for each (MirOp, AneRevision) pair, verify the engine is correct. |
-
----
-
-### T-P2-07: Fix CAPI stubs to return errors instead of Ok with wrong data
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P2-07 |
-| `title` | Replace CAPI stub Ok responses with honest error returns |
-| `phase` | P2 |
-| `severity` | HIGH |
-| `depends_on` | [] |
-| `files` | `crates/coreml-ffi/src/capi.rs` |
-| `violation_refs` | [V-017, V-018, V-066, V-067] |
-| `acceptance_criteria` | 1) `coreml_model_info` returns `ErrorUnknown` instead of zeroed struct with `Ok`; 2) `coreml_version` returns `ErrorUnknown` instead of "unknown"; 3) `coreml_model_compile` and `coreml_model_predict` return proper error codes; 4) No CAPI function returns `Ok` with fabricated data |
-| `agent_hints` | Change the return values in capi.rs for the macOS paths. `coreml_model_info`: return `CoreMlStatus::ErrorUnknown` with zeroed struct. `coreml_version`: return `CoreMlStatus::ErrorUnknown` with empty string. Better to fail honestly than to lie. |
-
----
-
-### T-P2-08: Mark unverified hardware limits
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P2-08 |
-| `title` | Add verified flag to AneHwLimits and gate compilation with unverified limits |
-| `phase` | P2 |
-| `severity` | HIGH |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/ane_hw_limits.rs` |
-| `violation_refs` | [V-019, V-020] |
-| `acceptance_criteria` | 1) `AneHwLimits` has a `verified: bool` field; 2) `for_revision()` returns `Result<AneHwLimits, UnverifiedLimitsWarning>` or logs a structured warning; 3) A12 and V26 limits are marked `verified: false`; 4) CLI emits a visible warning when compiling with unverified limits |
-| `agent_hints` | Add `pub verified: bool` to the struct. Set `true` for all revisions with confirmed limits (A11, A13–A18). Set `false` for A12 and V26. In `for_revision()`, if `!verified`, emit a `log::warn!` with the revision name. Consider adding `require_verified_limits: bool` to the compilation config. |
-
----
-
-### T-P2-09: Fix allow_missing_weights for production paths
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P2-09 |
-| `title` | Pass allow_missing_weights=false when real WeightResolver is provided |
-| `phase` | P2 |
-| `severity` | HIGH |
-| `depends_on` | [] |
-| `files` | `crates/bridge/src/proto_direct.rs` |
-| `violation_refs` | [V-021] |
-| `acceptance_criteria` | 1) `emit_mir_graph_proto_direct_with_resolver` passes `allow_missing_weights=false` when resolver is not `EmptyWeightResolver`; 2) `resolver.is_empty()` check is added before calling; 3) Production compilation with missing weights returns an error |
-| `agent_hints` | At line ~188, change `true` to `resolver.is_empty()` (or `false` if resolver is real). Add the missing `is_empty()` method to the resolver trait if it doesn't exist. |
-
----
-
-### T-P2-10: Fix mir_to_proto I/O descriptor fallback
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P2-10 |
-| `title` | Error on missing I/O descriptors instead of defaulting to empty shape + Float16 |
-| `phase` | P2 |
-| `severity` | HIGH |
-| `depends_on` | [] |
-| `files` | `crates/coreml-emit/src/mir_to_proto.rs` |
-| `violation_refs` | [V-022] |
-| `acceptance_criteria` | 1) Missing input/output names from descriptors return `Err(...)` instead of creating fallback `TensorDesc`; 2) No silent default to empty shape + Float16; 3) Test verifies error on missing descriptor |
-| `agent_hints` | Change the fallback at lines ~411–416 and ~428–433 from `TensorDesc { shape: vec![], dtype: Float16 }` to `Err(EmissionError::MissingIODescriptor { name })`. The caller should ensure all I/O names are present before emission. |
 
 ---
 
@@ -280,7 +83,7 @@
 | `severity` | HIGH |
 | `depends_on` | [] |
 | `files` | `crates/ir/src/common.rs`, `crates/passes/src/palettize_weights.rs`, `crates/bridge/src/mir_to_compat.rs`, `crates/bridge/src/shape_inference.rs` |
-| `violation_refs` | [V-023, V-024, V-040, V-041] |
+| `violation_refs` | [V-023, M-019] |
 | `acceptance_criteria` | 1) `ModelArchConfig` has no `Default` impl (or returns error); 2) `palettize_weights` requires `ModelArchitecture` parameter; 3) `build_input_alias_map` requires `ModelArchitecture`; 4) `max_seq_len` has no default — callers must provide it; 5) CLI updated to require these flags |
 | `agent_hints` | Remove `impl Default for ModelArchConfig`. Change `Option<ModelArchitecture>` to `ModelArchitecture` in function signatures. For `max_seq_len`, change `Option<usize>` to `usize` in the three functions. Update `crates/cli/src/main.rs` to require `--architecture` and `--max-seq-len` flags. |
 
@@ -304,38 +107,6 @@
 
 ## Phase 3 — Medium-Priority Constraint Enforcement
 
-### T-P3-01: Promote ANE constraint violations from warnings to errors
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P3-01 |
-| `title` | Change IOSurface size, surface uniformity, and flat buffer layout validations from warn to error |
-| `phase` | P3 |
-| `severity` | MEDIUM |
-| `depends_on` | [] |
-| `files` | `crates/coreml-emit/src/mir_to_proto.rs` |
-| `violation_refs` | [V-030, V-031, V-032] |
-| `acceptance_criteria` | 1) `validate_iosurface_sizes` returns `Err(...)` for undersized buffers; 2) `validate_surface_uniformity` returns `Err(...)` for non-uniform sizes; 3) `validate_flat_buffer_layout` returns `Err(...)` for non-[1,C,1,S] shapes; 4) Add `allow_invalid_surface` escape hatch flag if needed for testing |
-| `agent_hints` | Replace `log::warn!(...) + Ok(())` with `Err(EmissionError::...)` in all three validation functions. ANE will reject these models at runtime (0x1d error), so failing early is correct. Add a `ValidationPolicy { strict: bool }` config if a soft mode is needed. |
-
----
-
-### T-P3-02: Make validate_palette_bits_for_family require family
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P3-02 |
-| `title` | Change validate_palette_bits_for_family signature to require AneFamily |
-| `phase` | P3 |
-| `severity` | MEDIUM |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/ane_layout.rs` |
-| `violation_refs` | [V-025] |
-| `acceptance_criteria` | 1) `validate_palette_bits_for_family(family: AneFamily, ...)` — no Option; 2) All callers provide a concrete AneFamily; 3) 3-bit/6-bit palette on A11Legacy/A12/A13 is rejected; 4) Tests updated |
-| `agent_hints` | Change `family: Option<AneFamily>` to `family: AneFamily`. Find all callers and ensure they pass a real family. For contexts where family is truly unavailable, the caller should fail rather than silently accepting. |
-
----
-
 ### T-P3-03: Replace AIR risk fields with status enum
 
 | Field | Value |
@@ -346,7 +117,7 @@
 | `severity` | MEDIUM |
 | `depends_on` | [] |
 | `files` | `crates/ir/src/air.rs`, `crates/ir/src/serialize.rs`, `crates/passes/src/risk_annotate.rs` |
-| `violation_refs` | [V-026, V-033] |
+| `violation_refs` | [V-026, M-011] |
 | `acceptance_criteria` | 1) `AirNode` has `legality_status: LegalityStatus` enum instead of three f32 fields; 2) `LegalityStatus` variants: `Verified`, `Unverified`, `LikelyFallback`, `Unknown`; 3) `risk_annotate` populates from knowledge query; 4) No downstream code relies on the old fields |
 | `agent_hints` | Define `enum LegalityStatus { Verified, Unverified, LikelyFallback, Unknown }`. Replace `legality_confidence/fallback_risk/drift_risk` in `AirNode`. Update `serialize.rs` to map old values to new enum. Update `risk_annotate.rs` to use the enum. |
 
@@ -365,38 +136,6 @@
 | `violation_refs` | [V-037] |
 | `acceptance_criteria` | 1) `validate_conv_dims()` method exists that calls both `validate_tensor_dims()` and `validate_conv_channels()`; 2) All conv-placement callers use `validate_conv_dims()` instead of `validate_tensor_dims()` alone; 3) Conv with 40000 channels is rejected |
 | `agent_hints` | Add `pub fn validate_conv_dims(&self, ...) -> Result<(), ...>` that calls both methods. Find all call sites in `placement_validate.rs` and `op_constraints.rs` that validate conv dimensions and update them. |
-
----
-
-### T-P3-05: Add E5M2 validation gate
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P3-05 |
-| `title` | Add supports_e5m2() to AneFamily (always false) and validate in placement |
-| `phase` | P3 |
-| `severity` | MEDIUM |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/ane_target.rs`, `crates/passes/src/dtype_constraints.rs`, `crates/passes/src/placement_validate.rs` |
-| `violation_refs` | [V-028] |
-| `acceptance_criteria` | 1) `AneFamily::supports_e5m2()` exists and returns `false` for all families; 2) `is_dtype_ane_legal()` rejects E5M2 for ANE-targeted compilation; 3) Test verifies E5M2 is rejected |
-| `agent_hints` | Add `pub fn supports_e5m2(&self) -> bool { false }` to `AneFamily`. In `is_dtype_ane_legal()`, add a match arm for `MilDtype::E5M2` that returns `Err(...)`. |
-
----
-
-### T-P3-06: Remove or gate KvCacheLayout::Paged
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P3-06 |
-| `title` | Add #[non_exhaustive] to KvCacheLayout and validate Paged variant |
-| `phase` | P3 |
-| `severity` | MEDIUM |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/sir.rs` |
-| `violation_refs` | [V-027] |
-| `acceptance_criteria` | 1) `KvCacheLayout` is marked `#[non_exhaustive]`; 2) Downstream match arms handle the `Paged` variant with `todo!()` or `unimplemented!()` rather than silently accepting; 3) SIR construction rejects Paged for ANE targets |
-| `agent_hints` | Add `#[non_exhaustive]` to the enum. In the SIR builder, add a validation that rejects `KvCacheLayout::Paged` for ANE-targeted compilation with a clear error message. |
 
 ---
 
@@ -442,7 +181,7 @@
 | `severity` | MEDIUM |
 | `depends_on` | [T-P2-01] |
 | `files` | `crates/passes/src/op_constraints.rs` |
-| `violation_refs` | [V-006, forensic §6.7, §6.11] |
+| `violation_refs` | [V-006, F-CROSS-01, M-005] |
 | `acceptance_criteria` | 1) Dilation + vector_palettize combination is rejected; 2) Aliasing + vector_palettize combination is rejected; 3) Shuffle + per-channel_palettize combination is rejected; 4) Palettized weight + large_kernel_stride combination is rejected; 5) Z-dilation and X-dilation factor rejection added; 6) Deconv depth-axis stride rejection added |
 | `agent_hints` | These constraint combinations are present in the ANECompiler binary but not validated by MILLer. Add checks in `op_constraints.rs` for each combination. The binary error strings provide the exact rejection messages to match against. |
 
@@ -458,7 +197,7 @@
 | `severity` | MEDIUM |
 | `depends_on` | [] |
 | `files` | `crates/passes/src/op_constraints.rs`, `crates/passes/src/dtype_constraints.rs` |
-| `violation_refs` | [forensic §6.10] |
+| `violation_refs` | [F-ARCH-01] |
 | `acceptance_criteria` | 1) Softmax on old HW (pre-A13) is rejected or documented as risky; 2) LRN on unsupported architectures is rejected; 3) Depth-axis broadcast on affected architectures is rejected; 4) A14-class resize alignCorners=true is rejected; 5) H13+ floor for MIL compilation is documented/enforced |
 | `agent_hints` | The forensic analysis found strings like "Softmax is not supported by this ANE architecture" and "LRN is not supported on this architecture". Add per-family gates for these. Most of these are already CPU-only but the architecture gating adds an extra safety layer. |
 
@@ -475,7 +214,7 @@
 | `depends_on` | [] |
 | `files` | `crates/ir/src/sir.rs` |
 | `violation_refs` | [V-035] |
-| `acceptance_criteria` | 1) `palette_bits: Option<usize>` values are validated against {1,2,3,4,6,8} at construction; 2) Invalid values like `Some(5)` are rejected; 3) `clamp_to_valid_palette_bits()` logs a warning when clamping |
+| `acceptance_criteria` | 1) `palette_bits: Option<usize>` values are validated against {3,4,6,8} at construction; 2) Invalid values like `Some(5)` are rejected; 3) `clamp_to_valid_palette_bits()` logs a warning when clamping |
 | `agent_hints` | Add a `validate_palette_bits()` call in the constructors or use a newtype `PaletteBits(usize)` with a `TryFrom<usize>` impl. Also add `log::warn!` to `clamp_to_valid_palette_bits()`. |
 
 ---
@@ -562,22 +301,6 @@
 
 ---
 
-### T-P4-06: Update documentation
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P4-06 |
-| `title` | Update ir_reference.md, bridge_protocol.md, architecture.md |
-| `phase` | P4 |
-| `severity` | LOW |
-| `depends_on` | [T-P4-03] |
-| `files` | `docs/ir_reference.md`, `docs/bridge_protocol.md`, `docs/architecture.md` |
-| `violation_refs` | [V-046, V-047, V-048] |
-| `acceptance_criteria` | 1) StaticizePass removed from pipeline listing; 2) Multifunction support documented in bridge_protocol.md; 3) "No stubs" claim in architecture.md qualified to exclude CAPI; 4) No stale documentation contradicts implementation |
-| `agent_hints` | Remove StaticizePass from the pipeline table in ir_reference.md. Update the limitations section in bridge_protocol.md to document multifunction support. Qualify the stubs claim in architecture.md. |
-
----
-
 ### T-P4-07: Add HAL sub-variant modeling
 
 | Field | Value |
@@ -586,9 +309,9 @@
 | `title` | Research and model HAL sub-variants (H13g, H14c/g, H15c/g, H16c/g/s, H17a) |
 | `phase` | P4 |
 | `severity` | LOW |
-| `depends_on` | [T-P2-08] |
+| `depends_on` | [] |
 | `files` | `crates/ir/src/ane_target.rs`, `crates/ir/src/ane_hw_limits.rs` |
-| `violation_refs` | [forensic §5.1, §8.1] |
+| `violation_refs` | [F-HAL-01] |
 | `acceptance_criteria` | 1) Each HAL sub-variant is represented in AneRevision or a new AneSubVariant enum; 2) Constraint differences between sub-variants are documented; 3) Compilation targeting specific sub-variants uses correct limits |
 | `agent_hints` | This requires Apple hardware testing to determine actual constraint differences. Start by adding the sub-variant names to the type system with the same limits as their parent. Mark as unverified. Document the need for hardware validation. |
 
@@ -604,47 +327,13 @@
 | `severity` | LOW |
 | `depends_on` | [] |
 | `files` | `crates/ir/src/mir.rs`, `crates/passes/src/cpu_only_ops.rs` |
-| `violation_refs` | [forensic §2.3] |
+| `violation_refs` | [F-OPS-01] |
 | `acceptance_criteria` | 1) MirOp has variants for: broadcast, scaled_elementwise, global_arg_min_max, degamma, dirac, gain_offset_control, n_relu, high_precision_sigmoid, log2, trunc, invert, unflatten, channel_to_space, space_to_channel; 2) Each is classified as ANE-legal or CPU-only; 3) Default engine assignments are correct per family |
 | `agent_hints` | Add new MirOp variants. Most of these are niche operations. Classify them based on the forensic analysis: `scaled_elementwise` and `global_arg_min_max` may be ANE-legal on some families; others are likely CPU-only. Start with CPU-only classification for safety. |
 
 ---
 
-## Phase 5 — MLIR-Method Architectural Remediation (from MLIRVIOLATIONS.md)
-
-Tasks addressing violations identified by applying MLIR compiler-design discipline as a conceptual lens. See ISSUES.md (M-prefix entries) and MLIRVIOLATIONS.md for full details.
-
-### T-P5-01: Remove 1-bit and 2-bit palette support (ANEC rejects them)
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P5-01 |
-| `title` | Change VALID_PALETTE_BITS from [1,2,3,4,6,8] to [3,4,6,8] |
-| `phase` | P1 |
-| `severity` | CRITICAL |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/ane_layout.rs` |
-| `violation_refs` | [N-001] |
-| `acceptance_criteria` | 1) `VALID_PALETTE_BITS = &[3, 4, 6, 8]`; 2) `validate_palette_bits()` rejects 1/2-bit; 3) `clamp_to_valid_palette_bits()` clamps 1→3, 2→3 with `log::warn!`; 4) Tests updated; 5) `palettization_constraints_seed.json` audited |
-| `agent_hints` | Change the const at ane_layout.rs:164. Update all three functions that reference it. Search for any code constructing `palette_bits: Some(1)` or `Some(2)`. |
-
----
-
-### T-P5-02: Convert MatMul dimension mismatch from warning to hard error
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P5-02 |
-| `title` | Replace eprintln!("[WARN]") with anyhow::bail!() for MatMul mismatch |
-| `phase` | P1 |
-| `severity` | CRITICAL |
-| `depends_on` | [] |
-| `files` | `crates/passes/src/mil_lower.rs` |
-| `violation_refs` | [M-002] |
-| `acceptance_criteria` | 1) `mil_lower.rs:92–98` uses `bail!()` instead of `eprintln!`; 2) Test: MatMul with mismatched inner dims returns Err |
-| `agent_hints` | Replace the `eprintln!("[WARN]...")` + continue with `anyhow::bail!("MatMul inner dimension mismatch: lhs_cols={} != rhs_rows={}", lhs_cols, rhs_rows)`. Add a unit test in mil_lower tests. |
-
----
+## Phase 5 — MLIR-Method Architectural Remediation
 
 ### T-P5-03: Implement per-IR-layer verify() methods
 
@@ -652,7 +341,7 @@ Tasks addressing violations identified by applying MLIR compiler-design discipli
 |-------|-------|
 | `id` | T-P5-03 |
 | `title` | Add SirGraph::verify(), AirGraph::verify(), MirGraph::verify() |
-| `phase` | P2 |
+| `phase` | P5 |
 | `severity` | HIGH |
 | `depends_on` | [] |
 | `files` | `crates/ir/src/sir.rs`, `crates/ir/src/air.rs`, `crates/ir/src/mir.rs` |
@@ -668,7 +357,7 @@ Tasks addressing violations identified by applying MLIR compiler-design discipli
 |-------|-------|
 | `id` | T-P5-04 |
 | `title` | infer_shape() and compat_output_shape() must not return Ok(vec![]) |
-| `phase` | P2 |
+| `phase` | P5 |
 | `severity` | HIGH |
 | `depends_on` | [T-P5-03] |
 | `files` | `crates/passes/src/mil_lower.rs`, `crates/bridge/src/shape_inference.rs` |
@@ -684,7 +373,7 @@ Tasks addressing violations identified by applying MLIR compiler-design discipli
 |-------|-------|
 | `id` | T-P5-05 |
 | `title` | Rename pass to reflect ANE-specific nature |
-| `phase` | P3 |
+| `phase` | P5 |
 | `severity` | MEDIUM |
 | `depends_on` | [] |
 | `files` | `crates/passes/src/legality_rewrite.rs`, `crates/passes/src/lib.rs`, `docs/ir_reference.md` |
@@ -700,7 +389,7 @@ Tasks addressing violations identified by applying MLIR compiler-design discipli
 |-------|-------|
 | `id` | T-P5-06 |
 | `title` | Extract validate_sdpa_constraints() from MilLowerPass |
-| `phase` | P2 |
+| `phase` | P5 |
 | `severity` | MEDIUM |
 | `depends_on` | [T-P2-01] |
 | `files` | `crates/passes/src/mil_lower.rs`, `crates/passes/src/placement_validate.rs` |
@@ -716,11 +405,11 @@ Tasks addressing violations identified by applying MLIR compiler-design discipli
 |-------|-------|
 | `id` | T-P5-07 |
 | `title` | Create ane_placement.rs for target-parameterized engine mapping |
-| `phase` | P3 |
+| `phase` | P5 |
 | `severity` | MEDIUM |
-| `depends_on` | [T-P1-01, T-P2-06] |
+| `depends_on` | [] |
 | `files` | `crates/ir/src/mir.rs`, new `crates/ir/src/ane_placement.rs` |
-| `violation_refs` | [M-028, M-035] |
+| `violation_refs` | [M-028, N-009] |
 | `acceptance_criteria` | 1) New module maps MirOp→AneEngine parameterized by AneFamily; 2) base_engine() removed or replaced; 3) iOS18 hardcoding replaced with target-derived value; 4) Tests updated |
 | `agent_hints` | Create ane_placement.rs with `fn engine_for_op(op: &MirOp, family: AneFamily) -> Option<AneEngine>`. Move the default_engine_for_revision logic there. Mark base_engine() deprecated. Make opset_version configurable. |
 
@@ -732,7 +421,7 @@ Tasks addressing violations identified by applying MLIR compiler-design discipli
 |-------|-------|
 | `id` | T-P5-08 |
 | `title` | Move palette_bits, kernel_scale, kernel_zero_point, kernel_palettized_lut to target layer |
-| `phase` | P3 |
+| `phase` | P5 |
 | `severity` | MEDIUM |
 | `depends_on` | [T-P5-07] |
 | `files` | `crates/ir/src/sir.rs`, `crates/ir/src/mir.rs` |
@@ -748,187 +437,140 @@ Tasks addressing violations identified by applying MLIR compiler-design discipli
 |-------|-------|
 | `id` | T-P5-09 |
 | `title` | Remove name.contains("input_ids"), ends_with("_ids"), "__placeholder__" heuristics |
-| `phase` | P2 |
+| `phase` | P5 |
 | `severity` | MEDIUM |
 | `depends_on` | [T-P5-04] |
 | `files` | `crates/bridge/src/shape_inference.rs`, `crates/passes/src/mil_lower.rs` |
-| `violation_refs` | [M-016, M-018, M-041] |
+| `violation_refs` | [M-016, M-018] |
 | `acceptance_criteria` | 1) compat_input_shape() does not use name heuristics; 2) mil_lower dtype inference does not use name heuristics; 3) Shape/dtype carried as explicit fields from SIR→AIR→MIR; 4) Returns Err when unavailable |
-| `agent_hints` | Replace name-based fallbacks with Err returns. Add explicit shape/dtype fields to MirOp variants. The Qwen3 defaults (T-P2-11) provide the required parameters once that task is complete. |
+| `agent_hints` | Replace name-based fallbacks with Err returns. Add explicit shape/dtype fields to MirOp variants. The goal is to carry information in the type system, not in naming conventions. |
 
 ---
 
-### T-P5-10: Add post-lowering verification pass
+### T-P5-10: Fix MirOpCompat::Unsupported weight materialization gap
 
 | Field | Value |
 |-------|-------|
 | `id` | T-P5-10 |
-| `title` | Verify every MIR node has known shape and dtype after AIR→MIR lowering |
-| `phase` | P2 |
+| `title` | Make MirOpCompat::Unsupported visible to weight materialization or reject it |
+| `phase` | P5 |
 | `severity` | MEDIUM |
-| `depends_on` | [T-P5-03, T-P5-04] |
-| `files` | `crates/passes/src/` (new module) |
-| `violation_refs` | [M-003, M-014] |
-| `acceptance_criteria` | 1) MirVerifyPass runs after MilLowerPass; 2) Checks: non-empty shape (or Dynamic), legal dtype; 3) Verification failure → pipeline aborts; 4) Test: lowering with empty shape triggers error |
-| `agent_hints` | Create `mir_verify.rs` in passes/. Iterate over all nodes in MirGraph. Check each node has a non-empty shape and a legal dtype. Return Err with detailed diagnostic on first failure. Add to pipeline after MilLowerPass. |
+| `depends_on` | [] |
+| `files` | `crates/coreml-proto/src/lib.rs` |
+| `violation_refs` | [M-009] |
+| `acceptance_criteria` | 1) Unsupported ops either return correct input_names() or are rejected at emission with a clear error; 2) No silent weight materialization gap |
+| `agent_hints` | Either populate `input_names()` for Unsupported from the op's actual inputs, or reject Unsupported ops at the emission boundary with `bail!("Unsupported op: {}", name)`. |
 
 ---
 
-### T-P5-11: Update SPEC.md to match implementation
+### T-P5-11: Fix SPEC-implementation drift for knowledge store
 
 | Field | Value |
 |-------|-------|
 | `id` | T-P5-11 |
-| `title` | Fix SPEC: JSON not SQLite, confidence decay not wired, pruning not implemented, CrossValidated=0.6 |
-| `phase` | P3 |
+| `title` | Update SPEC to match JSON knowledge store implementation or implement SQLite |
+| `phase` | P5 |
 | `severity` | MEDIUM |
 | `depends_on` | [] |
-| `files` | `SPEC.md` |
-| `violation_refs` | [M-012, M-029, M-030, M-043, M-044] |
-| `acceptance_criteria` | 1) SPEC describes JSON file store; 2) Confidence decay marked "not yet implemented"; 3) Knowledge pruning marked "not yet implemented"; 4) CrossValidated confidence = 0.6; 5) Test count matches CHANGELOG |
-| `agent_hints` | Update SPEC sections on knowledge persistence, confidence decay, and pruning. Change CrossValidated value from 0.85 to 0.6. Update test count from 1270 to 1651+. |
+| `files` | `SPEC.md`, `crates/knowledge/src/store.rs`, `crates/knowledge/src/confidence.rs` |
+| `violation_refs` | [M-012, M-029, M-030] |
+| `acceptance_criteria` | 1) SPEC accurately describes JSON backend (not SQLite); 2) Confidence decay is either implemented as described or SPEC updated to match; 3) Knowledge pruning is either implemented or SPEC section marked as planned; 4) No SPEC claims contradict implementation |
+| `agent_hints` | The simplest path: update SPEC.md to describe the actual JSON implementation. Mark SQLite, confidence decay, and pruning as "planned" sections. Remove or qualify claims that don't match current implementation. |
 
 ---
 
-### T-P5-12: Add semantic verification to Python bridge
+## Phase 6 — Forensic Infrastructure Gaps (Long-Term)
 
-| Field | Value |
-|-------|-------|
-| `id` | T-P5-12 |
-| `title` | Verify constructed MIL graph against MIR spec after build_*_program() |
-| `phase` | P3 |
-| `severity` | MEDIUM |
-| `depends_on` | [] |
-| `files` | `python/mil_emitter.py`, `python/bridge.py` |
-| `violation_refs` | [M-020, M-032] |
-| `acceptance_criteria` | 1) After build, validate constructed program op set; 2) BridgeResult.status != semantic legality; 3) Structural verification of output graph; 4) LUT bitwidth wired; 5) Test: bridge returns Err on divergence |
-| `agent_hints` | Add a `verify_program(program, expected_ops)` function in mil_emitter.py. Call after each build_*_program(). Verify op types and topology match expectations. In bridge.py, don't treat status=="success" as semantic legality. |
-
----
-
-## Phase 6 — Binary-Research Infrastructure Gaps (from forensic analysis)
-
-Tasks addressing findings from cross-referencing MILLer source code against ANEC binary research. See ISSUES.md (N-prefix entries) for full details.
-
-### T-P6-01: Add 15+ highest-impact missing hal_params to AneHwLimits
+### T-P6-01: Model remaining ANEC hal_params
 
 | Field | Value |
 |-------|-------|
 | `id` | T-P6-01 |
-| `title` | Model critical missing hardware constraint parameters |
-| `phase` | P2 |
+| `title` | Add 35+ missing hal_params to AneHwLimits |
+| `phase` | P6 |
 | `severity` | CRITICAL |
 | `depends_on` | [] |
 | `files` | `crates/ir/src/ane_hw_limits.rs` |
-| `violation_refs` | [N-002, N-026, N-036] |
-| `acceptance_criteria` | 1) AneHwLimits gains: max_conv_kernel_dim_z, max_conv_pad_x/y/z, pe_max_tile_height, ne_transpose_w_max, ne_palette_lut_size_in_bytes, dram_alignment; 2) Values populated per revision; 3) validate_tensor_dims() uses new fields |
-| `agent_hints` | Add fields to AneHwLimits struct. Populate from binary research docs or empirical testing. Mark unverified values with verified:false. Update for_revision() to populate. Update validate methods. |
+| `violation_refs` | [N-002, N-010] |
+| `acceptance_criteria` | 1) All 50+ hal_params from ANEC binary research are modeled; 2) LUT size overflow detection added; 3) Validation uses complete parameter set |
+| `agent_hints` | This requires extensive binary research. Add fields incrementally, starting with the most impactful: kernel depth limits, padding limits, PE/NE per-engine limits. Mark each as verified/unverified. |
 
 ---
 
-### T-P6-02: Fix M1 hardware limits to reflect A14-family
+### T-P6-02: Fix M1 hardware limits
 
 | Field | Value |
 |-------|-------|
 | `id` | T-P6-02 |
-| `title` | m1() must derive from a14() values, not a17() |
-| `phase` | P2 |
+| `title` | Fix M1() to inherit from A14 instead of A17 |
+| `phase` | P6 |
 | `severity` | HIGH |
-| `depends_on` | [T-P6-01, T-P2-08] |
+| `depends_on` | [] |
 | `files` | `crates/ir/src/ane_hw_limits.rs` |
-| `violation_refs` | [N-003, V-019] |
-| `acceptance_criteria` | 1) m1() derives from a14() values; 2) A12() no longer copies A11 without verification; 3) future() clearly marked speculative; 4) Test: M1 limits match A14 class |
-| `agent_hints` | Change `..Self::a17()` to `..Self::a14()` in m1(). Update a12() to use independent values with verified:false flag. Add log::warn! for speculative limits. |
+| `violation_refs` | [N-003] |
+| `acceptance_criteria` | 1) `m1()` uses `..Self::a14()` or correct M1-specific limits; 2) Tensor dimensions validated against correct M1 limits |
+| `agent_hints` | Change the `..Self::a17()` to `..Self::a14()` in the m1() constructor. Verify against Apple documentation or empirical testing. |
 
 ---
 
-### T-P6-03: Build ValidateLayer equivalent (ANE Constraint Layer 1)
+### T-P6-03: Implement ValidateLayer-equivalent constraints
 
 | Field | Value |
 |-------|-------|
 | `id` | T-P6-03 |
-| `title` | Per-op ANECTensorDesc validation before placement |
-| `phase` | P3 |
+| `title` | Add MILLer equivalents for 40+ ANEC ValidateLayer instantiations |
+| `phase` | P6 |
 | `severity` | HIGH |
-| `depends_on` | [T-P6-01, T-P2-01] |
-| `files` | New `crates/passes/src/ane_validate_layer.rs` |
+| `depends_on` | [T-P6-01] |
+| `files` | `crates/passes/src/placement_validate.rs`, `crates/passes/src/op_constraints.rs` |
 | `violation_refs` | [N-004] |
-| `acceptance_criteria` | 1) Per-op validation functions for Conv, Deconv, Pool, Linear, MatMul, Elementwise, Norm, SDPA, Softmax, Gather, ArgMinMax, Reshape, Transpose, Pad, Sort/TopK; 2) Validates: tensor rank, valid format, interleave, int4→interleave-8; 3) Called from placement_validate.rs; 4) Test: each op with invalid tensor desc rejected |
-| `agent_hints` | Create ane_validate_layer.rs with validation functions per op type. Start with Conv/Linear/Elementwise (highest impact). Check rank ≤ 5, valid interleave ∈ {1,2,3,4,8}, int4→interleave=8, packed10 rejection. Import and call from placement_validate match arms. |
+| `acceptance_criteria` | 1) Each ANEC ValidateLayer constraint has a MILLer validation equivalent; 2) Invalid configurations caught at placement time instead of ANEC compile time |
+| `agent_hints` | This is a large task. Start by mapping each ValidateLayer instantiation to its constraint and adding validation methods. Prioritize by frequency of failure. |
 
 ---
 
-### T-P6-04: Add missing AneFamily capability methods
+### T-P6-04: Add uANE AneRevision variant
 
 | Field | Value |
 |-------|-------|
 | `id` | T-P6-04 |
-| `title` | Add supports_pool_conv_fallback(), supports_channellast_dram(), supports_instance_norm() |
-| `phase` | P2 |
+| `title` | Add AneRevision::Vu1 for uANE hardware |
+| `phase` | P6 |
 | `severity` | HIGH |
 | `depends_on` | [] |
-| `files` | `crates/ir/src/ane_target.rs` |
-| `violation_refs` | [N-014, N-016, N-008] |
-| `acceptance_criteria` | 1) supports_pool_conv_fallback() returns false for A13-; 2) supports_channellast_dram() returns false; 3) supports_instance_norm() added; 4) AneRevision::Vu1 added for uANE; 5) Tests |
-| `agent_hints` | Add methods following existing supports_sdpa()/supports_layernorm() pattern. For Vu1, add `V17u1` variant with unknown limits (verified:false). Wire into placement validation. |
+| `files` | `crates/ir/src/ane_target.rs`, `crates/ir/src/ane_hw_limits.rs` |
+| `violation_refs` | [N-008] |
+| `acceptance_criteria` | 1) `AneRevision::Vu1` variant exists; 2) uANE-specific limits (if different) are modeled; 3) CLI can target uANE |
+| `agent_hints` | Add the variant. Research uANE constraints — they may differ from standard ANE. Start with conservative limits matching A17 until hardware testing confirms. |
 
 ---
 
-### T-P6-05: Add fusability checks (ANE Constraint Layer 4)
+### T-P6-05: Add fusability checks
 
 | Field | Value |
 |-------|-------|
 | `id` | T-P6-05 |
-| `title` | Build IsFusable-style checks for NE/PE engine layers |
-| `phase` | P4 |
+| `title` | Implement IsFusable-equivalent checks for ANE layer fusion |
+| `phase` | P6 |
 | `severity` | HIGH |
-| `depends_on` | [T-P6-03, T-P5-07] |
-| `files` | New `crates/passes/src/ane_fusability.rs` |
+| `depends_on` | [T-P6-03] |
+| `files` | New module `crates/passes/src/fusability.rs` |
 | `violation_refs` | [N-006] |
-| `acceptance_criteria` | 1) Module documents fusable ops; 2) Documents impossible fusion patterns; 3) Warns when ops pass placement but can't fuse; 4) Test: known-impossible pattern detected |
-| `agent_hints` | Start as a documentation/validation module. Enumerate which activations can fuse into NE/PE layers and which cannot. Add a check function that warns when a non-fusable pattern is detected after placement. |
+| `acceptance_criteria` | 1) Fusability check module exists; 2) Ops that individually pass placement but fail to fuse are caught; 3) ANEC fusion constraints modeled |
+| `agent_hints` | This requires understanding ANEC's fusion rules from binary research. Create a fusability module that checks if adjacent ops can be fused into a single engine layer. |
 
 ---
 
-### T-P6-06: Build L2/Memory pressure model (ANE Constraint Layer 5)
+### T-P6-06: Add L2 memory budget modeling
 
 | Field | Value |
 |-------|-------|
 | `id` | T-P6-06 |
-| `title` | L2 cache budget estimation and DRAM limit checking |
-| `phase` | P4 |
+| `title` | Implement L2 memory budget modeling and legalization |
+| `phase` | P6 |
 | `severity` | HIGH |
-| `depends_on` | [T-P6-01, T-P6-03, T-P6-05] |
-| `files` | New `crates/passes/src/ane_memory_pressure.rs` |
+| `depends_on` | [T-P6-01] |
+| `files` | New module `crates/passes/src/l2_budget.rs` |
 | `violation_refs` | [N-007] |
-| `acceptance_criteria` | 1) L2 budget estimation per engine layer; 2) DRAM alignment validation; 3) Spatial split feasibility analysis; 4) Warning when L2 budget likely exceeded |
-| `agent_hints` | This is the most complex infrastructure task. Start with DRAM alignment checking (uses dram_alignment from T-P6-01). Add simple L2 budget estimation per layer. Mark all estimates as heuristic. |
-
----
-
-## Task Dependency Graph
-
-```
-T-P1-01 ──→ T-P2-06
-T-P1-04 ──→ T-P2-05
-T-P2-01 ──→ T-P3-09
-T-P2-08 ──→ T-P4-07
-T-P4-03 ──→ T-P4-06
-
-T-P5-03 ──→ T-P5-04
-T-P5-04 ──→ T-P5-10
-T-P5-07 ──→ T-P5-08
-T-P5-09 depends on T-P5-04
-
-T-P6-01 ──→ T-P6-02
-T-P6-01 ──→ T-P6-03
-T-P6-03 ──→ T-P6-05 ──→ T-P6-06
-T-P5-07 ──→ T-P6-05
-```
-
-## Execution Order Recommendation
-
-1. **T-P1-01 through T-P1-05, T-P5-01, T-P5-02** — CRITICAL, can be executed in parallel
-2. **T-P2-01 through T-P2-12, T-P5-06, T-P5-09, T-P6-01, T-P6-04** — HIGH, mostly parallel
-3. **T-P3-01 through T-P3-11, T-P5-03, T-P5-05, T-P5-07, T-P5-10, T-P5-11, T-P5-12, T-P6-02, T-P6-03** — MEDIUM, some dependencies
-4. **T-P4-01 through T-P4-08, T-P5-08, T-P6-05, T-P6-06** — LOW, long-term infrastructure
+| `acceptance_criteria` | 1) L2 memory budget modeled per AneFamily; 2) Individually legal ops that collectively exceed budget are caught; 3) Legalization splits or reorders ops to fit |
+| `agent_hints` | This is advanced infrastructure. Start by modeling L2 cache sizes per family. Add a budget check after placement validation. Legalization (splitting/reordering) is a follow-up. |
