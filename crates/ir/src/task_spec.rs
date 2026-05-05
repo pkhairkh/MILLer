@@ -935,9 +935,7 @@ fn parse_lut_projection(
 
     // T-64 (I-38): Use centralized palette bit-width validation
     // from ane_ir::ane_layout instead of inline matches! pattern.
-    if let Err(e) = crate::ane_layout::validate_palette_bits(lut_bitwidth) {
-        return Err(e);
-    }
+    crate::ane_layout::validate_palette_bits(lut_bitwidth)?;
 
     let op = TaskOp::LutProjection {
         vocab_size,

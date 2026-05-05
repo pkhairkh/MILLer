@@ -149,7 +149,7 @@ impl CanonicalizePass {
                     input: r!(input),
                     weight: weight.clone(),
                     bias: bias.clone(),
-                    palette_bits: palette_bits.clone(),
+                    palette_bits: *palette_bits,
                 }
             }
             SirOp::RMSNorm { input, weight, epsilon, axes } => SirOp::RMSNorm {

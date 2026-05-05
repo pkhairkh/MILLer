@@ -1908,6 +1908,7 @@ mod tests {
                     shape: vec![32, 64],
                     compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
                     air_source: None,
+                target_annotation: Default::default(),
                 },
                 MirNode {
                     id: MirNodeId("bias".to_string()),
@@ -1920,6 +1921,7 @@ mod tests {
                     shape: vec![32],
                     compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
                     air_source: None,
+                target_annotation: Default::default(),
                 },
                 MirNode {
                     id: MirNodeId("output".to_string()),
@@ -1933,6 +1935,7 @@ mod tests {
                     shape: vec![32],
                     compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
                     air_source: None,
+                target_annotation: Default::default(),
                 },
             ],
             inputs: vec![MirNodeId("input".to_string())],
@@ -2462,6 +2465,7 @@ mod tests {
             shape: vec![64, 128],
             compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
             air_source: None,
+        target_annotation: Default::default(),
         };
 
         let compat = mir_node_to_compat(&node, &resolver).unwrap();
@@ -2489,6 +2493,7 @@ mod tests {
             shape: vec![64, 128],
             compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
             air_source: None,
+        target_annotation: Default::default(),
         };
 
         let compat_fp16 = mir_node_to_compat(&node_fp16, &resolver).unwrap();

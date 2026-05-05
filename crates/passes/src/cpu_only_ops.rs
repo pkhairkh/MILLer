@@ -438,6 +438,9 @@ pub static CPU_ONLY_OPS_DETAILED: LazyLock<Vec<CpuOnlyOp>> = LazyLock::new(|| {
         CpuOnlyOp { mil_name: "prune", reason: CpuOnlyReason::NoConverter },
         CpuOnlyOp { mil_name: "pruning_metric", reason: CpuOnlyReason::NoConverter },
         CpuOnlyOp { mil_name: "pruning_structure", reason: CpuOnlyReason::NoConverter },
+        // ─── T-P4-08: ANEC internal ops (CPU-only stubs) ────────────
+        CpuOnlyOp { mil_name: "anec_fused_conv_activate", reason: CpuOnlyReason::NoConverter },
+        CpuOnlyOp { mil_name: "anec_fused_linear_activate", reason: CpuOnlyReason::NoConverter },
         CpuOnlyOp { mil_name: "variable_from_tensor", reason: CpuOnlyReason::NoConverter },
         CpuOnlyOp { mil_name: "assign_variable", reason: CpuOnlyReason::NoConverter },
         CpuOnlyOp { mil_name: "placeholder", reason: CpuOnlyReason::NoConverter },

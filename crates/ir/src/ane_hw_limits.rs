@@ -4,6 +4,23 @@
 use crate::ane_target::AneRevision;
 use serde::{Deserialize, Serialize};
 
+/// Sub-variant within an ANE family for fine-grained differentiation.
+///
+/// Some revisions share the same AneFamily but have different hardware
+/// characteristics (e.g., A18 Pro vs A18 Max have different NE counts).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub enum AneSubVariant {
+    /// Standard variant (default).
+    #[default]
+    Standard,
+    /// Pro variant with more NEs (e.g., A18 Pro with 8 NEs).
+    Pro,
+    /// Max variant with maximum NEs (e.g., A18 Max with 16 NEs).
+    Max,
+    /// Mac variant (e.g., M1 with Mac-specific limits).
+    Mac,
+}
+
 /// Per-revision ANE hardware limits.
 /// Key hardware limit parameters that govern ANE op placement.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +44,14 @@ pub struct AneHwLimits {
     pub pe_reduction_cout_limit: u64,
     pub num_nes: u32,
     pub ne_transpose_c_max: u64,
+    /// Whether these hardware limits have been verified on real hardware.
+    /// `false` for approximate/inherited/speculative limits (A12, A13, V26).
+    pub verified: bool,
+    /// Kernel size threshold above which special handling is needed.
+    /// A11-A13: 7, A14+: 9.
+    pub large_kernel_threshold: u64,
+    /// Sub-variant within an ANE family for fine-grained differentiation.
+    pub sub_variant: AneSubVariant,
 }
 
 impl AneHwLimits {
@@ -67,6 +92,9 @@ impl AneHwLimits {
             pe_reduction_cout_limit: 16384,
             num_nes: 1,
             ne_transpose_c_max: 16384,
+            verified: true,
+            large_kernel_threshold: 7,
+            sub_variant: AneSubVariant::Standard,
         }
     }
 
@@ -87,7 +115,7 @@ impl AneHwLimits {
             "A12 Bionic (ANE V5) hardware limits are approximate — copied from A11 values \
              and not yet verified on real A12 hardware. Results may be inaccurate."
         );
-        Self { revision: AneRevision::V5, ..Self::a11_legacy() }
+        Self { revision: AneRevision::V5, verified: false, ..Self::a11_legacy() }
     }
 
     /// A13 Bionic (ANE V6) hardware limits.
@@ -98,16 +126,25 @@ impl AneHwLimits {
             revision: AneRevision::V6,
             max_tensor_width: 32768,
             max_tensor_height: 8192,
+            verified: false,
             ..Self::a11_legacy()
         }
     }
 
     fn a14() -> Self {
-        Self { revision: AneRevision::V7, max_tensor_width: 65536, num_nes: 2, ..Self::a13() }
+        Self {
+            revision: AneRevision::V7,
+            max_tensor_width: 65536,
+            num_nes: 2,
+            verified: true,
+            large_kernel_threshold: 9,
+            sub_variant: AneSubVariant::Standard,
+            ..Self::a13()
+        }
     }
 
     fn a15() -> Self {
-        Self { revision: AneRevision::V8, num_nes: 2, ..Self::a14() }
+        Self { revision: AneRevision::V8, num_nes: 2, verified: true, ..Self::a14() }
     }
 
     fn a16() -> Self {
@@ -116,12 +153,13 @@ impl AneHwLimits {
             max_tensor_width: 131072,
             max_tensor_height: 16384,
             num_nes: 4,
+            verified: true,
             ..Self::a15()
         }
     }
 
     fn a17() -> Self {
-        Self { revision: AneRevision::V11, num_nes: 4, ..Self::a16() }
+        Self { revision: AneRevision::V11, num_nes: 4, verified: true, ..Self::a16() }
     }
 
     /// M1 (Mac, ANE V17) hardware limits.
@@ -131,7 +169,14 @@ impl AneHwLimits {
     /// 262144 max tensor width (vs A14's 65536). The family is A14 — M1
     /// does NOT get A18's SDPA or LayerNorm support.
     fn m1() -> Self {
-        Self { revision: AneRevision::V17, max_tensor_width: 262144, num_nes: 6, ..Self::a17() }
+        Self {
+            revision: AneRevision::V17,
+            max_tensor_width: 262144,
+            num_nes: 6,
+            verified: true,
+            sub_variant: AneSubVariant::Mac,
+            ..Self::a17()
+        }
     }
 
     /// A18 Bionic (iPhone 16, ANE V19) hardware limits.
@@ -139,15 +184,27 @@ impl AneHwLimits {
     /// A18 uses A18-family ANE with SDPA, LayerNorm, and E4M3 support.
     /// Has 6 NEs and 262144 max tensor width.
     fn a18() -> Self {
-        Self { revision: AneRevision::V19, max_tensor_width: 262144, num_nes: 6, ..Self::a17() }
+        Self { revision: AneRevision::V19, max_tensor_width: 262144, num_nes: 6, verified: true, ..Self::a17() }
     }
 
     fn a18_pro() -> Self {
-        Self { revision: AneRevision::V19, num_nes: 8, ..Self::a18() }
+        Self {
+            revision: AneRevision::V19,
+            num_nes: 8,
+            verified: true,
+            sub_variant: AneSubVariant::Pro,
+            ..Self::a18()
+        }
     }
 
     fn a18_max() -> Self {
-        Self { revision: AneRevision::V20, num_nes: 16, ..Self::a18_pro() }
+        Self {
+            revision: AneRevision::V20,
+            num_nes: 16,
+            verified: true,
+            sub_variant: AneSubVariant::Max,
+            ..Self::a18_pro()
+        }
     }
 
     /// T-124 (V-031/V-088): V26 is a speculative/future revision.
@@ -162,7 +219,7 @@ impl AneHwLimits {
              with num_nes=16. These have NOT been verified on real hardware. \
              Models compiled for V26 may not function correctly on actual hardware."
         );
-        Self { revision: AneRevision::V26, num_nes: 16, ..Self::a18_max() }
+        Self { revision: AneRevision::V26, num_nes: 16, verified: false, ..Self::a18_max() }
     }
 
     /// Validate that tensor dimensions are within hardware limits.
@@ -223,6 +280,44 @@ impl AneHwLimits {
                 param: "max_conv_channels".into(),
                 value: channels,
                 limit: self.max_conv_channels,
+            });
+        }
+        Ok(())
+    }
+
+    /// Validate convolution kernel dimensions against hardware limits.
+    pub fn validate_conv_dims(
+        &self,
+        kernel_x: u64,
+        kernel_y: u64,
+        is_8bit: bool,
+    ) -> Result<(), HwLimitViolation> {
+        let max_x = if is_8bit { self.max_8b_conv_kernel_dim_x } else { self.max_f16_conv_kernel_dim_x };
+        if kernel_x > max_x {
+            return Err(HwLimitViolation {
+                param: if is_8bit { "max_8b_conv_kernel_dim_x" } else { "max_f16_conv_kernel_dim_x" }.into(),
+                value: kernel_x,
+                limit: max_x,
+            });
+        }
+        if kernel_y > self.max_conv_kernel_dim_y {
+            return Err(HwLimitViolation {
+                param: "max_conv_kernel_dim_y".into(),
+                value: kernel_y,
+                limit: self.max_conv_kernel_dim_y,
+            });
+        }
+        Ok(())
+    }
+
+    /// Validate that the channel dimension for a transpose operation
+    /// does not exceed the NE transpose C maximum.
+    pub fn validate_transpose_c_max(&self, channels: u64) -> Result<(), HwLimitViolation> {
+        if channels > self.ne_transpose_c_max {
+            return Err(HwLimitViolation {
+                param: "ne_transpose_c_max".into(),
+                value: channels,
+                limit: self.ne_transpose_c_max,
             });
         }
         Ok(())
@@ -342,5 +437,84 @@ mod tests {
         let limits = AneHwLimits::for_revision(AneRevision::V26);
         assert_eq!(limits.revision, AneRevision::V26);
         assert_eq!(limits.num_nes, 16);
+    }
+
+    // ─── T-P3-04: validate_conv_dims() tests ─────────────────────────
+
+    #[test]
+    fn test_conv_dims_within_limits() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // Kernel 7x7 is at the limit for both fp16 and 8-bit
+        assert!(limits.validate_conv_dims(7, 7, false).is_ok());
+        assert!(limits.validate_conv_dims(7, 7, true).is_ok());
+    }
+
+    #[test]
+    fn test_conv_dims_f16_exceeds_x() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // fp16 conv kernel x=8 exceeds max_f16_conv_kernel_dim_x=7
+        let result = limits.validate_conv_dims(8, 5, false);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.param, "max_f16_conv_kernel_dim_x");
+        assert_eq!(err.value, 8);
+    }
+
+    #[test]
+    fn test_conv_dims_8bit_exceeds_x() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // 8-bit conv kernel x=8 exceeds max_8b_conv_kernel_dim_x=7
+        let result = limits.validate_conv_dims(8, 5, true);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.param, "max_8b_conv_kernel_dim_x");
+        assert_eq!(err.value, 8);
+    }
+
+    #[test]
+    fn test_conv_dims_exceeds_y() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // Kernel y=8 exceeds max_conv_kernel_dim_y=7
+        let result = limits.validate_conv_dims(5, 8, false);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.param, "max_conv_kernel_dim_y");
+        assert_eq!(err.value, 8);
+    }
+
+    #[test]
+    fn test_conv_dims_small_kernel_ok() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // Small kernels should always pass
+        assert!(limits.validate_conv_dims(1, 1, false).is_ok());
+        assert!(limits.validate_conv_dims(3, 3, true).is_ok());
+        assert!(limits.validate_conv_dims(5, 5, false).is_ok());
+    }
+
+    // ─── T-P3-08: validate_transpose_c_max() tests ────────────────────
+
+    #[test]
+    fn test_transpose_c_max_within_limit() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // Channels at the limit should pass
+        assert!(limits.validate_transpose_c_max(limits.ne_transpose_c_max).is_ok());
+    }
+
+    #[test]
+    fn test_transpose_c_max_exceeds_limit() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // Channels over the limit should fail
+        let result = limits.validate_transpose_c_max(limits.ne_transpose_c_max + 1);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.param, "ne_transpose_c_max");
+        assert_eq!(err.limit, limits.ne_transpose_c_max);
+    }
+
+    #[test]
+    fn test_transpose_c_max_small_channels_ok() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        assert!(limits.validate_transpose_c_max(256).is_ok());
+        assert!(limits.validate_transpose_c_max(1024).is_ok());
     }
 }

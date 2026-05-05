@@ -758,12 +758,12 @@ impl ShardPipelineSpec {
         // The Entry → Interior handoff carries the concatenated QKV output.
         // The Interior → Exit handoff carries the attention output.
         //
-        // Sprint 48 / S36.2: The Interior (attention) shard is stateful (KV cache).
         // The Entry → Interior handoff is a tensor pass-through (QKV data flows
-        // directly). But the Interior → Exit handoff is StateWriteRead: the
-        // attention shard writes its updated KV cache to shared state, and the
-        // next invocation reads it. This models the real runtime behavior where
-        // KV cache persists across decode steps.
+        // directly). The Interior → Exit handoff carries the attention output
+        // tensor directly (not state-mediated — attn_out is a computed tensor
+        // that flows directly to the output projection shard). The KV cache
+        // state is internal to the attention shard and managed via
+        // StateRead/StateWrite within that shard.
         let handoffs = vec![
             Handoff {
                 from_package: shard_names[0].clone(),
@@ -782,7 +782,7 @@ impl ShardPipelineSpec {
                 tensor_name: "attn_out".into(),
                 shape: vec![batch_size, embed_dim],
                 dtype: dtype.into(),
-                handoff_kind: HandoffKind::StateWriteRead,
+                handoff_kind: HandoffKind::TensorPassThrough,
                 execution_order: 1,
                 source_output_name: "attn_out".into(),
                 target_input_name: "attn_out".into(),
@@ -931,12 +931,14 @@ pub struct PirGraph {
 mod tests {
     use super::*;
 
-    /// S36.2 test: decode-step shard plan uses StateWriteRead for the
-    /// Interior → Exit handoff, because the attention shard maintains
-    /// KV-cache state that must persist across decode steps.
+    /// S36.2 test: decode-step shard plan uses TensorPassThrough for the
+    /// Interior → Exit handoff, because attn_out is a direct computed tensor
+    /// (not state-mediated). The KV cache state is internal to the attention
+    /// shard and managed via StateRead/StateWrite within that shard.
     ///
-    /// Before Sprint 48, all handoffs were TensorPassThrough, which
-    /// meant StateWriteRead was declared but never exercised.
+    /// Before the PIR attn_out handoff fix, the Interior → Exit handoff used
+    /// StateWriteRead, which was incorrect — attn_out is a direct tensor,
+    /// not state-mediated data.
     #[test]
     fn test_decode_step_uses_state_write_read_for_attention_handoff() {
         let spec =
@@ -952,11 +954,11 @@ mod tests {
             "Entry → Interior handoff must be TensorPassThrough (QKV data)"
         );
 
-        // Interior → Exit: state write-read (attention shard's KV cache persists)
+        // Interior → Exit: tensor pass-through (attn_out is a direct tensor)
         assert_eq!(
             spec.handoffs[1].handoff_kind,
-            HandoffKind::StateWriteRead,
-            "Interior → Exit handoff must be StateWriteRead (KV cache state persistence)"
+            HandoffKind::TensorPassThrough,
+            "Interior → Exit handoff must be TensorPassThrough (attn_out is a direct tensor)"
         );
     }
 

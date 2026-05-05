@@ -127,6 +127,7 @@ pub fn lower_shard_to_mir(
             shape: vec![shard.input_dim, shard.output_dim],
             compute_unit_hint: None,
             air_source: None,
+            target_annotation: Default::default(),
         },
         MirNode {
             id: bias_id.clone(),
@@ -139,6 +140,7 @@ pub fn lower_shard_to_mir(
             shape: vec![shard.output_dim],
             compute_unit_hint: None,
             air_source: None,
+            target_annotation: Default::default(),
         },
         MirNode {
             id: matmul_id.clone(),
@@ -152,6 +154,7 @@ pub fn lower_shard_to_mir(
             shape: vec![batch_size, shard.output_dim],
             compute_unit_hint: Some(compute_hint.clone()),
             air_source: None,
+            target_annotation: Default::default(),
         },
         MirNode {
             id: add_id.clone(),
@@ -160,6 +163,7 @@ pub fn lower_shard_to_mir(
             shape: vec![batch_size, shard.output_dim],
             compute_unit_hint: Some(compute_hint),
             air_source: None,
+            target_annotation: Default::default(),
         },
     ];
 

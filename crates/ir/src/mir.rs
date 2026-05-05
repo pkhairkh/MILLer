@@ -14,6 +14,21 @@ use super::common::IrNodeId;
 pub use super::common::{ComputeUnitHint, MilDtype};
 use crate::toproto::ToProto;
 
+/// Target-specific annotation for a MIR op node.
+///
+/// Captures ANE placement attributes that are determined after
+/// engine assignment but before emission. This separates target
+/// concerns from the pure IR representation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct MirOpTargetAnnotation {
+    /// The assigned ANE engine for this op, if any.
+    pub assigned_engine: Option<super::ane_engine::AneEngine>,
+    /// Whether this op was demoted from ANE to CPU by a family override.
+    pub demoted_to_cpu: bool,
+    /// The target ANE revision, if known.
+    pub target_revision: Option<super::ane_target::AneRevision>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MirNodeId(pub String);
 
@@ -1056,13 +1071,32 @@ pub enum MirOp {
         name: String,
         x: MirNodeId,
     },
+
+    // ─── ANEC Internal Ops (T-P4-08) ────────────────────────────────
+    // These represent operations performed by the ANEC binary internally.
+    // They are not exposed as MIL builder calls and are used for
+    // internal tracking and debugging only.
+    /// ANEC-internal: fused conv+activation operation.
+    AnecFusedConvActivate {
+        name: String,
+        x: MirNodeId,
+        weight: MirNodeId,
+        activation: String,
+    },
+    /// ANEC-internal: fused linear+activation operation.
+    AnecFusedLinearActivate {
+        name: String,
+        x: MirNodeId,
+        weight: String,
+        activation: String,
+    },
 }
 
 impl MirOp {
     /// Returns the base ANE engine assignment for this op, ignoring revision-specific
     /// constraints. This is the static per-op engine mapping used before applying
     /// family capability overrides.
-    fn base_engine(&self) -> Option<super::ane_engine::AneEngine> {
+    pub(crate) fn base_engine(&self) -> Option<super::ane_engine::AneEngine> {
         use super::ane_engine::AneEngine;
         match self {
             // ─── NE pipeline: conv/pool/matmul/attention ────────────
@@ -1318,7 +1352,10 @@ impl MirOp {
             // Was incorrectly assigned Some(AneEngine::PE), causing MILNeg
             // to pass the CPU-only gate (I-41) because CPU_ONLY_OPS had
             // "negative" instead of "neg" (I-42).
-            | MirOp::MILNeg { .. } => None,
+            | MirOp::MILNeg { .. }
+            // ─── T-P4-08: ANEC internal ops (CPU-only stubs) ──────
+            | MirOp::AnecFusedConvActivate { .. }
+            | MirOp::AnecFusedLinearActivate { .. } => None,
         }
     }
 
@@ -1355,62 +1392,7 @@ impl MirOp {
         &self,
         revision: Option<super::ane_target::AneRevision>,
     ) -> Option<super::ane_engine::AneEngine> {
-        let base = self.base_engine();
-
-        // Without a revision, return the base engine (backward-compatible).
-        let family = match revision {
-            Some(rev) => rev.family(),
-            None => return base,
-        };
-
-        // Apply family-specific overrides for ops that lack ANEC converters
-        // on certain families. These overrides demote the engine from Some(PE)
-        // to None when no converter exists for the target family.
-        match self {
-            // A18 family: ReduceArgmax/ReduceArgmin have no LSE_7 converter.
-            // The ANEC has ConvertReductionArg for LSE_0–LSE_6 (A11Legacy–A17)
-            // but there is NO LSE_7 converter. Placement validation that passes
-            // on A18 will silently fail at emission time.
-            MirOp::MILReduceArgmax { .. } | MirOp::MILReduceArgmin { .. } => {
-                if !family.supports_argminmax() {
-                    return None;
-                }
-            }
-
-            // A11Legacy/A12 families: ReduceL2Norm has no converter.
-            // The per-op support matrix shows reduce_l2_norm is only available
-            // on A14+ families that use A14Plus reduction converters.
-            MirOp::MILReduceL2Norm { .. } => {
-                if family.uses_a14minus_converters() {
-                    return None;
-                }
-            }
-
-            // A11Legacy/A12/A13 families (uses_a14minus_converters):
-            // MILSquare has no converter on these families. Per-op matrix row 19
-            // shows the A13Minus/A14Plus split — square uses ConvertSquareA13Minus
-            // which is not available on A14Minus converter families.
-            MirOp::MILSquare { .. } => {
-                if family.uses_a14minus_converters() {
-                    return None;
-                }
-            }
-
-            // ScaledDotProductAttention is only reliable on A16+ families.
-            // On older families, there is no reliable ANEC converter for SDPA.
-            // Note: In the base engine assignment, SDPA is already mapped to NE.
-            // On A16+ (supports_sdpa()), it stays NE. On older families without
-            // SDPA support, it should return None since there's no converter.
-            MirOp::MILScaledDotProductAttention { .. } => {
-                if !family.supports_sdpa() {
-                    return None;
-                }
-            }
-
-            _ => {}
-        }
-
-        base
+        super::ane_placement::engine_for_op(self, revision)
     }
 
     /// Returns the default ANE execution engine for this op (revision-agnostic).
@@ -1426,6 +1408,7 @@ impl MirOp {
     /// use [`Self::default_engine_for_revision`] instead.
     ///
     /// Source: ane-constraints-docs/03-placement-and-compiler/fusion-boundaries-and-resource-allocation.md
+    #[deprecated(since = "0.6.0", note = "use default_engine_for_revision() for revision-aware engine assignment")]
     pub fn default_engine(&self) -> Option<super::ane_engine::AneEngine> {
         self.default_engine_for_revision(None)
     }
@@ -1609,6 +1592,8 @@ impl MirOp {
             MirOp::MILStateWrite { .. } => "state_write",
             MirOp::MILTopk { .. } => "topk",
             MirOp::MILClassify { .. } => "classify",
+            MirOp::AnecFusedConvActivate { .. } => "anec_fused_conv_activate",
+            MirOp::AnecFusedLinearActivate { .. } => "anec_fused_linear_activate",
         }
     }
 }
@@ -1794,6 +1779,8 @@ impl ToProto for MirOp {
             MirOp::MILStateWrite { name, .. } => name,
             MirOp::MILTopk { name, .. } => name,
             MirOp::MILClassify { name, .. } => name,
+            MirOp::AnecFusedConvActivate { name, .. } => name,
+            MirOp::AnecFusedLinearActivate { name, .. } => name,
         }
     }
 
@@ -2128,6 +2115,9 @@ impl ToProto for MirOp {
             // ─── Metadata / Misc ─────────────────────────────────────
             MirOp::MILTopk { x, .. } => vec![x.0.clone()],
             MirOp::MILClassify { x, .. } => vec![x.0.clone()],
+            // ─── ANEC Internal Ops (T-P4-08) ─────────────────────────
+            MirOp::AnecFusedConvActivate { x, weight, .. } => vec![x.0.clone(), weight.0.clone()],
+            MirOp::AnecFusedLinearActivate { x, weight, .. } => vec![x.0.clone(), weight.clone()],
         }
     }
 
@@ -2236,6 +2226,10 @@ pub struct MirNode {
     pub shape: Vec<usize>,
     pub compute_unit_hint: Option<ComputeUnitHint>,
     pub air_source: Option<super::air::AirNodeId>,
+    /// Target-specific annotation capturing ANE placement attributes.
+    /// Populated after engine assignment but before emission.
+    #[serde(default)]
+    pub target_annotation: MirOpTargetAnnotation,
 }
 
 // ComputeUnitHint moved to common.rs; re-exported via `pub use super::common::ComputeUnitHint;` above.
@@ -2255,6 +2249,28 @@ pub struct MirGraph {
     /// shape inference.
     #[serde(default)]
     pub input_shapes: std::collections::HashMap<MirNodeId, Vec<usize>>,
+}
+
+impl MirGraph {
+    /// Verify graph invariants: no duplicate node IDs, all inputs/outputs reference existing nodes.
+    pub fn verify(&self) -> Result<(), super::common::VerifyError> {
+        use std::collections::HashSet;
+        let seen_ids: HashSet<&str> = self.nodes.iter().map(|n| n.id.as_str()).collect();
+        if seen_ids.len() != self.nodes.len() {
+            return Err(super::common::VerifyError { message: "Duplicate node IDs in MirGraph".into() });
+        }
+        for input_id in &self.inputs {
+            if !seen_ids.contains(input_id.as_str()) {
+                return Err(super::common::VerifyError { message: format!("MirGraph input '{}' not found in nodes", input_id.0) });
+            }
+        }
+        for output_id in &self.outputs {
+            if !seen_ids.contains(output_id.as_str()) {
+                return Err(super::common::VerifyError { message: format!("MirGraph output '{}' not found in nodes", output_id.0) });
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

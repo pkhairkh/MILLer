@@ -29,6 +29,7 @@ pub mod air;
 pub mod ane_engine;
 pub mod ane_hw_limits;
 pub mod ane_layout;
+pub mod ane_placement;
 pub mod ane_target;
 pub mod common;
 pub mod kir;
@@ -44,6 +45,10 @@ pub mod sir;
 pub mod strategy;
 pub mod task_spec;
 pub mod toproto;
+
+// Re-export key types for convenience.
+pub use common::VerifyError;
+pub use air::LegalityStatus;
 
 #[cfg(test)]
 mod mir_engine_test;

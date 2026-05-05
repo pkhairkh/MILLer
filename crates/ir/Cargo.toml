@@ -3,6 +3,10 @@ name = "ane-ir"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+paged-kv = []
+
 [dependencies]
 log = { workspace = true }
 serde = { workspace = true }

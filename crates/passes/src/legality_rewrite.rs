@@ -432,7 +432,7 @@ impl LegalityRewritePass {
                             input: a_id,
                             weight: weight.clone(),
                             pad_type: "valid".to_string(),
-                            output_dim,
+                            output_dim: if output_dim > 0 { Some(output_dim) } else { None },
                         },
                         sir_node,
                         "mb.linear",
@@ -1088,6 +1088,7 @@ impl LegalityRewritePass {
                 fallback_risk: 1.0,
                 drift_risk: 1.0,
                 precision_override: sir_node.metadata.precision_override.clone(),
+                legality_status: ane_ir::air::LegalityStatus::LikelyFallback,
             };
         }
 
@@ -1106,6 +1107,16 @@ impl LegalityRewritePass {
                 None => (0.5, 0.1, 0.05),
             };
 
+        let legality_status = if legality_confidence >= 0.95 {
+            ane_ir::air::LegalityStatus::Verified
+        } else if fallback_risk > 0.5 {
+            ane_ir::air::LegalityStatus::LikelyFallback
+        } else if legality_confidence < 0.1 {
+            ane_ir::air::LegalityStatus::Unknown
+        } else {
+            ane_ir::air::LegalityStatus::Unverified
+        };
+
         AirNode {
             id,
             op,
@@ -1115,6 +1126,7 @@ impl LegalityRewritePass {
             fallback_risk,
             drift_risk,
             precision_override: sir_node.metadata.precision_override.clone(),
+            legality_status,
         }
     }
 
@@ -1564,7 +1576,7 @@ impl LegalityRewritePass {
                 input: attn_flat_id,
                 weight: format!("{base}_w_out"),
                 pad_type: "valid".into(),
-                output_dim: embed as usize, // out_proj: embed_dim output
+                output_dim: Some(embed as usize), // out_proj: embed_dim output
             },
             sir_node,
             "mb.linear",
@@ -1688,7 +1700,7 @@ impl LegalityRewritePass {
                         input: token_air.clone(),
                         weight: qw.to_string(),
                         pad_type: "valid".into(),
-                        output_dim: q_proj_dim as usize,
+                        output_dim: Some(q_proj_dim as usize),
                     },
                     sir_node,
                     "mb.linear",
@@ -1702,7 +1714,7 @@ impl LegalityRewritePass {
                         input: token_air.clone(),
                         weight: kw.to_string(),
                         pad_type: "valid".into(),
-                        output_dim: kv_proj_dim as usize,
+                        output_dim: Some(kv_proj_dim as usize),
                     },
                     sir_node,
                     "mb.linear",
@@ -1716,7 +1728,7 @@ impl LegalityRewritePass {
                         input: token_air,
                         weight: vw.to_string(),
                         pad_type: "valid".into(),
-                        output_dim: kv_proj_dim as usize,
+                        output_dim: Some(kv_proj_dim as usize),
                     },
                     sir_node,
                     "mb.linear",
@@ -1733,7 +1745,7 @@ impl LegalityRewritePass {
                         input: token_air,
                         weight: format!("{base}_w_qkv"),
                         pad_type: "valid".into(),
-                        output_dim: (3 * embed) as usize,
+                        output_dim: Some((3 * embed) as usize),
                     },
                     sir_node,
                     "mb.linear",
@@ -2432,7 +2444,7 @@ impl LegalityRewritePass {
                 input: attn_flat_id,
                 weight: out_w,
                 pad_type: "valid".into(),
-                output_dim: embed as usize,
+                output_dim: Some(embed as usize),
             },
             sir_node,
             "mb.linear",
@@ -6516,7 +6528,7 @@ mod tests {
         // Conv1x1AsLinear output_dim for Q projection should be num_heads*head_dim = 16*128 = 2048
         let q_proj = air.nodes.iter().find(|n| {
             if let AirOp::Conv1x1AsLinear { weight, output_dim, .. } = &n.op {
-                weight.contains("q_proj") && *output_dim > 0
+                weight.contains("q_proj") && output_dim.map_or(false, |d| d > 0)
             } else {
                 false
             }
@@ -6524,7 +6536,7 @@ mod tests {
         if let Some(q) = q_proj {
             if let AirOp::Conv1x1AsLinear { output_dim, .. } = &q.op {
                 assert_eq!(
-                    *output_dim, 2048,
+                    *output_dim, Some(2048),
                     "Q projection output_dim should be num_heads*head_dim = 2048"
                 );
             }
@@ -6533,7 +6545,7 @@ mod tests {
         // K projection output_dim should be kv_heads*head_dim = 8*128 = 1024
         let k_proj = air.nodes.iter().find(|n| {
             if let AirOp::Conv1x1AsLinear { weight, output_dim, .. } = &n.op {
-                weight.contains("k_proj") && *output_dim > 0
+                weight.contains("k_proj") && output_dim.map_or(false, |d| d > 0)
             } else {
                 false
             }
@@ -6541,7 +6553,7 @@ mod tests {
         if let Some(k) = k_proj {
             if let AirOp::Conv1x1AsLinear { output_dim, .. } = &k.op {
                 assert_eq!(
-                    *output_dim, 1024,
+                    *output_dim, Some(1024),
                     "K projection output_dim should be kv_heads*head_dim = 1024"
                 );
             }
@@ -6550,14 +6562,14 @@ mod tests {
         // O projection output_dim should be embed_dim = 1024
         let o_proj = air.nodes.iter().find(|n| {
             if let AirOp::Conv1x1AsLinear { weight, output_dim, .. } = &n.op {
-                weight.contains("o_proj") && *output_dim > 0
+                weight.contains("o_proj") && output_dim.map_or(false, |d| d > 0)
             } else {
                 false
             }
         });
         if let Some(o) = o_proj {
             if let AirOp::Conv1x1AsLinear { output_dim, .. } = &o.op {
-                assert_eq!(*output_dim, 1024, "O projection output_dim should be embed_dim = 1024");
+                assert_eq!(*output_dim, Some(1024), "O projection output_dim should be embed_dim = 1024");
             }
         }
 
@@ -7176,7 +7188,7 @@ mod tests {
         // ── Output projection dimension should be embed_dim=4096 ──
         let o_proj = air.nodes.iter().find(|n| {
             if let AirOp::Conv1x1AsLinear { weight, output_dim, .. } = &n.op {
-                weight.contains("o_proj") && *output_dim > 0
+                weight.contains("o_proj") && output_dim.map_or(false, |d| d > 0)
             } else {
                 false
             }
@@ -7184,7 +7196,7 @@ mod tests {
         if let Some(o) = o_proj {
             if let AirOp::Conv1x1AsLinear { output_dim, .. } = &o.op {
                 assert_eq!(
-                    *output_dim, 4096,
+                    *output_dim, Some(4096),
                     "O projection output_dim should be embed_dim = 4096 for non-GQA model"
                 );
             }
@@ -7438,9 +7450,10 @@ mod tests {
         for node in &air.nodes {
             if let AirOp::Conv1x1AsLinear { weight, output_dim, .. } = &node.op {
                 let expected = ctx.output_dim_for_weight(weight);
+                let expected_opt = if expected > 0 { Some(expected) } else { None };
                 assert_eq!(
-                    *output_dim, expected,
-                    "Conv1x1AsLinear('{}') output_dim={} should match output_dim_for_weight()={}",
+                    *output_dim, expected_opt,
+                    "Conv1x1AsLinear('{}') output_dim={:?} should match output_dim_for_weight()={}",
                     weight, output_dim, expected
                 );
             }

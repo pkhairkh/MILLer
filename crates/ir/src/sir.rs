@@ -47,7 +47,7 @@ pub enum SirOp {
         bias: Option<String>,
         /// Palette bit-width for GroupedLut quantization.
         /// When `Some(bits)`, the weight should be palettized with the given
-        /// bit-width during Core ML emission. Valid values: {1, 2, 3, 4, 6, 8}.
+        /// bit-width during Core ML emission. Valid values: {3, 4, 6, 8}.
         /// When `None`, no palettization is applied.
         #[serde(default)]
         palette_bits: Option<usize>,
@@ -155,7 +155,7 @@ pub enum SirOp {
         dtype: MilDtype,
         /// Palette bit-width for kmeans palettization.
         /// When `Some(bits)`, the constant should be palettized with the given
-        /// bit-width during Core ML emission. Valid values: {1, 2, 3, 4, 6, 8}.
+        /// bit-width during Core ML emission. Valid values: {3, 4, 6, 8}.
         /// When `None`, no palettization is applied.
         #[serde(default)]
         palette_bits: Option<usize>,
@@ -984,6 +984,18 @@ pub enum SirOp {
     // applies the right pattern dynamically.
 }
 
+impl SirOp {
+    /// Validate palette_bits field if present, returning an error if invalid.
+    pub fn validate_palette_bits(&self) -> Result<(), String> {
+        let bits = match self {
+            SirOp::LinearProjection { palette_bits: Some(b), .. } => b,
+            SirOp::Const { palette_bits: Some(b), .. } => b,
+            _ => return Ok(()),
+        };
+        crate::ane_layout::validate_palette_bits(*bits)
+    }
+}
+
 // Sprint 58 (S58.2): MilDtypeRepr was removed. SIR now uses
 // `super::mir::MilDtype` directly, eliminating the duplicate type.
 
@@ -1032,6 +1044,28 @@ pub struct SirGraph {
     pub outputs: Vec<SirNodeId>,
 }
 
+impl SirGraph {
+    /// Verify graph invariants: no duplicate node IDs, all inputs/outputs reference existing nodes.
+    pub fn verify(&self) -> Result<(), super::common::VerifyError> {
+        use std::collections::HashSet;
+        let seen_ids: HashSet<&str> = self.nodes.iter().map(|n| n.id.as_str()).collect();
+        if seen_ids.len() != self.nodes.len() {
+            return Err(super::common::VerifyError { message: "Duplicate node IDs in SirGraph".into() });
+        }
+        for input_id in &self.inputs {
+            if !seen_ids.contains(input_id.as_str()) {
+                return Err(super::common::VerifyError { message: format!("SirGraph input '{}' not found in nodes", input_id.0) });
+            }
+        }
+        for output_id in &self.outputs {
+            if !seen_ids.contains(output_id.as_str()) {
+                return Err(super::common::VerifyError { message: format!("SirGraph output '{}' not found in nodes", output_id.0) });
+            }
+        }
+        Ok(())
+    }
+}
+
 /// KV cache layout strategy — determines how KV cache updates are structured.
 ///
 /// The layout choice directly affects ANE provisioning behavior.
@@ -1051,6 +1085,7 @@ pub enum KvCacheLayout {
     MaskedBlend,
     /// Paged KV cache with fixed-size blocks. Not yet implemented;
     /// reserved for future paged-attention support.
+    #[cfg(feature = "paged-kv")]
     Paged,
     /// Ring buffer KV cache: fixed-size circular buffer where new K/V
     /// entries are written at `position % max_seq_len` instead of shifting.
@@ -1077,7 +1112,7 @@ pub enum QuantizationStrategy {
     Blockwise {
         /// Block group size (e.g., 128).
         group_size: usize,
-        /// Bits per weight element. Valid ANE values: {1, 2, 3, 4, 6, 8}.
+        /// Bits per weight element. Valid ANE values: {3, 4, 6, 8}.
         /// T-64 (I-38): Updated to include full valid set.
         bits: usize,
     },
@@ -1087,7 +1122,7 @@ pub enum QuantizationStrategy {
     GroupedLut {
         /// Block group size (typically 128).
         group_size: usize,
-        /// Bits per palette index. Valid ANE values: {1, 2, 3, 4, 6, 8}.
+        /// Bits per palette index. Valid ANE values: {3, 4, 6, 8}.
         /// T-64 (I-38): Updated to include full valid set.
         bits: usize,
         /// Number of LUT groups.
@@ -1098,7 +1133,7 @@ pub enum QuantizationStrategy {
     Palettized {
         /// Palettization mode (e.g., "kmeans").
         mode: String,
-        /// Bits per palette index. Valid ANE values: {1, 2, 3, 4, 6, 8}.
+        /// Bits per palette index. Valid ANE values: {3, 4, 6, 8}.
         /// T-64 (I-38): Updated to include full valid set.
         nbits: usize,
         /// Group size for grouped channel palettization.

@@ -853,6 +853,9 @@ fn op_name(op: &MirOp) -> &'static str {
         MirOp::MILStateWrite { .. } => "MILStateWrite",
         MirOp::MILTopk { .. } => "MILTopk",
         MirOp::MILClassify { .. } => "MILClassify",
+        // T-P4-08: ANEC internal ops
+        MirOp::AnecFusedConvActivate { .. } => "AnecFusedConvActivate",
+        MirOp::AnecFusedLinearActivate { .. } => "AnecFusedLinearActivate",
     }
 }
 

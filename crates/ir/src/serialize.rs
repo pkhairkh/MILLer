@@ -116,6 +116,7 @@ mod tests {
                 fallback_risk: 0.0,
                 drift_risk: 0.0,
                 precision_override: None,
+                legality_status: crate::air::LegalityStatus::Verified,
             }],
             inputs: vec![AirNodeId("input".into())],
             outputs: vec![AirNodeId("output".into())],
@@ -140,6 +141,7 @@ mod tests {
                     shape: vec![64, 128],
                     compute_unit_hint: None,
                     air_source: None,
+                    target_annotation: Default::default(),
                 },
                 MirNode {
                     id: matmul_id.clone(),
@@ -153,6 +155,7 @@ mod tests {
                     shape: vec![1, 128],
                     compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
                     air_source: None,
+                    target_annotation: Default::default(),
                 },
             ],
             inputs: vec![input_id],
