@@ -4,9 +4,9 @@
   "description": "Palettization constraint knowledge seed. Documents hard constraints on weight palettization (LUT compression) for ANE execution.",
   "conv_palette_minimums": {
     "conv_standard_min_bits": 4,
-    "conv_alternate_min_bits": 2,
+    "conv_alternate_min_bits": 3,
     "conv_never_bits": 1,
-    "notes": "Standard conv palettization requires at least 4-bit LUT. Alternate path supports 2-bit minimum. 1-bit palettization is never supported on ANE."
+    "notes": "Standard conv palettization requires at least 4-bit LUT. Alternate path supports 3-bit minimum. 1-bit and 2-bit palettization are not supported by ANE hardware."
   },
   "palette_upcast": {
     "from_3bit_to_4bit": true,

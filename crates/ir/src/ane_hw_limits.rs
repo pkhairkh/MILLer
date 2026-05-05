@@ -27,6 +27,9 @@ pub struct AneHwLimits {
     pub pe_reduction_cout_limit: u64,
     pub num_nes: u32,
     pub ne_transpose_c_max: u64,
+    /// Whether these hardware limits have been verified on real hardware.
+    /// `false` for approximate/inherited/speculative limits (A12, A13, V26).
+    pub verified: bool,
 }
 
 impl AneHwLimits {
@@ -67,6 +70,7 @@ impl AneHwLimits {
             pe_reduction_cout_limit: 16384,
             num_nes: 1,
             ne_transpose_c_max: 16384,
+            verified: true,
         }
     }
 
@@ -87,7 +91,7 @@ impl AneHwLimits {
             "A12 Bionic (ANE V5) hardware limits are approximate — copied from A11 values \
              and not yet verified on real A12 hardware. Results may be inaccurate."
         );
-        Self { revision: AneRevision::V5, ..Self::a11_legacy() }
+        Self { revision: AneRevision::V5, verified: false, ..Self::a11_legacy() }
     }
 
     /// A13 Bionic (ANE V6) hardware limits.
@@ -98,16 +102,17 @@ impl AneHwLimits {
             revision: AneRevision::V6,
             max_tensor_width: 32768,
             max_tensor_height: 8192,
+            verified: false,
             ..Self::a11_legacy()
         }
     }
 
     fn a14() -> Self {
-        Self { revision: AneRevision::V7, max_tensor_width: 65536, num_nes: 2, ..Self::a13() }
+        Self { revision: AneRevision::V7, max_tensor_width: 65536, num_nes: 2, verified: true, ..Self::a13() }
     }
 
     fn a15() -> Self {
-        Self { revision: AneRevision::V8, num_nes: 2, ..Self::a14() }
+        Self { revision: AneRevision::V8, num_nes: 2, verified: true, ..Self::a14() }
     }
 
     fn a16() -> Self {
@@ -116,12 +121,13 @@ impl AneHwLimits {
             max_tensor_width: 131072,
             max_tensor_height: 16384,
             num_nes: 4,
+            verified: true,
             ..Self::a15()
         }
     }
 
     fn a17() -> Self {
-        Self { revision: AneRevision::V11, num_nes: 4, ..Self::a16() }
+        Self { revision: AneRevision::V11, num_nes: 4, verified: true, ..Self::a16() }
     }
 
     /// M1 (Mac, ANE V17) hardware limits.
@@ -131,7 +137,7 @@ impl AneHwLimits {
     /// 262144 max tensor width (vs A14's 65536). The family is A14 — M1
     /// does NOT get A18's SDPA or LayerNorm support.
     fn m1() -> Self {
-        Self { revision: AneRevision::V17, max_tensor_width: 262144, num_nes: 6, ..Self::a17() }
+        Self { revision: AneRevision::V17, max_tensor_width: 262144, num_nes: 6, verified: true, ..Self::a17() }
     }
 
     /// A18 Bionic (iPhone 16, ANE V19) hardware limits.
@@ -139,15 +145,15 @@ impl AneHwLimits {
     /// A18 uses A18-family ANE with SDPA, LayerNorm, and E4M3 support.
     /// Has 6 NEs and 262144 max tensor width.
     fn a18() -> Self {
-        Self { revision: AneRevision::V19, max_tensor_width: 262144, num_nes: 6, ..Self::a17() }
+        Self { revision: AneRevision::V19, max_tensor_width: 262144, num_nes: 6, verified: true, ..Self::a17() }
     }
 
     fn a18_pro() -> Self {
-        Self { revision: AneRevision::V19, num_nes: 8, ..Self::a18() }
+        Self { revision: AneRevision::V19, num_nes: 8, verified: true, ..Self::a18() }
     }
 
     fn a18_max() -> Self {
-        Self { revision: AneRevision::V20, num_nes: 16, ..Self::a18_pro() }
+        Self { revision: AneRevision::V20, num_nes: 16, verified: true, ..Self::a18_pro() }
     }
 
     /// T-124 (V-031/V-088): V26 is a speculative/future revision.
@@ -162,7 +168,7 @@ impl AneHwLimits {
              with num_nes=16. These have NOT been verified on real hardware. \
              Models compiled for V26 may not function correctly on actual hardware."
         );
-        Self { revision: AneRevision::V26, num_nes: 16, ..Self::a18_max() }
+        Self { revision: AneRevision::V26, num_nes: 16, verified: false, ..Self::a18_max() }
     }
 
     /// Validate that tensor dimensions are within hardware limits.

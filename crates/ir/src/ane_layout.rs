@@ -3,7 +3,7 @@
 //!
 //! ## Palette Bit-Width Validation
 //!
-//! The ANE only supports palette bit-widths in the set {1, 2, 3, 4, 6, 8}.
+//! The ANE only supports palette bit-widths in the set {3, 4, 6, 8}.
 //! Bit-widths 5 and 7 are **invalid** and will cause ANE runtime errors.
 //! [`validate_palette_bits()`] provides centralized validation used by
 //! `ane-passes`, `ane-lab`, and `ane-ir` (T-64 / I-38).
@@ -159,9 +159,9 @@ pub fn validate_channellast_constraints(
 ///
 /// T-64 (I-38): Centralized definition — all palette bit-width validation
 /// sites should reference this constant instead of duplicating the set.
-/// Previously, {1, 2, 3, 4, 6, 8} was duplicated in `palettize_weights.rs`,
+/// Previously, {3, 4, 6, 8} was duplicated in `palettize_weights.rs`,
 /// `lut_projection.rs`, and `task_spec.rs`.
-pub const VALID_PALETTE_BITS: &[usize] = &[1, 2, 3, 4, 6, 8];
+pub const VALID_PALETTE_BITS: &[usize] = &[3, 4, 6, 8];
 
 /// Validate that a palette bit-width is in the ANE-supported set.
 ///
@@ -261,7 +261,7 @@ pub fn clamp_to_valid_palette_bits(bits: usize) -> usize {
         return bits;
     }
     // Round down to nearest valid bit-width
-    *VALID_PALETTE_BITS.iter().filter(|&&b| b <= bits).last().unwrap_or(&1)
+    *VALID_PALETTE_BITS.iter().rfind(|&&b| b <= bits).unwrap_or(&3)
 }
 
 #[cfg(test)]
@@ -277,6 +277,8 @@ mod tests {
 
     #[test]
     fn test_validate_palette_bits_invalid() {
+        assert!(validate_palette_bits(1).is_err(), "1-bit is not ANE-supported");
+        assert!(validate_palette_bits(2).is_err(), "2-bit is not ANE-supported");
         assert!(validate_palette_bits(5).is_err(), "5-bit is not ANE-supported");
         assert!(validate_palette_bits(7).is_err(), "7-bit is not ANE-supported");
         assert!(validate_palette_bits(9).is_err(), "9-bit is not ANE-supported");
@@ -285,14 +287,14 @@ mod tests {
 
     #[test]
     fn test_clamp_to_valid_palette_bits() {
-        assert_eq!(clamp_to_valid_palette_bits(1), 1);
+        assert_eq!(clamp_to_valid_palette_bits(3), 3);
         assert_eq!(clamp_to_valid_palette_bits(4), 4);
         assert_eq!(clamp_to_valid_palette_bits(5), 4); // 5 → 4 (round down)
         assert_eq!(clamp_to_valid_palette_bits(6), 6);
         assert_eq!(clamp_to_valid_palette_bits(7), 6); // 7 → 6 (round down)
         assert_eq!(clamp_to_valid_palette_bits(8), 8);
         assert_eq!(clamp_to_valid_palette_bits(10), 8); // 10 → 8 (round down)
-        assert_eq!(clamp_to_valid_palette_bits(0), 1); // 0 → 1 (minimum)
+        assert_eq!(clamp_to_valid_palette_bits(0), 3); // 0 → 3 (minimum)
     }
 
     #[test]
@@ -431,15 +433,6 @@ mod tests {
         assert!(validate_palette_bits_for_family(3, None).is_ok(), "3-bit is in VALID_PALETTE_BITS");
         assert!(validate_palette_bits_for_family(6, None).is_ok(), "6-bit is in VALID_PALETTE_BITS");
         assert!(validate_palette_bits_for_family(5, None).is_err(), "5-bit is not in VALID_PALETTE_BITS");
-    }
-
-    #[test]
-    fn test_t118_1bit_and_2bit_allowed_on_all_families() {
-        use crate::ane_target::AneFamily;
-        for family in [AneFamily::A11Legacy, AneFamily::A12, AneFamily::A13] {
-            assert!(validate_palette_bits_for_family(1, Some(family)).is_ok());
-            assert!(validate_palette_bits_for_family(2, Some(family)).is_ok());
-        }
     }
 
     #[test]

@@ -957,6 +957,7 @@ fn all_mir_op_variants() -> Vec<(String, MirOp)> {
     ]
 }
 
+#[allow(deprecated)]
 #[test]
 fn test_every_mir_op_variant_has_engine_assignment() {
     let variants = all_mir_op_variants();
@@ -979,6 +980,7 @@ fn test_every_mir_op_variant_has_engine_assignment() {
     }
 }
 
+#[allow(deprecated)]
 #[test]
 fn test_ne_pipeline_ops_map_to_ne() {
     use crate::ane_engine::AneEngine;
@@ -1021,6 +1023,7 @@ fn test_ne_pipeline_ops_map_to_ne() {
     }
 }
 
+#[allow(deprecated)]
 #[test]
 fn test_pe_pipeline_ops_map_to_pe() {
     use crate::ane_engine::AneEngine;
@@ -1047,6 +1050,7 @@ fn test_pe_pipeline_ops_map_to_pe() {
     }
 }
 
+#[allow(deprecated)]
 #[test]
 fn test_transpose_maps_to_transpose_engine() {
     use crate::ane_engine::AneEngine;
@@ -1054,6 +1058,7 @@ fn test_transpose_maps_to_transpose_engine() {
     assert_eq!(op.default_engine(), Some(AneEngine::TransposeEngine));
 }
 
+#[allow(deprecated)]
 #[test]
 fn test_cpu_only_ops_return_none() {
     let cpu_ops: Vec<MirOp> = vec![
@@ -1104,6 +1109,7 @@ fn test_cpu_only_ops_return_none() {
     }
 }
 
+#[allow(deprecated)]
 #[test]
 fn test_variant_count_matches_expectation() {
     let variants = all_mir_op_variants();
@@ -1119,6 +1125,7 @@ fn test_variant_count_matches_expectation() {
 
 /// T-22: Verify that ops moved from PE/NE to CPU-only actually return None.
 /// These ops have NO ANEC converter in any ANE family per the per-op support matrix.
+#[allow(deprecated)]
 #[test]
 fn test_t22_cpu_only_ops_moved_from_pe_ne() {
     let moved_ops: Vec<MirOp> = vec![
@@ -1185,6 +1192,7 @@ fn test_t22_cpu_only_ops_moved_from_pe_ne() {
 /// T-22: Verify that ANE-legal ops that were kept in PE still return PE.
 /// These ops have ANEC converters per the per-op support matrix but
 /// currently lack MirOpCompat variants (see T-38/T-39).
+#[allow(deprecated)]
 #[test]
 fn test_t22_ane_legal_ops_still_in_pe() {
     use crate::ane_engine::AneEngine;
@@ -1222,6 +1230,7 @@ fn test_t22_ane_legal_ops_still_in_pe() {
 }
 
 /// T-22: Verify mil_op_name() returns non-empty names for all variants.
+#[allow(deprecated)]
 #[test]
 fn test_mil_op_name_returns_nonempty() {
     let variants = all_mir_op_variants();
@@ -1230,4 +1239,28 @@ fn test_mil_op_name_returns_nonempty() {
         assert!(!mil_name.is_empty(), "mil_op_name() returned empty string for variant {}", name);
         let _ = mil_name; // Also verify no panic
     }
+}
+
+#[test]
+fn test_layernorm_revision_gating() {
+    use crate::ane_engine::AneEngine;
+    use crate::ane_target::AneRevision;
+
+    let ln = MirOp::MILLayerNorm {
+        name: "ln".into(),
+        x: nid("x"),
+        weight: "w".into(),
+        bias: None,
+        epsilon: 1e-5,
+        axes: vec![2],
+    };
+
+    // A14 (V7) — does NOT support LayerNorm → None
+    assert_eq!(ln.default_engine_for_revision(Some(AneRevision::V7)), None);
+    // V17 (M1) is A14-class — does NOT support LayerNorm → None
+    assert_eq!(ln.default_engine_for_revision(Some(AneRevision::V17)), None);
+    // A15 (V8) — supports LayerNorm → PE
+    assert_eq!(ln.default_engine_for_revision(Some(AneRevision::V8)), Some(AneEngine::PE));
+    // A16 (V10) — supports LayerNorm → PE
+    assert_eq!(ln.default_engine_for_revision(Some(AneRevision::V10)), Some(AneEngine::PE));
 }
