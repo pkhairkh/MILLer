@@ -8,10 +8,24 @@ use serde::{Deserialize, Serialize};
 
 // ─── Legality Status ────────────────────────────────────────────
 
-/// Legality status for an AIR node, replacing f32 risk/confidence fields.
+/// T-P3-03: Typed legality status replacing the legacy f32 risk fields
+/// (legality_confidence, fallback_risk, drift_risk).
 ///
-/// Provides structured legality information instead of floating-point risk scores.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+/// The old approach used three f32 fields that were imprecise and
+/// difficult to reason about. The new enum provides clear, actionable
+/// states that map directly to compilation decisions:
+///
+/// - `Verified`: Op is known-legal for the target architecture.
+///   Confirmed by knowledge store or successful placement validation.
+/// - `Unverified`: Op has not been checked yet. This is the default
+///   state before risk annotation runs.
+/// - `LikelyFallback`: Op is likely to require CPU fallback.
+///   This is set when the knowledge store reports low confidence or
+///   when placement validation indicates partial support.
+/// - `Unknown`: Op legality cannot be determined. This typically
+///   means the knowledge store has no entry for this operation on
+///   the target architecture.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[non_exhaustive]
 pub enum LegalityStatus {
     /// The op has been verified to run correctly on ANE.
@@ -901,33 +915,40 @@ pub struct AirNode {
     pub id: AirNodeId,
     pub op: AirOp,
     pub name: String,
-    pub legality_confidence: f32,
     pub sir_source: Option<super::sir::SirNodeId>,
-    pub fallback_risk: f32,
-    pub drift_risk: f32,
     pub precision_override: Option<String>,
-    /// Structured legality status replacing f32 risk fields.
+    /// T-P3-03: Structured legality status replacing f32 risk fields.
     #[serde(default)]
     pub legality_status: LegalityStatus,
 }
 
 /// Legacy fields for backward-compatible deserialization.
+///
+/// Maps old f32 risk fields (legality_confidence, fallback_risk, drift_risk)
+/// to the new `LegalityStatus` enum. The mapping rules are:
+/// - `legality_confidence > 0.8` → `Verified`
+/// - `fallback_risk > 0.5` → `LikelyFallback`
+/// - Fields missing/default → `Unverified`
+/// - `legality_confidence < 0.1` → `Unknown`
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct LegacyAirNodeFields {
-    id: AirNodeId,
-    op: AirOp,
-    name: String,
-    legality_confidence: f32,
-    sir_source: Option<super::sir::SirNodeId>,
-    fallback_risk: f32,
-    drift_risk: f32,
-    precision_override: Option<String>,
+pub struct LegacyAirNodeFields {
+    pub id: AirNodeId,
+    pub op: AirOp,
+    pub name: String,
+    #[serde(default)]
+    pub legality_confidence: f32,
+    pub sir_source: Option<super::sir::SirNodeId>,
+    #[serde(default)]
+    pub fallback_risk: f32,
+    #[serde(default)]
+    pub drift_risk: f32,
+    pub precision_override: Option<String>,
 }
 
 impl TryFrom<LegacyAirNodeFields> for AirNode {
     type Error = String;
     fn try_from(legacy: LegacyAirNodeFields) -> Result<Self, Self::Error> {
-        let legality_status = if legacy.legality_confidence >= 0.95 {
+        let legality_status = if legacy.legality_confidence > 0.8 {
             LegalityStatus::Verified
         } else if legacy.fallback_risk > 0.5 {
             LegalityStatus::LikelyFallback
@@ -940,10 +961,7 @@ impl TryFrom<LegacyAirNodeFields> for AirNode {
             id: legacy.id,
             op: legacy.op,
             name: legacy.name,
-            legality_confidence: legacy.legality_confidence,
             sir_source: legacy.sir_source,
-            fallback_risk: legacy.fallback_risk,
-            drift_risk: legacy.drift_risk,
             precision_override: legacy.precision_override,
             legality_status,
         })
@@ -956,10 +974,21 @@ impl From<AirNode> for LegacyAirNodeFields {
             id: node.id,
             op: node.op,
             name: node.name,
-            legality_confidence: node.legality_confidence,
+            legality_confidence: match node.legality_status {
+                LegalityStatus::Verified => 1.0,
+                LegalityStatus::Unverified => 0.5,
+                LegalityStatus::LikelyFallback => 0.0,
+                LegalityStatus::Unknown => 0.0,
+            },
             sir_source: node.sir_source,
-            fallback_risk: node.fallback_risk,
-            drift_risk: node.drift_risk,
+            fallback_risk: match node.legality_status {
+                LegalityStatus::LikelyFallback => 1.0,
+                _ => 0.0,
+            },
+            drift_risk: match node.legality_status {
+                LegalityStatus::LikelyFallback => 0.5,
+                _ => 0.0,
+            },
             precision_override: node.precision_override,
         }
     }

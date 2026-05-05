@@ -41,6 +41,7 @@
         "num_nes": 1,
         "ne_transpose_c_max": 16384,
         "large_kernel_threshold": 7,
+        "large_kernel_mode_threshold": 16,
         "verified": true
       }
     },
@@ -83,6 +84,7 @@
         "num_nes": 1,
         "ne_transpose_c_max": 16384,
         "large_kernel_threshold": 7,
+        "large_kernel_mode_threshold": 16,
         "verified": false
       }
     },
@@ -125,6 +127,7 @@
         "num_nes": 1,
         "ne_transpose_c_max": 16384,
         "large_kernel_threshold": 7,
+        "large_kernel_mode_threshold": 16,
         "verified": false
       }
     },
@@ -167,6 +170,7 @@
         "num_nes": 2,
         "ne_transpose_c_max": 16384,
         "large_kernel_threshold": 9,
+        "large_kernel_mode_threshold": 16,
         "verified": true
       }
     },
@@ -209,6 +213,7 @@
         "num_nes": 2,
         "ne_transpose_c_max": 16384,
         "large_kernel_threshold": 9,
+        "large_kernel_mode_threshold": 16,
         "verified": true
       }
     },
@@ -251,6 +256,7 @@
         "num_nes": 4,
         "ne_transpose_c_max": 16384,
         "large_kernel_threshold": 9,
+        "large_kernel_mode_threshold": 16,
         "verified": true
       }
     },
@@ -293,6 +299,7 @@
         "num_nes": 4,
         "ne_transpose_c_max": 16384,
         "large_kernel_threshold": 9,
+        "large_kernel_mode_threshold": 16,
         "verified": true
       }
     },
@@ -335,6 +342,7 @@
         "num_nes": 6,
         "ne_transpose_c_max": 16384,
         "large_kernel_threshold": 9,
+        "large_kernel_mode_threshold": 16,
         "verified": true
       }
     },
@@ -377,6 +385,7 @@
         "num_nes": 8,
         "ne_transpose_c_max": 16384,
         "large_kernel_threshold": 9,
+        "large_kernel_mode_threshold": 16,
         "verified": true
       }
     },
@@ -419,6 +428,7 @@
         "num_nes": 16,
         "ne_transpose_c_max": 16384,
         "large_kernel_threshold": 9,
+        "large_kernel_mode_threshold": 16,
         "verified": true
       }
     },
@@ -461,6 +471,7 @@
         "num_nes": 16,
         "ne_transpose_c_max": 16384,
         "large_kernel_threshold": 9,
+        "large_kernel_mode_threshold": 16,
         "verified": false
       }
     }

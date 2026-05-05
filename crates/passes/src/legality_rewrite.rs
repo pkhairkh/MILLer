@@ -367,7 +367,7 @@ pub struct DecodeWeights<'a> {
     pub mask_ref: Option<&'a str>,
 }
 
-/// Legality Rewrite pass implementation.
+/// ANE Legality Rewrite pass implementation.
 pub struct AneLegalityRewritePass {
     // No configuration needed for the linear projection case
 }
@@ -1082,48 +1082,38 @@ impl AneLegalityRewritePass {
                 id,
                 op,
                 name: sir_node.name.clone(),
-                legality_confidence: 0.0,
                 sir_source: Some(sir_node.id.clone()),
-                fallback_risk: 1.0,
-                drift_risk: 1.0,
                 precision_override: sir_node.metadata.precision_override.clone(),
                 legality_status: ane_ir::air::LegalityStatus::LikelyFallback,
             };
         }
 
-        let (legality_confidence, fallback_risk, drift_risk) =
+        // T-P3-03: Derive LegalityStatus directly from knowledge query,
+        // without intermediate f32 risk fields.
+        let legality_status =
             match knowledge_query.query_legality(op_pattern, None) {
-                Some(info) if info.ane_legal => (
-                    info.confidence,
-                    (1.0 - info.confidence).min(1.0),
-                    (1.0 - info.confidence).min(1.0) * 0.5,
-                ),
-                Some(info) => (
-                    (1.0 - info.confidence).max(0.0),
-                    info.confidence.min(1.0),
-                    info.confidence.min(1.0) * 0.8,
-                ),
-                None => (0.5, 0.1, 0.05),
+                Some(info) if info.ane_legal && info.confidence >= 0.95 => {
+                    ane_ir::air::LegalityStatus::Verified
+                }
+                Some(info) if !info.ane_legal && info.confidence >= 0.5 => {
+                    ane_ir::air::LegalityStatus::LikelyFallback
+                }
+                Some(info) if info.confidence < 0.1 => {
+                    ane_ir::air::LegalityStatus::Unknown
+                }
+                Some(_) => {
+                    ane_ir::air::LegalityStatus::Unverified
+                }
+                None => {
+                    ane_ir::air::LegalityStatus::Unverified
+                }
             };
-
-        let legality_status = if legality_confidence >= 0.95 {
-            ane_ir::air::LegalityStatus::Verified
-        } else if fallback_risk > 0.5 {
-            ane_ir::air::LegalityStatus::LikelyFallback
-        } else if legality_confidence < 0.1 {
-            ane_ir::air::LegalityStatus::Unknown
-        } else {
-            ane_ir::air::LegalityStatus::Unverified
-        };
 
         AirNode {
             id,
             op,
             name: sir_node.name.clone(),
-            legality_confidence,
             sir_source: Some(sir_node.id.clone()),
-            fallback_risk,
-            drift_risk,
             precision_override: sir_node.metadata.precision_override.clone(),
             legality_status,
         }
@@ -4779,6 +4769,7 @@ mod tests {
         ComputePlanPlacementInfo, LegalityInfo, NoKnowledge, PassKnowledgeQuery,
         PrecisionHazardInfo, RiskInfo,
     };
+    use ane_ir::air::LegalityStatus;
     use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
 
     /// A mock knowledge query that reports mb.linear as ANE-legal with high confidence.
@@ -4947,33 +4938,34 @@ mod tests {
         assert_eq!(lp_node_legal.len(), 1, "Expected exactly one Conv1x1AsLinear node");
         assert_eq!(lp_node_illegal.len(), 1, "Expected exactly one Conv1x1AsLinear node");
 
-        let no_k_conf = lp_node_no_knowledge[0].legality_confidence;
-        let legal_conf = lp_node_legal[0].legality_confidence;
-        let illegal_conf = lp_node_illegal[0].legality_confidence;
+        // T-P3-03: Verify legality_status ordering instead of f32 fields.
+        // Legal knowledge should produce a "better" status than NoKnowledge,
+        // and illegal knowledge should produce a "worse" status.
+        let no_k_status = &lp_node_no_knowledge[0].legality_status;
+        let legal_status = &lp_node_legal[0].legality_status;
+        let illegal_status = &lp_node_illegal[0].legality_status;
 
+        // Legal → Verified, NoKnowledge → Unverified, Illegal → LikelyFallback
         assert!(
-            legal_conf > no_k_conf,
-            "Legal knowledge ({}) should produce higher confidence than NoKnowledge ({})",
-            legal_conf,
-            no_k_conf
+            matches!(legal_status, LegalityStatus::Verified),
+            "Legal knowledge should produce Verified, got {:?}",
+            legal_status
         );
 
         assert!(
-            illegal_conf < no_k_conf,
-            "Illegal knowledge ({}) should produce lower confidence than NoKnowledge ({})",
-            illegal_conf,
-            no_k_conf
+            matches!(illegal_status, LegalityStatus::LikelyFallback),
+            "Illegal knowledge should produce LikelyFallback, got {:?}",
+            illegal_status
         );
 
-        let no_k_risk = lp_node_no_knowledge[0].fallback_risk;
-        let legal_risk = lp_node_legal[0].fallback_risk;
-        let illegal_risk = lp_node_illegal[0].fallback_risk;
-
-        assert!(legal_risk < no_k_risk);
-        assert!(illegal_risk > no_k_risk);
+        assert!(
+            matches!(no_k_status, LegalityStatus::Unverified | LegalityStatus::Unknown),
+            "No knowledge should produce Unverified or Unknown, got {:?}",
+            no_k_status
+        );
     }
 
-    /// Test that NoKnowledge produces the expected default values.
+    /// Test that NoKnowledge produces the expected default status.
     #[test]
     fn test_no_knowledge_default_confidence() {
         let sir = make_linear_sir();
@@ -4987,9 +4979,8 @@ mod tests {
             .find(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }))
             .expect("Expected Conv1x1AsLinear node");
 
-        assert!((lp_node.legality_confidence - 0.5).abs() < 0.001);
-        assert!((lp_node.fallback_risk - 0.1).abs() < 0.001);
-        assert!((lp_node.drift_risk - 0.05).abs() < 0.001);
+        // T-P3-03: No knowledge should produce Unverified (default)
+        assert_eq!(lp_node.legality_status, LegalityStatus::Unverified);
     }
 
     /// Test that LinearProjection now lowers to Conv1x1AsLinear (not MatMul).

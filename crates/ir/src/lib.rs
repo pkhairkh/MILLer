@@ -49,6 +49,7 @@ pub mod toproto;
 // Re-export key types for convenience.
 pub use common::VerifyError;
 pub use air::LegalityStatus;
+pub use air::LegacyAirNodeFields;
 
 #[cfg(test)]
 mod mir_engine_test;

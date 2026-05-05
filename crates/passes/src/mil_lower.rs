@@ -3821,7 +3821,7 @@ impl MilLowerPass {
             // With the mask computation now using precomputed eye_tab/mask_tab
             // + Gather (ISSUE-001 fix), MILFill/MILFillLike should NOT appear
             // in the decode_step path. If they appear from other paths, they
-            // are flagged as CPU-only (legality_confidence=0.0) and the
+            // are flagged as CPU-only (legality_status=LikelyFallback) and the
             // proto emitter handles their emission as a fallback.
             //
             // We do NOT attempt to replace MILFill with MILConst here because
@@ -4125,10 +4125,7 @@ mod tests {
                     id: AirNodeId("weight".into()),
                     op: AirOp::Mul { x: AirNodeId(String::new()), y: AirNodeId(String::new()) },
                     name: "weight".into(),
-                    legality_confidence: 0.5,
                     sir_source: None,
-                    fallback_risk: 0.1,
-                    drift_risk: 0.05,
                     precision_override: None,
                     legality_status: ane_ir::air::LegalityStatus::Unverified,
                 },
@@ -4139,10 +4136,7 @@ mod tests {
                         b: AirNodeId("weight".into()),
                     },
                     name: "linear_out".into(),
-                    legality_confidence: 0.95,
                     sir_source: None,
-                    fallback_risk: 0.05,
-                    drift_risk: 0.02,
                     precision_override: override_dtype.map(|s| s.to_string()),
                     legality_status: ane_ir::air::LegalityStatus::Verified,
                 },
@@ -4236,10 +4230,7 @@ mod tests {
             id: AirNodeId(id.into()),
             op,
             name: id.into(),
-            legality_confidence: 0.9,
             sir_source: None,
-            fallback_risk: 0.05,
-            drift_risk: 0.02,
             precision_override: None,
             legality_status: ane_ir::air::LegalityStatus::Unverified,
         }
@@ -5043,10 +5034,7 @@ mod tests {
                     id: AirNodeId("weight".into()),
                     op: AirOp::Mul { x: AirNodeId(String::new()), y: AirNodeId(String::new()) },
                     name: "weight".into(),
-                    legality_confidence: 0.5,
                     sir_source: None,
-                    fallback_risk: 0.1,
-                    drift_risk: 0.05,
                     precision_override: None,
                     legality_status: ane_ir::air::LegalityStatus::Unverified,
                 },
@@ -5057,10 +5045,7 @@ mod tests {
                         b: AirNodeId("weight".into()),
                     },
                     name: "linear_out".into(),
-                    legality_confidence: 0.95,
                     sir_source: None,
-                    fallback_risk: 0.05,
-                    drift_risk: 0.02,
                     precision_override: None,
                     legality_status: ane_ir::air::LegalityStatus::Verified,
                 },

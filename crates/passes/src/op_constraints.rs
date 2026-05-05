@@ -1,6 +1,7 @@
 //! Per-op ANE constraint validation functions.
 //! Source: ane-constraints-docs/03-placement-and-compiler/mil-to-ane-placement-constraint-system.md
 
+use ane_ir::ane_hw_limits::AneHwLimits;
 use ane_ir::ane_target::AneFamily;
 use ane_ir::mir::MirOp;
 #[cfg(test)]
@@ -27,13 +28,6 @@ impl std::fmt::Display for OpConstraintViolation {
     }
 }
 
-/// T-93: Threshold above which ANE activates "large kernel" mode with
-/// additional constraints. Based on binary forensic evidence: "kernel
-/// width and height should be multiple of 8 for large kernel" appears
-/// when W or H exceeds this threshold. The previous dead-code comparison
-/// at line 41 used a literal 16; this named constant replaces it.
-pub const LARGE_KERNEL_THRESHOLD: u64 = 16;
-
 /// Check whether a value is a power of 2 (0 is not a power of 2).
 fn is_power_of_two(v: u64) -> bool {
     v > 0 && (v & (v - 1)) == 0
@@ -52,6 +46,7 @@ pub fn validate_conv_constraints(
     groups: u64,
     is_dilated: bool,
     stride: &[u64],
+    limits: &AneHwLimits,
 ) -> Result<(), OpConstraintViolation> {
     // ─── T-92: Kernel dimensions must be power of 2 ────────────────
     // ANEC rejects non-power-of-2 kernel sizes: "Kernel width must be
@@ -145,7 +140,7 @@ pub fn validate_conv_constraints(
         }
     }
     // Grouped conv + large kernel = hard reject
-    if groups > 1 && (kernel_w > LARGE_KERNEL_THRESHOLD || kernel_h > LARGE_KERNEL_THRESHOLD) {
+    if groups > 1 && (kernel_w > limits.large_kernel_mode_threshold || kernel_h > limits.large_kernel_mode_threshold) {
         return Err(OpConstraintViolation {
             op_name: "conv".into(),
             constraint: "grouped_conv_large_kernel".into(),
@@ -153,7 +148,7 @@ pub fn validate_conv_constraints(
         });
     }
     // Dilated conv + large kernel = hard reject
-    if is_dilated && (kernel_w > LARGE_KERNEL_THRESHOLD || kernel_h > LARGE_KERNEL_THRESHOLD) {
+    if is_dilated && (kernel_w > limits.large_kernel_mode_threshold || kernel_h > limits.large_kernel_mode_threshold) {
         return Err(OpConstraintViolation {
             op_name: "conv".into(),
             constraint: "dilated_conv_large_kernel".into(),
@@ -165,7 +160,7 @@ pub fn validate_conv_constraints(
     // When kernel W or H exceeds the threshold, ANEC enters "large
     // kernel mode" with additional constraints. Binary forensic
     // evidence confirms 12+ additional constraints.
-    if kernel_w > LARGE_KERNEL_THRESHOLD || kernel_h > LARGE_KERNEL_THRESHOLD {
+    if kernel_w > limits.large_kernel_mode_threshold || kernel_h > limits.large_kernel_mode_threshold {
         if let Err(e) = validate_large_kernel_constraints(
             kernel_w, kernel_h, kernel_d, groups, is_dilated, stride,
         ) {
@@ -178,9 +173,10 @@ pub fn validate_conv_constraints(
 
 /// T-93: Validate ANEC large kernel mode constraints.
 ///
-/// When kernel width or height exceeds `LARGE_KERNEL_THRESHOLD` (16),
-/// ANEC activates a special "large kernel mode" with 12+ additional
-/// constraints. All of these are derived from binary forensic strings:
+/// When kernel width or height exceeds the large_kernel_mode_threshold
+/// (loaded from AneHwLimits, value 16 for all revisions), ANEC activates
+/// a special "large kernel mode" with 12+ additional constraints.
+/// All of these are derived from binary forensic strings:
 ///
 /// 1. Kernel W/H must be multiple of 8
 /// 2. Stride must be 1 or 2 only
@@ -348,6 +344,7 @@ pub fn validate_deconv_constraints(
     kernel_d: u64,
     stride: u64,
     is_vector_palettized: bool,
+    limits: &AneHwLimits,
 ) -> Result<(), OpConstraintViolation> {
     // 1. No dilation
     if is_dilated {
@@ -369,7 +366,7 @@ pub fn validate_deconv_constraints(
         });
     }
     // 3. No large kernel
-    if kernel_w > LARGE_KERNEL_THRESHOLD || kernel_h > LARGE_KERNEL_THRESHOLD {
+    if kernel_w > limits.large_kernel_mode_threshold || kernel_h > limits.large_kernel_mode_threshold {
         return Err(OpConstraintViolation {
             op_name: "deconv".into(),
             constraint: "no_large_kernel".into(),
@@ -572,25 +569,20 @@ pub fn validate_pooling_constraints(
     stride: u64,
     kernel_size: u64,
     is_dilated: bool,
+    limits: &AneHwLimits,
 ) -> Result<(), OpConstraintViolation> {
-    // T-69: Validate kernel size against ANE hardware limits.
-    // The ANE has a per-revision max_pooling_kernel_dim limit. We use the
-    // most conservative limit (A11/A12 = 27) as a compile-time gate.
-    // Larger kernels are rejected by the ANE compiler at runtime with
+    // T-P4-01: Validate kernel size against ANE hardware limits loaded
+    // from the knowledge store (AneHwLimits.max_pooling_kernel_dim).
+    // The ANE has a per-revision max_pooling_kernel_dim limit. Larger
+    // kernels are rejected by the ANE compiler at runtime with
     // "Error: pooling kernel size exceeds hardware limit".
-    //
-    // Per ane-constraints-docs/02-hardware-and-limits/:
-    //   A11/A12/A13: max_pooling_kernel_dim = 27
-    //   A14+: max_pooling_kernel_dim = 27 (unchanged)
-    //   M1/A18+: max_pooling_kernel_dim = 27 (unchanged)
-    const MAX_POOLING_KERNEL_DIM: u64 = 27;
-    if kernel_size > MAX_POOLING_KERNEL_DIM {
+    if kernel_size > limits.max_pooling_kernel_dim {
         return Err(OpConstraintViolation {
             op_name: format!("{}_pool", pool_type),
             constraint: "kernel_size_limit".into(),
             message: format!(
                 "Pooling kernel size {} exceeds ANE maximum of {} (pool_type={})",
-                kernel_size, MAX_POOLING_KERNEL_DIM, pool_type
+                kernel_size, limits.max_pooling_kernel_dim, pool_type
             ),
         });
     }
@@ -1160,53 +1152,63 @@ pub fn validate_architecture_gated_constraints(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ane_ir::ane_target::AneRevision;
+
+    /// Helper: default AneHwLimits for unit tests (A14/V7).
+    fn test_limits() -> AneHwLimits {
+        AneHwLimits::for_revision(AneRevision::V7)
+    }
 
     #[test]
     fn test_conv_kernel_range_1_7() {
+        let limits = test_limits();
         // T-92: Only power-of-2 kernels are valid ANE conv sizes (1, 2, 4)
-        assert!(validate_conv_constraints(1, 1, 1, 1, false, &[]).is_ok());
-        assert!(validate_conv_constraints(2, 2, 1, 1, false, &[]).is_ok());
-        assert!(validate_conv_constraints(4, 4, 1, 1, false, &[]).is_ok());
+        assert!(validate_conv_constraints(1, 1, 1, 1, false, &[], &limits).is_ok());
+        assert!(validate_conv_constraints(2, 2, 1, 1, false, &[], &limits).is_ok());
+        assert!(validate_conv_constraints(4, 4, 1, 1, false, &[], &limits).is_ok());
         // Non-power-of-2 kernels are now rejected (3, 5, 6, 7)
-        assert!(validate_conv_constraints(3, 3, 1, 1, false, &[]).is_err());
-        assert!(validate_conv_constraints(5, 5, 1, 1, false, &[]).is_err());
-        assert!(validate_conv_constraints(7, 7, 1, 1, false, &[]).is_err());
+        assert!(validate_conv_constraints(3, 3, 1, 1, false, &[], &limits).is_err());
+        assert!(validate_conv_constraints(5, 5, 1, 1, false, &[], &limits).is_err());
+        assert!(validate_conv_constraints(7, 7, 1, 1, false, &[], &limits).is_err());
         // Out of range kernels are still rejected
-        assert!(validate_conv_constraints(0, 1, 1, 1, false, &[]).is_err());
-        assert!(validate_conv_constraints(8, 1, 1, 1, false, &[]).is_err());
+        assert!(validate_conv_constraints(0, 1, 1, 1, false, &[], &limits).is_err());
+        assert!(validate_conv_constraints(8, 1, 1, 1, false, &[], &limits).is_err());
     }
 
     #[test]
     fn test_conv_kernel_power_of_2_depth() {
+        let limits = test_limits();
         // T-92: 3D conv depth must be power of 2
-        assert!(validate_conv_constraints(2, 2, 1, 1, false, &[]).is_ok());
-        assert!(validate_conv_constraints(2, 2, 2, 1, false, &[]).is_ok());
-        assert!(validate_conv_constraints(2, 2, 4, 1, false, &[]).is_ok());
+        assert!(validate_conv_constraints(2, 2, 1, 1, false, &[], &limits).is_ok());
+        assert!(validate_conv_constraints(2, 2, 2, 1, false, &[], &limits).is_ok());
+        assert!(validate_conv_constraints(2, 2, 4, 1, false, &[], &limits).is_ok());
         // Depth 3 is not power of 2
-        assert!(validate_conv_constraints(2, 2, 3, 1, false, &[]).is_err());
+        assert!(validate_conv_constraints(2, 2, 3, 1, false, &[], &limits).is_err());
     }
 
     #[test]
     fn test_conv_grouped_large_kernel() {
+        let limits = test_limits();
         // Regular conv with valid kernel is OK
-        assert!(validate_conv_constraints(2, 2, 1, 1, false, &[]).is_ok());
+        assert!(validate_conv_constraints(2, 2, 1, 1, false, &[], &limits).is_ok());
         // Grouped conv with valid kernel is OK
-        assert!(validate_conv_constraints(2, 2, 1, 4, false, &[]).is_ok());
+        assert!(validate_conv_constraints(2, 2, 1, 4, false, &[], &limits).is_ok());
     }
 
     #[test]
     fn test_conv_dilated_large_kernel() {
+        let limits = test_limits();
         // Dilated conv with in-range kernel is OK
-        assert!(validate_conv_constraints(4, 4, 1, 1, true, &[]).is_ok());
+        assert!(validate_conv_constraints(4, 4, 1, 1, true, &[], &limits).is_ok());
         // Dilated conv with kernel > 16 is rejected (out of range first)
-        assert!(validate_conv_constraints(32, 32, 1, 1, true, &[]).is_err());
+        assert!(validate_conv_constraints(32, 32, 1, 1, true, &[], &limits).is_err());
     }
 
     // ─── T-93: Large kernel mode tests ─────────────────────────────
 
     #[test]
     fn test_large_kernel_wh_multiple_of_8() {
-        // 16 is > LARGE_KERNEL_THRESHOLD, and 16 % 8 == 0 — valid
+        // 16 is > large_kernel_mode_threshold, and 16 % 8 == 0 — valid
         assert!(validate_large_kernel_constraints(16, 16, 1, 1, false, &[1]).is_ok());
         // 24 is >16 and 24 % 8 == 0 — valid for the large kernel function
         // (though conv_constraints would reject 24 via the power-of-2 check first)
@@ -1293,50 +1295,57 @@ mod tests {
 
     #[test]
     fn test_deconv_valid() {
+        let limits = test_limits();
         // All valid: no dilation, SOx=2, small kernel, no vector palett
-        assert!(validate_deconv_constraints(false, 2, 4, 4, 1, 1, false).is_ok());
+        assert!(validate_deconv_constraints(false, 2, 4, 4, 1, 1, false, &limits).is_ok());
     }
 
     #[test]
     fn test_deconv_dilation_rejected() {
-        let result = validate_deconv_constraints(true, 2, 4, 4, 1, 1, false);
+        let limits = test_limits();
+        let result = validate_deconv_constraints(true, 2, 4, 4, 1, 1, false, &limits);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "no_dilation");
     }
 
     #[test]
     fn test_deconv_sox_not_2_rejected() {
-        let result = validate_deconv_constraints(false, 3, 4, 4, 1, 1, false);
+        let limits = test_limits();
+        let result = validate_deconv_constraints(false, 3, 4, 4, 1, 1, false, &limits);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "sox_must_be_2");
     }
 
     #[test]
     fn test_deconv_large_kernel_rejected() {
-        let result = validate_deconv_constraints(false, 2, 32, 4, 1, 1, false);
+        let limits = test_limits();
+        let result = validate_deconv_constraints(false, 2, 32, 4, 1, 1, false, &limits);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "no_large_kernel");
     }
 
     #[test]
     fn test_deconv_vector_palettization_rejected() {
-        let result = validate_deconv_constraints(false, 2, 4, 4, 1, 1, true);
+        let limits = test_limits();
+        let result = validate_deconv_constraints(false, 2, 4, 4, 1, 1, true, &limits);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "no_vector_palettization");
     }
 
     #[test]
     fn test_deconv_stride_gt_2_with_depth_rejected() {
+        let limits = test_limits();
         // Stride > 2 with kernel_d > 1 is rejected
-        let result = validate_deconv_constraints(false, 2, 4, 4, 2, 3, false);
+        let result = validate_deconv_constraints(false, 2, 4, 4, 2, 3, false, &limits);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "stride_gt_2_no_depth");
     }
 
     #[test]
     fn test_deconv_stride_gt_2_no_depth_ok() {
+        let limits = test_limits();
         // Stride > 2 with kernel_d == 1 is OK
-        assert!(validate_deconv_constraints(false, 2, 4, 4, 1, 3, false).is_ok());
+        assert!(validate_deconv_constraints(false, 2, 4, 4, 1, 3, false, &limits).is_ok());
     }
 
     #[test]
@@ -1369,32 +1378,36 @@ mod tests {
 
     #[test]
     fn test_pooling_dilated() {
-        assert!(validate_pooling_constraints("max", 1, 3, false).is_ok());
-        assert!(validate_pooling_constraints("max", 1, 3, true).is_err());
+        let limits = test_limits();
+        assert!(validate_pooling_constraints("max", 1, 3, false, &limits).is_ok());
+        assert!(validate_pooling_constraints("max", 1, 3, true, &limits).is_err());
     }
 
     #[test]
     fn test_pooling_stride() {
-        assert!(validate_pooling_constraints("avg", 3, 3, false).is_ok());
-        assert!(validate_pooling_constraints("max", 3, 3, false).is_err());
+        let limits = test_limits();
+        assert!(validate_pooling_constraints("avg", 3, 3, false, &limits).is_ok());
+        assert!(validate_pooling_constraints("max", 3, 3, false, &limits).is_err());
     }
 
     // ─── T-69: Pooling kernel size validation tests ─────────────────
 
     #[test]
     fn test_pooling_kernel_size_within_limit() {
+        let limits = test_limits();
         // Kernel sizes 1-27 should be accepted
-        assert!(validate_pooling_constraints("max", 1, 1, false).is_ok());
-        assert!(validate_pooling_constraints("max", 1, 3, false).is_ok());
-        assert!(validate_pooling_constraints("max", 1, 7, false).is_ok());
-        assert!(validate_pooling_constraints("max", 1, 27, false).is_ok());
-        assert!(validate_pooling_constraints("avg", 1, 27, false).is_ok());
+        assert!(validate_pooling_constraints("max", 1, 1, false, &limits).is_ok());
+        assert!(validate_pooling_constraints("max", 1, 3, false, &limits).is_ok());
+        assert!(validate_pooling_constraints("max", 1, 7, false, &limits).is_ok());
+        assert!(validate_pooling_constraints("max", 1, 27, false, &limits).is_ok());
+        assert!(validate_pooling_constraints("avg", 1, 27, false, &limits).is_ok());
     }
 
     #[test]
     fn test_pooling_kernel_size_exceeds_limit() {
+        let limits = test_limits();
         // Kernel sizes > 27 should be rejected
-        let result = validate_pooling_constraints("max", 1, 28, false);
+        let result = validate_pooling_constraints("max", 1, 28, false, &limits);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.constraint, "kernel_size_limit");
@@ -1404,14 +1417,16 @@ mod tests {
 
     #[test]
     fn test_pooling_kernel_size_zero_rejected() {
-        let result = validate_pooling_constraints("avg", 1, 0, false);
+        let limits = test_limits();
+        let result = validate_pooling_constraints("avg", 1, 0, false, &limits);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "kernel_size_positive");
     }
 
     #[test]
     fn test_pooling_kernel_size_large_rejected() {
-        let result = validate_pooling_constraints("max", 1, 64, false);
+        let limits = test_limits();
+        let result = validate_pooling_constraints("max", 1, 64, false, &limits);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "kernel_size_limit");
     }

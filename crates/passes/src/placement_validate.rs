@@ -717,7 +717,7 @@ pub fn validate_placement_with_context(
         // Constraints enforced:
         //   1. No dilation
         //   2. SOx must equal 2
-        //   3. No large kernel (kernel dim > LARGE_KERNEL_THRESHOLD)
+        //   3. No large kernel (kernel dim > large_kernel_mode_threshold)
         //   4. No vector palettization
         //   5. Stride > 2 does not support kernel depth > 1
         //   6. ConvTranspose unsupported on A11Legacy family
@@ -766,6 +766,16 @@ pub fn validate_placement_with_context(
             };
 
             // Call the unified deconv constraint validator
+            // T-P4-01: Pass AneHwLimits so that large_kernel_mode_threshold
+            // is loaded from the knowledge store rather than a hardcoded constant.
+            let hw_limits = if let Some(revision) = ctx.anef_revision {
+                ane_ir::ane_hw_limits::AneHwLimits::for_revision(revision)
+            } else {
+                // No revision available; fall back to A14 (most common)
+                ane_ir::ane_hw_limits::AneHwLimits::for_revision(
+                    ane_ir::ane_target::AneRevision::V7
+                )
+            };
             if let Err(violation) = crate::op_constraints::validate_deconv_constraints(
                 is_dilated,
                 sox,
@@ -774,6 +784,7 @@ pub fn validate_placement_with_context(
                 kernel_d,
                 max_stride,
                 ctx.is_vector_palettized,
+                &hw_limits,
             ) {
                 return PlacementDecision::CpuOnly(format!(
                     "{}: deconv constraint '{}' — {}",
