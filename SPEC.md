@@ -301,7 +301,7 @@ Two code paths still require per-variant match and cannot be fully generic:
 
 **Outputs**: Query results used by the legality engine, shard planner, precision engine, and risk annotator.
 
-**Implementation**: Rust (storage engine, query engine) with SQLite as the persistence backend.
+**Implementation**: Rust (storage engine, query engine) with JSON seed files in the `knowledge/` directory as the persistence backend. Queries use linear-scan over loaded JSON structures. SQLite was originally planned but JSON provides a simpler, more portable, and offline-first approach that matches the project's iteration speed. A SQLite backend may be added in the future for large-scale knowledge stores.
 
 **Main risks**: Knowledge contamination from noisy observations; conflicting observations from different devices; knowledge becoming stale as OS versions change.
 
@@ -513,11 +513,11 @@ The knowledge store contains the following unit types:
 
 ## 6.2 Storage Model
 
-- **Backend**: SQLite with one table per knowledge unit type.
+- **Backend**: JSON seed files in the `knowledge/` directory (linear-scan queries). Each file contains an array of knowledge units. SQLite was originally planned but JSON provides a simpler, offline-first approach suitable for the current iteration.
 - **Schema**: Each table has `id`, `version`, `timestamp`, `confidence`, `evidence_source`, `evidence_count`, `scope_device_classes`, `scope_os_versions`, `scope_opset_versions`, `conflict_priority`, plus type-specific fields.
 - **Indexing**: Composite indexes on `(type_specific_key, scope_device_classes, scope_os_versions)` for fast lookup during compilation.
 - **Immutability**: Knowledge units are append-only. Updates insert a new version with incremented version number. Old versions remain queryable for audit.
-- **Snapshots**: The full knowledge store can be exported as a snapshot file (JSON + SQLite dump) for reproducibility.
+- **Snapshots**: The full knowledge store can be exported as a snapshot file (JSON) for reproducibility.
 
 ## 6.3 Update Pipeline
 
@@ -1260,7 +1260,7 @@ Fallback suspicion score is a float in [0.0, 1.0]:
 | Run trace | JSON + numpy arrays | Raw profiling results |
 | Drift report | Markdown + JSON | Numerical drift analysis |
 | Fallback suspicion report | Markdown + JSON | Fallback risk assessment |
-| Backend knowledge snapshot | SQLite dump + JSON | Knowledge store export |
+| Backend knowledge snapshot | JSON | Knowledge store export |
 | Reproducibility hash | Text (SHA-256) | Bit-for-bit reproducibility verification |
 
 All artifacts are stored under the project's output directory structure and are named with a combination of compilation-run-id and artifact type.
@@ -1310,7 +1310,7 @@ MILLer/
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
-│   │       ├── store.rs             # SQLite-backed storage
+│   │       ├── store.rs             # JSON-backed knowledge store
 │   │       ├── query.rs             # Query engine
 │   │       ├── update.rs            # Update pipeline
 │   │       ├── confidence.rs        # Confidence model
@@ -1468,7 +1468,7 @@ MILLer/
 - Canonicalization pass (fully functional).
 - Staticization pass (fully functional for supported patterns).
 - Legality rewrite pass (with initial rule set derived from Qwen3 evidence).
-- Knowledge store schema and SQLite backend in `crates/knowledge/`.
+- Knowledge store schema and JSON backend in `crates/knowledge/`.
 - Seed knowledge loaded from `knowledge/` files.
 - Query API for knowledge store (legality rules, survival matrices).
 

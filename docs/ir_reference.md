@@ -63,16 +63,20 @@ The full IR stack is now wired into the `compile-full` CLI subcommand. The actua
 pass pipeline ordering and signatures are:
 
 ```
-SIR → (CanonicalizePass: SIR→SIR) → (StaticizePass: SIR→SIR)
-  → (PrecisionPolicyPass: SIR→SIR) → (StateTopologyPass: SIR→SIR)
-  → (LegalityRewritePass: SIR→AIR) → (RiskAnnotatePass: AIR→AIR)
-  → (ShardPlanPass: &SIR→ShardPlan+PIR) → (MilLowerPass: &AIR+&ShardPlan→Vec<MIR>)
+SIR → (CanonicalizePass: SIR→SIR) → (PrecisionPolicyPass: SIR→SIR)
+  → (StateTopologyPass: SIR→SIR) → (AneLegalityRewritePass: SIR→AIR)
+  → (RiskAnnotatePass: AIR→AIR) → (ShardPlanPass: &SIR→ShardPlan+PIR)
+  → (MilLowerPass: &AIR+&ShardPlan→Vec<MIR>)
 ```
 
 Note the key data-flow dependencies:
-- CanonicalizePass, StaticizePass, PrecisionPolicyPass, and StateTopologyPass all
+- CanonicalizePass, PrecisionPolicyPass, and StateTopologyPass all
   transform SIR in place (pass-through for the current linear projection slice).
-- LegalityRewritePass consumes the SIR and produces an AIR graph.
+- StaticizePass was removed (T-107) — its responsibilities were folded into
+  PrecisionPolicyPass and AneLegalityRewritePass.
+- AneLegalityRewritePass (renamed from LegalityRewritePass) consumes the SIR
+  and produces an AIR graph. The rename reflects that it specifically targets
+  ANE legality constraints, not general legality.
 - RiskAnnotatePass annotates the AIR graph with risk scores.
 - ShardPlanPass takes a reference to the original SIR to produce a ShardPlan and PIR.
 - MilLowerPass takes references to both the AIR graph and the ShardPlan to produce
@@ -138,10 +142,10 @@ weakness is now explicitly labeled rather than hidden.
 ## SIR→AIR Decomposition
 
 All declared SIR ops now have active SIR→AIR decomposition paths in
-`LegalityRewritePass`. Previously, `SirOp::AttentionBlock`, `SirOp::DecodeStep`,
-`SirOp::RMSNorm`, `SirOp::RoPETransform`, and `SirOp::Sampler` would produce
-an error in the legality rewrite pass. They now decompose into sequences of
-lower-level AIR ops:
+`AneLegalityRewritePass` (renamed from `LegalityRewritePass`). Previously,
+`SirOp::AttentionBlock`, `SirOp::DecodeStep`, `SirOp::RMSNorm`,
+`SirOp::RoPETransform`, and `SirOp::Sampler` would produce an error in the
+legality rewrite pass. They now decompose into sequences of lower-level AIR ops:
 
 | SIR Op | AIR Decomposition |
 |--------|-------------------|
@@ -151,6 +155,15 @@ lower-level AIR ops:
 | RMSNorm | ReduceMean + Rsqrt + ElementWise::Mul + ElementWise::Mul |
 | RoPETransform | Cos + Sin + ElementWise::Mul + ElementWise::Mul + ElementWise::Add |
 | Sampler | Topk + Softmax + Gather |
+
+**Note on LayerNorm and SDPA engine assignment:** LayerNorm and SDPA
+are family-gated — they are only available on A18+ (ANE family
+`AneFamily::A18`). On A14-class and earlier ANEs, these ops must be
+replaced with ANE-legal decompositions during `AneLegalityRewritePass`.
+The engine assignment for these ops is controlled by `AneEngine`
+which maps them to `NE` (neural engine) or `PE` (processing element)
+units based on the target ANE family's capabilities.
+
 | StateRead | StateReadFixed |
 | StateWrite | StateWriteFixed |
 

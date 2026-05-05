@@ -19,7 +19,7 @@ See [CHANGELOG.md](../CHANGELOG.md) for implementation history and verification 
 | `crates/ir/src/pir.rs` | Package IR with `FunctionEntry` (multifunction seam) |
 | `crates/ir/src/ane_target.rs` | `AneFamily`, `AneRevision`, `AneTarget` types with chip-to-family mapping |
 | `crates/ir/src/ane_engine.rs` | `AneEngine` enum (NE/PE/TransposeEngine) with per-MirOp engine assignment |
-| `crates/ir/src/ane_hw_limits.rs` | `AneHwLimits` per-revision hardware limit enforcement |
+| `crates/ir/src/ane_hw_limits.rs` | `AneHwLimits` per-revision hardware limit enforcement (has `verified: bool` field indicating whether limits have been confirmed on real hardware) |
 | `crates/ir/src/ane_layout.rs` | `AneInterleave`/`AneLayout` types for interleave and ChannelLast constraints |
 | `crates/bridge/src/subprocess.rs` | Rust→Python subprocess bridge, `BridgeResult` with full field capture |
 | `crates/cli/src/main.rs` | CLI compile, report, trace-compile commands, deterministic task hashing, spec-driven manifest |
@@ -90,4 +90,4 @@ compile output dir (mlpackage + manifest + MIR dump + knowledge)
   → {model_id}.zip
 ```
 
-Both the reporter and packager operate on the same data produced by the compile command. No `todo!()` stubs remain in these modules.
+Both the reporter and packager operate on the same data produced by the compile command. No `todo!()` stubs remain in the core compiler pipeline. The CAPI layer (`coreml-ffi`) contains stub implementations that return honest errors for unsupported operations on macOS.

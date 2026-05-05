@@ -183,9 +183,13 @@ pub fn emit_mir_graph_proto_direct_with_resolver(
     output_path: &str,
     resolver: &dyn crate::mir_to_compat::WeightResolver,
 ) -> Result<ProtoDirectResult> {
-    // When a real resolver is provided, still allow missing weights for now.
-    // Production callers should check resolver.is_empty() before calling.
-    let compat = mir_graph_to_compat_with_allow_missing(graph, resolver, true)?;
+    // T-P2-09: Only allow missing weights when the resolver is empty.
+    // When a non-empty resolver is provided but a weight is missing, that's
+    // a production error — zero-filled weights produce silently broken models.
+    // Previously, this always passed allow_missing_weights=true, which
+    // masked real weight resolution failures.
+    let allow_missing = resolver.is_empty();
+    let compat = mir_graph_to_compat_with_allow_missing(graph, resolver, allow_missing)?;
     emit_proto_direct(&compat, output_path)
 }
 
@@ -607,5 +611,71 @@ mod tests {
         assert_eq!(result.emission_method, "proto-direct");
         assert_eq!(result.function_count, 1);
         assert!(output_path.exists());
+    }
+
+    /// T-P2-09: Production paths must reject missing weights.
+    /// When a non-empty resolver is provided but a weight is missing,
+    /// emission should return an error, not silently produce zero-filled data.
+    #[test]
+    fn test_production_path_rejects_missing_weights() {
+        use crate::mir_to_compat::HashMapWeightResolver;
+        use ane_ir::mir::{ComputeUnitHint, MilDtype, MirNode, MirNodeId, MirOp};
+
+        let tmp = TempDir::new().unwrap();
+        let output_path = tmp.path().join("prod.mlpackage");
+
+        // Build a graph that references a weight
+        let graph = MirGraph {
+            nodes: vec![
+                MirNode {
+                    id: MirNodeId("w".into()),
+                    op: MirOp::MILConst {
+                        name: "w".into(),
+                        value_path: "weights/w.bin".into(),
+                        dtype: MilDtype::Fp16,
+                    },
+                    dtype: MilDtype::Fp16,
+                    shape: vec![32, 64],
+                    compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
+                    air_source: None,
+                },
+                MirNode {
+                    id: MirNodeId("out".into()),
+                    op: MirOp::MILLinear {
+                        name: "linear".into(),
+                        x: MirNodeId("input".into()),
+                        weight: "w".into(),
+                        bias: None,
+                    },
+                    dtype: MilDtype::Fp16,
+                    shape: vec![32],
+                    compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
+                    air_source: None,
+                },
+            ],
+            inputs: vec![MirNodeId("input".into())],
+            outputs: vec![MirNodeId("out".into())],
+            opset_version: "iOS18".into(),
+            shard_name: "main".into(),
+            input_shapes: {
+                let mut shapes = std::collections::HashMap::new();
+                shapes.insert(MirNodeId("input".into()), vec![1, 64]);
+                shapes
+            },
+        };
+
+        // Create a non-empty resolver that doesn't have the right weight
+        let mut resolver = HashMapWeightResolver::new();
+        resolver.add("some_other_weight".to_string(), vec![0u8; 64], vec![32]);
+        // The resolver has data but doesn't have the weight the graph needs
+        assert!(!resolver.is_empty(), "Resolver should not be empty");
+
+        // Production path should error, not produce zero-filled weights
+        let result = emit_mir_graph_proto_direct_with_resolver(
+            &graph,
+            output_path.to_str().unwrap(),
+            &resolver,
+        );
+        assert!(result.is_err(), "Production path should reject missing weights, got Ok");
     }
 }

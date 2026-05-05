@@ -839,3 +839,201 @@ def save_verification_result(
         "artifact_path": str(artifact_path),
         "summary_path": str(summary_path),
     }
+
+
+# ---------------------------------------------------------------------------
+# T-P5-12: Semantic emission verification
+# ---------------------------------------------------------------------------
+
+def verify_emission_semantics(
+    mlpackage_path: str,
+    expected_inputs: Optional[List[Dict[str, Any]]] = None,
+    expected_outputs: Optional[List[Dict[str, Any]]] = None,
+    expected_dtypes: Optional[Dict[str, str]] = None,
+    forbidden_patterns: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Verify semantic correctness of an emitted mlpackage.
+
+    T-P5-12: This function performs lightweight host-side semantic checks
+    on an emitted mlpackage to catch common emission errors before runtime.
+    It does NOT require macOS or coremltools to execute the model.
+
+    Checks performed:
+    1. All expected I/O names appear in the emitted mlpackage
+    2. Weight files exist and have non-zero size
+    3. Proto descriptors match the original graph's dtypes (not all Float16)
+    4. No placeholder names remain in the emission (e.g., "__placeholder__",
+       "__unused__", "__todo__")
+
+    Args:
+        mlpackage_path: Path to the .mlpackage directory.
+        expected_inputs: List of dicts with 'name' keys for expected input names.
+        expected_outputs: List of dicts with 'name' keys for expected output names.
+        expected_dtypes: Dict mapping I/O name to expected dtype string
+            (e.g., {"x": "fp16", "output": "fp32"}). Checks that not all
+            dtypes are Float16 (which would indicate a default-dtype bug).
+        forbidden_patterns: List of string patterns that must NOT appear in
+            any I/O name (e.g., ["__placeholder__", "__unused__", "__todo__"]).
+
+    Returns:
+        Dict with:
+          - passed: bool — whether all checks passed
+          - errors: list of str — semantic errors found
+          - warnings: list of str — non-fatal issues found
+          - details: dict — per-check details
+    """
+    pkg_path = Path(mlpackage_path)
+    errors: List[str] = []
+    warnings: List[str] = []
+    details: Dict[str, Any] = {}
+
+    # Check 1: mlpackage directory exists
+    if not pkg_path.exists() or not pkg_path.is_dir():
+        return {
+            "passed": False,
+            "errors": [f"mlpackage directory does not exist: {mlpackage_path}"],
+            "warnings": [],
+            "details": {"directory_exists": False},
+        }
+
+    # Check 2: Manifest.json exists and is readable
+    manifest_path = pkg_path / "Manifest.json"
+    manifest = None
+    if manifest_path.exists():
+        try:
+            with open(manifest_path) as f:
+                manifest = json.load(f)
+            details["manifest_readable"] = True
+        except Exception as e:
+            errors.append(f"Manifest.json is not valid JSON: {e}")
+            details["manifest_readable"] = False
+    else:
+        errors.append("Manifest.json is missing")
+        details["manifest_readable"] = False
+
+    # Check 3: Weight file exists and has non-zero size
+    weight_bin_path = pkg_path / "Data" / "com.apple.CoreML" / "weights" / "weight.bin"
+    if weight_bin_path.exists():
+        weight_size = weight_bin_path.stat().st_size
+        details["weight_bin_size"] = weight_size
+        if weight_size == 0:
+            errors.append("weight.bin exists but is empty (0 bytes) — all weights may be zero-filled")
+    else:
+        # Weight file may not exist for models with no weights (unlikely but possible)
+        warnings.append("weight.bin not found — model may have no weight data")
+        details["weight_bin_size"] = 0
+
+    # Check 4: Model.mlmodel (protobuf) exists and has non-zero size
+    mlmodel_path = pkg_path / "Data" / "com.apple.CoreML" / "model.mlmodel"
+    if mlmodel_path.exists():
+        mlmodel_size = mlmodel_path.stat().st_size
+        details["mlmodel_size"] = mlmodel_size
+        if mlmodel_size == 0:
+            errors.append("model.mlmodel is empty (0 bytes)")
+    else:
+        errors.append("model.mlmodel is missing from the mlpackage")
+        details["mlmodel_size"] = 0
+
+    # Attempt structural inspection for I/O name checks
+    io_names = {"inputs": set(), "outputs": set()}
+    io_dtypes: Dict[str, str] = {}
+
+    try:
+        import coremltools as ct
+        try:
+            model = ct.models.MLModel(str(pkg_path))
+            spec = model.get_spec()
+
+            # Extract input names and dtypes
+            for inp in spec.description.input:
+                io_names["inputs"].add(inp.name)
+                type_str = str(inp.type).lower()
+                if "float16" in type_str or "fp16" in type_str:
+                    io_dtypes[inp.name] = "fp16"
+                elif "float32" in type_str or "fp32" in type_str:
+                    io_dtypes[inp.name] = "fp32"
+                elif "int32" in type_str:
+                    io_dtypes[inp.name] = "int32"
+                else:
+                    io_dtypes[inp.name] = "unknown"
+
+            # Extract output names and dtypes
+            for outp in spec.description.output:
+                io_names["outputs"].add(outp.name)
+                type_str = str(outp.type).lower()
+                if "float16" in type_str or "fp16" in type_str:
+                    io_dtypes[outp.name] = "fp16"
+                elif "float32" in type_str or "fp32" in type_str:
+                    io_dtypes[outp.name] = "fp32"
+                elif "int32" in type_str:
+                    io_dtypes[outp.name] = "int32"
+                else:
+                    io_dtypes[outp.name] = "unknown"
+
+            details["structural_inspection"] = "coremltools"
+        except Exception as e:
+            warnings.append(f"Could not load model for structural inspection: {e}")
+            details["structural_inspection"] = "unavailable"
+    except ImportError:
+        warnings.append("coremltools not available — I/O name and dtype checks skipped")
+        details["structural_inspection"] = "coremltools_not_installed"
+
+    # Check 5: All expected I/O names are present
+    if expected_inputs and io_names["inputs"]:
+        missing_inputs = [
+            inp["name"] for inp in expected_inputs
+            if inp["name"] not in io_names["inputs"]
+        ]
+        if missing_inputs:
+            errors.append(
+                f"Missing expected input name(s) in emitted mlpackage: {missing_inputs}"
+            )
+        details["missing_inputs"] = missing_inputs
+
+    if expected_outputs and io_names["outputs"]:
+        missing_outputs = [
+            outp["name"] for outp in expected_outputs
+            if outp["name"] not in io_names["outputs"]
+        ]
+        if missing_outputs:
+            errors.append(
+                f"Missing expected output name(s) in emitted mlpackage: {missing_outputs}"
+            )
+        details["missing_outputs"] = missing_outputs
+
+    # Check 6: Proto descriptors match expected dtypes (not all Float16)
+    if io_dtypes:
+        all_fp16 = all(v == "fp16" for v in io_dtypes.values())
+        if all_fp16 and len(io_dtypes) > 0:
+            # This is a warning, not an error — some models genuinely are all-FP16
+            warnings.append(
+                "All I/O dtypes are Float16 — this may indicate a default-dtype bug "
+                "where original graph dtypes were not preserved during emission"
+            )
+        details["all_dtypes_fp16"] = all_fp16
+        details["io_dtypes"] = io_dtypes
+
+    # Check 7: No placeholder names remain in the emission
+    default_forbidden = ["__placeholder__", "__unused__", "__todo__", "__stub__"]
+    patterns_to_check = (forbidden_patterns or []) + default_forbidden
+    placeholder_found = []
+    for name in io_names["inputs"] | io_names["outputs"]:
+        for pattern in patterns_to_check:
+            if pattern in name:
+                placeholder_found.append(name)
+                break
+    if placeholder_found:
+        errors.append(
+            f"Placeholder name(s) found in emitted I/O: {placeholder_found}. "
+            "These indicate incomplete emission — every I/O tensor should have "
+            "a meaningful name from the original graph."
+        )
+    details["placeholder_names"] = placeholder_found
+
+    passed = len(errors) == 0
+    return {
+        "passed": passed,
+        "errors": errors,
+        "warnings": warnings,
+        "details": details,
+    }

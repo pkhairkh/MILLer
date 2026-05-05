@@ -68,7 +68,7 @@ from mil_emitter import (
 )
 
 # Import unified verification harness (Sprint 40)
-from verify import verify_model, save_verification_result
+from verify import verify_model, save_verification_result, verify_emission_semantics
 
 # Import structural verification (Sprint 34)
 from model_structure import (
@@ -494,8 +494,12 @@ def handle_profile(command: dict) -> dict:
             "p99_ms": p99_ns / 1_000_000.0,
             "min_ms": min_ns / 1_000_000.0,
             "max_ms": max_ns / 1_000_000.0,
-            "mean_ms": median_ns / 1_000_000.0,  # Approximation: use median
-            "std_dev_ms": 0.0,  # profiler doesn't return stddev
+            # T-P4-05: Renamed from mean_ms to median_ms. The profiler returns
+            # median_ns, not mean_ns. The previous key name was misleading.
+            "median_ms": median_ns / 1_000_000.0,
+            # T-P4-05: std_dev_ms set to None since the profiler does not compute
+            # standard deviation. Previously was hardcoded to 0.0 which was misleading.
+            "std_dev_ms": None,
             "compute_units": compute_units_str,
             "scope_note": (
                 f"Device execution with {compute_units_str} hint. "
@@ -727,11 +731,15 @@ def handle_validate_proto_direct(command: dict) -> dict:
         }
 
     # Check required subdirectories
-    model_dir = pkg_path / "Model" / "com.apple.CoreML"
+    # T-P1-03: The proto-direct emitter writes model.mlmodel to Data/com.apple.CoreML/
+    # (see crates/coreml-emit/src/package.rs line 339), not Model/com.apple.CoreML/.
+    # The previous path check was incorrect, causing false validation failures
+    # for proto-direct emitted packages.
+    data_dir = pkg_path / "Data" / "com.apple.CoreML"
     weights_dir = pkg_path / "Data" / "com.apple.CoreML" / "weights"
 
-    if not model_dir.exists():
-        validation_errors.append("Model/com.apple.CoreML/ directory missing")
+    if not data_dir.exists():
+        validation_errors.append("Data/com.apple.CoreML/ directory missing")
     if not weights_dir.exists():
         validation_errors.append("Data/com.apple.CoreML/weights/ directory missing")
 
@@ -762,7 +770,8 @@ def handle_validate_proto_direct(command: dict) -> dict:
         validation_errors.append("Manifest.json missing")
 
     # Step 3: Check model.mlmodel (protobuf)
-    mlmodel_path = model_dir / "model.mlmodel"
+    # T-P1-03: Use data_dir instead of model_dir — proto-direct emitter writes to Data/
+    mlmodel_path = data_dir / "model.mlmodel"
     if not mlmodel_path.exists():
         validation_errors.append("model.mlmodel file missing")
     else:

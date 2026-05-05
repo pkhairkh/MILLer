@@ -30,13 +30,47 @@ use ane_coreml_proto::{
 use anyhow::Result;
 use prost::Message;
 
+/// T-P3-01: Controls whether ANE constraint violations produce errors or warnings.
+/// Default is strict mode (errors) since the ANE rejects these at runtime.
+#[derive(Debug, Clone)]
+pub struct ValidationPolicy {
+    /// When true, ANE constraint violations produce hard errors.
+    /// When false, they produce warnings and emission continues.
+    /// Default: true (strict mode)
+    pub strict: bool,
+}
+
+impl Default for ValidationPolicy {
+    fn default() -> Self {
+        Self { strict: true }
+    }
+}
+
+impl ValidationPolicy {
+    /// Create a strict validation policy (errors on violations).
+    pub fn strict() -> Self {
+        Self { strict: true }
+    }
+
+    /// Create a warn-only validation policy (warnings on violations, emission continues).
+    pub fn warn_only() -> Self {
+        Self { strict: false }
+    }
+}
+
 /// Convert a single-function MIR graph to a CoreMlModel.
 pub fn convert_mir_to_proto(
     graph: &MirGraphCompat,
     spec_version: SpecVersion,
     compute_unit: CoreMlComputeUnit,
 ) -> Result<CoreMlModel> {
-    convert_mir_to_proto_multifunction(std::slice::from_ref(graph), &[], spec_version, compute_unit)
+    convert_mir_to_proto_multifunction_with_policy(
+        std::slice::from_ref(graph),
+        &[],
+        spec_version,
+        compute_unit,
+        ValidationPolicy::default(),
+    )
 }
 
 /// Convert one or more MIR graphs to a multi-function CoreMlModel.
@@ -49,6 +83,30 @@ pub fn convert_mir_to_proto_multifunction(
     shared_weight_names: &[String],
     spec_version: SpecVersion,
     compute_unit: CoreMlComputeUnit,
+) -> Result<CoreMlModel> {
+    convert_mir_to_proto_multifunction_with_policy(
+        graphs,
+        shared_weight_names,
+        spec_version,
+        compute_unit,
+        ValidationPolicy::default(),
+    )
+}
+
+/// Convert one or more MIR graphs to a multi-function CoreMlModel with
+/// a custom validation policy.
+///
+/// T-P3-01: The `validation_policy` parameter controls whether ANE constraint
+/// violations (IOSurface sizes, surface uniformity, flat buffer layout)
+/// produce hard errors or warnings. Default is strict mode (errors) since
+/// the ANE rejects these at runtime (0x1d error). Use `ValidationPolicy::warn_only()`
+/// for development/debugging where you want emission to continue despite violations.
+pub fn convert_mir_to_proto_multifunction_with_policy(
+    graphs: &[MirGraphCompat],
+    shared_weight_names: &[String],
+    spec_version: SpecVersion,
+    compute_unit: CoreMlComputeUnit,
+    validation_policy: ValidationPolicy,
 ) -> Result<CoreMlModel> {
     let mut functions = Vec::new();
     let mut all_weights = Vec::new();
@@ -397,8 +455,11 @@ pub fn convert_mir_to_proto_multifunction(
 
         // Build input/output descriptions from the graph.
         // If input_descs/output_descs are provided (from MIR node shapes),
-        // use those for accurate shape information. Otherwise, fall back
-        // to name-only descriptors with empty shapes.
+        // use those for accurate shape information.
+        // T-P2-10: Previously, missing I/O descriptors silently defaulted to
+        // empty shape + Float16. These defaults are almost certainly wrong for
+        // any real model with batch > 1, sequence length > 1, or non-FP16 dtypes.
+        // Now we return an error to force explicit shape/dtype specification.
         for input_name in &graph.inputs {
             if let Some(desc) = graph.input_descs.iter().find(|d| d.name == *input_name) {
                 graph_inputs.push(TensorDesc {
@@ -408,12 +469,12 @@ pub fn convert_mir_to_proto_multifunction(
                     is_state: false,
                 });
             } else {
-                graph_inputs.push(TensorDesc {
-                    name: input_name.clone(),
-                    shape: vec![], // Shape unknown — Core ML may infer from graph
-                    dtype: CoreMlDataType::Float16, // Default
-                    is_state: false,
-                });
+                anyhow::bail!(
+                    "Missing input descriptor for '{}' in function '{}'. \
+                     Cannot determine shape/dtype for Core ML proto emission. \
+                     All graph inputs must have corresponding input_descs entries.",
+                    input_name, graph.function_name
+                );
             }
         }
         for output_name in &graph.outputs {
@@ -425,12 +486,12 @@ pub fn convert_mir_to_proto_multifunction(
                     is_state: false,
                 });
             } else {
-                graph_outputs.push(TensorDesc {
-                    name: output_name.clone(),
-                    shape: vec![], // Shape unknown — Core ML may infer from graph
-                    dtype: CoreMlDataType::Float16, // Default
-                    is_state: false,
-                });
+                anyhow::bail!(
+                    "Missing output descriptor for '{}' in function '{}'. \
+                     Cannot determine shape/dtype for Core ML proto emission. \
+                     All graph outputs must have corresponding output_descs entries.",
+                    output_name, graph.function_name
+                );
             }
         }
 
@@ -488,22 +549,13 @@ pub fn convert_mir_to_proto_multifunction(
         states: default_fn.map(|f| f.states.clone()).unwrap_or_default(),
     };
 
-    // T-119: Validate minimum IOSurface size for output buffers (Orion #4).
-    // The ANE requires a minimum ~49 KB for eval buffers. Models with
-    // smaller output buffers fail at runtime with 0x1d error.
-    validate_iosurface_sizes(&functions)?;
-
-    // T-95: Validate surface size uniformity (Orion #2, #18).
-    // The ANE requires all output buffers to have the same byte size and
-    // all input buffers to have the same byte size within each function.
-    // Non-uniform sizes cause 0x1d runtime errors with no compile-time
-    // indication from coremlcompiler.
-    validate_surface_uniformity(&functions)?;
-
-    // T-95: Validate flat buffer layout [1,C,1,S] (Orion #20).
-    // The ANE flat buffer layout packs tensors as [1,C,1,S]. Tensors
-    // not conforming to this layout may be silently misinterpreted.
-    validate_flat_buffer_layout(&functions)?;
+    // T-P3-01: Validate ANE constraints with the specified policy.
+    // In strict mode (default), violations are hard errors since the ANE
+    // rejects these at runtime (0x1d error). In warn-only mode, violations
+    // produce warnings and emission continues.
+    validate_iosurface_sizes(&functions, &validation_policy)?;
+    validate_surface_uniformity(&functions, &validation_policy)?;
+    validate_flat_buffer_layout(&functions, &validation_policy)?;
 
     Ok(CoreMlModel {
         spec_version,
@@ -524,13 +576,17 @@ pub fn convert_mir_to_proto_multifunction(
 /// compile-time indication. This constant defines the minimum byte size.
 pub const MIN_IOSURFACE_BYTES: u64 = 49 * 1024; // ~49 KB
 
-/// T-119: Validate that all output tensor buffers meet the minimum
+/// T-119 / T-P3-01: Validate that all output tensor buffers meet the minimum
 /// IOSurface size requirement (Orion #4).
 ///
 /// For each output tensor, computes `shape_product × dtype_size` and
-/// warns if below `MIN_IOSURFACE_BYTES`. The ANE silently fails with
-/// a 0x1d runtime error for undersized output buffers.
-fn validate_iosurface_sizes(functions: &[ane_coreml_proto::CoreMlFunction]) -> Result<()> {
+/// errors (strict mode) or warns (warn-only mode) if below
+/// `MIN_IOSURFACE_BYTES`. The ANE silently fails with a 0x1d runtime error
+/// for undersized output buffers, so failing early is correct.
+fn validate_iosurface_sizes(
+    functions: &[ane_coreml_proto::CoreMlFunction],
+    policy: &ValidationPolicy,
+) -> Result<()> {
     for func in functions {
         for output in &func.outputs {
             let element_size = output.dtype.element_size() as u64;
@@ -538,10 +594,10 @@ fn validate_iosurface_sizes(functions: &[ane_coreml_proto::CoreMlFunction]) -> R
             let buffer_size = shape_product * element_size;
 
             if buffer_size < MIN_IOSURFACE_BYTES {
-                log::warn!(
+                let msg = format!(
                     "T-119: Output '{}' in function '{}' has buffer size {} bytes \
                      (shape={:?}, dtype_size={}), below minimum {} bytes (Orion #4). \
-                     The ANE may fail with 0x1d runtime error for undersized buffers.",
+                     The ANE rejects undersized output buffers with 0x1d runtime error.",
                     output.name,
                     func.name,
                     buffer_size,
@@ -549,13 +605,18 @@ fn validate_iosurface_sizes(functions: &[ane_coreml_proto::CoreMlFunction]) -> R
                     element_size,
                     MIN_IOSURFACE_BYTES
                 );
+                if policy.strict {
+                    anyhow::bail!("{}", msg);
+                } else {
+                    log::warn!("{}", msg);
+                }
             }
         }
     }
     Ok(())
 }
 
-/// T-95: Validate that all output surfaces and all input surfaces within
+/// T-95 / T-P3-01: Validate that all output surfaces and all input surfaces within
 /// each function have uniform byte sizes (Orion #2, #18).
 ///
 /// The ANE requires all output buffers in a function to have the same byte
@@ -563,10 +624,13 @@ fn validate_iosurface_sizes(functions: &[ane_coreml_proto::CoreMlFunction]) -> R
 /// sizes cause a 0x1d runtime error with no compile-time indication from
 /// coremlcompiler — the model compiles successfully but fails at inference.
 ///
-/// This check warns (does not error) because single-output functions are
-/// trivially uniform, and the constraint is only relevant for multi-output
-/// functions. The warning helps catch layout issues before runtime.
-fn validate_surface_uniformity(functions: &[ane_coreml_proto::CoreMlFunction]) -> Result<()> {
+/// In strict mode (default, T-P3-01), violations are hard errors since the
+/// ANE rejects non-uniform buffers at runtime. In warn-only mode, violations
+/// produce warnings and emission continues.
+fn validate_surface_uniformity(
+    functions: &[ane_coreml_proto::CoreMlFunction],
+    policy: &ValidationPolicy,
+) -> Result<()> {
     for func in functions {
         // Check output buffer uniformity (Orion #2)
         if func.outputs.len() > 1 {
@@ -583,15 +647,20 @@ fn validate_surface_uniformity(functions: &[ane_coreml_proto::CoreMlFunction]) -
             let non_uniform: Vec<&str> =
                 sizes.iter().filter(|(s, _)| *s != first_size).map(|(_, n)| *n).collect();
             if !non_uniform.is_empty() {
-                log::warn!(
+                let msg = format!(
                     "T-95: Function '{}' has non-uniform output buffer sizes (Orion #2). \
                      The ANE requires all output buffers in a function to have the same byte size. \
-                     Non-uniform sizes may cause 0x1d runtime error. \
+                     Non-uniform sizes cause 0x1d runtime error. \
                      First output size: {} bytes; non-uniform outputs: {:?}",
                     func.name,
                     first_size,
                     non_uniform
                 );
+                if policy.strict {
+                    anyhow::bail!("{}", msg);
+                } else {
+                    log::warn!("{}", msg);
+                }
             }
         }
 
@@ -610,22 +679,27 @@ fn validate_surface_uniformity(functions: &[ane_coreml_proto::CoreMlFunction]) -
             let non_uniform: Vec<&str> =
                 sizes.iter().filter(|(s, _)| *s != first_size).map(|(_, n)| *n).collect();
             if !non_uniform.is_empty() {
-                log::warn!(
+                let msg = format!(
                     "T-95: Function '{}' has non-uniform input buffer sizes (Orion #18). \
                      The ANE requires all input buffers in a function to have the same byte size. \
-                     Non-uniform sizes may cause 0x1d runtime error. \
+                     Non-uniform sizes cause 0x1d runtime error. \
                      First input size: {} bytes; non-uniform inputs: {:?}",
                     func.name,
                     first_size,
                     non_uniform
                 );
+                if policy.strict {
+                    anyhow::bail!("{}", msg);
+                } else {
+                    log::warn!("{}", msg);
+                }
             }
         }
     }
     Ok(())
 }
 
-/// T-95: Validate that tensor shapes conform to the ANE flat buffer layout
+/// T-95 / T-P3-01: Validate that tensor shapes conform to the ANE flat buffer layout
 /// convention [1,C,1,S] (Orion #20).
 ///
 /// The ANE flat buffer layout packs tensor data in [1,C,1,S] format.
@@ -633,10 +707,13 @@ fn validate_surface_uniformity(functions: &[ane_coreml_proto::CoreMlFunction]) -
 /// silently misinterpreted by the ANE runtime, producing incorrect
 /// inference results without any error message.
 ///
-/// This check warns for tensors that deviate from the [1,C,1,S] layout.
-/// It is advisory (not a hard error) because the Core ML framework handles
-/// the layout transform internally for most standard operations.
-fn validate_flat_buffer_layout(functions: &[ane_coreml_proto::CoreMlFunction]) -> Result<()> {
+/// In strict mode (default, T-P3-01), violations are hard errors since the
+/// ANE rejects non-[1,C,1,S] layouts at runtime. In warn-only mode, violations
+/// produce warnings and emission continues.
+fn validate_flat_buffer_layout(
+    functions: &[ane_coreml_proto::CoreMlFunction],
+    policy: &ValidationPolicy,
+) -> Result<()> {
     for func in functions {
         for output in &func.outputs {
             // The ANE flat buffer layout is [1,C,1,S]. Rank-4 tensors with
@@ -646,7 +723,7 @@ fn validate_flat_buffer_layout(functions: &[ane_coreml_proto::CoreMlFunction]) -
                 // For rank-4 tensors, the canonical layout is [1,C,1,S].
                 // Check if dimensions 0 and 2 are 1 (the "1" in [1,C,1,S]).
                 if output.shape[0] != 1 || output.shape[2] != 1 {
-                    log::warn!(
+                    let msg = format!(
                         "T-95: Output '{}' in function '{}' has rank-4 shape {:?} that \
                          does not follow ANE flat buffer layout [1,C,1,S] (Orion #20). \
                          Dimensions [0] and [2] should be 1 for the canonical layout. \
@@ -655,6 +732,11 @@ fn validate_flat_buffer_layout(functions: &[ane_coreml_proto::CoreMlFunction]) -
                         func.name,
                         output.shape
                     );
+                    if policy.strict {
+                        anyhow::bail!("{}", msg);
+                    } else {
+                        log::warn!("{}", msg);
+                    }
                 }
             }
         }
@@ -1832,5 +1914,134 @@ mod tests {
 
         let result = validate_flat_buffer_layout(&functions);
         assert!(result.is_ok());
+    }
+
+    // ─── T-P3-01: ValidationPolicy strict-mode tests ────────────────────
+
+    /// Helper: create a CoreMlFunction with given outputs.
+    fn make_func_with_outputs(name: &str, outputs: Vec<TensorDesc>) -> ane_coreml_proto::CoreMlFunction {
+        ane_coreml_proto::CoreMlFunction {
+            name: name.to_string(),
+            inputs: vec![],
+            outputs,
+            states: vec![],
+            operations: vec![],
+            node_shapes: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_validation_policy_default_is_strict() {
+        let policy = ValidationPolicy::default();
+        assert!(policy.strict, "Default ValidationPolicy should be strict");
+    }
+
+    #[test]
+    fn test_validation_policy_strict_constructor() {
+        let policy = ValidationPolicy::strict();
+        assert!(policy.strict);
+    }
+
+    #[test]
+    fn test_validation_policy_warn_only_constructor() {
+        let policy = ValidationPolicy::warn_only();
+        assert!(!policy.strict);
+    }
+
+    #[test]
+    fn test_iosurface_sizes_strict_rejects_undersized() {
+        // A tiny output (1 element × 2 bytes = 2 bytes) is far below MIN_IOSURFACE_BYTES.
+        let functions = vec![make_func_with_outputs("main", vec![TensorDesc {
+            name: "tiny_out".to_string(),
+            shape: vec![1],  // 1 element
+            dtype: CoreMlDataType::Fp16,  // 2 bytes per element → 2 bytes total
+            is_state: false,
+        }])];
+        let result = validate_iosurface_sizes(&functions, &ValidationPolicy::strict());
+        assert!(result.is_err(), "Strict mode should reject undersized IOSurface buffers");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("below minimum"), "Error should mention 'below minimum': {err}");
+    }
+
+    #[test]
+    fn test_iosurface_sizes_warn_only_allows_undersized() {
+        let functions = vec![make_func_with_outputs("main", vec![TensorDesc {
+            name: "tiny_out".to_string(),
+            shape: vec![1],
+            dtype: CoreMlDataType::Fp16,
+            is_state: false,
+        }])];
+        let result = validate_iosurface_sizes(&functions, &ValidationPolicy::warn_only());
+        assert!(result.is_ok(), "Warn-only mode should not error for undersized buffers");
+    }
+
+    #[test]
+    fn test_surface_uniformity_strict_rejects_non_uniform() {
+        // Two outputs with different sizes: 100 bytes vs 200 bytes
+        let functions = vec![make_func_with_outputs("main", vec![
+            TensorDesc {
+                name: "a".to_string(),
+                shape: vec![50],  // 50 × 2 = 100 bytes
+                dtype: CoreMlDataType::Fp16,
+                is_state: false,
+            },
+            TensorDesc {
+                name: "b".to_string(),
+                shape: vec![100],  // 100 × 2 = 200 bytes
+                dtype: CoreMlDataType::Fp16,
+                is_state: false,
+            },
+        ])];
+        let result = validate_surface_uniformity(&functions, &ValidationPolicy::strict());
+        assert!(result.is_err(), "Strict mode should reject non-uniform output buffers");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("non-uniform"), "Error should mention 'non-uniform': {err}");
+    }
+
+    #[test]
+    fn test_surface_uniformity_warn_only_allows_non_uniform() {
+        let functions = vec![make_func_with_outputs("main", vec![
+            TensorDesc {
+                name: "a".to_string(),
+                shape: vec![50],
+                dtype: CoreMlDataType::Fp16,
+                is_state: false,
+            },
+            TensorDesc {
+                name: "b".to_string(),
+                shape: vec![100],
+                dtype: CoreMlDataType::Fp16,
+                is_state: false,
+            },
+        ])];
+        let result = validate_surface_uniformity(&functions, &ValidationPolicy::warn_only());
+        assert!(result.is_ok(), "Warn-only mode should not error for non-uniform buffers");
+    }
+
+    #[test]
+    fn test_flat_buffer_layout_strict_rejects_non_canonical() {
+        // Rank-4 shape [2,3,4,5] does NOT follow [1,C,1,S] (dims 0 and 2 ≠ 1)
+        let functions = vec![make_func_with_outputs("main", vec![TensorDesc {
+            name: "bad_layout".to_string(),
+            shape: vec![2, 3, 4, 5],
+            dtype: CoreMlDataType::Fp16,
+            is_state: false,
+        }])];
+        let result = validate_flat_buffer_layout(&functions, &ValidationPolicy::strict());
+        assert!(result.is_err(), "Strict mode should reject non-[1,C,1,S] layout");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("[1,C,1,S]"), "Error should mention [1,C,1,S]: {err}");
+    }
+
+    #[test]
+    fn test_flat_buffer_layout_warn_only_allows_non_canonical() {
+        let functions = vec![make_func_with_outputs("main", vec![TensorDesc {
+            name: "bad_layout".to_string(),
+            shape: vec![2, 3, 4, 5],
+            dtype: CoreMlDataType::Fp16,
+            is_state: false,
+        }])];
+        let result = validate_flat_buffer_layout(&functions, &ValidationPolicy::warn_only());
+        assert!(result.is_ok(), "Warn-only mode should not error for non-[1,C,1,S] layout");
     }
 }

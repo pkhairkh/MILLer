@@ -53,12 +53,6 @@ from program_builder import (
     emit_program,
 )
 
-# Shared constants (deduplicated from build_*_program functions)
-_DEFAULT_OPSET_MAP = {
-    "coreml_opset": "iOS18",
-    "mil_opset": "coreml3",
-}
-
 def _resolve_dtype(dtype_str):
     """Resolve dtype string to numpy dtype and MIL dtype string.
 

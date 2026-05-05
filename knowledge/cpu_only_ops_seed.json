@@ -299,10 +299,6 @@
       "reason_code": "Logical"
     },
     {
-      "mil_name": "erf",
-      "reason_code": "Miscellaneous"
-    },
-    {
       "mil_name": "non_maximum_suppression",
       "reason_code": "Miscellaneous"
     },
@@ -409,6 +405,324 @@
     {
       "mil_name": "reverse_sequence",
       "reason_code": "Miscellaneous"
+    },
+    {
+      "mil_name": "rnn",
+      "reason_code": "Rnn",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "cumsum",
+      "reason_code": "Cumulative",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "cond",
+      "reason_code": "ControlFlow",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "range1d",
+      "reason_code": "Miscellaneous",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "fill",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "fill_like",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "select",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "where",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "gather",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "gather_along_axis",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "gather_nd",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "relu6",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "sigmoid_hard",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "thresholded_relu",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "clamped_relu",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "linear_activation",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "scaled_tanh",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "softplus_parametric",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "threshold",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "inverse",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "einsum",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "slice_update",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "sliding_windows",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "reverse",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "argsort",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "return",
+      "reason_code": "ControlFlow",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "is_finite",
+      "reason_code": "TypeCheck",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "is_infinite",
+      "reason_code": "TypeCheck",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "is_nan",
+      "reason_code": "TypeCheck",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "neg",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "round",
+      "reason_code": "NoANECConverter",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "strided_slice_update",
+      "reason_code": "Transform",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "dynamic_shape_cast",
+      "reason_code": "Transform",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "reinterpret_cast",
+      "reason_code": "Transform",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "col_to_im",
+      "reason_code": "Transform",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "im_to_col",
+      "reason_code": "Transform",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "dequantize_lut",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "extract",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "from_elements",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "func",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "get_coordinates",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "local_convolution",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "lp_norm",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "prune",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "pruning_metric",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "pruning_structure",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "variable_from_tensor",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "assign_variable",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "placeholder",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "device_hint",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "nf",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "unrealized_fold",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
+    },
+    {
+      "mil_name": "create_texture_tensor",
+      "reason_code": "SparseBuffer",
+      "ane_legal": false,
+      "notes": "Added from cpu_only_ops.rs ground truth"
     }
   ]
 }

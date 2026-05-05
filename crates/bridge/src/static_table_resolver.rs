@@ -44,6 +44,7 @@
 //! ```
 
 use crate::mir_to_compat::{WeightData, WeightResolver};
+use ane_coreml_proto::mir_compat::MilDtypeCompat;
 use std::collections::HashMap;
 
 /// Configuration for RoPE table computation.
@@ -229,11 +230,11 @@ impl StaticTableResolver {
         // cos/sin shape: [1, 1, seq_len, head_dim] — broadcasts with [B, H, S, D]
         self.cache.insert(
             format!("static_tables/{}/sin_tab", tables_ref),
-            WeightData { data: sin_bytes, shape: vec![1, 1, seq, hd] },
+            WeightData { data: sin_bytes, shape: vec![1, 1, seq, hd], dtype: MilDtypeCompat::Fp16 },
         );
         self.cache.insert(
             format!("static_tables/{}/cos_tab", tables_ref),
-            WeightData { data: cos_bytes, shape: vec![1, 1, seq, hd] },
+            WeightData { data: cos_bytes, shape: vec![1, 1, seq, hd], dtype: MilDtypeCompat::Fp16 },
         );
         // NOTE: eye_tab and mask_tab are only cached for small seq_len.
         // The decode_step uses arithmetic masks instead; the embedding path
@@ -241,22 +242,22 @@ impl StaticTableResolver {
         if compute_quadratic_tables {
             self.cache.insert(
                 format!("static_tables/{}/eye_tab", tables_ref),
-                WeightData { data: eye_bytes, shape: vec![seq, seq] },
+                WeightData { data: eye_bytes, shape: vec![seq, seq], dtype: MilDtypeCompat::Fp16 },
             );
             self.cache.insert(
                 format!("static_tables/{}/mask_tab", tables_ref),
-                WeightData { data: mask_bytes, shape: vec![seq, seq] },
+                WeightData { data: mask_bytes, shape: vec![seq, seq], dtype: MilDtypeCompat::Fp16 },
             );
         }
         // arange shape: [seq_len] int32 — position indices for mask computation
         self.cache.insert(
             format!("static_tables/{}/arange_tab", tables_ref),
-            WeightData { data: arange_bytes, shape: vec![seq] },
+            WeightData { data: arange_bytes, shape: vec![seq], dtype: MilDtypeCompat::Int32 },
         );
         // arange_fp16 shape: [seq_len] fp16 — position indices for arithmetic mask computation
         self.cache.insert(
             format!("static_tables/{}/arange_fp16_tab", tables_ref),
-            WeightData { data: arange_fp16_bytes, shape: vec![seq] },
+            WeightData { data: arange_fp16_bytes, shape: vec![seq], dtype: MilDtypeCompat::Fp16 },
         );
     }
 }
@@ -274,12 +275,12 @@ impl StaticTableResolver {
             let f16_val = half::f16::from_f32(val);
             let mut bytes = Vec::with_capacity(2);
             bytes.extend_from_slice(&f16_val.to_bits().to_le_bytes());
-            Some(WeightData { data: bytes, shape: vec![1] })
+            Some(WeightData { data: bytes, shape: vec![1], dtype: MilDtypeCompat::Fp16 })
         } else if let Some(rest) = value_path.strip_prefix("scalar://fp32/") {
             let val: f32 = rest.parse().ok()?;
             let mut bytes = Vec::with_capacity(4);
             bytes.extend_from_slice(&val.to_le_bytes());
-            Some(WeightData { data: bytes, shape: vec![1] })
+            Some(WeightData { data: bytes, shape: vec![1], dtype: MilDtypeCompat::Fp32 })
         } else {
             None
         }
