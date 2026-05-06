@@ -8,3 +8,6 @@ ane-ir = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

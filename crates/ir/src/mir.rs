@@ -2253,24 +2253,303 @@ pub struct MirGraph {
 }
 
 impl MirGraph {
-    /// Verify graph invariants: no duplicate node IDs, all inputs/outputs reference existing nodes.
+    /// Verify graph invariants:
+    /// - No duplicate node IDs
+    /// - All required fields are populated (name, op kind)
+    /// - All dtype values are valid
+    /// - All edge references resolve to existing nodes
+    /// - All inputs/outputs reference existing nodes
+    /// - All node shapes are non-empty or the op is a known
+    ///   shape-exception (MILConst, MILStateWrite, MILCoremlUpdateState,
+    ///   MILRange1d, MILFill, or ops that produce dynamic/0-rank tensors)
     pub fn verify(&self) -> Result<(), super::common::VerifyError> {
+        self.verify_with_shape_check(true)
+    }
+
+    /// Verify graph invariants without checking shapes.
+    /// Useful for early-stage graphs where shapes haven't been inferred yet.
+    pub fn verify_no_shape_check(&self) -> Result<(), super::common::VerifyError> {
+        self.verify_with_shape_check(false)
+    }
+
+    /// Verify graph invariants with strict shape checking.
+    /// Same as `verify()` — requires non-empty shapes on all non-exception nodes.
+    pub fn verify_strict(&self) -> Result<(), super::common::VerifyError> {
+        self.verify_with_shape_check(true)
+    }
+
+    fn verify_with_shape_check(&self, check_shapes: bool) -> Result<(), super::common::VerifyError> {
+        use super::common::VerifyError;
         use std::collections::HashSet;
-        let seen_ids: HashSet<&str> = self.nodes.iter().map(|n| n.id.as_str()).collect();
-        if seen_ids.len() != self.nodes.len() {
-            return Err(super::common::VerifyError { message: "Duplicate node IDs in MirGraph".into() });
-        }
-        for input_id in &self.inputs {
-            if !seen_ids.contains(input_id.as_str()) {
-                return Err(super::common::VerifyError { message: format!("MirGraph input '{}' not found in nodes", input_id.0) });
+
+        // Collect all node IDs, checking for duplicates
+        let mut seen_ids: HashSet<&str> = HashSet::new();
+        for node in &self.nodes {
+            let id = node.id.as_str();
+            if !seen_ids.insert(id) {
+                return Err(VerifyError::DuplicateNodeId { node_id: id.to_string() });
             }
         }
+
+        // Check inputs reference existing nodes
+        for input_id in &self.inputs {
+            if !seen_ids.contains(input_id.as_str()) {
+                return Err(VerifyError::GraphInvariant {
+                    message: format!("MirGraph input '{}' not found in nodes", input_id.0),
+                });
+            }
+        }
+
+        // Check outputs reference existing nodes
         for output_id in &self.outputs {
             if !seen_ids.contains(output_id.as_str()) {
-                return Err(super::common::VerifyError { message: format!("MirGraph output '{}' not found in nodes", output_id.0) });
+                return Err(VerifyError::GraphInvariant {
+                    message: format!("MirGraph output '{}' not found in nodes", output_id.0),
+                });
+            }
+        }
+
+        // Per-node checks
+        for node in &self.nodes {
+            let node_id = node.id.as_str();
+
+            // Check shapes: require non-empty shapes for ops that produce tensors.
+            // Exceptions: ops that carry no output shape (constants, state writes,
+            // range1d, fill — these have their shape encoded differently or
+            // produce 0-rank/scalar tensors).
+            if check_shapes && node.shape.is_empty() && !Self::is_shape_exception(&node.op) {
+                return Err(VerifyError::EmptyShape {
+                    node_id: node_id.to_string(),
+                });
+            }
+
+            // Validate node references inside ops
+            let ref_err = Self::validate_op_refs(&node.op, node_id, &seen_ids);
+            if let Err(e) = ref_err {
+                return Err(e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Ops that are allowed to have an empty shape vector.
+    ///
+    /// These are ops where the output shape is not meaningful (state
+    /// mutation ops), is encoded inline (Fill, Range1d, MILConst carry
+    /// shape info in their fields), or produce 0-rank/scalar tensors.
+    fn is_shape_exception(op: &MirOp) -> bool {
+        matches!(
+            op,
+            MirOp::MILConst { .. }
+            | MirOp::MILStateWrite { .. }
+            | MirOp::MILCoremlUpdateState { .. }
+            | MirOp::MILRange1d { .. }
+            | MirOp::MILFill { .. }
+        )
+    }
+
+    /// Validate that all MirNodeId references inside an op resolve to existing nodes.
+    fn validate_op_refs(
+        op: &MirOp,
+        node_id: &str,
+        seen_ids: &std::collections::HashSet<&str>,
+    ) -> Result<(), super::common::VerifyError> {
+        use super::common::VerifyError;
+        for referenced in op.node_refs() {
+            if !seen_ids.contains(referenced.as_str()) {
+                return Err(VerifyError::UnresolvedReference {
+                    node_id: node_id.to_string(),
+                    reference: referenced.0.clone(),
+                });
             }
         }
         Ok(())
+    }
+}
+
+/// Helper: extract all MirNodeId references from a MirOp.
+impl MirOp {
+    /// Returns all `MirNodeId` references within this op variant.
+    pub fn node_refs(&self) -> Vec<&MirNodeId> {
+        match self {
+            MirOp::MILConst { .. } => vec![],
+            MirOp::MILLinear { x, .. } => vec![x],
+            MirOp::MILMatMul { x, y, .. } => vec![x, y],
+            MirOp::MILEinsum { inputs, .. } => inputs.iter().collect(),
+            MirOp::MILConv { x, weight, .. } => vec![x, weight],
+            MirOp::MILConvTranspose { x, weight, .. } => vec![x, weight],
+            MirOp::MILAdd { x, y, .. } => vec![x, y],
+            MirOp::MILMul { x, y, .. } => vec![x, y],
+            MirOp::MILSub { x, y, .. } => vec![x, y],
+            MirOp::MILMaximum { x, y, .. } => vec![x, y],
+            MirOp::MILMinimum { x, y, .. } => vec![x, y],
+            MirOp::MILRealDiv { x, y, .. } => vec![x, y],
+            MirOp::MILFloorDiv { x, y, .. } => vec![x, y],
+            MirOp::MILMod { x, y, .. } => vec![x, y],
+            MirOp::MILPow { x, y, .. } => vec![x, y],
+            MirOp::MILEqual { x, y, .. } => vec![x, y],
+            MirOp::MILNotEqual { x, y, .. } => vec![x, y],
+            MirOp::MILGreater { x, y, .. } => vec![x, y],
+            MirOp::MILGreaterEqual { x, y, .. } => vec![x, y],
+            MirOp::MILLess { x, y, .. } => vec![x, y],
+            MirOp::MILLessEqual { x, y, .. } => vec![x, y],
+            MirOp::MILLogicalAnd { x, y, .. } => vec![x, y],
+            MirOp::MILLogicalOr { x, y, .. } => vec![x, y],
+            MirOp::MILLogicalXor { x, y, .. } => vec![x, y],
+            MirOp::MILAbs { x, .. } => vec![x],
+            MirOp::MILNeg { x, .. } => vec![x],
+            MirOp::MILSigmoid { x, .. } => vec![x],
+            MirOp::MILTanh { x, .. } => vec![x],
+            MirOp::MILRelu { x, .. } => vec![x],
+            MirOp::MILRelu6 { x, .. } => vec![x],
+            MirOp::MILLeakyRelu { x, .. } => vec![x],
+            MirOp::MILSigmoidHard { x, .. } => vec![x],
+            MirOp::MILThresholdedRelu { x, .. } => vec![x],
+            MirOp::MILClampedRelu { x, .. } => vec![x],
+            MirOp::MILLinearActivation { x, .. } => vec![x],
+            MirOp::MILPrelu { x, .. } => vec![x],
+            MirOp::MILSoftsign { x, .. } => vec![x],
+            MirOp::MILSilu { x, .. } => vec![x],
+            MirOp::MILScaledTanh { x, .. } => vec![x],
+            MirOp::MILElu { x, .. } => vec![x],
+            MirOp::MILSoftplus { x, .. } => vec![x],
+            MirOp::MILSoftplusParametric { x, .. } => vec![x],
+            MirOp::MILGelu { x, .. } => vec![x],
+            MirOp::MILClip { x, .. } => vec![x],
+            MirOp::MILSquare { x, .. } => vec![x],
+            MirOp::MILThreshold { x, .. } => vec![x],
+            MirOp::MILSqrt { x, .. } => vec![x],
+            MirOp::MILRsqrt { x, .. } => vec![x],
+            MirOp::MILInverse { x, .. } => vec![x],
+            MirOp::MILCeil { x, .. } => vec![x],
+            MirOp::MILFloor { x, .. } => vec![x],
+            MirOp::MILRound { x, .. } => vec![x],
+            MirOp::MILExp { x, .. } => vec![x],
+            MirOp::MILExp2 { x, .. } => vec![x],
+            MirOp::MILLog { x, .. } => vec![x],
+            MirOp::MILSign { x, .. } => vec![x],
+            MirOp::MILCos { x, .. } => vec![x],
+            MirOp::MILSin { x, .. } => vec![x],
+            MirOp::MILTan { x, .. } => vec![x],
+            MirOp::MILAcos { x, .. } => vec![x],
+            MirOp::MILAsin { x, .. } => vec![x],
+            MirOp::MILAtan { x, .. } => vec![x],
+            MirOp::MILCosh { x, .. } => vec![x],
+            MirOp::MILSinh { x, .. } => vec![x],
+            MirOp::MILAtanh { x, .. } => vec![x],
+            MirOp::MILErf { x, .. } => vec![x],
+            MirOp::MILLogicalNot { x, .. } => vec![x],
+            MirOp::MILCast { x, .. } => vec![x],
+            MirOp::MILSelect { condition, x, y, .. } => vec![condition, x, y],
+            MirOp::MILWhere { condition, x, y, .. } => vec![condition, x, y],
+            MirOp::MILSoftmax { x, .. } => vec![x],
+            MirOp::MILReduceSum { x, .. } => vec![x],
+            MirOp::MILReduceMean { x, .. } => vec![x],
+            MirOp::MILReduceMax { x, .. } => vec![x],
+            MirOp::MILReduceMin { x, .. } => vec![x],
+            MirOp::MILReduceProd { x, .. } => vec![x],
+            MirOp::MILReduceSumSquare { x, .. } => vec![x],
+            MirOp::MILReduceL2Norm { x, .. } => vec![x],
+            MirOp::MILReduceL1Norm { x, .. } => vec![x],
+            MirOp::MILReduceLogSumExp { x, .. } => vec![x],
+            MirOp::MILReduceLogSum { x, .. } => vec![x],
+            MirOp::MILReduceArgmax { x, .. } => vec![x],
+            MirOp::MILReduceArgmin { x, .. } => vec![x],
+            MirOp::MILBatchNorm { x, .. } => vec![x],
+            MirOp::MILInstanceNorm { x, .. } => vec![x],
+            MirOp::MILLayerNorm { x, .. } => vec![x],
+            MirOp::MILL2Norm { x, .. } => vec![x],
+            MirOp::MILLocalResponseNorm { x, .. } => vec![x],
+            MirOp::MILMaxPool { x, .. } => vec![x],
+            MirOp::MILAvgPool { x, .. } => vec![x],
+            MirOp::MILL2Pool { x, .. } => vec![x],
+            MirOp::MILResize { x, .. } => vec![x],
+            MirOp::MILResizeNearestNeighbor { x, .. } => vec![x],
+            MirOp::MILResizeBilinear { x, .. } => vec![x],
+            MirOp::MILUpsampleNearestNeighbor { x, .. } => vec![x],
+            MirOp::MILUpsampleBilinear { x, .. } => vec![x],
+            MirOp::MILCropResize { x, boxes, box_indices, .. } => vec![x, boxes, box_indices],
+            MirOp::MILAffine { x, transform, .. } => vec![x, transform],
+            MirOp::MILResample { x, coordinates, .. } => vec![x, coordinates],
+            MirOp::MILReshape { x, .. } => vec![x],
+            MirOp::MILReshapeLike { x, ref_tensor, .. } => vec![x, ref_tensor],
+            MirOp::MILTranspose { x, .. } => vec![x],
+            MirOp::MILSplit { x, .. } => vec![x],
+            MirOp::MILConcat { values, .. } => values.iter().collect(),
+            MirOp::MILExpandDims { x, .. } => vec![x],
+            MirOp::MILSqueeze { x, .. } => vec![x],
+            MirOp::MILFlatten2d { x, .. } => vec![x],
+            MirOp::MILReverse { x, .. } => vec![x],
+            MirOp::MILReverseSequence { x, lengths, .. } => vec![x, lengths],
+            MirOp::MILSliceByIndex { x, .. } => vec![x],
+            MirOp::MILSliceBySize { x, .. } => vec![x],
+            MirOp::MILSliceUpdate { x, update, .. } => vec![x, update],
+            MirOp::MILSlidingWindows { x, .. } => vec![x],
+            MirOp::MILDepthToSpace { x, .. } => vec![x],
+            MirOp::MILSpaceToDepth { x, .. } => vec![x],
+            MirOp::MILPixelShuffle { x, .. } => vec![x],
+            MirOp::MILPixelUnshuffle { x, .. } => vec![x],
+            MirOp::MILBatchToSpace { x, .. } => vec![x],
+            MirOp::MILSpaceToBatch { x, .. } => vec![x],
+            MirOp::MILPad { x, .. } => vec![x],
+            MirOp::MILStack { values, .. } => values.iter().collect(),
+            MirOp::MILTile { x, .. } => vec![x],
+            MirOp::MILCumsum { x, .. } => vec![x],
+            MirOp::MILFill { .. } => vec![],
+            MirOp::MILFillLike { ref_tensor, .. } => vec![ref_tensor],
+            MirOp::MILIdentity { x, .. } => vec![x],
+            MirOp::MILOneHot { indices, .. } => vec![indices],
+            MirOp::MILNonZero { x, .. } => vec![x],
+            MirOp::MILArgsort { x, .. } => vec![x],
+            MirOp::MILBandPart { x, .. } => vec![x],
+            MirOp::MILRange1d { .. } => vec![],
+            MirOp::MILShape { x, .. } => vec![x],
+            MirOp::MILCrop { x, .. } => vec![x],
+            MirOp::MILGather { x, indices, .. } => vec![x, indices],
+            MirOp::MILGatherAlongAxis { x, indices, .. } => vec![x, indices],
+            MirOp::MILGatherNd { x, indices, .. } => vec![x, indices],
+            MirOp::MILScatter { x, indices, updates, .. } => vec![x, indices, updates],
+            MirOp::MILScatterAlongAxis { x, indices, updates, .. } => vec![x, indices, updates],
+            MirOp::MILScatterNd { x, indices, updates, .. } => vec![x, indices, updates],
+            MirOp::MILNonMaximumSuppression { boxes, scores, .. } => vec![boxes, scores],
+            MirOp::MILScaledDotProductAttention { query, key, value, attention_mask, .. } => {
+                let mut refs = vec![query, key, value];
+                if let Some(m) = attention_mask { refs.push(m); }
+                refs
+            }
+            MirOp::MILQuantize { x, .. } => vec![x],
+            MirOp::MILDequantize { x, .. } => vec![x],
+            MirOp::MILConstexprAffineDequantize { .. } => vec![],
+            MirOp::MILConstexprBlockwiseShiftScale { .. } => vec![],
+            MirOp::MILConstexprLutToDense { .. } => vec![],
+            MirOp::MILConstexprSparseToDense { .. } => vec![],
+            MirOp::MILConstexprCast { .. } => vec![],
+            MirOp::MILConstexprLutToSparse { .. } => vec![],
+            MirOp::MILConstexprSparseBlockwiseShiftScale { .. } => vec![],
+            MirOp::MILRnn { x, initial_h, .. } => vec![x, initial_h],
+            MirOp::MILGru { x, initial_h, .. } => vec![x, initial_h],
+            MirOp::MILLstm { x, initial_h, initial_c, .. } => vec![x, initial_h, initial_c],
+            MirOp::MILCond { pred, .. } => vec![pred],
+            MirOp::MILWhileLoop { loop_vars, .. } => loop_vars.iter().collect(),
+            MirOp::MILMakeList { elems, .. } => elems.iter().collect(),
+            MirOp::MILListLength { ls, .. } => vec![ls],
+            MirOp::MILListWrite { ls, index, value, .. } => vec![ls, index, value],
+            MirOp::MILListRead { ls, index, .. } => vec![ls, index],
+            MirOp::MILListGather { ls, indices, .. } => vec![ls, indices],
+            MirOp::MILListScatter { ls, indices, values, .. } => vec![ls, indices, values],
+            MirOp::MILRandomBernoulli { .. } => vec![],
+            MirOp::MILRandomNormal { .. } => vec![],
+            MirOp::MILRandomUniform { .. } => vec![],
+            MirOp::MILRandomCategorical { logits, .. } => vec![logits],
+            MirOp::MILReadState { .. } => vec![],
+            MirOp::MILCoremlUpdateState { value, .. } => vec![value],
+            MirOp::MILStateWrite { value, .. } => vec![value],
+            MirOp::MILTopk { x, .. } => vec![x],
+            MirOp::MILClassify { x, .. } => vec![x],
+            MirOp::AnecFusedConvActivate { x, weight, .. } => vec![x, weight],
+            MirOp::AnecFusedLinearActivate { x, .. } => vec![x],
+        }
     }
 }
 

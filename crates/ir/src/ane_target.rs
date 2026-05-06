@@ -220,6 +220,7 @@ pub enum AneRevision {
     V19, // A18/A18 Pro (iPhone 16)
     V20, // M4 (Mac)
     V26, // Future
+    Vu1, // uANE (unified ANE on Apple Silicon Macs, M2+)
 }
 
 impl AneRevision {
@@ -245,6 +246,11 @@ impl AneRevision {
             // A14Plus elementwise/reduction converters, full-dtype broadcast.
             // Do NOT map V17 to A18 — M1 does not have A18's SDPA/LayerNorm.
             AneRevision::V17 => AneFamily::A14,
+            // T-P6-04: Vu1 is uANE (unified ANE on Apple Silicon Macs, M2+).
+            // Maps to A17 family: uANE supports SDPA, LayerNorm, E4M3, ArgMinMax
+            // (same as A17). Hardware limits may differ from mobile A17;
+            // using A17-conservative defaults until hardware testing confirms.
+            AneRevision::Vu1 => AneFamily::A17,
             AneRevision::V19 | AneRevision::V20 | AneRevision::V26 => AneFamily::A18,
         }
     }
@@ -286,6 +292,30 @@ mod tests {
         // T-40: V17 (M1) is A14-class, NOT A18.
         assert_eq!(AneRevision::V17.family(), AneFamily::A14);
         assert_eq!(AneRevision::V19.family(), AneFamily::A18);
+        // T-P6-04: Vu1 (uANE) maps to A17 family.
+        assert_eq!(AneRevision::Vu1.family(), AneFamily::A17);
+    }
+
+    // ─── T-P6-04: Vu1 (uANE) Variant Tests ────────────────────────────
+
+    #[test]
+    fn test_vu1_maps_to_a17_family() {
+        // T-P6-04: Vu1 (uANE) maps to A17 family with SDPA, LayerNorm, E4M3.
+        assert_eq!(AneRevision::Vu1.family(), AneFamily::A17);
+    }
+
+    #[test]
+    fn test_vu1_family_capabilities() {
+        let family = AneRevision::Vu1.family();
+        // A17 family capabilities: SDPA, LayerNorm, E4M3, ArgMinMax
+        assert!(family.supports_sdpa(), "Vu1 (A17) should support SDPA");
+        assert!(family.supports_layernorm(), "Vu1 (A17) should support LayerNorm");
+        assert!(family.supports_e4m3(), "Vu1 (A17) should support E4M3");
+        assert!(family.supports_argminmax(), "Vu1 (A17) should support ArgMinMax");
+        // Full dtype broadcast (not FP16-only)
+        assert!(!family.broadcast_fp16_only());
+        // A14Plus converters (not A14Minus)
+        assert!(!family.uses_a14minus_converters());
     }
 
     #[test]
@@ -587,6 +617,7 @@ mod tests {
             ("V19", AneFamily::A18),
             ("V20", AneFamily::A18),
             ("V26", AneFamily::A18),
+            ("Vu1", AneFamily::A17),  // T-P6-04: uANE maps to A17 family
         ];
 
         for (rev_str, expected_family) in &expected {
@@ -602,6 +633,7 @@ mod tests {
                 "V19" => AneRevision::V19,
                 "V20" => AneRevision::V20,
                 "V26" => AneRevision::V26,
+                "Vu1" => AneRevision::Vu1,
                 _ => panic!("Unknown revision string: {}", rev_str),
             };
             let actual_family = revision.family();

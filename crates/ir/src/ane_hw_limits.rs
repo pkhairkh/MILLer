@@ -58,6 +58,12 @@ pub struct AneHwLimits {
     pub large_kernel_mode_threshold: u64,
     /// Sub-variant within an ANE family for fine-grained differentiation.
     pub sub_variant: AneSubVariant,
+    /// T-P6-04: Whether this is a uANE (unified ANE) variant found on
+    /// Apple Silicon Macs. uANE has the same family/constraint profile
+    /// as mobile ANE but may have different hardware limits (NE count,
+    /// tensor widths, etc.). This flag enables uANE-specific handling
+    /// in limit enforcement and diagnostic messages.
+    pub is_uane: bool,
 }
 
 impl AneHwLimits {
@@ -77,6 +83,8 @@ impl AneHwLimits {
             AneRevision::V19 => Self::a18_pro(),
             AneRevision::V20 => Self::a18_max(),
             AneRevision::V26 => Self::future(),
+            // T-P6-04: Vu1 (uANE) — unified ANE on Apple Silicon Macs (M2+).
+            AneRevision::Vu1 => Self::vu1(),
         }
     }
 
@@ -102,6 +110,7 @@ impl AneHwLimits {
             large_kernel_threshold: 7,
             large_kernel_mode_threshold: 16,
             sub_variant: AneSubVariant::Standard,
+            is_uane: false,
         }
     }
 
@@ -231,7 +240,45 @@ impl AneHwLimits {
              with num_nes=16. These have NOT been verified on real hardware. \
              Models compiled for V26 may not function correctly on actual hardware."
         );
-        Self { revision: AneRevision::V26, num_nes: 16, verified: false, ..Self::a18_max() }
+        Self {
+            revision: AneRevision::V26,
+            num_nes: 16,
+            verified: false,
+            is_uane: false,
+            ..Self::a18_max()
+        }
+    }
+
+    /// T-P6-04: uANE (Vu1) hardware limits — unified ANE on Apple Silicon Macs (M2+).
+    ///
+    /// The uANE is the unified ANE found on Apple Silicon Macs with M-series
+    /// chips (M2 and later). It has the same constraint profile as A17 family
+    /// (SDPA, LayerNorm, E4M3, ArgMinMax) but may have Mac-specific hardware
+    /// limits (more NEs, larger tensor widths) compared to mobile A17 (V11).
+    ///
+    /// **WARNING**: These limits are conservative estimates inherited from A17
+    /// with Mac-scale overrides (more NEs, larger tensor width). They have NOT
+    /// been verified on real uANE hardware. Until hardware testing confirms the
+    /// actual limits, these should be treated as lower bounds — the real uANE
+    /// may support larger dimensions.
+    fn vu1() -> Self {
+        log::warn!(
+            "uANE (Vu1) hardware limits are unverified — using A17-conservative defaults \
+             with Mac-scale overrides. These have NOT been confirmed on real uANE hardware. \
+             Results may be conservative."
+        );
+        Self {
+            revision: AneRevision::Vu1,
+            // Mac-scale overrides: uANE likely has larger tensor width and more NEs
+            // than mobile A17 (V11). Using M1-style Mac scaling as a conservative
+            // estimate until hardware testing confirms actual uANE limits.
+            max_tensor_width: 262144,
+            num_nes: 8,
+            verified: false,
+            sub_variant: AneSubVariant::Mac,
+            is_uane: true,
+            ..Self::a17()
+        }
     }
 
     /// Validate that tensor dimensions are within hardware limits.
@@ -548,5 +595,87 @@ mod tests {
         let limits = AneHwLimits::for_revision(AneRevision::V7);
         assert!(limits.validate_transpose_c_max(256).is_ok());
         assert!(limits.validate_transpose_c_max(1024).is_ok());
+    }
+
+    // ─── T-P6-04: Vu1 (uANE) Hardware Limits Tests ──────────────────
+
+    #[test]
+    fn test_vu1_revision_and_family() {
+        let limits = AneHwLimits::for_revision(AneRevision::Vu1);
+        assert_eq!(limits.revision, AneRevision::Vu1);
+        // Vu1 maps to A17 family
+        assert_eq!(AneRevision::Vu1.family(), AneFamily::A17);
+    }
+
+    #[test]
+    fn test_vu1_limits_inherited_from_a17() {
+        let vu1_limits = AneHwLimits::for_revision(AneRevision::Vu1);
+        let a17_limits = AneHwLimits::for_revision(AneRevision::V11);
+        // Vu1 inherits from A17 — these fields should match
+        assert_eq!(vu1_limits.max_tensor_height, a17_limits.max_tensor_height,
+            "Vu1 max_tensor_height should match A17");
+        assert_eq!(vu1_limits.max_tensor_depth, a17_limits.max_tensor_depth,
+            "Vu1 max_tensor_depth should match A17");
+        assert_eq!(vu1_limits.max_tensor_channels, a17_limits.max_tensor_channels,
+            "Vu1 max_tensor_channels should match A17");
+        assert_eq!(vu1_limits.max_tensor_rank, a17_limits.max_tensor_rank,
+            "Vu1 max_tensor_rank should match A17");
+        assert_eq!(vu1_limits.large_kernel_threshold, a17_limits.large_kernel_threshold,
+            "Vu1 large_kernel_threshold should match A17");
+    }
+
+    #[test]
+    fn test_vu1_mac_scale_overrides() {
+        let vu1_limits = AneHwLimits::for_revision(AneRevision::Vu1);
+        let a17_limits = AneHwLimits::for_revision(AneRevision::V11);
+        // Vu1 has Mac-scale overrides: larger tensor width, more NEs
+        assert!(vu1_limits.max_tensor_width > a17_limits.max_tensor_width,
+            "Vu1 should have larger max_tensor_width than mobile A17");
+        assert!(vu1_limits.num_nes > a17_limits.num_nes,
+            "Vu1 should have more NEs than mobile A17");
+        // Specific values: 262144 width, 8 NEs (A17-conservative Mac defaults)
+        assert_eq!(vu1_limits.max_tensor_width, 262144);
+        assert_eq!(vu1_limits.num_nes, 8);
+    }
+
+    #[test]
+    fn test_vu1_unverified() {
+        let limits = AneHwLimits::for_revision(AneRevision::Vu1);
+        // Vu1 limits are unverified — using A17-conservative defaults
+        assert!(!limits.verified, "Vu1 limits should be marked unverified until hardware testing");
+    }
+
+    #[test]
+    fn test_vu1_is_uane_flag() {
+        let vu1_limits = AneHwLimits::for_revision(AneRevision::Vu1);
+        assert!(vu1_limits.is_uane, "Vu1 should have is_uane = true");
+        // All other revisions should have is_uane = false
+        for rev in [
+            AneRevision::V4, AneRevision::V5, AneRevision::V6,
+            AneRevision::V7, AneRevision::V8, AneRevision::V10,
+            AneRevision::V11, AneRevision::V17, AneRevision::V19,
+            AneRevision::V20, AneRevision::V26,
+        ] {
+            let limits = AneHwLimits::for_revision(rev);
+            assert!(!limits.is_uane, "{:?} should have is_uane = false", rev);
+        }
+    }
+
+    #[test]
+    fn test_vu1_sub_variant_mac() {
+        let limits = AneHwLimits::for_revision(AneRevision::Vu1);
+        assert_eq!(limits.sub_variant, AneSubVariant::Mac,
+            "Vu1 should use Mac sub-variant");
+    }
+
+    #[test]
+    fn test_for_revision_vu1_returns_vu1_limits() {
+        // for_revision(Vu1) must return vu1() limits
+        let limits = AneHwLimits::for_revision(AneRevision::Vu1);
+        assert_eq!(limits.revision, AneRevision::Vu1);
+        assert!(limits.is_uane);
+        assert_eq!(limits.sub_variant, AneSubVariant::Mac);
+        assert_eq!(limits.max_tensor_width, 262144);
+        assert_eq!(limits.num_nes, 8);
     }
 }

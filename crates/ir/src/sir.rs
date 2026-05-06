@@ -1046,24 +1046,298 @@ pub struct SirGraph {
 }
 
 impl SirGraph {
-    /// Verify graph invariants: no duplicate node IDs, all inputs/outputs reference existing nodes.
+    /// Verify graph invariants:
+    /// - No duplicate node IDs
+    /// - All required fields are populated (name, op kind)
+    /// - All dtype values are valid
+    /// - All edge references resolve to existing nodes
+    /// - All inputs/outputs reference existing nodes
     pub fn verify(&self) -> Result<(), super::common::VerifyError> {
+        use super::common::VerifyError;
         use std::collections::HashSet;
-        let seen_ids: HashSet<&str> = self.nodes.iter().map(|n| n.id.as_str()).collect();
-        if seen_ids.len() != self.nodes.len() {
-            return Err(super::common::VerifyError { message: "Duplicate node IDs in SirGraph".into() });
-        }
-        for input_id in &self.inputs {
-            if !seen_ids.contains(input_id.as_str()) {
-                return Err(super::common::VerifyError { message: format!("SirGraph input '{}' not found in nodes", input_id.0) });
+
+        // Collect all node IDs, checking for duplicates
+        let mut seen_ids: HashSet<&str> = HashSet::new();
+        for node in &self.nodes {
+            let id = node.id.as_str();
+            if !seen_ids.insert(id) {
+                return Err(VerifyError::DuplicateNodeId { node_id: id.to_string() });
             }
         }
+
+        // Check inputs reference existing nodes
+        for input_id in &self.inputs {
+            if !seen_ids.contains(input_id.as_str()) {
+                return Err(VerifyError::GraphInvariant {
+                    message: format!("SirGraph input '{}' not found in nodes", input_id.0),
+                });
+            }
+        }
+
+        // Check outputs reference existing nodes
         for output_id in &self.outputs {
             if !seen_ids.contains(output_id.as_str()) {
-                return Err(super::common::VerifyError { message: format!("SirGraph output '{}' not found in nodes", output_id.0) });
+                return Err(VerifyError::GraphInvariant {
+                    message: format!("SirGraph output '{}' not found in nodes", output_id.0),
+                });
+            }
+        }
+
+        // Per-node checks
+        for node in &self.nodes {
+            let node_id = node.id.as_str();
+
+            // Required field: name must not be empty
+            if node.name.is_empty() {
+                return Err(VerifyError::MissingField {
+                    node_id: node_id.to_string(),
+                    field: "name".to_string(),
+                });
+            }
+
+            // Validate dtypes inside ops
+            let dtype_err = Self::validate_op_dtypes(&node.op, node_id);
+            if let Err(e) = dtype_err {
+                return Err(e);
+            }
+
+            // Validate node references inside ops
+            let ref_err = Self::validate_op_refs(&node.op, node_id, &seen_ids);
+            if let Err(e) = ref_err {
+                return Err(e);
+            }
+
+            // Validate palette_bits if present
+            if let Err(msg) = node.op.validate_palette_bits() {
+                return Err(VerifyError::InvalidDtype {
+                    node_id: node_id.to_string(),
+                    dtype: msg,
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate that dtype fields within SirOp variants are legal.
+    ///
+    /// All `MilDtype` variants are valid by construction (Rust enum).
+    /// No additional validation needed — if a dtype deserialized, it's valid.
+    fn validate_op_dtypes(_op: &SirOp, _node_id: &str) -> Result<(), super::common::VerifyError> {
+        Ok(())
+    }
+
+    /// Validate that all SirNodeId references inside an op resolve to existing nodes.
+    fn validate_op_refs(
+        op: &SirOp,
+        node_id: &str,
+        seen_ids: &std::collections::HashSet<&str>,
+    ) -> Result<(), super::common::VerifyError> {
+        use super::common::VerifyError;
+        for referenced in op.node_refs() {
+            if !seen_ids.contains(referenced.as_str()) {
+                return Err(VerifyError::UnresolvedReference {
+                    node_id: node_id.to_string(),
+                    reference: referenced.0.clone(),
+                });
             }
         }
         Ok(())
+    }
+}
+
+/// Helper: extract all SirNodeId references from a SirOp.
+impl SirOp {
+    /// Returns all `SirNodeId` references within this op variant.
+    pub fn node_refs(&self) -> Vec<&SirNodeId> {
+        match self {
+            SirOp::LinearProjection { input, .. } => vec![input],
+            SirOp::AttentionBlock { q, k, v, mask, rope, .. } => {
+                let mut refs = vec![q, k, v];
+                if let Some(m) = mask { refs.push(m); }
+                if let Some(r) = rope { refs.push(r); }
+                refs
+            }
+            SirOp::RMSNorm { input, .. } => vec![input],
+            SirOp::RoPETransform { input, .. } => vec![input],
+            SirOp::DecodeStep { token, position, .. } => {
+                let mut refs = vec![token];
+                if let Some(p) = position { refs.push(p); }
+                refs
+            }
+            SirOp::Sampler { logits, .. } => vec![logits],
+            SirOp::StateRead { .. } => vec![],
+            SirOp::StateWrite { value, .. } => vec![value],
+            SirOp::Const { .. } => vec![],
+            SirOp::MatMul { a, b } => vec![a, b],
+            SirOp::Einsum { inputs, .. } => inputs.iter().collect(),
+            SirOp::Conv { input, weight, .. } => vec![input, weight],
+            SirOp::ConvTranspose { input, weight, .. } => vec![input, weight],
+            SirOp::Add { x, y } => vec![x, y],
+            SirOp::Mul { x, y } => vec![x, y],
+            SirOp::Sub { x, y } => vec![x, y],
+            SirOp::Maximum { x, y } => vec![x, y],
+            SirOp::Minimum { x, y } => vec![x, y],
+            SirOp::RealDiv { x, y } => vec![x, y],
+            SirOp::FloorDiv { x, y } => vec![x, y],
+            SirOp::Mod { x, y } => vec![x, y],
+            SirOp::Pow { x, y } => vec![x, y],
+            SirOp::Equal { x, y } => vec![x, y],
+            SirOp::NotEqual { x, y } => vec![x, y],
+            SirOp::Greater { x, y } => vec![x, y],
+            SirOp::GreaterEqual { x, y } => vec![x, y],
+            SirOp::Less { x, y } => vec![x, y],
+            SirOp::LessEqual { x, y } => vec![x, y],
+            SirOp::LogicalAnd { x, y } => vec![x, y],
+            SirOp::LogicalOr { x, y } => vec![x, y],
+            SirOp::LogicalXor { x, y } => vec![x, y],
+            SirOp::Abs { input } => vec![input],
+            SirOp::Neg { input } => vec![input],
+            SirOp::Sigmoid { input } => vec![input],
+            SirOp::Tanh { input } => vec![input],
+            SirOp::Relu { input } => vec![input],
+            SirOp::Relu6 { input } => vec![input],
+            SirOp::LeakyRelu { input, .. } => vec![input],
+            SirOp::SigmoidHard { input, .. } => vec![input],
+            SirOp::ThresholdedRelu { input, .. } => vec![input],
+            SirOp::ClampedRelu { input, .. } => vec![input],
+            SirOp::LinearActivation { input, .. } => vec![input],
+            SirOp::Prelu { input, .. } => vec![input],
+            SirOp::Softsign { input } => vec![input],
+            SirOp::Silu { input } => vec![input],
+            SirOp::ScaledTanh { input, .. } => vec![input],
+            SirOp::Elu { input, .. } => vec![input],
+            SirOp::Softplus { input } => vec![input],
+            SirOp::SoftplusParametric { input, .. } => vec![input],
+            SirOp::Gelu { input, .. } => vec![input],
+            SirOp::Clip { input, .. } => vec![input],
+            SirOp::Square { input } => vec![input],
+            SirOp::Threshold { input, .. } => vec![input],
+            SirOp::Sqrt { input } => vec![input],
+            SirOp::Rsqrt { input } => vec![input],
+            SirOp::Inverse { input, .. } => vec![input],
+            SirOp::Ceil { input } => vec![input],
+            SirOp::Floor { input } => vec![input],
+            SirOp::Round { input } => vec![input],
+            SirOp::Exp { input } => vec![input],
+            SirOp::Exp2 { input } => vec![input],
+            SirOp::Log { input, .. } => vec![input],
+            SirOp::Sign { input } => vec![input],
+            SirOp::Cos { input } => vec![input],
+            SirOp::Sin { input } => vec![input],
+            SirOp::Tan { input } => vec![input],
+            SirOp::Acos { input } => vec![input],
+            SirOp::Asin { input } => vec![input],
+            SirOp::Atan { input } => vec![input],
+            SirOp::Cosh { input } => vec![input],
+            SirOp::Sinh { input } => vec![input],
+            SirOp::Atanh { input } => vec![input],
+            SirOp::Erf { input } => vec![input],
+            SirOp::LogicalNot { input } => vec![input],
+            SirOp::Cast { input, .. } => vec![input],
+            SirOp::Select { condition, x, y } => vec![condition, x, y],
+            SirOp::Where { condition, x, y } => vec![condition, x, y],
+            SirOp::Softmax { input, .. } => vec![input],
+            SirOp::ReduceSum { input, .. } => vec![input],
+            SirOp::ReduceMean { input, .. } => vec![input],
+            SirOp::ReduceMax { input, .. } => vec![input],
+            SirOp::ReduceMin { input, .. } => vec![input],
+            SirOp::ReduceProd { input, .. } => vec![input],
+            SirOp::ReduceSumSquare { input, .. } => vec![input],
+            SirOp::ReduceL2Norm { input, .. } => vec![input],
+            SirOp::ReduceL1Norm { input, .. } => vec![input],
+            SirOp::ReduceLogSumExp { input, .. } => vec![input],
+            SirOp::ReduceLogSum { input, .. } => vec![input],
+            SirOp::ReduceArgmax { input, .. } => vec![input],
+            SirOp::ReduceArgmin { input, .. } => vec![input],
+            SirOp::BatchNorm { input, .. } => vec![input],
+            SirOp::InstanceNorm { input, .. } => vec![input],
+            SirOp::LayerNorm { input, .. } => vec![input],
+            SirOp::L2Norm { input, .. } => vec![input],
+            SirOp::LocalResponseNorm { input, .. } => vec![input],
+            SirOp::MaxPool { input, .. } => vec![input],
+            SirOp::AvgPool { input, .. } => vec![input],
+            SirOp::L2Pool { input, .. } => vec![input],
+            SirOp::Resize { input, .. } => vec![input],
+            SirOp::ResizeNearestNeighbor { input, .. } => vec![input],
+            SirOp::ResizeBilinear { input, .. } => vec![input],
+            SirOp::UpsampleNearestNeighbor { input, .. } => vec![input],
+            SirOp::UpsampleBilinear { input, .. } => vec![input],
+            SirOp::CropResize { input, boxes, box_indices, .. } => vec![input, boxes, box_indices],
+            SirOp::Affine { input, transform, .. } => vec![input, transform],
+            SirOp::Resample { input, coordinates, .. } => vec![input, coordinates],
+            SirOp::Reshape { input, .. } => vec![input],
+            SirOp::ReshapeLike { input, ref_tensor } => vec![input, ref_tensor],
+            SirOp::Transpose { input, .. } => vec![input],
+            SirOp::Split { input, .. } => vec![input],
+            SirOp::Concat { inputs, .. } => inputs.iter().collect(),
+            SirOp::ExpandDims { input, .. } => vec![input],
+            SirOp::Squeeze { input, .. } => vec![input],
+            SirOp::Flatten2d { input, .. } => vec![input],
+            SirOp::Reverse { input, .. } => vec![input],
+            SirOp::ReverseSequence { input, lengths, .. } => vec![input, lengths],
+            SirOp::SliceByIndex { input, .. } => vec![input],
+            SirOp::SliceBySize { input, .. } => vec![input],
+            SirOp::SlidingWindows { input, .. } => vec![input],
+            SirOp::DepthToSpace { input, .. } => vec![input],
+            SirOp::SpaceToDepth { input, .. } => vec![input],
+            SirOp::PixelShuffle { input, .. } => vec![input],
+            SirOp::PixelUnshuffle { input, .. } => vec![input],
+            SirOp::BatchToSpace { input, .. } => vec![input],
+            SirOp::SpaceToBatch { input, .. } => vec![input],
+            SirOp::Pad { input, .. } => vec![input],
+            SirOp::Stack { values, .. } => values.iter().collect(),
+            SirOp::Tile { input, .. } => vec![input],
+            SirOp::Cumsum { input, .. } => vec![input],
+            SirOp::Fill { .. } => vec![],
+            SirOp::FillLike { ref_tensor, .. } => vec![ref_tensor],
+            SirOp::Identity { input } => vec![input],
+            SirOp::OneHot { indices, .. } => vec![indices],
+            SirOp::NonZero { input } => vec![input],
+            SirOp::Argsort { input, .. } => vec![input],
+            SirOp::BandPart { input, .. } => vec![input],
+            SirOp::Range1d { .. } => vec![],
+            SirOp::Shape { input } => vec![input],
+            SirOp::Crop { input, .. } => vec![input],
+            SirOp::Gather { input, indices, .. } => vec![input, indices],
+            SirOp::GatherAlongAxis { input, indices, .. } => vec![input, indices],
+            SirOp::GatherNd { input, indices } => vec![input, indices],
+            SirOp::Scatter { input, indices, updates, .. } => vec![input, indices, updates],
+            SirOp::ScatterAlongAxis { input, indices, updates, .. } => vec![input, indices, updates],
+            SirOp::ScatterNd { input, indices, updates } => vec![input, indices, updates],
+            SirOp::NonMaximumSuppression { boxes, scores, .. } => vec![boxes, scores],
+            SirOp::ScaledDotProductAttention { query, key, value, attention_mask, .. } => {
+                let mut refs = vec![query, key, value];
+                if let Some(m) = attention_mask { refs.push(m); }
+                refs
+            }
+            SirOp::Quantize { input, .. } => vec![input],
+            SirOp::Dequantize { input, .. } => vec![input],
+            SirOp::ConstexprAffineDequantize { .. } => vec![],
+            SirOp::ConstexprBlockwiseShiftScale { .. } => vec![],
+            SirOp::ConstexprLutToDense { .. } => vec![],
+            SirOp::ConstexprSparseToDense { .. } => vec![],
+            SirOp::ConstexprCast { .. } => vec![],
+            SirOp::ConstexprLutToSparse { .. } => vec![],
+            SirOp::ConstexprSparseBlockwiseShiftScale { .. } => vec![],
+            SirOp::Rnn { input, initial_h, .. } => vec![input, initial_h],
+            SirOp::Gru { input, initial_h, .. } => vec![input, initial_h],
+            SirOp::Lstm { input, initial_h, initial_c, .. } => vec![input, initial_h, initial_c],
+            SirOp::Cond { pred, .. } => vec![pred],
+            SirOp::WhileLoop { loop_vars, .. } => loop_vars.iter().collect(),
+            SirOp::MakeList { elems, .. } => elems.iter().collect(),
+            SirOp::ListLength { ls } => vec![ls],
+            SirOp::ListWrite { ls, index, value } => vec![ls, index, value],
+            SirOp::ListRead { ls, index } => vec![ls, index],
+            SirOp::ListGather { ls, indices } => vec![ls, indices],
+            SirOp::ListScatter { ls, indices, values } => vec![ls, indices, values],
+            SirOp::RandomBernoulli { .. } => vec![],
+            SirOp::RandomNormal { .. } => vec![],
+            SirOp::RandomUniform { .. } => vec![],
+            SirOp::RandomCategorical { logits, .. } => vec![logits],
+            SirOp::Topk { input, .. } => vec![input],
+            SirOp::Classify { input } => vec![input],
+        }
     }
 }
 
@@ -1205,5 +1479,117 @@ impl Default for IoModelSpec {
             embedding_mode_value: 0,
             logit_mode_value: 1,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sid(s: &str) -> SirNodeId {
+        SirNodeId(s.to_string())
+    }
+
+    fn make_simple_graph() -> SirGraph {
+        let const_node = SirNode {
+            id: sid("const1"),
+            op: SirOp::Const {
+                value_path: "weights/embed.bin".into(),
+                dtype: MilDtype::Fp16,
+                palette_bits: None,
+            },
+            name: "const1".into(),
+            metadata: SirMetadata {
+                task_origin: TaskOrigin::Synthetic,
+                model_id: None,
+                quality_contract: None,
+                precision_override: None,
+            },
+        };
+        let add_node = SirNode {
+            id: sid("add1"),
+            op: SirOp::Add {
+                x: sid("const1"),
+                y: sid("const1"),
+            },
+            name: "add1".into(),
+            metadata: SirMetadata {
+                task_origin: TaskOrigin::Synthetic,
+                model_id: None,
+                quality_contract: None,
+                precision_override: None,
+            },
+        };
+        SirGraph {
+            nodes: vec![const_node, add_node],
+            inputs: vec![sid("const1")],
+            outputs: vec![sid("add1")],
+        }
+    }
+
+    #[test]
+    fn test_sir_verify_valid_graph() {
+        let g = make_simple_graph();
+        assert!(g.verify().is_ok());
+    }
+
+    #[test]
+    fn test_sir_verify_duplicate_ids() {
+        let mut g = make_simple_graph();
+        g.nodes.push(SirNode {
+            id: sid("add1"), // duplicate
+            op: SirOp::Abs { input: sid("const1") },
+            name: "dup".into(),
+            metadata: SirMetadata {
+                task_origin: TaskOrigin::Synthetic,
+                model_id: None,
+                quality_contract: None,
+                precision_override: None,
+            },
+        });
+        let err = g.verify().unwrap_err();
+        assert_eq!(err, super::super::common::VerifyError::DuplicateNodeId { node_id: "add1".into() });
+    }
+
+    #[test]
+    fn test_sir_verify_empty_name() {
+        let mut g = make_simple_graph();
+        g.nodes[0].name = String::new();
+        let err = g.verify().unwrap_err();
+        assert_eq!(err, super::super::common::VerifyError::MissingField {
+            node_id: "const1".into(),
+            field: "name".into(),
+        });
+    }
+
+    #[test]
+    fn test_sir_verify_unresolved_ref() {
+        let mut g = make_simple_graph();
+        // Change the add to reference a non-existent node
+        g.nodes[1].op = SirOp::Add {
+            x: sid("nonexistent"),
+            y: sid("const1"),
+        };
+        let err = g.verify().unwrap_err();
+        assert_eq!(err, super::super::common::VerifyError::UnresolvedReference {
+            node_id: "add1".into(),
+            reference: "nonexistent".into(),
+        });
+    }
+
+    #[test]
+    fn test_sir_verify_input_not_in_nodes() {
+        let mut g = make_simple_graph();
+        g.inputs.push(sid("ghost"));
+        let err = g.verify().unwrap_err();
+        assert!(matches!(err, super::super::common::VerifyError::GraphInvariant { .. }));
+    }
+
+    #[test]
+    fn test_sir_verify_output_not_in_nodes() {
+        let mut g = make_simple_graph();
+        g.outputs.push(sid("ghost"));
+        let err = g.verify().unwrap_err();
+        assert!(matches!(err, super::super::common::VerifyError::GraphInvariant { .. }));
     }
 }

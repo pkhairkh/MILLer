@@ -2,7 +2,7 @@
 
 > Consolidated remediation task board for open and in-progress issues.
 > Completed tasks have been removed — see git history for the full audit trail.
-> Recently completed: T-P2-01, T-P2-05, T-P2-12, T-P3-03, T-P3-04, T-P3-07, T-P3-08, T-P3-09, T-P3-10, T-P3-11, T-P4-01, T-P4-02, T-P4-03, T-P4-04, T-P4-05, T-P5-05, T-P5-06, T-P5-10, T-P5-11.
+> Recently completed: T-P2-01, T-P2-04, T-P2-05, T-P2-12, T-P3-03, T-P3-04, T-P3-07, T-P3-08, T-P3-09, T-P3-10, T-P3-11, T-P4-01, T-P4-02, T-P4-03, T-P4-04, T-P4-05, T-P5-03, T-P5-05, T-P5-06, T-P5-10, T-P5-11, T-P6-04.
 > Format: Agentic AI task specification (structured, machine-parseable, human-readable).
 > Each task is independently executable by an AI coding agent with access to this repository.
 
@@ -25,22 +25,6 @@
 ---
 
 ## Phase 2 — High-Priority Validation Gaps
-
-### T-P2-04: Fix knowledge store contradictions
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P2-04 |
-| `title` | Synchronize knowledge store JSON with source code ground truth |
-| `phase` | P2 |
-| `severity` | HIGH |
-| `depends_on` | [] |
-| `files` | `knowledge/legality_seed.json`, `knowledge/cpu_only_ops_seed.json`, `knowledge/ane_op_family_matrix.json` |
-| `violation_refs` | [V-011, M-013] |
-| `acceptance_criteria` | 1) `cpu_only_ops_seed.json`: all ops from `cpu_only_ops.rs` CPU_ONLY_OPS set included; 2) `ane_op_family_matrix.json`: entries with empirical CPU-only status gain `practical_status: "cpu_only"` field; 3) Seed validation tests pass |
-| `agent_hints` | Run `cpu_only_ops.rs` test to get the full CPU_ONLY_OPS set. Use that as the ground truth. For the matrix, add an `empirical_note` field rather than changing `supported` to avoid losing theoretical converter info. |
-
----
 
 ### T-P2-11: Remove Qwen3-specific defaults
 
@@ -99,22 +83,6 @@
 ---
 
 ## Phase 5 — MLIR-Method Architectural Remediation
-
-### T-P5-03: Implement per-IR-layer verify() methods
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P5-03 |
-| `title` | Add SirGraph::verify(), AirGraph::verify(), MirGraph::verify() |
-| `phase` | P5 |
-| `severity` | HIGH |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/sir.rs`, `crates/ir/src/air.rs`, `crates/ir/src/mir.rs` |
-| `violation_refs` | [M-003, M-011, M-014] |
-| `acceptance_criteria` | 1) Each verify() checks node reference integrity, required fields, dtype legality; 2) AirGraph::verify() rejects LegalityStatus::Unknown in strict mode; 3) MirGraph::verify() requires non-empty shapes or Dynamic; 4) verify() called after each pass; 5) Pipeline aborts on failure |
-| `agent_hints` | Add `pub fn verify(&self) -> Result<(), Vec<VerifyError>>` to each graph type. Check: all node IDs resolve, all dtype values are valid, required fields non-empty. For AIR, check legality_status is not Unknown in strict mode. For MIR, check shapes are non-empty. Call from pipeline after each pass. |
-
----
 
 ### T-P5-04: Replace empty-shape fallbacks with explicit errors
 
@@ -227,22 +195,6 @@
 | `violation_refs` | [N-004] |
 | `acceptance_criteria` | 1) Each ANEC ValidateLayer constraint has a MILLer validation equivalent; 2) Invalid configurations caught at placement time instead of ANEC compile time |
 | `agent_hints` | This is a large task. Start by mapping each ValidateLayer instantiation to its constraint and adding validation methods. Prioritize by frequency of failure. |
-
----
-
-### T-P6-04: Add uANE AneRevision variant
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P6-04 |
-| `title` | Add AneRevision::Vu1 for uANE hardware |
-| `phase` | P6 |
-| `severity` | HIGH |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/ane_target.rs`, `crates/ir/src/ane_hw_limits.rs` |
-| `violation_refs` | [N-008] |
-| `acceptance_criteria` | 1) `AneRevision::Vu1` variant exists; 2) uANE-specific limits (if different) are modeled; 3) CLI can target uANE |
-| `agent_hints` | Add the variant. Research uANE constraints — they may differ from standard ANE. Start with conservative limits matching A17 until hardware testing confirms. |
 
 ---
 

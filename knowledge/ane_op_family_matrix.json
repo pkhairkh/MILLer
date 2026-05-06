@@ -140,7 +140,8 @@
         "key_constraints": [
           "limited_equation_set",
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -330,7 +331,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -376,7 +378,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -422,7 +425,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -469,7 +473,8 @@
         "key_constraints": [
           "bilinear_or_nearest",
           "rank_4_only"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -515,7 +520,8 @@
         },
         "key_constraints": [
           "rank_4_only"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -561,7 +567,8 @@
         },
         "key_constraints": [
           "rank_4_only"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -607,7 +614,8 @@
         },
         "key_constraints": [
           "rank_4_only"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -653,7 +661,8 @@
         },
         "key_constraints": [
           "rank_4_only"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -699,7 +708,8 @@
         },
         "key_constraints": [
           "rank_4_only"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -745,7 +755,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -791,7 +802,8 @@
         },
         "key_constraints": [
           "rank_4_only"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -837,7 +849,8 @@
         },
         "key_constraints": [
           "rank_4_only"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -883,7 +896,8 @@
         },
         "key_constraints": [
           "rank_4_only"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -929,7 +943,8 @@
         },
         "key_constraints": [
           "rank_4_only"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -975,7 +990,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -1021,7 +1037,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -2756,7 +2773,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -2804,7 +2822,8 @@
           "rank_le_5"
         ],
         "architecture_conditional": true,
-        "architecture_conditional_note": "ConvertInstanceNorm is family-agnostic but architecture-conditional. A11Legacy is explicitly unsupported. Older variants (A12/A13) may reject at compile time. T-105 adds soft-warning at placement for these families."
+        "architecture_conditional_note": "ConvertInstanceNorm is family-agnostic but architecture-conditional. A11Legacy is explicitly unsupported. Older variants (A12/A13) may reject at compile time. T-105 adds soft-warning at placement for these families.",
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -3226,7 +3245,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -3272,7 +3292,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -3364,7 +3385,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -3502,7 +3524,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -3640,7 +3663,8 @@
         },
         "key_constraints": [
           "no_anec_converter"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -3686,7 +3710,8 @@
         },
         "key_constraints": [
           "no_anec_converter"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -3732,7 +3757,8 @@
         },
         "key_constraints": [
           "no_anec_converter"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -3778,7 +3804,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -3870,7 +3897,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -3916,7 +3944,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -3962,7 +3991,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -4008,7 +4038,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -4054,7 +4085,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -4238,7 +4270,8 @@
         },
         "key_constraints": [
           "rank_4_only"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -4376,7 +4409,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -4423,7 +4457,8 @@
         "key_constraints": [
           "a14_plus",
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -4469,7 +4504,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -4561,7 +4597,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {
@@ -4607,7 +4644,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {

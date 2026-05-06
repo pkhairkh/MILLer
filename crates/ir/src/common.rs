@@ -476,6 +476,47 @@ mod tests {
         let expected_64 = 1.0f32 / (64.0f32).sqrt();
         assert!((config_64.attention_scale() - expected_64).abs() < 1e-6);
     }
+
+    // ─── VerifyError ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_verify_error_display() {
+        let e = VerifyError::DuplicateNodeId { node_id: "n1".into() };
+        assert_eq!(format!("{}", e), "Duplicate node ID: 'n1'");
+
+        let e = VerifyError::MissingField { node_id: "n2".into(), field: "name".into() };
+        assert_eq!(format!("{}", e), "Node 'n2' missing required field: 'name'");
+
+        let e = VerifyError::InvalidDtype { node_id: "n3".into(), dtype: "BadType".into() };
+        assert_eq!(format!("{}", e), "Node 'n3' has invalid dtype: 'BadType'");
+
+        let e = VerifyError::UnresolvedReference { node_id: "n4".into(), reference: "missing".into() };
+        assert_eq!(format!("{}", e), "Node 'n4' references non-existent node: 'missing'");
+
+        let e = VerifyError::EmptyShape { node_id: "n5".into() };
+        assert_eq!(format!("{}", e), "Node 'n5' has empty shape");
+
+        let e = VerifyError::UnknownLegality { node_id: "n6".into() };
+        assert_eq!(format!("{}", e), "Node 'n6' has Unknown legality status (strict mode)");
+
+        let e = VerifyError::GraphInvariant { message: "bad graph".into() };
+        assert_eq!(format!("{}", e), "Graph invariant violation: bad graph");
+    }
+
+    #[test]
+    fn test_verify_error_graph_convenience() {
+        let e = VerifyError::graph("oops");
+        assert_eq!(e, VerifyError::GraphInvariant { message: "oops".into() });
+    }
+
+    #[test]
+    fn test_verify_error_equality() {
+        let e1 = VerifyError::DuplicateNodeId { node_id: "x".into() };
+        let e2 = VerifyError::DuplicateNodeId { node_id: "x".into() };
+        let e3 = VerifyError::DuplicateNodeId { node_id: "y".into() };
+        assert_eq!(e1, e2);
+        assert_ne!(e1, e3);
+    }
 }
 
 // ─── Shared Traits ───────────────────────────────────────────────
@@ -498,14 +539,78 @@ pub trait IrNodeId:
 // ─── Verification Error ────────────────────────────────────────
 
 /// Error from IR graph verification.
-#[derive(Debug, Clone)]
-pub struct VerifyError {
-    pub message: String,
+///
+/// T-P5-03: Structured verification errors replacing the previous
+/// single-message struct. Each variant captures specific failure
+/// context for programmatic handling and precise diagnostics.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VerifyError {
+    /// Two or more nodes share the same ID.
+    DuplicateNodeId {
+        node_id: String,
+    },
+    /// A required field on a node is empty or missing.
+    MissingField {
+        node_id: String,
+        field: String,
+    },
+    /// A dtype value is not a valid `MilDtype`.
+    InvalidDtype {
+        node_id: String,
+        dtype: String,
+    },
+    /// A node reference (edge) points to a node that does not exist in the graph.
+    UnresolvedReference {
+        node_id: String,
+        reference: String,
+    },
+    /// A MIR node has an empty shape and is not a dynamic-shaped node.
+    EmptyShape {
+        node_id: String,
+    },
+    /// An AIR node has `LegalityStatus::Unknown` in strict mode.
+    UnknownLegality {
+        node_id: String,
+    },
+    /// A graph-level invariant was violated (e.g., inputs/outputs
+    /// reference nodes not in the graph). The message describes the issue.
+    GraphInvariant {
+        message: String,
+    },
+}
+
+impl VerifyError {
+    /// Convenience constructor for the `GraphInvariant` variant.
+    pub fn graph(msg: impl Into<String>) -> Self {
+        VerifyError::GraphInvariant { message: msg.into() }
+    }
 }
 
 impl std::fmt::Display for VerifyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Verification error: {}", self.message)
+        match self {
+            VerifyError::DuplicateNodeId { node_id } => {
+                write!(f, "Duplicate node ID: '{}'", node_id)
+            }
+            VerifyError::MissingField { node_id, field } => {
+                write!(f, "Node '{}' missing required field: '{}'", node_id, field)
+            }
+            VerifyError::InvalidDtype { node_id, dtype } => {
+                write!(f, "Node '{}' has invalid dtype: '{}'", node_id, dtype)
+            }
+            VerifyError::UnresolvedReference { node_id, reference } => {
+                write!(f, "Node '{}' references non-existent node: '{}'", node_id, reference)
+            }
+            VerifyError::EmptyShape { node_id } => {
+                write!(f, "Node '{}' has empty shape", node_id)
+            }
+            VerifyError::UnknownLegality { node_id } => {
+                write!(f, "Node '{}' has Unknown legality status (strict mode)", node_id)
+            }
+            VerifyError::GraphInvariant { message } => {
+                write!(f, "Graph invariant violation: {}", message)
+            }
+        }
     }
 }
 

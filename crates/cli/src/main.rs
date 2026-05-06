@@ -415,7 +415,8 @@ enum Commands {
 
         /// Target ANE family for constraint-aware compilation.
         /// Accepts ANE generation codes (A11Legacy, A12, A14, A15, A16, A17, A18)
-        /// or Apple Silicon chip names (M1, M2, M3, M4, with Pro/Max variants).
+        /// or Apple Silicon chip names (M1, M2, M3, M4, with Pro/Max variants),
+        /// or uANE/Vu1 for the unified ANE on Apple Silicon Macs (M2+).
         /// Defaults to A16 (first family with reliable SDPA support).
         #[arg(long, default_value = "A16")]
         target_family: String,
@@ -5133,9 +5134,11 @@ fn parse_ane_family(s: &str) -> Result<ane_ir::ane_target::AneFamily, String> {
         "m3pro" | "m3_max" | "m3max" => Ok(AneFamily::A16),
         "m4" => Ok(AneFamily::A18),
         "m4pro" | "m4_max" | "m4max" => Ok(AneFamily::A18),
+        // T-P6-04: uANE (unified ANE on Apple Silicon Macs, M2+) maps to A17 family.
+        "vu1" | "uane" => Ok(AneFamily::A17),
         _ => Err(format!(
             "Unknown ANE family '{}'. Valid: A11Legacy, A12, A13, A14, A15, A16, A17, A18, \
-             or chip names: iPhone 8/X/XS/11/12/13/14Pro/15Pro/16, M1/M2/M3/M4 (with Pro/Max variants)",
+             uANE/Vu1, or chip names: iPhone 8/X/XS/11/12/13/14Pro/15Pro/16, M1/M2/M3/M4 (with Pro/Max variants)",
             s
         )),
     }

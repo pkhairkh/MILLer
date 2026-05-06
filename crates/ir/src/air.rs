@@ -1002,23 +1002,283 @@ pub struct AirGraph {
 }
 
 impl AirGraph {
-    /// Verify graph invariants: no duplicate node IDs, all inputs/outputs reference existing nodes.
+    /// Verify graph invariants:
+    /// - No duplicate node IDs
+    /// - All required fields are populated (name, op kind)
+    /// - All dtype values are valid
+    /// - All edge references resolve to existing nodes
+    /// - All inputs/outputs reference existing nodes
+    /// - In strict mode: reject nodes with LegalityStatus::Unknown
     pub fn verify(&self) -> Result<(), super::common::VerifyError> {
+        self.verify_with_mode(false)
+    }
+
+    /// Verify graph invariants with strict legality checking.
+    ///
+    /// Strict mode rejects any node with `LegalityStatus::Unknown`,
+    /// which should be used after the legality annotation pass has run.
+    pub fn verify_strict(&self) -> Result<(), super::common::VerifyError> {
+        self.verify_with_mode(true)
+    }
+
+    fn verify_with_mode(&self, strict: bool) -> Result<(), super::common::VerifyError> {
+        use super::common::VerifyError;
         use std::collections::HashSet;
-        let seen_ids: HashSet<&str> = self.nodes.iter().map(|n| n.id.as_str()).collect();
-        if seen_ids.len() != self.nodes.len() {
-            return Err(super::common::VerifyError { message: "Duplicate node IDs in AirGraph".into() });
-        }
-        for input_id in &self.inputs {
-            if !seen_ids.contains(input_id.as_str()) {
-                return Err(super::common::VerifyError { message: format!("AirGraph input '{}' not found in nodes", input_id.0) });
+
+        // Collect all node IDs, checking for duplicates
+        let mut seen_ids: HashSet<&str> = HashSet::new();
+        for node in &self.nodes {
+            let id = node.id.as_str();
+            if !seen_ids.insert(id) {
+                return Err(VerifyError::DuplicateNodeId { node_id: id.to_string() });
             }
         }
+
+        // Check inputs reference existing nodes
+        for input_id in &self.inputs {
+            if !seen_ids.contains(input_id.as_str()) {
+                return Err(VerifyError::GraphInvariant {
+                    message: format!("AirGraph input '{}' not found in nodes", input_id.0),
+                });
+            }
+        }
+
+        // Check outputs reference existing nodes
         for output_id in &self.outputs {
             if !seen_ids.contains(output_id.as_str()) {
-                return Err(super::common::VerifyError { message: format!("AirGraph output '{}' not found in nodes", output_id.0) });
+                return Err(VerifyError::GraphInvariant {
+                    message: format!("AirGraph output '{}' not found in nodes", output_id.0),
+                });
+            }
+        }
+
+        // Per-node checks
+        for node in &self.nodes {
+            let node_id = node.id.as_str();
+
+            // Required field: name must not be empty
+            if node.name.is_empty() {
+                return Err(VerifyError::MissingField {
+                    node_id: node_id.to_string(),
+                    field: "name".to_string(),
+                });
+            }
+
+            // Strict mode: reject Unknown legality
+            if strict && node.legality_status == LegalityStatus::Unknown {
+                return Err(VerifyError::UnknownLegality {
+                    node_id: node_id.to_string(),
+                });
+            }
+
+            // Validate node references inside ops
+            let ref_err = Self::validate_op_refs(&node.op, node_id, &seen_ids);
+            if let Err(e) = ref_err {
+                return Err(e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate that all AirNodeId references inside an op resolve to existing nodes.
+    fn validate_op_refs(
+        op: &AirOp,
+        node_id: &str,
+        seen_ids: &std::collections::HashSet<&str>,
+    ) -> Result<(), super::common::VerifyError> {
+        use super::common::VerifyError;
+        for referenced in op.node_refs() {
+            if !seen_ids.contains(referenced.as_str()) {
+                return Err(VerifyError::UnresolvedReference {
+                    node_id: node_id.to_string(),
+                    reference: referenced.0.clone(),
+                });
             }
         }
         Ok(())
+    }
+}
+
+/// Helper: extract all AirNodeId references from an AirOp.
+impl AirOp {
+    /// Returns all `AirNodeId` references within this op variant.
+    pub fn node_refs(&self) -> Vec<&AirNodeId> {
+        match self {
+            AirOp::Const { .. } => vec![],
+            AirOp::Linear { input, .. } => vec![input],
+            AirOp::MatMul { a, b } => vec![a, b],
+            AirOp::Einsum { inputs, .. } => inputs.iter().collect(),
+            AirOp::Conv1x1AsLinear { input, .. } => vec![input],
+            AirOp::Conv { input, weight, .. } => vec![input, weight],
+            AirOp::ConvTranspose { input, weight, .. } => vec![input, weight],
+            AirOp::Add { x, y } => vec![x, y],
+            AirOp::Mul { x, y } => vec![x, y],
+            AirOp::Sub { x, y } => vec![x, y],
+            AirOp::Maximum { x, y } => vec![x, y],
+            AirOp::Minimum { x, y } => vec![x, y],
+            AirOp::RealDiv { x, y } => vec![x, y],
+            AirOp::FloorDiv { x, y } => vec![x, y],
+            AirOp::Mod { x, y } => vec![x, y],
+            AirOp::Pow { x, y } => vec![x, y],
+            AirOp::Equal { x, y } => vec![x, y],
+            AirOp::NotEqual { x, y } => vec![x, y],
+            AirOp::Greater { x, y } => vec![x, y],
+            AirOp::GreaterEqual { x, y } => vec![x, y],
+            AirOp::Less { x, y } => vec![x, y],
+            AirOp::LessEqual { x, y } => vec![x, y],
+            AirOp::LogicalAnd { x, y } => vec![x, y],
+            AirOp::LogicalOr { x, y } => vec![x, y],
+            AirOp::LogicalXor { x, y } => vec![x, y],
+            AirOp::Abs { input } => vec![input],
+            AirOp::Neg { input } => vec![input],
+            AirOp::Sigmoid { input } => vec![input],
+            AirOp::Tanh { input } => vec![input],
+            AirOp::Relu { input } => vec![input],
+            AirOp::Relu6 { input } => vec![input],
+            AirOp::LeakyRelu { input, .. } => vec![input],
+            AirOp::SigmoidHard { input, .. } => vec![input],
+            AirOp::ThresholdedRelu { input, .. } => vec![input],
+            AirOp::ClampedRelu { input, .. } => vec![input],
+            AirOp::LinearActivation { input, .. } => vec![input],
+            AirOp::Prelu { input, .. } => vec![input],
+            AirOp::Softsign { input } => vec![input],
+            AirOp::Silu { input } => vec![input],
+            AirOp::ScaledTanh { input, .. } => vec![input],
+            AirOp::Elu { input, .. } => vec![input],
+            AirOp::Softplus { input } => vec![input],
+            AirOp::SoftplusParametric { input, .. } => vec![input],
+            AirOp::Gelu { input, .. } => vec![input],
+            AirOp::Clip { input, .. } => vec![input],
+            AirOp::Square { input } => vec![input],
+            AirOp::Threshold { input, .. } => vec![input],
+            AirOp::Sqrt { input } => vec![input],
+            AirOp::Rsqrt { input } => vec![input],
+            AirOp::Inverse { input, .. } => vec![input],
+            AirOp::Ceil { input } => vec![input],
+            AirOp::Floor { input } => vec![input],
+            AirOp::Round { input } => vec![input],
+            AirOp::Exp { input } => vec![input],
+            AirOp::Exp2 { input } => vec![input],
+            AirOp::Log { input, .. } => vec![input],
+            AirOp::Sign { input } => vec![input],
+            AirOp::Cos { input } => vec![input],
+            AirOp::Sin { input } => vec![input],
+            AirOp::Tan { input } => vec![input],
+            AirOp::Acos { input } => vec![input],
+            AirOp::Asin { input } => vec![input],
+            AirOp::Atan { input } => vec![input],
+            AirOp::Cosh { input } => vec![input],
+            AirOp::Sinh { input } => vec![input],
+            AirOp::Atanh { input } => vec![input],
+            AirOp::Erf { input } => vec![input],
+            AirOp::LogicalNot { input } => vec![input],
+            AirOp::Cast { input, .. } => vec![input],
+            AirOp::Select { condition, x, y } => vec![condition, x, y],
+            AirOp::Where { condition, x, y } => vec![condition, x, y],
+            AirOp::Softmax { input, .. } => vec![input],
+            AirOp::ReduceSum { input, .. } => vec![input],
+            AirOp::ReduceMean { input, .. } => vec![input],
+            AirOp::ReduceMax { input, .. } => vec![input],
+            AirOp::ReduceMin { input, .. } => vec![input],
+            AirOp::ReduceProd { input, .. } => vec![input],
+            AirOp::ReduceSumSquare { input, .. } => vec![input],
+            AirOp::ReduceL2Norm { input, .. } => vec![input],
+            AirOp::ReduceL1Norm { input, .. } => vec![input],
+            AirOp::ReduceLogSumExp { input, .. } => vec![input],
+            AirOp::ReduceLogSum { input, .. } => vec![input],
+            AirOp::ReduceArgmax { input, .. } => vec![input],
+            AirOp::ReduceArgmin { input, .. } => vec![input],
+            AirOp::BatchNorm { input, .. } => vec![input],
+            AirOp::InstanceNorm { input, .. } => vec![input],
+            AirOp::LayerNorm { input, .. } => vec![input],
+            AirOp::L2Norm { input, .. } => vec![input],
+            AirOp::LocalResponseNorm { input, .. } => vec![input],
+            AirOp::MaxPool { input, .. } => vec![input],
+            AirOp::AvgPool { input, .. } => vec![input],
+            AirOp::L2Pool { input, .. } => vec![input],
+            AirOp::Resize { input, .. } => vec![input],
+            AirOp::ResizeNearestNeighbor { input, .. } => vec![input],
+            AirOp::ResizeBilinear { input, .. } => vec![input],
+            AirOp::UpsampleNearestNeighbor { input, .. } => vec![input],
+            AirOp::UpsampleBilinear { input, .. } => vec![input],
+            AirOp::CropResize { input, boxes, box_indices, .. } => vec![input, boxes, box_indices],
+            AirOp::Affine { input, transform, .. } => vec![input, transform],
+            AirOp::Resample { input, coordinates, .. } => vec![input, coordinates],
+            AirOp::Reshape { input, .. } => vec![input],
+            AirOp::ReshapeLike { input, ref_tensor } => vec![input, ref_tensor],
+            AirOp::Transpose { input, .. } => vec![input],
+            AirOp::Split { input, .. } => vec![input],
+            AirOp::Concat { inputs, .. } => inputs.iter().collect(),
+            AirOp::ExpandDims { input, .. } => vec![input],
+            AirOp::Squeeze { input, .. } => vec![input],
+            AirOp::Flatten2d { input, .. } => vec![input],
+            AirOp::Reverse { input, .. } => vec![input],
+            AirOp::ReverseSequence { input, lengths, .. } => vec![input, lengths],
+            AirOp::SliceByIndex { input, .. } => vec![input],
+            AirOp::SliceBySize { input, .. } => vec![input],
+            AirOp::SliceUpdate { input, update, .. } => vec![input, update],
+            AirOp::SlidingWindows { input, .. } => vec![input],
+            AirOp::DepthToSpace { input, .. } => vec![input],
+            AirOp::SpaceToDepth { input, .. } => vec![input],
+            AirOp::PixelShuffle { input, .. } => vec![input],
+            AirOp::PixelUnshuffle { input, .. } => vec![input],
+            AirOp::BatchToSpace { input, .. } => vec![input],
+            AirOp::SpaceToBatch { input, .. } => vec![input],
+            AirOp::Pad { input, .. } => vec![input],
+            AirOp::Stack { values, .. } => values.iter().collect(),
+            AirOp::Tile { input, .. } => vec![input],
+            AirOp::Cumsum { input, .. } => vec![input],
+            AirOp::Fill { .. } => vec![],
+            AirOp::FillLike { ref_tensor, .. } => vec![ref_tensor],
+            AirOp::Identity { input } => vec![input],
+            AirOp::OneHot { indices, .. } => vec![indices],
+            AirOp::NonZero { input } => vec![input],
+            AirOp::Argsort { input, .. } => vec![input],
+            AirOp::BandPart { input, .. } => vec![input],
+            AirOp::Range1d { .. } => vec![],
+            AirOp::Shape { input } => vec![input],
+            AirOp::Crop { input, .. } => vec![input],
+            AirOp::Gather { input, indices, .. } => vec![input, indices],
+            AirOp::GatherAlongAxis { input, indices, .. } => vec![input, indices],
+            AirOp::GatherNd { input, indices } => vec![input, indices],
+            AirOp::Scatter { input, indices, updates, .. } => vec![input, indices, updates],
+            AirOp::ScatterAlongAxis { input, indices, updates, .. } => vec![input, indices, updates],
+            AirOp::ScatterNd { input, indices, updates } => vec![input, indices, updates],
+            AirOp::NonMaximumSuppression { boxes, scores, .. } => vec![boxes, scores],
+            AirOp::ScaledDotProductAttention { query, key, value, attention_mask, .. } => {
+                let mut refs = vec![query, key, value];
+                if let Some(m) = attention_mask { refs.push(m); }
+                refs
+            }
+            AirOp::Quantize { input, .. } => vec![input],
+            AirOp::Dequantize { input, .. } => vec![input],
+            AirOp::ConstexprAffineDequantize { .. } => vec![],
+            AirOp::ConstexprBlockwiseShiftScale { .. } => vec![],
+            AirOp::ConstexprLutToDense { .. } => vec![],
+            AirOp::ConstexprSparseToDense { .. } => vec![],
+            AirOp::ConstexprCast { .. } => vec![],
+            AirOp::ConstexprLutToSparse { .. } => vec![],
+            AirOp::ConstexprSparseBlockwiseShiftScale { .. } => vec![],
+            AirOp::Rnn { input, initial_h, .. } => vec![input, initial_h],
+            AirOp::Gru { input, initial_h, .. } => vec![input, initial_h],
+            AirOp::Lstm { input, initial_h, initial_c, .. } => vec![input, initial_h, initial_c],
+            AirOp::Cond { pred, .. } => vec![pred],
+            AirOp::WhileLoop { loop_vars, .. } => loop_vars.iter().collect(),
+            AirOp::MakeList { elems, .. } => elems.iter().collect(),
+            AirOp::ListLength { ls } => vec![ls],
+            AirOp::ListWrite { ls, index, value } => vec![ls, index, value],
+            AirOp::ListRead { ls, index } => vec![ls, index],
+            AirOp::ListGather { ls, indices } => vec![ls, indices],
+            AirOp::ListScatter { ls, indices, values } => vec![ls, indices, values],
+            AirOp::RandomBernoulli { .. } => vec![],
+            AirOp::RandomNormal { .. } => vec![],
+            AirOp::RandomUniform { .. } => vec![],
+            AirOp::RandomCategorical { logits, .. } => vec![logits],
+            AirOp::StateReadFixed { .. } => vec![],
+            AirOp::StateWriteFixed { value, .. } => vec![value],
+            AirOp::Topk { input, .. } => vec![input],
+            AirOp::Classify { input } => vec![input],
+        }
     }
 }

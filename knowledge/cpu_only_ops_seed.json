@@ -55,6 +55,85 @@
       }
     },
     {
+      "id": "cpu_only_affine",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "affine",
+        "reason_code": "NoConverter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_and",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "and",
+        "reason_code": "Logical",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_argsort",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "argsort",
+        "reason_code": "NoANECConverter",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
       "id": "cpu_only_asin",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
@@ -107,6 +186,33 @@
       }
     },
     {
+      "id": "cpu_only_assign_variable",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "assign_variable",
+        "reason_code": "SparseBuffer",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
       "id": "cpu_only_atan",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
@@ -128,32 +234,6 @@
       "conflict_priority": 0,
       "payload": {
         "mil_name": "atan",
-        "reason_code": "TrigInverse",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_atanh",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "atanh",
         "reason_code": "TrigInverse",
         "ane_legal": false
       }
@@ -185,7 +265,7 @@
       }
     },
     {
-      "id": "cpu_only_tan",
+      "id": "cpu_only_atanh",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -205,13 +285,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "tan",
+        "mil_name": "atanh",
         "reason_code": "TrigInverse",
         "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_sinh",
+      "id": "cpu_only_avg_pool",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -231,13 +311,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "sinh",
-        "reason_code": "Hyperbolic",
+        "mil_name": "avg_pool",
+        "reason_code": "NoConverter",
         "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_cosh",
+      "id": "cpu_only_band_part",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -257,13 +337,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "cosh",
-        "reason_code": "Hyperbolic",
+        "mil_name": "band_part",
+        "reason_code": "Miscellaneous",
         "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_and",
+      "id": "cpu_only_batch_norm",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -283,13 +363,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "and",
-        "reason_code": "Logical",
+        "mil_name": "batch_norm",
+        "reason_code": "NoConverter",
         "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_or",
+      "id": "cpu_only_batch_to_space",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -309,13 +389,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "or",
-        "reason_code": "Logical",
+        "mil_name": "batch_to_space",
+        "reason_code": "NoConverter",
         "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_xor",
+      "id": "cpu_only_bias_add_grad",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -335,86 +415,8 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "xor",
-        "reason_code": "Logical",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_nand",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "nand",
-        "reason_code": "Logical",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_nor",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "nor",
-        "reason_code": "Logical",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_xnor",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "xnor",
-        "reason_code": "Logical",
+        "mil_name": "bias_add_grad",
+        "reason_code": "Gradient",
         "ane_legal": false
       }
     },
@@ -440,6 +442,32 @@
       "conflict_priority": 0,
       "payload": {
         "mil_name": "bitwise_and",
+        "reason_code": "Logical",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_bitwise_not",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "bitwise_not",
         "reason_code": "Logical",
         "ane_legal": false
       }
@@ -497,7 +525,7 @@
       }
     },
     {
-      "id": "cpu_only_bitwise_not",
+      "id": "cpu_only_buffer_tensor",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -517,13 +545,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "bitwise_not",
-        "reason_code": "Logical",
+        "mil_name": "buffer_tensor",
+        "reason_code": "Sparse",
         "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_left_shift",
+      "id": "cpu_only_call",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -543,13 +571,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "left_shift",
-        "reason_code": "Logical",
+        "mil_name": "call",
+        "reason_code": "ControlFlow",
         "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_right_shift",
+      "id": "cpu_only_clamp",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -569,13 +597,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "right_shift",
-        "reason_code": "Logical",
+        "mil_name": "clamp",
+        "reason_code": "Miscellaneous",
         "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_popcount",
+      "id": "cpu_only_clamped_relu",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -595,13 +623,14 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "popcount",
-        "reason_code": "Logical",
-        "ane_legal": false
+        "mil_name": "clamped_relu",
+        "reason_code": "NoANECConverter",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
-      "id": "cpu_only_create_complex",
+      "id": "cpu_only_col_to_im",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -621,13 +650,14 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "create_complex",
-        "reason_code": "ComplexNumber",
-        "ane_legal": false
+        "mil_name": "col_to_im",
+        "reason_code": "Transform",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
-      "id": "cpu_only_real_part",
+      "id": "cpu_only_cond",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -647,13 +677,14 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "real_part",
-        "reason_code": "ComplexNumber",
-        "ane_legal": false
+        "mil_name": "cond",
+        "reason_code": "ControlFlow",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
-      "id": "cpu_only_imaginary_part",
+      "id": "cpu_only_condition",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -673,8 +704,8 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "imaginary_part",
-        "reason_code": "ComplexNumber",
+        "mil_name": "condition",
+        "reason_code": "ControlFlow",
         "ane_legal": false
       }
     },
@@ -705,7 +736,7 @@
       }
     },
     {
-      "id": "cpu_only_fast_fourier_transform",
+      "id": "cpu_only_constexpr_blockwise_shift_scale",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -725,13 +756,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "fast_fourier_transform",
-        "reason_code": "Fft",
+        "mil_name": "constexpr_blockwise_shift_scale",
+        "reason_code": "Miscellaneous",
         "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_hermitean_to_real_fft",
+      "id": "cpu_only_constexpr_sparse_blockwise_shift_scale",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -751,242 +782,8 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "hermitean_to_real_fft",
-        "reason_code": "Fft",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_real_to_hermitean_fft",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "real_to_hermitean_fft",
-        "reason_code": "Fft",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_matrix_decomposition_lu",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "matrix_decomposition_lu",
-        "reason_code": "MatrixAlgebra",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_matrix_inverse",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "matrix_inverse",
-        "reason_code": "MatrixAlgebra",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_matrix_solver_lu",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "matrix_solver_lu",
-        "reason_code": "MatrixAlgebra",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_gru",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "gru",
-        "reason_code": "Rnn",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_lstm",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "lstm",
-        "reason_code": "Rnn",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_rnn_activation",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "rnn_activation",
-        "reason_code": "Rnn",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_singlegate_rnn",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "singlegate_rnn",
-        "reason_code": "Rnn",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_bias_add_grad",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "bias_add_grad",
-        "reason_code": "Gradient",
+        "mil_name": "constexpr_sparse_blockwise_shift_scale",
+        "reason_code": "Miscellaneous",
         "ane_legal": false
       }
     },
@@ -1017,7 +814,7 @@
       }
     },
     {
-      "id": "cpu_only_pooling_max_gradient",
+      "id": "cpu_only_cosh",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -1037,13 +834,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "pooling_max_gradient",
-        "reason_code": "Gradient",
+        "mil_name": "cosh",
+        "reason_code": "Hyperbolic",
         "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_pooling_avg_gradient",
+      "id": "cpu_only_create_complex",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -1063,13 +860,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "pooling_avg_gradient",
-        "reason_code": "Gradient",
+        "mil_name": "create_complex",
+        "reason_code": "ComplexNumber",
         "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_relu_grad",
+      "id": "cpu_only_create_texture_tensor",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -1089,13 +886,40 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "relu_grad",
-        "reason_code": "Gradient",
+        "mil_name": "create_texture_tensor",
+        "reason_code": "SparseBuffer",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_crop_resize",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "crop_resize",
+        "reason_code": "NoConverter",
         "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_sigmoid_grad",
+      "id": "cpu_only_cumsum",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -1115,61 +939,10 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "sigmoid_grad",
-        "reason_code": "Gradient",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_tanh_grad",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "tanh_grad",
-        "reason_code": "Gradient",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_linear_grad",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "linear_grad",
-        "reason_code": "Gradient",
-        "ane_legal": false
+        "mil_name": "cumsum",
+        "reason_code": "Cumulative",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
@@ -1277,7 +1050,7 @@
       }
     },
     {
-      "id": "cpu_only_random_normal",
+      "id": "cpu_only_depth_to_space",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -1297,13 +1070,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "random_normal",
-        "reason_code": "Random",
+        "mil_name": "depth_to_space",
+        "reason_code": "NoConverter",
         "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_random_truncated_normal",
+      "id": "cpu_only_dequantize",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -1323,13 +1096,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "random_truncated_normal",
-        "reason_code": "Random",
+        "mil_name": "dequantize",
+        "reason_code": "NoConverter",
         "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_random_uniform",
+      "id": "cpu_only_dequantize_lut",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -1349,13 +1122,14 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "random_uniform",
-        "reason_code": "Random",
-        "ane_legal": false
+        "mil_name": "dequantize_lut",
+        "reason_code": "SparseBuffer",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
-      "id": "cpu_only_random_categorical",
+      "id": "cpu_only_device_hint",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -1375,581 +1149,10 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "random_categorical",
-        "reason_code": "Random",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_random_bernoulli",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "random_bernoulli",
-        "reason_code": "Random",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_if",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "if",
-        "reason_code": "ControlFlow",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_for",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "for",
-        "reason_code": "ControlFlow",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_while_loop",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "while_loop",
-        "reason_code": "ControlFlow",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_call",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "call",
-        "reason_code": "ControlFlow",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_condition",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "condition",
-        "reason_code": "ControlFlow",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_yield",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "yield",
-        "reason_code": "ControlFlow",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_scatter",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "scatter",
-        "reason_code": "Scatter",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_scatter_along_axis",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "scatter_along_axis",
-        "reason_code": "Scatter",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_scatter_nd",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "scatter_nd",
-        "reason_code": "Scatter",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_sparse_tensor_storage",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "sparse_tensor_storage",
-        "reason_code": "Sparse",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_materialize_sparse_tensor",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "materialize_sparse_tensor",
-        "reason_code": "Sparse",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_buffer_tensor",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "buffer_tensor",
-        "reason_code": "Sparse",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_shape",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "shape",
-        "reason_code": "ShapeQuery",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_rank",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "rank",
-        "reason_code": "ShapeQuery",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_size",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "size",
-        "reason_code": "ShapeQuery",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_dimension_size",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "dimension_size",
-        "reason_code": "ShapeQuery",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_logical_and",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "logical_and",
-        "reason_code": "Logical",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_logical_or",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "logical_or",
-        "reason_code": "Logical",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_logical_xor",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "logical_xor",
-        "reason_code": "Logical",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_logical_not",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "logical_not",
-        "reason_code": "Logical",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_non_maximum_suppression",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "non_maximum_suppression",
-        "reason_code": "Miscellaneous",
-        "ane_legal": false
+        "mil_name": "device_hint",
+        "reason_code": "SparseBuffer",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
@@ -1974,32 +1177,6 @@
       "conflict_priority": 0,
       "payload": {
         "mil_name": "dict",
-        "reason_code": "ControlFlow",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_has_key",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "has_key",
         "reason_code": "ControlFlow",
         "ane_legal": false
       }
@@ -2057,7 +1234,7 @@
       }
     },
     {
-      "id": "cpu_only_list_read",
+      "id": "cpu_only_dimension_size",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -2077,13 +1254,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "list_read",
-        "reason_code": "ControlFlow",
+        "mil_name": "dimension_size",
+        "reason_code": "ShapeQuery",
         "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_list_write",
+      "id": "cpu_only_dynamic_shape_cast",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -2103,560 +1280,14 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "list_write",
-        "reason_code": "ControlFlow",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_list_gather",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "list_gather",
-        "reason_code": "ControlFlow",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_list_scatter",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "list_scatter",
-        "reason_code": "ControlFlow",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_make_list",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "make_list",
-        "reason_code": "ControlFlow",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_list_length",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "list_length",
-        "reason_code": "ControlFlow",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_read_cell",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "read_cell",
-        "reason_code": "ControlFlow",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_write_cell",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "write_cell",
-        "reason_code": "ControlFlow",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_constexpr_blockwise_shift_scale",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "constexpr_blockwise_shift_scale",
-        "reason_code": "Miscellaneous",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_constexpr_sparse_blockwise_shift_scale",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "constexpr_sparse_blockwise_shift_scale",
-        "reason_code": "Miscellaneous",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_band_part",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "band_part",
-        "reason_code": "Miscellaneous",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_one_hot",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "one_hot",
-        "reason_code": "Miscellaneous",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_softplus",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "softplus",
-        "reason_code": "Miscellaneous",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_softsign",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "softsign",
-        "reason_code": "Miscellaneous",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_modulo",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "modulo",
-        "reason_code": "Miscellaneous",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_non_zero",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "non_zero",
-        "reason_code": "Miscellaneous",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_clamp",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "clamp",
-        "reason_code": "Miscellaneous",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_prelu",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "prelu",
-        "reason_code": "Miscellaneous",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_topk_grad",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "topk_grad",
-        "reason_code": "Gradient",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_gather_grad",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "gather_grad",
-        "reason_code": "Gradient",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_scatter_along_axis_grad",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "scatter_along_axis_grad",
-        "reason_code": "Gradient",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_reverse_sequence",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "reverse_sequence",
-        "reason_code": "Miscellaneous",
-        "ane_legal": false
-      }
-    },
-    {
-      "id": "cpu_only_rnn",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "rnn",
-        "reason_code": "Rnn",
+        "mil_name": "dynamic_shape_cast",
+        "reason_code": "Transform",
         "ane_legal": false,
         "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
-      "id": "cpu_only_cumsum",
+      "id": "cpu_only_einsum",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -2676,14 +1307,14 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "cumsum",
-        "reason_code": "Cumulative",
+        "mil_name": "einsum",
+        "reason_code": "NoANECConverter",
         "ane_legal": false,
         "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
-      "id": "cpu_only_cond",
+      "id": "cpu_only_extract",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -2703,14 +1334,14 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "cond",
-        "reason_code": "ControlFlow",
+        "mil_name": "extract",
+        "reason_code": "SparseBuffer",
         "ane_legal": false,
         "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
-      "id": "cpu_only_range1d",
+      "id": "cpu_only_fast_fourier_transform",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -2730,10 +1361,9 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "range1d",
-        "reason_code": "Miscellaneous",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
+        "mil_name": "fast_fourier_transform",
+        "reason_code": "Fft",
+        "ane_legal": false
       }
     },
     {
@@ -2791,7 +1421,7 @@
       }
     },
     {
-      "id": "cpu_only_select",
+      "id": "cpu_only_for",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -2811,14 +1441,40 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "select",
-        "reason_code": "NoANECConverter",
+        "mil_name": "for",
+        "reason_code": "ControlFlow",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_from_elements",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "from_elements",
+        "reason_code": "SparseBuffer",
         "ane_legal": false,
         "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
-      "id": "cpu_only_where",
+      "id": "cpu_only_func",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -2838,8 +1494,8 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "where",
-        "reason_code": "NoANECConverter",
+        "mil_name": "func",
+        "reason_code": "SparseBuffer",
         "ane_legal": false,
         "notes": "Added from cpu_only_ops.rs ground truth"
       }
@@ -2899,6 +1555,32 @@
       }
     },
     {
+      "id": "cpu_only_gather_grad",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "gather_grad",
+        "reason_code": "Gradient",
+        "ane_legal": false
+      }
+    },
+    {
       "id": "cpu_only_gather_nd",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
@@ -2926,7 +1608,7 @@
       }
     },
     {
-      "id": "cpu_only_relu6",
+      "id": "cpu_only_get_coordinates",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -2946,14 +1628,14 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "relu6",
-        "reason_code": "NoANECConverter",
+        "mil_name": "get_coordinates",
+        "reason_code": "SparseBuffer",
         "ane_legal": false,
         "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
-      "id": "cpu_only_sigmoid_hard",
+      "id": "cpu_only_gru",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -2973,14 +1655,118 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "sigmoid_hard",
-        "reason_code": "NoANECConverter",
+        "mil_name": "gru",
+        "reason_code": "Rnn",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_has_key",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "has_key",
+        "reason_code": "ControlFlow",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_hermitean_to_real_fft",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "hermitean_to_real_fft",
+        "reason_code": "Fft",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_if",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "if",
+        "reason_code": "ControlFlow",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_im_to_col",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "im_to_col",
+        "reason_code": "Transform",
         "ane_legal": false,
         "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
-      "id": "cpu_only_thresholded_relu",
+      "id": "cpu_only_imaginary_part",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -3000,14 +1786,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "thresholded_relu",
-        "reason_code": "NoANECConverter",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
+        "mil_name": "imaginary_part",
+        "reason_code": "ComplexNumber",
+        "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_clamped_relu",
+      "id": "cpu_only_instance_norm",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -3027,118 +1812,9 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "clamped_relu",
-        "reason_code": "NoANECConverter",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
-      }
-    },
-    {
-      "id": "cpu_only_linear_activation",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "linear_activation",
-        "reason_code": "NoANECConverter",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
-      }
-    },
-    {
-      "id": "cpu_only_scaled_tanh",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "scaled_tanh",
-        "reason_code": "NoANECConverter",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
-      }
-    },
-    {
-      "id": "cpu_only_softplus_parametric",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "softplus_parametric",
-        "reason_code": "NoANECConverter",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
-      }
-    },
-    {
-      "id": "cpu_only_threshold",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "threshold",
-        "reason_code": "NoANECConverter",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
+        "mil_name": "instance_norm",
+        "reason_code": "NoConverter",
+        "ane_legal": false
       }
     },
     {
@@ -3164,168 +1840,6 @@
       "payload": {
         "mil_name": "inverse",
         "reason_code": "NoANECConverter",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
-      }
-    },
-    {
-      "id": "cpu_only_einsum",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "einsum",
-        "reason_code": "NoANECConverter",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
-      }
-    },
-    {
-      "id": "cpu_only_slice_update",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "slice_update",
-        "reason_code": "NoANECConverter",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
-      }
-    },
-    {
-      "id": "cpu_only_sliding_windows",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "sliding_windows",
-        "reason_code": "NoANECConverter",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
-      }
-    },
-    {
-      "id": "cpu_only_reverse",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "reverse",
-        "reason_code": "NoANECConverter",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
-      }
-    },
-    {
-      "id": "cpu_only_argsort",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "argsort",
-        "reason_code": "NoANECConverter",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
-      }
-    },
-    {
-      "id": "cpu_only_return",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "return",
-        "reason_code": "ControlFlow",
         "ane_legal": false,
         "notes": "Added from cpu_only_ops.rs ground truth"
       }
@@ -3412,7 +1926,7 @@
       }
     },
     {
-      "id": "cpu_only_neg",
+      "id": "cpu_only_l2_norm",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -3432,14 +1946,92 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "neg",
+        "mil_name": "l2_norm",
+        "reason_code": "NoConverter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_l2_pool",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "l2_pool",
+        "reason_code": "NoConverter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_left_shift",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "left_shift",
+        "reason_code": "Logical",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_linear_activation",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "linear_activation",
         "reason_code": "NoANECConverter",
         "ane_legal": false,
         "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
-      "id": "cpu_only_round",
+      "id": "cpu_only_linear_grad",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -3459,14 +2051,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "round",
-        "reason_code": "NoANECConverter",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
+        "mil_name": "linear_grad",
+        "reason_code": "Gradient",
+        "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_strided_slice_update",
+      "id": "cpu_only_list_gather",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -3486,14 +2077,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "strided_slice_update",
-        "reason_code": "Transform",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
+        "mil_name": "list_gather",
+        "reason_code": "ControlFlow",
+        "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_dynamic_shape_cast",
+      "id": "cpu_only_list_length",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -3513,14 +2103,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "dynamic_shape_cast",
-        "reason_code": "Transform",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
+        "mil_name": "list_length",
+        "reason_code": "ControlFlow",
+        "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_reinterpret_cast",
+      "id": "cpu_only_list_read",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -3540,14 +2129,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "reinterpret_cast",
-        "reason_code": "Transform",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
+        "mil_name": "list_read",
+        "reason_code": "ControlFlow",
+        "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_col_to_im",
+      "id": "cpu_only_list_scatter",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -3567,14 +2155,13 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "col_to_im",
-        "reason_code": "Transform",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
+        "mil_name": "list_scatter",
+        "reason_code": "ControlFlow",
+        "ane_legal": false
       }
     },
     {
-      "id": "cpu_only_im_to_col",
+      "id": "cpu_only_list_write",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -3594,145 +2181,9 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "im_to_col",
-        "reason_code": "Transform",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
-      }
-    },
-    {
-      "id": "cpu_only_dequantize_lut",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "dequantize_lut",
-        "reason_code": "SparseBuffer",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
-      }
-    },
-    {
-      "id": "cpu_only_extract",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "extract",
-        "reason_code": "SparseBuffer",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
-      }
-    },
-    {
-      "id": "cpu_only_from_elements",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "from_elements",
-        "reason_code": "SparseBuffer",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
-      }
-    },
-    {
-      "id": "cpu_only_func",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "func",
-        "reason_code": "SparseBuffer",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
-      }
-    },
-    {
-      "id": "cpu_only_get_coordinates",
-      "version": 1,
-      "timestamp": "2025-01-01T00:00:00Z",
-      "knowledge_type": "CpuOnlyOps",
-      "confidence": 0.9,
-      "evidence_source": "SourceCode",
-      "evidence_count": 1,
-      "scope": {
-        "device_classes": [
-          "unknown"
-        ],
-        "os_versions": [
-          "unknown"
-        ],
-        "opset_versions": [
-          "unknown"
-        ]
-      },
-      "conflict_priority": 0,
-      "payload": {
-        "mil_name": "get_coordinates",
-        "reason_code": "SparseBuffer",
-        "ane_legal": false,
-        "notes": "Added from cpu_only_ops.rs ground truth"
+        "mil_name": "list_write",
+        "reason_code": "ControlFlow",
+        "ane_legal": false
       }
     },
     {
@@ -3763,6 +2214,110 @@
       }
     },
     {
+      "id": "cpu_only_logical_and",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "logical_and",
+        "reason_code": "Logical",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_logical_not",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "logical_not",
+        "reason_code": "Logical",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_logical_or",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "logical_or",
+        "reason_code": "Logical",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_logical_xor",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "logical_xor",
+        "reason_code": "Logical",
+        "ane_legal": false
+      }
+    },
+    {
       "id": "cpu_only_lp_norm",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
@@ -3787,6 +2342,607 @@
         "reason_code": "SparseBuffer",
         "ane_legal": false,
         "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_lstm",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "lstm",
+        "reason_code": "Rnn",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_make_list",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "make_list",
+        "reason_code": "ControlFlow",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_materialize_sparse_tensor",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "materialize_sparse_tensor",
+        "reason_code": "Sparse",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_matrix_decomposition_lu",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "matrix_decomposition_lu",
+        "reason_code": "MatrixAlgebra",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_matrix_inverse",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "matrix_inverse",
+        "reason_code": "MatrixAlgebra",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_matrix_solver_lu",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "matrix_solver_lu",
+        "reason_code": "MatrixAlgebra",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_max_pool",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "max_pool",
+        "reason_code": "NoConverter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_modulo",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "modulo",
+        "reason_code": "Miscellaneous",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_nand",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "nand",
+        "reason_code": "Logical",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_neg",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "neg",
+        "reason_code": "NoANECConverter",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_nf",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "nf",
+        "reason_code": "SparseBuffer",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_non_maximum_suppression",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "non_maximum_suppression",
+        "reason_code": "Miscellaneous",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_non_zero",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "non_zero",
+        "reason_code": "Miscellaneous",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_nor",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "nor",
+        "reason_code": "Logical",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_one_hot",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "one_hot",
+        "reason_code": "Miscellaneous",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_or",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "or",
+        "reason_code": "Logical",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_pixel_shuffle",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "pixel_shuffle",
+        "reason_code": "NoConverter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_pixel_unshuffle",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "pixel_unshuffle",
+        "reason_code": "NoConverter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_placeholder",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "placeholder",
+        "reason_code": "SparseBuffer",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_pooling_avg_gradient",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "pooling_avg_gradient",
+        "reason_code": "Gradient",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_pooling_max_gradient",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "pooling_max_gradient",
+        "reason_code": "Gradient",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_popcount",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "popcount",
+        "reason_code": "Logical",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_prelu",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "prelu",
+        "reason_code": "Miscellaneous",
+        "ane_legal": false
       }
     },
     {
@@ -3871,7 +3027,7 @@
       }
     },
     {
-      "id": "cpu_only_variable_from_tensor",
+      "id": "cpu_only_quantize",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -3891,14 +3047,170 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "variable_from_tensor",
-        "reason_code": "SparseBuffer",
+        "mil_name": "quantize",
+        "reason_code": "NoConverter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_random_bernoulli",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "random_bernoulli",
+        "reason_code": "Random",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_random_categorical",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "random_categorical",
+        "reason_code": "Random",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_random_normal",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "random_normal",
+        "reason_code": "Random",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_random_truncated_normal",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "random_truncated_normal",
+        "reason_code": "Random",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_random_uniform",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "random_uniform",
+        "reason_code": "Random",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_range1d",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "range1d",
+        "reason_code": "Miscellaneous",
         "ane_legal": false,
         "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
-      "id": "cpu_only_assign_variable",
+      "id": "cpu_only_rank",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -3918,14 +3230,118 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "assign_variable",
-        "reason_code": "SparseBuffer",
+        "mil_name": "rank",
+        "reason_code": "ShapeQuery",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_read_cell",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "read_cell",
+        "reason_code": "ControlFlow",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_real_part",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "real_part",
+        "reason_code": "ComplexNumber",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_real_to_hermitean_fft",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "real_to_hermitean_fft",
+        "reason_code": "Fft",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_reinterpret_cast",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "reinterpret_cast",
+        "reason_code": "Transform",
         "ane_legal": false,
         "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
-      "id": "cpu_only_placeholder",
+      "id": "cpu_only_relu6",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -3945,14 +3361,14 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "placeholder",
-        "reason_code": "SparseBuffer",
+        "mil_name": "relu6",
+        "reason_code": "NoANECConverter",
         "ane_legal": false,
         "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
-      "id": "cpu_only_device_hint",
+      "id": "cpu_only_relu_grad",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -3972,14 +3388,144 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "device_hint",
-        "reason_code": "SparseBuffer",
+        "mil_name": "relu_grad",
+        "reason_code": "Gradient",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_resample",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "resample",
+        "reason_code": "NoConverter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_resize",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "resize",
+        "reason_code": "NoConverter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_resize_bilinear",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "resize_bilinear",
+        "reason_code": "NoConverter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_resize_nearest_neighbor",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "resize_nearest_neighbor",
+        "reason_code": "NoConverter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_return",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "return",
+        "reason_code": "ControlFlow",
         "ane_legal": false,
         "notes": "Added from cpu_only_ops.rs ground truth"
       }
     },
     {
-      "id": "cpu_only_nf",
+      "id": "cpu_only_reverse",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -3999,10 +3545,827 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "nf",
-        "reason_code": "SparseBuffer",
+        "mil_name": "reverse",
+        "reason_code": "NoANECConverter",
         "ane_legal": false,
         "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_reverse_sequence",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "reverse_sequence",
+        "reason_code": "Miscellaneous",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_right_shift",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "right_shift",
+        "reason_code": "Logical",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_rnn",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "rnn",
+        "reason_code": "Rnn",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_rnn_activation",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "rnn_activation",
+        "reason_code": "Rnn",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_round",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "round",
+        "reason_code": "NoANECConverter",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_scaled_tanh",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "scaled_tanh",
+        "reason_code": "NoANECConverter",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_scatter",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "scatter",
+        "reason_code": "Scatter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_scatter_along_axis",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "scatter_along_axis",
+        "reason_code": "Scatter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_scatter_along_axis_grad",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "scatter_along_axis_grad",
+        "reason_code": "Gradient",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_scatter_nd",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "scatter_nd",
+        "reason_code": "Scatter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_select",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "select",
+        "reason_code": "NoANECConverter",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_shape",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "shape",
+        "reason_code": "ShapeQuery",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_sigmoid_grad",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "sigmoid_grad",
+        "reason_code": "Gradient",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_sigmoid_hard",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "sigmoid_hard",
+        "reason_code": "NoANECConverter",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_singlegate_rnn",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "singlegate_rnn",
+        "reason_code": "Rnn",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_sinh",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "sinh",
+        "reason_code": "Hyperbolic",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_size",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "size",
+        "reason_code": "ShapeQuery",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_slice_update",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "slice_update",
+        "reason_code": "NoANECConverter",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_sliding_windows",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "sliding_windows",
+        "reason_code": "NoANECConverter",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_softplus",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "softplus",
+        "reason_code": "Miscellaneous",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_softplus_parametric",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "softplus_parametric",
+        "reason_code": "NoANECConverter",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_softsign",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "softsign",
+        "reason_code": "Miscellaneous",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_space_to_batch",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "space_to_batch",
+        "reason_code": "NoConverter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_space_to_depth",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "space_to_depth",
+        "reason_code": "NoConverter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_sparse_tensor_storage",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "sparse_tensor_storage",
+        "reason_code": "Sparse",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_strided_slice_update",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "strided_slice_update",
+        "reason_code": "Transform",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_tan",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "tan",
+        "reason_code": "TrigInverse",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_tanh_grad",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "tanh_grad",
+        "reason_code": "Gradient",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_threshold",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "threshold",
+        "reason_code": "NoANECConverter",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_thresholded_relu",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "thresholded_relu",
+        "reason_code": "NoANECConverter",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_topk_grad",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "topk_grad",
+        "reason_code": "Gradient",
+        "ane_legal": false
       }
     },
     {
@@ -4033,7 +4396,7 @@
       }
     },
     {
-      "id": "cpu_only_create_texture_tensor",
+      "id": "cpu_only_upsample_bilinear",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",
       "knowledge_type": "CpuOnlyOps",
@@ -4053,10 +4416,219 @@
       },
       "conflict_priority": 0,
       "payload": {
-        "mil_name": "create_texture_tensor",
+        "mil_name": "upsample_bilinear",
+        "reason_code": "NoConverter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_upsample_nearest_neighbor",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "upsample_nearest_neighbor",
+        "reason_code": "NoConverter",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_variable_from_tensor",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "variable_from_tensor",
         "reason_code": "SparseBuffer",
         "ane_legal": false,
         "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_where",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "where",
+        "reason_code": "NoANECConverter",
+        "ane_legal": false,
+        "notes": "Added from cpu_only_ops.rs ground truth"
+      }
+    },
+    {
+      "id": "cpu_only_while_loop",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "while_loop",
+        "reason_code": "ControlFlow",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_write_cell",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "write_cell",
+        "reason_code": "ControlFlow",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_xnor",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "xnor",
+        "reason_code": "Logical",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_xor",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "xor",
+        "reason_code": "Logical",
+        "ane_legal": false
+      }
+    },
+    {
+      "id": "cpu_only_yield",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "yield",
+        "reason_code": "ControlFlow",
+        "ane_legal": false
       }
     }
   ]

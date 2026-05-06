@@ -1164,4 +1164,147 @@ mod tests {
         // Non-CPU-only op returns None
         assert_eq!(get_cpu_only_reason("conv"), None);
     }
+
+    /// T-P2-04: Validate that every op in CPU_ONLY_OPS appears in the
+    /// knowledge store seed JSON (`knowledge/cpu_only_ops_seed.json`).
+    ///
+    /// This test ensures the seed JSON stays synchronized with the source
+    /// code ground truth. If an op is added to CPU_ONLY_OPS but not to
+    /// the seed, this test will fail.
+    #[test]
+    fn test_seed_json_covers_all_cpu_only_ops() {
+        use std::fs;
+        use std::path::Path;
+
+        // Resolve knowledge/ directory relative to the crate.
+        let candidates = [
+            "../../knowledge",           // crate-relative (crates/passes/)
+            "../../../knowledge",        // deeper nesting fallback
+            "knowledge",                 // workspace-root run
+        ];
+        let knowledge_dir = candidates
+            .iter()
+            .find(|d| Path::new(d).join("cpu_only_ops_seed.json").exists());
+
+        let Some(knowledge_dir) = knowledge_dir else {
+            eprintln!(
+                "Skipping test_seed_json_covers_all_cpu_only_ops: \
+                 knowledge/cpu_only_ops_seed.json not found"
+            );
+            return;
+        };
+
+        let seed_path = Path::new(knowledge_dir).join("cpu_only_ops_seed.json");
+        let json_str = fs::read_to_string(&seed_path)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {}", seed_path.display(), e));
+        let parsed: serde_json::Value = serde_json::from_str(&json_str)
+            .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", seed_path.display(), e));
+
+        let entries = parsed
+            .get("entries")
+            .and_then(|e| e.as_array())
+            .expect("cpu_only_ops_seed.json: missing 'entries' array");
+
+        // Collect all mil_names from the seed
+        let seed_names: HashSet<String> = entries
+            .iter()
+            .filter_map(|e| {
+                e.get("payload")
+                    .and_then(|p| p.get("mil_name"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect();
+
+        // Verify every op in CPU_ONLY_OPS appears in the seed
+        let mut missing = Vec::new();
+        for &op_name in CPU_ONLY_OPS.iter() {
+            if !seed_names.contains(op_name) {
+                missing.push(op_name);
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "T-P2-04: The following ops are in CPU_ONLY_OPS but missing from \
+             cpu_only_ops_seed.json — add entries for them: {:?}",
+            missing
+        );
+
+        // Also verify the seed doesn't contain ops NOT in CPU_ONLY_OPS
+        let mut extra = Vec::new();
+        for name in &seed_names {
+            if !CPU_ONLY_OPS.contains(name.as_str()) {
+                extra.push(name.clone());
+            }
+        }
+        assert!(
+            extra.is_empty(),
+            "T-P2-04: The following ops are in cpu_only_ops_seed.json but NOT in \
+             CPU_ONLY_OPS — remove them from the seed or add to CPU_ONLY_OPS: {:?}",
+            extra
+        );
+    }
+
+    /// T-P2-04: Validate that entries in ane_op_family_matrix.json that
+    /// are empirically CPU-only have practical_status: "cpu_only".
+    #[test]
+    fn test_matrix_cpu_only_entries_have_practical_status() {
+        use std::fs;
+        use std::path::Path;
+
+        let candidates = [
+            "../../knowledge",
+            "../../../knowledge",
+            "knowledge",
+        ];
+        let knowledge_dir = candidates
+            .iter()
+            .find(|d| Path::new(d).join("ane_op_family_matrix.json").exists());
+
+        let Some(knowledge_dir) = knowledge_dir else {
+            eprintln!(
+                "Skipping test_matrix_cpu_only_entries_have_practical_status: \
+                 knowledge/ane_op_family_matrix.json not found"
+            );
+            return;
+        };
+
+        let matrix_path = Path::new(knowledge_dir).join("ane_op_family_matrix.json");
+        let json_str = fs::read_to_string(&matrix_path)
+            .unwrap_or_else(|e| panic!("Failed to read {}: {}", matrix_path.display(), e));
+        let parsed: serde_json::Value = serde_json::from_str(&json_str)
+            .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", matrix_path.display(), e));
+
+        let entries = parsed
+            .get("entries")
+            .and_then(|e| e.as_array())
+            .expect("ane_op_family_matrix.json: missing 'entries' array");
+
+        // Find matrix entries where the op is CPU-only but lacks practical_status
+        let mut missing = Vec::new();
+        for entry in entries {
+            let mil_name = entry
+                .get("payload")
+                .and_then(|p| p.get("mil_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if CPU_ONLY_OPS.contains(mil_name) {
+                let has_practical = entry
+                    .get("payload")
+                    .and_then(|p| p.get("practical_status"))
+                    .is_some();
+                if !has_practical {
+                    missing.push(mil_name.to_string());
+                }
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "T-P2-04: The following CPU-only ops in ane_op_family_matrix.json \
+             are missing 'practical_status: \"cpu_only\"': {:?}",
+            missing
+        );
+    }
 }
