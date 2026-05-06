@@ -1651,9 +1651,12 @@ pub fn mir_op_to_compat(
         // ─── Full-coverage wildcard for all remaining MirOp variants ───
         // These map to MirOpCompat::Unsupported which carries the op kind
         // and serialized parameters for flexible proto emission.
+        // T-P5-10: Also carries input names from proto_input_refs() so that
+        // weight materialization doesn't silently drop referenced weights.
         other => {
             let (op_kind, name, params) = mir_op_to_unsupported(other);
-            Ok(MirOpCompat::Unsupported { op_kind, name, params_json: params })
+            let inputs = other.proto_input_refs();
+            Ok(MirOpCompat::Unsupported { op_kind, name, params_json: params, inputs })
         }
     }
 }

@@ -2,7 +2,7 @@
 
 > Consolidated remediation task board for open and in-progress issues.
 > Completed tasks have been removed — see git history for the full audit trail.
-> Recently completed: T-P2-01, T-P2-05, T-P2-12, T-P3-03, T-P3-04, T-P3-07, T-P3-08, T-P3-09, T-P3-10, T-P3-11, T-P4-01, T-P4-02, T-P4-03, T-P4-04, T-P4-05, T-P5-05.
+> Recently completed: T-P2-01, T-P2-05, T-P2-12, T-P3-03, T-P3-04, T-P3-07, T-P3-08, T-P3-09, T-P3-10, T-P3-11, T-P4-01, T-P4-02, T-P4-03, T-P4-04, T-P4-05, T-P5-05, T-P5-06, T-P5-10, T-P5-11.
 > Format: Agentic AI task specification (structured, machine-parseable, human-readable).
 > Each task is independently executable by an AI coding agent with access to this repository.
 
@@ -132,22 +132,6 @@
 
 ---
 
-### T-P5-06: Move ANE-specific validation out of mil_lower.rs
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P5-06 |
-| `title` | Extract validate_sdpa_constraints() from MilLowerPass |
-| `phase` | P5 |
-| `severity` | MEDIUM |
-| `depends_on` | [T-P2-01] |
-| `files` | `crates/passes/src/mil_lower.rs`, `crates/passes/src/placement_validate.rs` |
-| `violation_refs` | [M-015] |
-| `acceptance_criteria` | 1) MilLowerPass::run() does not call validate_sdpa_constraints(); 2) Constraints checked in placement; 3) MilLowerPass is pure AIR→MIR mapping |
-| `agent_hints` | Move `validate_sdpa_constraints()` to placement_validate.rs. Remove the call from mil_lower.rs. Add a call in the SDPA placement validation block. |
-
----
-
 ### T-P5-07: Move engine assignment out of MirOp::base_engine()
 
 | Field | Value |
@@ -193,38 +177,6 @@
 | `violation_refs` | [M-016, M-018] |
 | `acceptance_criteria` | 1) compat_input_shape() does not use name heuristics; 2) mil_lower dtype inference does not use name heuristics; 3) Shape/dtype carried as explicit fields from SIR→AIR→MIR; 4) Returns Err when unavailable |
 | `agent_hints` | Replace name-based fallbacks with Err returns. Add explicit shape/dtype fields to MirOp variants. The goal is to carry information in the type system, not in naming conventions. |
-
----
-
-### T-P5-10: Fix MirOpCompat::Unsupported weight materialization gap
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P5-10 |
-| `title` | Make MirOpCompat::Unsupported visible to weight materialization or reject it |
-| `phase` | P5 |
-| `severity` | MEDIUM |
-| `depends_on` | [] |
-| `files` | `crates/coreml-proto/src/lib.rs` |
-| `violation_refs` | [M-009] |
-| `acceptance_criteria` | 1) Unsupported ops either return correct input_names() or are rejected at emission with a clear error; 2) No silent weight materialization gap |
-| `agent_hints` | Either populate `input_names()` for Unsupported from the op's actual inputs, or reject Unsupported ops at the emission boundary with `bail!("Unsupported op: {}", name)`. |
-
----
-
-### T-P5-11: Fix SPEC-implementation drift for knowledge store
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P5-11 |
-| `title` | Update SPEC to match JSON knowledge store implementation or implement SQLite |
-| `phase` | P5 |
-| `severity` | MEDIUM |
-| `depends_on` | [] |
-| `files` | `SPEC.md`, `crates/knowledge/src/store.rs`, `crates/knowledge/src/confidence.rs` |
-| `violation_refs` | [M-012, M-029, M-030] |
-| `acceptance_criteria` | 1) SPEC accurately describes JSON backend (not SQLite); 2) Confidence decay is either implemented as described or SPEC updated to match; 3) Knowledge pruning is either implemented or SPEC section marked as planned; 4) No SPEC claims contradict implementation |
-| `agent_hints` | The simplest path: update SPEC.md to describe the actual JSON implementation. Mark SQLite, confidence decay, and pruning as "planned" sections. Remove or qualify claims that don't match current implementation. |
 
 ---
 

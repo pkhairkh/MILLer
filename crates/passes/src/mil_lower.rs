@@ -437,49 +437,9 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
     }
 }
 
-/// Validate SDPA (ScaledDotProductAttention) constraints during AIR→MIR lowering.
-///
-/// Sprint 59: ANE constraints require:
-/// - Operand count is 3 or 4 (Q, K, V, optional mask)
-/// - All operand ranks ≤ 4
-///
-/// Returns a descriptive error on violation.
-///
-/// T-P5-06: This function is no longer called from mil_lower. SDPA validation
-/// now happens in the placement validator instead. Kept for reference.
-#[allow(dead_code)]
-fn validate_sdpa_constraints(
-    query_shape: &[usize],
-    key_shape: &[usize],
-    value_shape: &[usize],
-    mask_shape: Option<&[usize]>,
-) -> Result<()> {
-    // Operand count: must be 3 or 4 (Q, K, V, optional mask)
-    // The mask presence is checked by the Option, so we just validate
-    // that we have the required 3 core operands.
-
-    // Check all operand ranks ≤ 4
-    let check_rank = |name: &str, shape: &[usize]| -> Result<()> {
-        if shape.len() > 4 {
-            anyhow::bail!(
-                "SDPA constraint violation: {} has rank {} which exceeds maximum of 4 \
-                 (ANE constraint: all SDPA operands must be rank ≤ 4)",
-                name,
-                shape.len()
-            );
-        }
-        Ok(())
-    };
-
-    check_rank("query", query_shape)?;
-    check_rank("key", key_shape)?;
-    check_rank("value", value_shape)?;
-    if let Some(mask_shape) = mask_shape {
-        check_rank("attention_mask", mask_shape)?;
-    }
-
-    Ok(())
-}
+// T-P5-06: validate_sdpa_constraints() moved to placement_validate.rs.
+// SDPA constraint validation is ANE-specific and belongs in the placement
+// validator, not in the pure AIR→MIR mapping pass.
 
 /// Helper: compute the output shape of a reduce op (ReduceMean / ReduceSum).
 ///
@@ -827,13 +787,8 @@ impl MilLowerPass {
                 }
                 // Attention ops (Sprint 36)
                 AirOp::ScaledDotProductAttention { query, key, value, attention_mask, scale } => {
-                    // T-P5-06: validate_sdpa_constraints moved out of mil_lower.
-                    // SDPA validation now happens in the placement validator instead.
-                    // let q_shape = node_shapes.get(query).cloned().unwrap_or_default();
-                    // let k_shape = node_shapes.get(key).cloned().unwrap_or_default();
-                    // let v_shape = node_shapes.get(value).cloned().unwrap_or_default();
-                    // let m_shape = attention_mask.as_ref().and_then(|m| node_shapes.get(m)).cloned();
-                    // validate_sdpa_constraints(&q_shape, &k_shape, &v_shape, m_shape.as_deref())?;
+                    // T-P5-06: SDPA constraint validation moved to placement_validate.rs.
+                    // MilLowerPass is now a pure AIR→MIR mapping pass.
 
                     let mir_q = air_to_mir
                         .get(query)
@@ -5088,92 +5043,9 @@ mod tests {
         assert_eq!(reshape_node.shape, vec![2, 16], "MirNode.shape for Reshape should be [2, 16]");
     }
 
-    #[test]
-    fn test_sdpa_validation_rank5_query_fails() {
-        // Rank-5 query should fail
-        let result = validate_sdpa_constraints(
-            &[1, 2, 8, 4, 64], // rank 5
-            &[1, 8, 4, 64],
-            &[1, 8, 4, 64],
-            None,
-        );
-        assert!(result.is_err(), "Rank-5 query should fail SDPA validation");
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("query") && err.contains("rank 5"),
-            "Error should mention query and rank 5, got: {err}"
-        );
-    }
-
-    #[test]
-    fn test_sdpa_validation_rank5_key_fails() {
-        // Rank-5 key should fail
-        let result = validate_sdpa_constraints(
-            &[1, 8, 4, 64],
-            &[1, 2, 8, 4, 64], // rank 5
-            &[1, 8, 4, 64],
-            None,
-        );
-        assert!(result.is_err(), "Rank-5 key should fail SDPA validation");
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("key") && err.contains("rank 5"),
-            "Error should mention key and rank 5, got: {err}"
-        );
-    }
-
-    #[test]
-    fn test_sdpa_validation_rank5_value_fails() {
-        // Rank-5 value should fail
-        let result = validate_sdpa_constraints(
-            &[1, 8, 4, 64],
-            &[1, 8, 4, 64],
-            &[1, 2, 8, 4, 64], // rank 5
-            None,
-        );
-        assert!(result.is_err(), "Rank-5 value should fail SDPA validation");
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("value") && err.contains("rank 5"),
-            "Error should mention value and rank 5, got: {err}"
-        );
-    }
-
-    #[test]
-    fn test_sdpa_validation_rank5_mask_fails() {
-        // Rank-5 mask should fail
-        let result = validate_sdpa_constraints(
-            &[1, 8, 4, 64],
-            &[1, 8, 4, 64],
-            &[1, 8, 4, 64],
-            Some(&[1, 2, 8, 4, 64]), // rank 5
-        );
-        assert!(result.is_err(), "Rank-5 mask should fail SDPA validation");
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("attention_mask") && err.contains("rank 5"),
-            "Error should mention attention_mask and rank 5, got: {err}"
-        );
-    }
-
-    #[test]
-    fn test_sdpa_validation_rank3_succeeds() {
-        // Rank-3 operands should pass
-        let result = validate_sdpa_constraints(&[8, 4, 64], &[8, 4, 64], &[8, 4, 64], None);
-        assert!(result.is_ok(), "Rank-3 SDPA should pass validation");
-    }
-
-    #[test]
-    fn test_sdpa_validation_with_mask_succeeds() {
-        // Valid SDPA with mask
-        let result = validate_sdpa_constraints(
-            &[1, 8, 4, 64],
-            &[1, 8, 4, 64],
-            &[1, 8, 4, 64],
-            Some(&[1, 8, 4, 64]),
-        );
-        assert!(result.is_ok(), "SDPA with valid mask should pass validation");
-    }
+    // T-P5-06: SDPA validation tests moved to placement_validate.rs.
+    // SDPA constraint validation is now handled by the placement validator,
+    // not the pure AIR→MIR mapping pass.
 
     // ─── T-28: resolve_reshape_zeros tests ───
 

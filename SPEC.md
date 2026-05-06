@@ -301,7 +301,7 @@ Two code paths still require per-variant match and cannot be fully generic:
 
 **Outputs**: Query results used by the legality engine, shard planner, precision engine, and risk annotator.
 
-**Implementation**: Rust (storage engine, query engine) with JSON seed files in the `knowledge/` directory as the persistence backend. Queries use linear-scan over loaded JSON structures. SQLite was originally planned but JSON provides a simpler, more portable, and offline-first approach that matches the project's iteration speed. A SQLite backend may be added in the future for large-scale knowledge stores.
+**Implementation**: Rust (storage engine, query engine) with JSON files as the persistence backend. The store uses a directory layout with individual JSON files per entry (`seeds/<id>.json`, `observations/<id>.json`) plus a `store_index.json` for metadata. In-memory secondary indexes (by knowledge type and evidence source) provide O(k) lookups instead of linear scans. SQLite was originally planned but the JSON file-per-entry approach provides a simpler, more portable, and offline-first persistence model that matches the project's iteration speed. A SQLite backend may be added in the future for large-scale knowledge stores.
 
 **Main risks**: Knowledge contamination from noisy observations; conflicting observations from different devices; knowledge becoming stale as OS versions change.
 
@@ -513,36 +513,48 @@ The knowledge store contains the following unit types:
 
 ## 6.2 Storage Model
 
-- **Backend**: JSON seed files in the `knowledge/` directory (linear-scan queries). Each file contains an array of knowledge units. SQLite was originally planned but JSON provides a simpler, offline-first approach suitable for the current iteration.
-- **Schema**: Each table has `id`, `version`, `timestamp`, `confidence`, `evidence_source`, `evidence_count`, `scope_device_classes`, `scope_os_versions`, `scope_opset_versions`, `conflict_priority`, plus type-specific fields.
-- **Indexing**: Composite indexes on `(type_specific_key, scope_device_classes, scope_os_versions)` for fast lookup during compilation.
-- **Immutability**: Knowledge units are append-only. Updates insert a new version with incremented version number. Old versions remain queryable for audit.
-- **Snapshots**: The full knowledge store can be exported as a snapshot file (JSON) for reproducibility.
+- **Backend**: JSON file-per-entry storage in a directory layout. Each knowledge entry is stored as an individual JSON file for atomicity and to avoid write contention. Directory structure:
+  ```
+  <store_path>/
+    store_index.json      — Store metadata and entry ID index
+    seeds/
+      <id>.json           — Seed entries (immutable, loaded from knowledge/*.json)
+    observations/
+      <id>.json           — Observation entries (learned from runs)
+  ```
+  SQLite was originally planned but the JSON file-per-entry approach provides a simpler, offline-first, and atomic persistence model suitable for the current iteration.
+- **Schema**: Each entry has `id`, `version`, `timestamp`, `confidence`, `evidence_source`, `evidence_count`, `scope_device_classes`, `scope_os_versions`, `scope_opset_versions`, `conflict_priority`, plus type-specific payload fields. Entries also carry store-level metadata: provenance (origin, inserted_at, updated_at, source_path), source type (Seed or Observation), conflict status, and revision number.
+- **Indexing**: In-memory secondary indexes using HashMaps: `type_index` (KnowledgeType → entry IDs) and `source_index` (evidence source string → entry IDs). These provide O(k) lookups by type or source instead of O(n) linear scans. Composite indexes on `(type_specific_key, scope_device_classes, scope_os_versions)` are planned for future implementation.
+- **Immutability**: Seed entries are immutable and cannot be overwritten by observations. Observation entries support revision-based updates: re-inserting an observation with the same ID increments the revision number and updates the entry in place. Old revisions are not retained (unlike the originally planned append-only versioning). Seeds always have revision 0.
+- **Snapshots**: The full knowledge store can be exported as a snapshot file (JSON) for reproducibility, preserving the seed/observation distinction. Snapshots can be imported into other stores, with validation and conflict detection.
 
 ## 6.3 Update Pipeline
 
 1. **Observation ingestion**: A structured observation arrives from run ingestion or manual entry. It contains: observation type, observed values, device metadata, IR context hash, task identifier.
-2. **Validation**: The observation is checked for structural validity and basic sanity (e.g., confidence cannot be 1.0 from a single observation, latency must be positive).
+2. **Validation**: The observation is checked for structural validity and basic sanity (e.g., confidence must be in [0.0, 1.0], evidence_count must be ≥ 1, ID must not be empty).
 3. **Matching**: The system checks whether an existing knowledge unit matches the observation's key fields and scope.
 4. **Update or Insert**:
    - If a matching unit exists: compute new confidence using Bayesian update (prior confidence + new evidence). If the observation conflicts, flag for review rather than silently overwriting.
-   - If no matching unit: insert a new unit with initial confidence = `base_confidence(evidence_source)` (e.g., 0.3 for a single synthetic run, 0.5 for a single real-model run, 0.7 for a manual entry from a trusted source).
+   - If no matching unit: insert a new unit with initial confidence = `initial_confidence(evidence_source, evidence_count)` (e.g., 0.2 for a single synthetic run, 0.35 for a single real-model run, 0.5 for a manual entry, 0.9 for a compute plan observation).
 5. **Conflict detection**: If a new observation contradicts an existing unit with confidence > 0.8, create a conflict entry requiring manual resolution. Do not auto-resolve high-confidence conflicts.
-6. **Pruning**: Knowledge units with evidence_count = 1 and age > 90 days and confidence < 0.3 are candidates for pruning. Pruning requires explicit approval.
+6. **Pruning** *(Planned)*: Knowledge units with evidence_count = 1 and age > 90 days and confidence < 0.3 are candidates for pruning. Pruning requires explicit approval. This is not yet implemented.
 
 ## 6.4 Confidence Model
 
 Confidence is a float in [0.0, 1.0] computed as follows:
 
 - **Base confidence by evidence source**:
-  - Single synthetic run: 0.2
-  - Multiple synthetic runs (n >= 5): 0.4
-  - Single real-model run: 0.35
-  - Multiple real-model runs (n >= 5): 0.6
-  - Compile failure (deterministic): 0.7
-  - Load failure (deterministic): 0.8
-  - Manual authoritative entry: 0.75
-  - Cross-validated (synthetic + real agreement): 0.85
+  - SyntheticRun: 0.2
+  - RealModelRun: 0.35
+  - CompileFailure (deterministic): 0.7
+  - LoadFailure (deterministic): 0.8
+  - RuntimeAnomaly: 0.4
+  - ManualEntry: 0.5
+  - CrossValidated: 0.6
+  - ComputePlan (deterministic per hardware+OS): 0.9
+  - SourceCode (static analysis): 0.3
+
+  Multiple evidence points add a small logarithmic bonus: `(evidence_count.ln() * 0.02)` when evidence_count > 1. There are no separate fixed tiers for "multiple runs" — the bonus scales smoothly.
 
 - **Confidence update rule**: Given existing confidence `c_old` and new evidence with source weight `w`:
   ```
@@ -550,11 +562,13 @@ Confidence is a float in [0.0, 1.0] computed as follows:
   ```
   Where `agreement_factor` = +1 if the new evidence agrees, -0.5 if it disagrees (asymmetric: disagreement reduces confidence less than agreement increases it, because a single negative observation should not override accumulated positive evidence without more weight).
 
-- **Confidence decay**: Confidence decays by 1% per 30 days for observations not re-confirmed. Re-confirmation resets the decay clock.
+- **Confidence decay** *(Planned)*: Confidence decays by 1% per 30 days for observations not re-confirmed. Re-confirmation resets the decay clock. This is not yet implemented — all entries retain their original confidence indefinitely.
 
 ## 6.5 Conflict Resolution
 
-When two knowledge units with overlapping scope contradict each other:
+**Implemented**: Conflict *detection* is implemented. When two knowledge units of the same type with overlapping scope make contradictory claims (e.g., one says `ane_legal=true` and the other says `ane_legal=false` for the same op pattern), both entries are marked with `ConflictedWith` status listing the IDs of conflicting entries. Conflict detection is symmetric — both the new entry and any existing entries it conflicts with are marked. Resolved conflicts (marked with a resolution note) are not re-introduced by subsequent conflict checks.
+
+**Planned** — The following priority-based resolution rules are not yet implemented:
 
 1. **Priority by evidence count**: Higher evidence_count wins if the confidence difference is < 0.1.
 2. **Priority by evidence source**: Real-model observations override synthetic observations at the same confidence level.

@@ -1043,11 +1043,21 @@ pub mod mir_compat {
         /// Catch-all for MIL ops that don't have specialized compat representations.
         /// The proto emission layer handles these by emitting the appropriate
         /// MIL builder call based on the op_kind string.
+        ///
+        /// T-P5-10: `inputs` carries the SSA input reference names so that
+        /// `input_names()` returns correct data for weight materialization.
+        /// Previously this was missing, causing a silent gap where weights
+        /// referenced only by Unsupported ops would be excluded from the
+        /// model's weight.bin.
         Unsupported {
             op_kind: String,
             name: String,
             /// Serialized JSON of the op's parameters for flexible emission
             params_json: String,
+            /// SSA input reference names (weight / tensor names this op reads).
+            /// Populated from `MirOp::proto_input_refs()` at construction time
+            /// so that `input_names()` never silently drops weight references.
+            inputs: Vec<String>,
         },
     }
 
@@ -1334,7 +1344,9 @@ pub mod mir_compat {
                 MirOpCompat::Quantize { x, .. } | MirOpCompat::Dequantize { x, .. } => {
                     vec![x.clone()]
                 }
-                MirOpCompat::Unsupported { .. } => vec![],
+                // T-P5-10: Unsupported ops now carry their input references
+                // in the `inputs` field, preventing silent weight materialization gaps.
+                MirOpCompat::Unsupported { inputs, .. } => inputs.clone(),
             }
         }
 
@@ -1691,6 +1703,15 @@ pub mod mir_compat {
                 }
                 MirOpCompat::Dequantize { name, x, scale, zero_point, axis, output_dtype } => {
                     MirOpCompat::Dequantize { name, x: f(x), scale, zero_point, axis, output_dtype }
+                }
+                // T-P5-10: Remap input references in Unsupported ops
+                MirOpCompat::Unsupported { op_kind, name, params_json, inputs } => {
+                    MirOpCompat::Unsupported {
+                        op_kind,
+                        name,
+                        params_json,
+                        inputs: inputs.into_iter().map(&f).collect(),
+                    }
                 }
                 // Variants with no remappable inputs: pass through unchanged.
                 other => other,
@@ -2075,8 +2096,9 @@ pub mod mir_compat {
                         output_dtype,
                     }
                 }
-                MirOpCompat::Unsupported { op_kind, name: _, params_json } => {
-                    MirOpCompat::Unsupported { op_kind, name: new_name, params_json }
+                // T-P5-10: preserve inputs when renaming output
+                MirOpCompat::Unsupported { op_kind, name: _, params_json, inputs } => {
+                    MirOpCompat::Unsupported { op_kind, name: new_name, params_json, inputs }
                 }
             }
         }
@@ -2131,6 +2153,7 @@ pub mod mir_compat {
 impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
     fn from(op: ane_ir::mir::MirOp) -> mir_compat::MirOpCompat {
         use ane_ir::mir::MirOp;
+        use ane_ir::toproto::ToProto;
         use mir_compat::MilDtypeCompat;
 
         /// Convert ane-ir MilDtype to compat MilDtypeCompat.
@@ -2161,17 +2184,22 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             id.as_str().to_string()
         }
 
-        /// Create an Unsupported variant. Serializes the op for the params_json field.
-        fn unsupported(op_kind: &str, name: &str, op_json: &str) -> mir_compat::MirOpCompat {
+        // Pre-serialize the op for use in Unsupported variants (avoids partial-move issues).
+        // T-P5-10: Also extract input refs *before* consuming the op in the match,
+        // so Unsupported variants carry correct input names for weight materialization.
+        let op_json = serde_json::to_string(&op).unwrap_or_default();
+        let op_inputs = op.proto_input_refs();
+
+        // T-P5-10: Closure that captures `op_inputs` from the enclosing scope
+        // so that `input_names()` returns correct data for weight materialization.
+        let unsupported = |op_kind: &str, name: &str, op_json: &str| -> mir_compat::MirOpCompat {
             mir_compat::MirOpCompat::Unsupported {
                 op_kind: op_kind.to_string(),
                 name: name.to_string(),
                 params_json: op_json.to_string(),
+                inputs: op_inputs.clone(),
             }
-        }
-
-        // Pre-serialize the op for use in Unsupported variants (avoids partial-move issues).
-        let op_json = serde_json::to_string(&op).unwrap_or_default();
+        };
         match op {
             // ─── Constants ───────────────────────────────────────────
             MirOp::MILConst { name, dtype, .. } => mir_compat::MirOpCompat::Const {
@@ -3631,9 +3659,7 @@ pub fn mir_op_to_proto_op(
                 }),
             )
         }
-        mir_compat::MirOpCompat::Unsupported { op_kind, name, params_json: _ } => {
-            // Emit as identity to preserve graph structure; downstream
-            // Python bridge will handle the actual op emission.
+        mir_compat::MirOpCompat::Unsupported { op_kind, name, params_json: _, inputs: _ } => {
             (
                 format!("{name}__unsupported_{op_kind}"),
                 proto::mil_operation::Operation::IdentityOp(proto::MilIdentityOp {
@@ -6452,7 +6478,7 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
-        mir_compat::MirOpCompat::Unsupported { op_kind, name, params_json: _ } => {
+        mir_compat::MirOpCompat::Unsupported { op_kind, name, params_json: _, inputs: _ } => {
             // Emit as identity to preserve graph structure
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(name));

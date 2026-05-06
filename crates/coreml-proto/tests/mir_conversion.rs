@@ -8,6 +8,7 @@
 
 use ane_coreml_proto::mir_compat::{MilDtypeCompat, MirOpCompat};
 use ane_ir::mir::{MilDtype, MirNodeId, MirOp};
+use ane_ir::toproto::ToProto;
 
 fn nid(s: &str) -> MirNodeId {
     MirNodeId(s.to_string())
@@ -702,4 +703,157 @@ fn test_t66_remap_inputs() {
     } else {
         panic!("Expected Dequantize after remap");
     }
+}
+
+// ─── T-P5-10: Unsupported input_names() weight materialization gap ─────
+
+/// Test that Unsupported ops carry input names from the source MirOp,
+/// so weight materialization does not silently drop referenced weights.
+#[test]
+fn test_unsupported_input_names_from_mir_op() {
+    // MILConvTranspose has inputs x (MirNodeId) and weight (MirNodeId).
+    // When it maps to Unsupported, those inputs should be preserved.
+    let op = MirOp::MILConvTranspose {
+        name: "ct".into(),
+        x: nid("input_x"),
+        weight: nid("weight_w"),
+        pad_type: "valid".into(),
+        groups: 1,
+        strides: vec![1],
+        pad_amounts: vec![0],
+        dilations: vec![1],
+        output_shape: vec![1],
+    };
+    let compat: MirOpCompat = op.into();
+    if let MirOpCompat::Unsupported { inputs, op_kind, .. } = &compat {
+        assert_eq!(op_kind, "conv_transpose");
+        assert_eq!(*inputs, vec!["input_x", "weight_w"],
+            "Unsupported from MILConvTranspose should carry input names");
+    } else {
+        panic!("Expected MirOpCompat::Unsupported from MILConvTranspose");
+    }
+
+    // Verify input_names() returns the same thing as inputs
+    assert_eq!(compat.input_names(), vec!["input_x", "weight_w"]);
+}
+
+/// Test that an Unsupported op from a unary MirOp carries a single input name.
+#[test]
+fn test_unsupported_input_names_unary_op() {
+    // MILRelu6 has a single input x
+    let op = MirOp::MILRelu6 { name: "r6".into(), x: nid("input_a") };
+    let compat: MirOpCompat = op.into();
+    if let MirOpCompat::Unsupported { inputs, op_kind, .. } = &compat {
+        assert_eq!(op_kind, "relu6");
+        assert_eq!(*inputs, vec!["input_a"]);
+    } else {
+        panic!("Expected MirOpCompat::Unsupported from MILRelu6");
+    }
+    assert_eq!(compat.input_names(), vec!["input_a"]);
+}
+
+/// Test that an Unsupported op from a MirOp with no inputs (e.g., random)
+/// carries an empty inputs vec.
+#[test]
+fn test_unsupported_input_names_no_input_op() {
+    let op = MirOp::MILRandomNormal {
+        name: "rn".into(),
+        shape: vec![1],
+        mean: 0.0,
+        stddev: 1.0,
+        seed: None,
+        dtype: MilDtype::Fp32,
+    };
+    let compat: MirOpCompat = op.into();
+    if let MirOpCompat::Unsupported { inputs, .. } = &compat {
+        assert!(inputs.is_empty(),
+            "RandomNormal has no SSA inputs — Unsupported inputs should be empty");
+    } else {
+        panic!("Expected MirOpCompat::Unsupported from MILRandomNormal");
+    }
+    assert!(compat.input_names().is_empty());
+}
+
+/// Test that Unsupported ops' input_names() matches MirOp::proto_input_refs().
+#[test]
+fn test_unsupported_input_names_matches_proto_input_refs() {
+    // MILPrelu has x (MirNodeId) and alpha (String weight name)
+    let op = MirOp::MILPrelu { name: "prelu".into(), x: nid("input_x"), alpha: "alpha_weight".into() };
+    let expected_inputs = op.proto_input_refs();
+    let compat: MirOpCompat = op.into();
+    if let MirOpCompat::Unsupported { inputs, .. } = &compat {
+        assert_eq!(*inputs, expected_inputs,
+            "Unsupported inputs should match proto_input_refs()");
+    } else {
+        panic!("Expected MirOpCompat::Unsupported from MILPrelu");
+    }
+    assert_eq!(compat.input_names(), expected_inputs);
+}
+
+/// Test that remap_inputs correctly remaps Unsupported ops' inputs.
+#[test]
+fn test_unsupported_remap_inputs() {
+    let op = MirOp::MILConvTranspose {
+        name: "ct".into(),
+        x: nid("input_x"),
+        weight: nid("weight_w"),
+        pad_type: "valid".into(),
+        groups: 1,
+        strides: vec![1],
+        pad_amounts: vec![0],
+        dilations: vec![1],
+        output_shape: vec![1],
+    };
+    let compat: MirOpCompat = op.into();
+
+    let remap = |name: String| format!("remapped_{}", name);
+    let remapped = compat.remap_inputs(remap);
+
+    if let MirOpCompat::Unsupported { inputs, .. } = &remapped {
+        assert_eq!(*inputs, vec!["remapped_input_x", "remapped_weight_w"]);
+    } else {
+        panic!("Expected MirOpCompat::Unsupported after remap");
+    }
+    assert_eq!(remapped.input_names(), vec!["remapped_input_x", "remapped_weight_w"]);
+}
+
+/// Test that rename_output preserves inputs in Unsupported ops.
+#[test]
+fn test_unsupported_rename_output_preserves_inputs() {
+    let op = MirOp::MILConvTranspose {
+        name: "ct".into(),
+        x: nid("input_x"),
+        weight: nid("weight_w"),
+        pad_type: "valid".into(),
+        groups: 1,
+        strides: vec![1],
+        pad_amounts: vec![0],
+        dilations: vec![1],
+        output_shape: vec![1],
+    };
+    let compat: MirOpCompat = op.into();
+    let renamed = compat.rename_output("new_output_name".into());
+
+    if let MirOpCompat::Unsupported { name, inputs, op_kind, .. } = &renamed {
+        assert_eq!(*name, "new_output_name");
+        assert_eq!(*op_kind, "conv_transpose");
+        assert_eq!(*inputs, vec!["input_x", "weight_w"],
+            "rename_output should preserve inputs");
+    } else {
+        panic!("Expected MirOpCompat::Unsupported after rename_output");
+    }
+}
+
+/// Test that an Unsupported op constructed manually with explicit inputs
+/// returns those inputs from input_names().
+#[test]
+fn test_unsupported_manual_construction_input_names() {
+    let unsupported = MirOpCompat::Unsupported {
+        op_kind: "custom_op".into(),
+        name: "custom_out".into(),
+        params_json: "{}".into(),
+        inputs: vec!["input_a".into(), "input_b".into(), "weight_c".into()],
+    };
+    assert_eq!(unsupported.input_names(), vec!["input_a", "input_b", "weight_c"]);
+    assert_eq!(unsupported.output_name(), "custom_out");
 }

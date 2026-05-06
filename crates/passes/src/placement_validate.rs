@@ -542,7 +542,7 @@ pub fn validate_placement_with_context(
             PlacementDecision::AneAllowed
         }
 
-        // SDPA: strict shape constraints
+        // SDPA: strict shape constraints (T-P5-06: validation extracted from mil_lower)
         MirOp::MILScaledDotProductAttention { .. } => {
             // Must have 3-4 inputs: Q, K, V, and optional mask
             let operand_count = input_shapes.len();
@@ -553,15 +553,13 @@ pub fn validate_placement_with_context(
                 ));
             }
 
-            // All operands must be rank ≤ 4
-            for (i, shape) in input_shapes.iter().enumerate() {
-                if shape.len() > 4 {
-                    return PlacementDecision::CpuOnly(format!(
-                        "SDPA operand {} has rank {} which exceeds maximum of 4",
-                        i,
-                        shape.len()
-                    ));
-                }
+            // T-P5-06: Validate SDPA operand rank constraints with named operands.
+            // Moved from mil_lower.rs — MilLowerPass should be a pure AIR→MIR mapping.
+            if let Err(e) = validate_sdpa_constraints(input_shapes) {
+                return PlacementDecision::CpuOnly(format!(
+                    "MILScaledDotProductAttention: {}",
+                    e
+                ));
             }
 
             // K and V must have the same shape (last two dims)
@@ -962,6 +960,33 @@ pub fn validate_placement_with_context(
     }
 }
 
+/// Validate SDPA (ScaledDotProductAttention) operand constraints.
+///
+/// T-P5-06: Extracted from mil_lower.rs. ANE constraints require:
+/// - All operand ranks ≤ 4
+///
+/// `input_shapes` follows the SDPA convention:
+///   [0] = query, [1] = key, [2] = value, [3] = attention_mask (optional)
+///
+/// Returns a descriptive error string on violation.
+fn validate_sdpa_constraints(input_shapes: &[Vec<usize>]) -> Result<(), String> {
+    let operand_names = ["query", "key", "value", "attention_mask"];
+
+    for (i, shape) in input_shapes.iter().enumerate() {
+        if shape.len() > 4 {
+            let name = operand_names.get(i).copied().unwrap_or("operand");
+            return Err(format!(
+                "SDPA constraint violation: {} has rank {} which exceeds maximum of 4 \
+                 (ANE constraint: all SDPA operands must be rank ≤ 4)",
+                name,
+                shape.len()
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 /// Extract a human-readable op name from a MirOp.
 fn op_name(op: &MirOp) -> &'static str {
     match op {
@@ -1358,6 +1383,79 @@ mod tests {
     fn test_sdpa_valid_on_a16() {
         let op = make_sdpa(true);
         let shapes = vec![vec![1, 8, 4], vec![1, 8, 4], vec![1, 8, 4], vec![1, 8, 4]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    // ─── T-P5-06: SDPA constraint validation tests (moved from mil_lower) ───
+
+    #[test]
+    fn test_sdpa_validation_rank5_query_fails() {
+        // Rank-5 query should fail with named operand in error
+        let op = make_sdpa(false);
+        let shapes = vec![vec![1, 2, 8, 4, 64], vec![1, 8, 4, 64], vec![1, 8, 4, 64]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("query") && s.contains("rank 5")),
+            "Rank-5 query should mention 'query' and 'rank 5'"
+        );
+    }
+
+    #[test]
+    fn test_sdpa_validation_rank5_key_fails() {
+        // Rank-5 key should fail with named operand in error
+        let op = make_sdpa(false);
+        let shapes = vec![vec![1, 8, 4, 64], vec![1, 2, 8, 4, 64], vec![1, 8, 4, 64]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("key") && s.contains("rank 5")),
+            "Rank-5 key should mention 'key' and 'rank 5'"
+        );
+    }
+
+    #[test]
+    fn test_sdpa_validation_rank5_value_fails() {
+        // Rank-5 value should fail with named operand in error
+        let op = make_sdpa(false);
+        let shapes = vec![vec![1, 8, 4, 64], vec![1, 8, 4, 64], vec![1, 2, 8, 4, 64]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("value") && s.contains("rank 5")),
+            "Rank-5 value should mention 'value' and 'rank 5'"
+        );
+    }
+
+    #[test]
+    fn test_sdpa_validation_rank5_mask_fails() {
+        // Rank-5 mask should fail with named operand in error
+        let op = make_sdpa(true);
+        let shapes = vec![
+            vec![1, 8, 4, 64],
+            vec![1, 8, 4, 64],
+            vec![1, 8, 4, 64],
+            vec![1, 2, 8, 4, 64], // rank-5 mask
+        ];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert!(
+            matches!(decision, PlacementDecision::CpuOnly(ref s) if s.contains("attention_mask") && s.contains("rank 5")),
+            "Rank-5 mask should mention 'attention_mask' and 'rank 5'"
+        );
+    }
+
+    #[test]
+    fn test_sdpa_validation_rank3_succeeds() {
+        // Rank-3 operands should pass (via placement validation)
+        let op = make_sdpa(false);
+        let shapes = vec![vec![8, 4, 64], vec![8, 4, 64], vec![8, 4, 64]];
+        let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
+        assert_eq!(decision, PlacementDecision::AneAllowed);
+    }
+
+    #[test]
+    fn test_sdpa_validation_with_mask_succeeds() {
+        // Valid SDPA with mask should pass (via placement validation)
+        let op = make_sdpa(true);
+        let shapes = vec![vec![1, 8, 4, 64], vec![1, 8, 4, 64], vec![1, 8, 4, 64], vec![1, 8, 4, 64]];
         let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
         assert_eq!(decision, PlacementDecision::AneAllowed);
     }
