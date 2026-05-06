@@ -20,6 +20,7 @@
 #   7. ir-pipeline — Validate SIR → AIR → MIR dumps & legality
 #   8. ane         — ANE fastpath matrix & compute plan inspection
 #   9. report      — Aggregate & print results
+#  10. package     — Zip all outputs into project root as miller_testkit_<timestamp>.zip
 #
 # Environment:
 #   MILLER_ROOT       — Path to MILLer repo (default: script's parent's parent)
@@ -883,11 +884,83 @@ print(f'Results written to ${RESULTS_FILE}')
     if [[ "$FAILED_TESTS" -gt 0 ]]; then
         echo ""
         log_fail "Test run completed with ${FAILED_TESTS} failure(s)"
-        return 1
     else
         echo ""
         log_success "All tests passed!"
-        return 0
+    fi
+}
+
+# =============================================================================
+# Phase 10: Package all outputs into a zip in the project root
+# =============================================================================
+phase_package() {
+    log_phase 10 "Package Results into ZIP"
+
+    local zip_name="miller_testkit_${TIMESTAMP}.zip"
+    local zip_path="${MILLER_ROOT}/${zip_name}"
+
+    log_info "Packaging all test outputs into ${zip_path}"
+
+    # Write a manifest of what's inside the zip
+    local manifest="${TEST_WORKDIR}/zip_manifest.json"
+    python3 -c "
+import json, datetime, os, subprocess
+
+def count_files(d):
+    count = 0
+    for root, dirs, files in os.walk(d):
+        count += len(files)
+    return count
+
+workdir = '${TEST_WORKDIR}'
+manifest = {
+    'zip_timestamp': datetime.datetime.now().isoformat(),
+    'zip_name': '${zip_name}',
+    'miller_root': '${MILLER_ROOT}',
+    'test_workdir': workdir,
+    'total_test_count': ${TOTAL_TESTS},
+    'passed': ${PASSED_TESTS},
+    'failed': ${FAILED_TESTS},
+    'skipped': ${SKIPPED_TESTS},
+    'failed_items': $(printf '%s\n' "${FAILED_ITEMS[@]}" | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))'),
+    'workdir_file_count': count_files(workdir) if os.path.isdir(workdir) else 0,
+    'seed': ${SEED},
+    'qwen3_model': '${QWEN3_MODEL_ID}',
+    'contents_description': {
+        'build.log':             'Cargo build output (release)',
+        'synthetic/':            'Compiled synthetic task specs + manifests + logs',
+        'bridge/':               'Python bridge emitter results (command.json, result.json, .mlpackage)',
+        'qwen3/':                'Qwen3-0.6B trace-compile output + verify/profile results',
+        'qwen3_kv/':             'Qwen3 with KV-cache trace-compile output',
+        'knowledge_store/':      'Imported knowledge store + index',
+        'ir_dumps/':             'IR stage dumps (SIR/AIR/MIR)',
+        'ir_compile_output/':    'IR compile output directory',
+        'compute_plans/':        'ANE compute plan harvest results',
+        'results_*.json':        'Aggregated test results JSON',
+        'zip_manifest.json':     'This manifest file',
+        '*.log':                 'Individual phase logs',
+    }
+}
+with open('${manifest}', 'w') as f:
+    json.dump(manifest, f, indent=2)
+print(f'Manifest written: {len(json.dumps(manifest))} bytes')
+"
+
+    # Remove old zip if it exists
+    rm -f "$zip_path"
+
+    # Zip everything from test_work, plus any relevant extras from MILLER_ROOT
+    # We cd into MILLER_ROOT so the zip paths are relative to the project root
+    if (cd "$MILLER_ROOT" && zip -r "$zip_name" \
+        "scripts/test_work/" \
+        2>&1 | tail -5); then
+        local zip_size
+        zip_size=$(du -h "$zip_path" | cut -f1)
+        record_result "ZIP package created" "pass" "${zip_path} (${zip_size})"
+        log_success "All outputs zipped → ${zip_path} (${zip_size})"
+    else
+        record_result "ZIP package created" "fail" "zip command failed"
+        log_fail "Failed to create zip package"
     fi
 }
 
@@ -915,6 +988,7 @@ main() {
     if should_run_phase "ane";        then phase_ane;        fi
 
     phase_report
+    phase_package
 }
 
 main "$@"
