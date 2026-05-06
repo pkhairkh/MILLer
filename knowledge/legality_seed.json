@@ -158,6 +158,206 @@
         "ane_legal": false,
         "note": "where is CPU-only per cpu_only_ops.rs, no usable ANE converter despite PEFUSEDSelect dialect entry."
       }
+    },
+    {
+      "id": "legality_linear",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "LegalityRule",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 10,
+      "scope": {
+        "device_classes": ["A11Legacy", "A12", "A13", "A14", "A15", "A16", "A17", "A18"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.linear",
+        "ane_legal": true,
+        "note": "mb.linear is the canonical ANE FC projection op. Supported across all Apple Silicon device families per ane_op_family_matrix.json (ANELinear dialect). Replaces matmul+add for fully-connected layers."
+      }
+    },
+    {
+      "id": "legality_reshape_transpose",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "LegalityRule",
+      "confidence": 0.8,
+      "evidence_source": "SourceCode",
+      "evidence_count": 5,
+      "scope": {
+        "device_classes": ["A11Legacy", "A12", "A13", "A14", "A15", "A16", "A17", "A18"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.reshape|mb.transpose",
+        "ane_legal": true,
+        "note": "Reshape and transpose are structural ANE ops supported across all device families."
+      }
+    },
+    {
+      "id": "legality_split_concat",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "LegalityRule",
+      "confidence": 0.8,
+      "evidence_source": "SourceCode",
+      "evidence_count": 5,
+      "scope": {
+        "device_classes": ["A12", "A13", "A14", "A15", "A16", "A17", "A18"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.split|mb.concat",
+        "ane_legal": true,
+        "note": "Split and concat are structural ANE ops."
+      }
+    },
+    {
+      "id": "legality_sdpa",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "LegalityRule",
+      "confidence": 0.7,
+      "evidence_source": "SourceCode",
+      "evidence_count": 3,
+      "scope": {
+        "device_classes": ["A16", "A17", "A18"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.scaled_dot_product_attention",
+        "ane_legal": true,
+        "note": "SDPA supported on A16+ per ane_op_family_matrix.json. Unreliable on A12-A15."
+      }
+    },
+    {
+      "id": "legality_activations",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "LegalityRule",
+      "confidence": 0.8,
+      "evidence_source": "SourceCode",
+      "evidence_count": 5,
+      "scope": {
+        "device_classes": ["A12", "A13", "A14", "A15", "A16", "A17", "A18"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.relu|mb.gelu|mb.sigmoid|mb.tanh",
+        "ane_legal": true,
+        "note": "Common activation ops are ANE-legal via PEFUSED elementwise unary converters."
+      }
+    },
+    {
+      "id": "legality_normalization",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "LegalityRule",
+      "confidence": 0.7,
+      "evidence_source": "SourceCode",
+      "evidence_count": 3,
+      "scope": {
+        "device_classes": ["A14", "A15", "A16", "A17", "A18"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.layer_norm|mb.reduce_mean",
+        "ane_legal": true,
+        "note": "Normalization and reduce ops supported on A14+."
+      }
+    },
+    {
+      "id": "legality_slice_ops",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "LegalityRule",
+      "confidence": 0.8,
+      "evidence_source": "SourceCode",
+      "evidence_count": 5,
+      "scope": {
+        "device_classes": ["A12", "A13", "A14", "A15", "A16", "A17", "A18"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.slice_by_index|mb.slice_update",
+        "ane_legal": true,
+        "note": "Slice ops are ANE-legal. Prefer slice_by_index over gather for dynamic-axis patterns."
+      }
+    },
+    {
+      "id": "legality_trig_exp",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "LegalityRule",
+      "confidence": 0.7,
+      "evidence_source": "SourceCode",
+      "evidence_count": 2,
+      "scope": {
+        "device_classes": ["A14", "A15", "A16", "A17", "A18"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.cos|mb.sin|mb.exp|mb.rsqrt",
+        "ane_legal": true,
+        "note": "Elementwise unary math ops (trig, exp, rsqrt) supported on A14+."
+      }
+    },
+    {
+      "id": "legality_topk_realdiv",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "LegalityRule",
+      "confidence": 0.6,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": ["A14", "A15", "A16", "A17", "A18"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.topk|mb.real_div",
+        "ane_legal": true,
+        "note": "topk and real_div supported on A14+ per ane_op_family_matrix.json."
+      }
+    },
+    {
+      "id": "legality_state_ops",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "LegalityRule",
+      "confidence": 0.6,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": ["A16", "A17", "A18"],
+        "os_versions": ["macOS_15"],
+        "opset_versions": ["iOS18"]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "op_pattern": "mb.read_state|mb.coreml_update_state",
+        "ane_legal": true,
+        "note": "Stateful model ops (read_state, coreml_update_state) require iOS 18+ / A16+. Supported on Apple Silicon with Core ML state API."
+      }
     }
   ]
 }

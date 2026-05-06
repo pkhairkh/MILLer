@@ -141,13 +141,57 @@ def save_mlpackage(mlmodel, mlpackage_path: str) -> dict:
 
     Returns:
         Dict with content_hash, package_files, output_path.
+
+    SIGABRT workaround (macOS + coremltools 9.0):
+        On macOS, mlmodel.save() internally compiles the .mlpackage to
+        .mlmodelc for verification. The C++ compilation step can throw an
+        uncaught exception ("coremldata.bin is not a valid .mlmodelc file"),
+        causing SIGABRT. However, the .mlpackage files are written to disk
+        BEFORE the crash. We use os.fork() to isolate the save in a child
+        process; if the child gets SIGABRT but the .mlpackage exists on disk,
+        we treat it as a successful save.
     """
     mlpackage_path = Path(mlpackage_path)
 
     if mlpackage_path.exists():
         shutil.rmtree(mlpackage_path)
 
-    mlmodel.save(str(mlpackage_path))
+    import signal
+
+    pid = os.fork()
+    if pid == 0:
+        # Child process — do the save. If coremltools' post-save
+        # compilation crashes with SIGABRT, only this child dies.
+        try:
+            mlmodel.save(str(mlpackage_path))
+            os._exit(0)
+        except BaseException:
+            os._exit(1)
+
+    # Parent — wait for child
+    _, status = os.waitpid(pid, 0)
+    child_signaled = os.WIFSIGNALED(status)
+    child_sig = os.WTERMSIG(status) if child_signaled else 0
+    child_exit = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
+
+    if not mlpackage_path.exists():
+        if child_signaled and child_sig == signal.SIGABRT:
+            raise RuntimeError(
+                "save_mlpackage: coremltools SIGABRT during save and no "
+                ".mlpackage created. This is a known coremltools 9.0 issue "
+                "on macOS with incompatible PyTorch versions."
+            )
+        elif child_exit != 0:
+            raise RuntimeError(f"save_mlpackage: child exited with code {child_exit}")
+        else:
+            raise RuntimeError("save_mlpackage: no output created for unknown reason")
+
+    # .mlpackage exists on disk — treat as success even if SIGABRT occurred
+    if child_signaled and child_sig == signal.SIGABRT:
+        logger.warning(
+            "save_mlpackage: coremltools post-save compilation hit SIGABRT, "
+            "but .mlpackage was written successfully — proceeding"
+        )
 
     content_hash = _hash_directory(mlpackage_path)
 

@@ -639,6 +639,9 @@ notice "MIR op variants: $MIR_COUNT"
 # ─── Summary Report ────────────────────────────────────────────────────────
 section "Lab Summary"
 
+# Initialize defaults for variables that may not be set if matrix is missing
+ANE_RATE="${ANE_RATE:-N/A}"
+
 # Load fastpath matrix results if available
 MATRIX_FILE="$OUTPUT_DIR/ane_fastpath_matrix.json"
 if [ -f "$MATRIX_FILE" ]; then
