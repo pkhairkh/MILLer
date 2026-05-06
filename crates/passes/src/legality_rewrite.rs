@@ -576,7 +576,7 @@ impl AneLegalityRewritePass {
                         // No-op tile: all reps are 1, just pass through as identity
                         let nodes = vec![Self::make_air_node(
                             air_id.clone(),
-                            AirOp::Identity { input: input_air },
+                            AirOp::Identity { input: input_air, dtype_hint: None, shape_hint: None },
                             sir_node,
                             "mb.identity",
                             knowledge_query,
@@ -4423,7 +4423,7 @@ impl AneLegalityRewritePass {
                 },
                 "mb.fill_like",
             ),
-            SirOp::Identity { input } => (AirOp::Identity { input: aid(input) }, "mb.identity"),
+            SirOp::Identity { input } => (AirOp::Identity { input: aid(input), dtype_hint: None, shape_hint: None }, "mb.identity"),
             SirOp::OneHot { indices, one_hot_vector_size, on_value, off_value, axis, dtype } => (
                 AirOp::OneHot {
                     indices: aid(indices),
@@ -6279,7 +6279,7 @@ mod tests {
             AirOp::Cumsum { input, .. } => vec![input.clone()],
             AirOp::Fill { .. } | AirOp::Range1d { .. } => vec![],
             AirOp::FillLike { ref_tensor, .. } => vec![ref_tensor.clone()],
-            AirOp::Identity { input } => vec![input.clone()],
+            AirOp::Identity { input, .. } => vec![input.clone()],
             AirOp::OneHot { indices, .. } => vec![indices.clone()],
             AirOp::NonZero { input } | AirOp::Argsort { input, .. } => vec![input.clone()],
             AirOp::BandPart { input, .. } => vec![input.clone()],

@@ -1097,6 +1097,16 @@ impl MirOp {
     /// Returns the base ANE engine assignment for this op, ignoring revision-specific
     /// constraints. This is the static per-op engine mapping used before applying
     /// family capability overrides.
+    ///
+    /// **Deprecated** (T-P5-07): Use `ane_placement::engine_for_op()` instead,
+    /// which provides revision-aware placement with family-specific overrides.
+    /// This method will be removed in a future version once all callers are
+    /// migrated.
+    #[deprecated(
+        since = "0.7.0",
+        note = "T-P5-07: Use ane_placement::engine_for_op() for revision-aware engine assignment. \
+                This method only provides the static per-op mapping without family overrides."
+    )]
     pub(crate) fn base_engine(&self) -> Option<super::ane_engine::AneEngine> {
         use super::ane_engine::AneEngine;
         match self {

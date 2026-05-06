@@ -650,6 +650,18 @@ pub enum AirOp {
     },
     Identity {
         input: AirNodeId,
+        /// T-P5-09: Explicit dtype hint for identity/graph-input nodes.
+        /// When present, this overrides name-based heuristics for dtype
+        /// inference in mil_lower. Set by the SIR→AIR builder for known
+        /// input types (input_ids → Int32, attention_mask → Int32, etc.).
+        #[serde(default)]
+        dtype_hint: Option<super::common::MilDtype>,
+        /// T-P5-09: Explicit shape hint for identity/graph-input nodes.
+        /// When present, this overrides name-based heuristics for shape
+        /// inference. Set by the SIR→AIR builder for known input shapes
+        /// (input_ids → [1, max_seq_len], etc.).
+        #[serde(default)]
+        shape_hint: Option<Vec<usize>>,
     },
     OneHot {
         indices: AirNodeId,
@@ -1231,7 +1243,7 @@ impl AirOp {
             AirOp::Cumsum { input, .. } => vec![input],
             AirOp::Fill { .. } => vec![],
             AirOp::FillLike { ref_tensor, .. } => vec![ref_tensor],
-            AirOp::Identity { input } => vec![input],
+            AirOp::Identity { input, .. } => vec![input],
             AirOp::OneHot { indices, .. } => vec![indices],
             AirOp::NonZero { input } => vec![input],
             AirOp::Argsort { input, .. } => vec![input],

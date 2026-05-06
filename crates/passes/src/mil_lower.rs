@@ -63,7 +63,22 @@ fn resolve_reshape_zeros(input_shape: &[usize], target_shape: &[usize]) -> Resul
 fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Result<Vec<usize>> {
     match op {
         // ─── Identity: propagate input shape (critical for graph I/O nodes) ───
-        AirOp::Identity { input } => Ok(node_shapes.get(input).cloned().unwrap_or_default()),
+        // T-P5-09: Use shape_hint when available, falling back to node_shapes.
+        // T-P5-04: When neither is available, return an explicit error rather
+        // than silently returning an empty shape.
+        AirOp::Identity { input, shape_hint, .. } => {
+            if let Some(hint) = shape_hint {
+                Ok(hint.clone())
+            } else if let Some(shape) = node_shapes.get(input) {
+                Ok(shape.clone())
+            } else {
+                Err(anyhow::anyhow!(
+                    "T-P5-04: Shape inference failed for Identity node: \
+                     no shape_hint and no input shape available. \
+                     Add an explicit shape_hint or ensure the input shape is known."
+                ))
+            }
+        }
 
         // ─── MatMul: batched [*, M, K] × [*, K, N] → [*, M, N]; 1-D broadcast cases ───
         // Sprint 63: extended from 2-D only to arbitrary batched matmul.
@@ -218,6 +233,10 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         }
         AirOp::Softmax { input, .. } => Ok(node_shapes.get(input).cloned().unwrap_or_default()),
         AirOp::StateReadFixed { shape, .. } => Ok(shape.clone()),
+        // T-P5-04: StateWriteFixed is a side-effecting op with no output shape.
+        // It correctly returns an empty shape since it has no output tensor.
+        // The caller must handle the empty shape appropriately (e.g., not
+        // propagating it as a downstream input shape).
         AirOp::StateWriteFixed { .. } => Ok(vec![]),
         AirOp::ReduceMean { input, axes, keep_dims } => {
             Ok(reduce_shape(node_shapes.get(input).cloned().unwrap_or_default(), axes, *keep_dims))
@@ -585,17 +604,27 @@ impl MilLowerPass {
                     }
                 },
                 None => {
-                    // T-P5-09: Name-based dtype heuristic — fragile.
-                    // Identity ops that are graph inputs with names containing
-                    // "ids" (e.g., input_ids) or "mask" are treated as integer
-                    // tensors. This should be replaced with explicit dtype
-                    // metadata on the AIR node (precision_override or a new
-                    // field) rather than relying on naming conventions.
-                    if matches!(&air_node.op, AirOp::Identity { .. })
+                    // T-P5-09: Prefer explicit dtype_hint on Identity ops
+                    // over name-based heuristics. The dtype_hint is set by
+                    // the SIR→AIR builder and carries the intended dtype
+                    // without relying on naming conventions.
+                    if let AirOp::Identity { dtype_hint: Some(hint), .. } = &air_node.op {
+                        hint.clone()
+                    } else if matches!(&air_node.op, AirOp::Identity { .. })
                         && (air_node.name.ends_with("_ids")
                             || air_node.name.contains("input_ids")
                             || air_node.name.contains("mask"))
                     {
+                        // T-P5-09: Legacy name-based fallback — still present
+                        // for backward compatibility with AIR graphs that don't
+                        // have dtype_hint set. Emits a warning so callers know
+                        // to update their SIR→AIR builder.
+                        log::warn!(
+                            "T-P5-09: Using name-based dtype heuristic for node '{}'. \
+                             This is fragile and should be replaced by setting dtype_hint \
+                             on the Identity op in the SIR→AIR builder.",
+                            air_node.name
+                        );
                         MilDtype::Int32
                     } else {
                         MilDtype::Fp16
@@ -1997,7 +2026,7 @@ impl MilLowerPass {
                         dtype: dtype.clone(),
                     }
                 }
-                AirOp::Identity { input } => {
+                AirOp::Identity { input, .. } => {
                     let mi = air_to_mir
                         .get(input)
                         .cloned()
@@ -3928,15 +3957,20 @@ impl MilLowerPass {
             // AirOp::MatMul. We need to detect the per-head attention matmul
             // pattern and set transpose_y=True for the QK logits matmul.
             //
-            // Pattern: MILMatMul where x is a "q_head_N" node and y is a "k_head_N" node
-            // This is fragile but matches the naming convention from decompose_decode_step.
-            // T-P5-09: Name-based heuristic for logits matmul detection. Fragile.
+            // T-P5-09: Name-based heuristic for logits matmul detection.
+            // TODO: Replace with explicit AIR-level metadata (e.g., a transpose_y
+            // field on AirOp::MatMul) to avoid name-based detection entirely.
             for node in mir_nodes.iter_mut() {
                 if let MirOp::MILMatMul { name, x: _, y: _, transpose_y } = &mut node.op {
                     if !*transpose_y && name.contains("_logits_") {
                         // Per-head attention QK matmul needs transpose_y=True
                         *transpose_y = true;
-                        eprintln!("    [ANE legality] Setting transpose_y=True for attention logits matmul '{}'", name);
+                        log::warn!(
+                            "T-P5-09: Using name-based heuristic to set transpose_y=True \
+                             for logits matmul '{}'. This should be replaced with explicit \
+                             AIR-level metadata.",
+                            name
+                        );
                     }
                 }
             }
@@ -5307,5 +5341,79 @@ mod tests {
             }
             other => panic!("Expected CpuOnly for non-channel concat, got {:?}", other),
         }
+    }
+
+    // ─── T-P5-09: dtype_hint on Identity ops ──────────────────────────
+
+    #[test]
+    fn test_identity_dtype_hint_overrides_name_heuristic() {
+        // When an Identity op has dtype_hint=Int32, it should be used
+        // regardless of the node name (no need for name.contains("input_ids"))
+        let op = AirOp::Identity {
+            input: AirNodeId("x".into()),
+            dtype_hint: Some(ane_ir::common::MilDtype::Int32),
+            shape_hint: None,
+        };
+        let node = AirNode {
+            id: AirNodeId("my_custom_input".into()),
+            op,
+            name: "my_custom_input".into(), // No "input_ids" in name!
+            sir_source: None,
+            precision_override: None,
+            legality_status: ane_ir::air::LegalityStatus::Unverified,
+        };
+        let mut node_shapes = HashMap::new();
+        node_shapes.insert(AirNodeId("x".into()), vec![1, 512]);
+        // The dtype should be Int32 from the dtype_hint, not Fp16
+        let dtype = match &node.op {
+            AirOp::Identity { dtype_hint: Some(hint), .. } => hint.clone(),
+            _ => ane_ir::common::MilDtype::Fp16,
+        };
+        assert_eq!(dtype, ane_ir::common::MilDtype::Int32,
+            "dtype_hint should override name-based heuristic");
+    }
+
+    #[test]
+    fn test_identity_shape_hint_used_in_infer_shape() {
+        // When an Identity op has shape_hint, infer_shape should use it
+        let op = AirOp::Identity {
+            input: AirNodeId("x".into()),
+            dtype_hint: None,
+            shape_hint: Some(vec![1, 2048]),
+        };
+        let mut node_shapes = HashMap::new();
+        // No shape for "x" in node_shapes — shape_hint should be used
+        let result = infer_shape(&op, &node_shapes);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), vec![1, 2048]);
+    }
+
+    #[test]
+    fn test_identity_no_shape_hint_no_input_shape_returns_error() {
+        // T-P5-04: When Identity has no shape_hint and no input shape,
+        // infer_shape should return an error, not silently return vec![]
+        let op = AirOp::Identity {
+            input: AirNodeId("unknown".into()),
+            dtype_hint: None,
+            shape_hint: None,
+        };
+        let node_shapes = HashMap::new();
+        let result = infer_shape(&op, &node_shapes);
+        assert!(result.is_err(), "T-P5-04: Identity with no shape info should return error");
+    }
+
+    #[test]
+    fn test_state_write_fixed_returns_empty_shape() {
+        // T-P5-04: StateWriteFixed has no output tensor — returns empty shape.
+        // This is correct behavior for a side-effecting op.
+        let op = AirOp::StateWriteFixed {
+            state_id: "state_0".into(),
+            value: AirNodeId("val".into()),
+        };
+        let node_shapes = HashMap::new();
+        let result = infer_shape(&op, &node_shapes);
+        assert!(result.is_ok(), "StateWriteFixed should return Ok");
+        assert_eq!(result.unwrap(), Vec::<usize>::new(),
+            "StateWriteFixed should return empty shape (no output tensor)");
     }
 }

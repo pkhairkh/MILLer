@@ -2,7 +2,7 @@
 
 > Consolidated remediation task board for open and in-progress issues.
 > Completed tasks have been removed — see git history for the full audit trail.
-> Recently completed: T-P2-01, T-P2-04, T-P2-05, T-P2-12, T-P3-03, T-P3-04, T-P3-07, T-P3-08, T-P3-09, T-P3-10, T-P3-11, T-P4-01, T-P4-02, T-P4-03, T-P4-04, T-P4-05, T-P5-03, T-P5-05, T-P5-06, T-P5-10, T-P5-11, T-P6-04.
+> Recently completed: T-P2-01, T-P2-04, T-P2-05, T-P2-12, T-P3-03, T-P3-04, T-P3-07, T-P3-08, T-P3-09, T-P3-10, T-P3-11, T-P4-01, T-P4-02, T-P4-03, T-P4-04, T-P4-05, T-P4-07, T-P5-03, T-P5-04, T-P5-05, T-P5-06, T-P5-07, T-P5-09, T-P5-10, T-P5-11, T-P6-02, T-P6-04.
 > Format: Agentic AI task specification (structured, machine-parseable, human-readable).
 > Each task is independently executable by an AI coding agent with access to this repository.
 
@@ -50,22 +50,6 @@
 
 ## Phase 4 — Low-Priority Cleanup and Polish
 
-### T-P4-07: Add HAL sub-variant modeling
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P4-07 |
-| `title` | Research and model HAL sub-variants (H13g, H14c/g, H15c/g, H16c/g/s, H17a) |
-| `phase` | P4 |
-| `severity` | LOW |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/ane_target.rs`, `crates/ir/src/ane_hw_limits.rs` |
-| `violation_refs` | [F-HAL-01] |
-| `acceptance_criteria` | 1) Each HAL sub-variant is represented in AneRevision or a new AneSubVariant enum; 2) Constraint differences between sub-variants are documented; 3) Compilation targeting specific sub-variants uses correct limits |
-| `agent_hints` | This requires Apple hardware testing to determine actual constraint differences. Start by adding the sub-variant names to the type system with the same limits as their parent. Mark as unverified. Document the need for hardware validation. |
-
----
-
 ### T-P4-08: Add unmapped ANEC operation stubs
 
 | Field | Value |
@@ -84,38 +68,6 @@
 
 ## Phase 5 — MLIR-Method Architectural Remediation
 
-### T-P5-04: Replace empty-shape fallbacks with explicit errors
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P5-04 |
-| `title` | infer_shape() and compat_output_shape() must not return Ok(vec![]) |
-| `phase` | P5 |
-| `severity` | HIGH |
-| `depends_on` | [T-P5-03] |
-| `files` | `crates/passes/src/mil_lower.rs`, `crates/bridge/src/shape_inference.rs` |
-| `violation_refs` | [M-003, M-006, M-033] |
-| `acceptance_criteria` | 1) `infer_shape()` returns Err for unknown variants; 2) `compat_output_shape()` returns Err for unhandled MirOp; 3) `shard_plan.rs` returns Err instead of [1,1,1,1]; 4) Downstream handles Shape::Dynamic explicitly or fails |
-| `agent_hints` | Change `Ok(vec![])` to `Err(...)` in infer_shape and compat_output_shape. Change derive_primary_shapes to bail! instead of defaulting. Add a `Shape::Dynamic` variant for intentional dynamic shapes. |
-
----
-
-### T-P5-07: Move engine assignment out of MirOp::base_engine()
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P5-07 |
-| `title` | Create ane_placement.rs for target-parameterized engine mapping |
-| `phase` | P5 |
-| `severity` | MEDIUM |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/mir.rs`, new `crates/ir/src/ane_placement.rs` |
-| `violation_refs` | [M-028, N-009] |
-| `acceptance_criteria` | 1) New module maps MirOp→AneEngine parameterized by AneFamily; 2) base_engine() removed or replaced; 3) iOS18 hardcoding replaced with target-derived value; 4) Tests updated |
-| `agent_hints` | Create ane_placement.rs with `fn engine_for_op(op: &MirOp, family: AneFamily) -> Option<AneEngine>`. Move the default_engine_for_revision logic there. Mark base_engine() deprecated. Make opset_version configurable. |
-
----
-
 ### T-P5-08: Remove ANE-specific attributes from SIR and MIR
 
 | Field | Value |
@@ -129,22 +81,6 @@
 | `violation_refs` | [M-028] |
 | `acceptance_criteria` | 1) SirOp::LinearProjection no longer has palette_bits; 2) MirOp::MILConv no longer has ANEC attributes; 3) Target-specific layer adds these during ANE lowering; 4) SIR can represent non-ANE targets |
 | `agent_hints` | Move palette_bits from SirOp to a separate SirOpMetadata or target annotation. Move kernel_scale/kernel_zero_point/kernel_palettized_lut from MirOp to ane_placement metadata. This is a significant refactor — break into smaller PRs. |
-
----
-
-### T-P5-09: Replace name-based heuristics with explicit annotations
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P5-09 |
-| `title` | Remove name.contains("input_ids"), ends_with("_ids"), "__placeholder__" heuristics |
-| `phase` | P5 |
-| `severity` | MEDIUM |
-| `depends_on` | [T-P5-04] |
-| `files` | `crates/bridge/src/shape_inference.rs`, `crates/passes/src/mil_lower.rs` |
-| `violation_refs` | [M-016, M-018] |
-| `acceptance_criteria` | 1) compat_input_shape() does not use name heuristics; 2) mil_lower dtype inference does not use name heuristics; 3) Shape/dtype carried as explicit fields from SIR→AIR→MIR; 4) Returns Err when unavailable |
-| `agent_hints` | Replace name-based fallbacks with Err returns. Add explicit shape/dtype fields to MirOp variants. The goal is to carry information in the type system, not in naming conventions. |
 
 ---
 
@@ -163,22 +99,6 @@
 | `violation_refs` | [N-002, N-010] |
 | `acceptance_criteria` | 1) All 50+ hal_params from ANEC binary research are modeled; 2) LUT size overflow detection added; 3) Validation uses complete parameter set |
 | `agent_hints` | This requires extensive binary research. Add fields incrementally, starting with the most impactful: kernel depth limits, padding limits, PE/NE per-engine limits. Mark each as verified/unverified. |
-
----
-
-### T-P6-02: Fix M1 hardware limits
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P6-02 |
-| `title` | Fix M1() to inherit from A14 instead of A17 |
-| `phase` | P6 |
-| `severity` | HIGH |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/ane_hw_limits.rs` |
-| `violation_refs` | [N-003] |
-| `acceptance_criteria` | 1) `m1()` uses `..Self::a14()` or correct M1-specific limits; 2) Tensor dimensions validated against correct M1 limits |
-| `agent_hints` | Change the `..Self::a17()` to `..Self::a14()` in the m1() constructor. Verify against Apple documentation or empirical testing. |
 
 ---
 

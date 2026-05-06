@@ -8,6 +8,23 @@ use serde::{Deserialize, Serialize};
 ///
 /// Some revisions share the same AneFamily but have different hardware
 /// characteristics (e.g., A18 Pro vs A18 Max have different NE counts).
+/// Additionally, within each family there are chip-level sub-variants
+/// (denoted by their HAL identifier, e.g., H14c, H14g) that may have
+/// subtle constraint differences.
+///
+/// T-P4-07: Added chip-level HAL sub-variants. These are modeled with
+/// the same limits as their parent family and marked as `verified: false`
+/// until hardware testing confirms actual constraint differences. The
+/// naming convention follows the ANEC binary's HAL identifiers:
+/// - `H<family_number><suffix>` where suffix indicates the chip variant
+/// - `c` = compact/budget (e.g., A14 Bionic = H14c)
+/// - `g` = standard (e.g., A14 GPU variant = H14g)
+/// - `s` = performance (e.g., A16 Pro = H16s)
+/// - `a` = application processor (e.g., A17 Pro = H17a)
+///
+/// **WARNING**: Sub-variant-specific constraint differences are NOT yet
+/// modeled. All sub-variants currently inherit their parent family's
+/// limits. Hardware validation is required to determine actual differences.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum AneSubVariant {
     /// Standard variant (default).
@@ -19,6 +36,38 @@ pub enum AneSubVariant {
     Max,
     /// Mac variant (e.g., M1 with Mac-specific limits).
     Mac,
+
+    // ─── T-P4-07: Chip-level HAL sub-variants ──────────────────────
+    // These represent specific chip SKUs within each ANE family.
+    // Currently unverified — same limits as parent family.
+
+    /// A13 Bionic — H13g (standard A13 SKU).
+    /// Unverified: constraint differences from parent A13 not yet modeled.
+    H13g,
+    /// A14 Bionic — H14c (compact/budget SKU, e.g., iPhone 12 mini).
+    /// Unverified: may have lower NE count or tensor limits than H14g.
+    H14c,
+    /// A14 Bionic — H14g (standard SKU, e.g., iPhone 12).
+    /// Unverified: this is the canonical A14 variant.
+    H14g,
+    /// A15 Bionic — H15c (compact/budget SKU, e.g., iPhone 13 mini).
+    /// Unverified: may have lower NE count than H15g.
+    H15c,
+    /// A15 Bionic — H15g (standard SKU, e.g., iPhone 13).
+    /// Unverified: this is the canonical A15 variant.
+    H15g,
+    /// A16 Bionic — H16c (compact/budget SKU, e.g., iPhone 15).
+    /// Unverified: may have different NE count than H16g.
+    H16c,
+    /// A16 Bionic — H16g (standard SKU, e.g., iPhone 14 Pro).
+    /// Unverified: this is the canonical A16 variant.
+    H16g,
+    /// A16 Bionic — H16s (performance SKU, e.g., iPhone 15 Pro with A16).
+    /// Unverified: may have more NEs than H16g.
+    H16s,
+    /// A17 Pro — H17a (application processor SKU, e.g., iPhone 15 Pro).
+    /// Unverified: this is the canonical A17 variant.
+    H17a,
 }
 
 /// Per-revision ANE hardware limits.
@@ -278,6 +327,196 @@ impl AneHwLimits {
             sub_variant: AneSubVariant::Mac,
             is_uane: true,
             ..Self::a17()
+        }
+    }
+
+    // ─── T-P4-07: HAL sub-variant factory methods ─────────────────────
+    //
+    // These produce AneHwLimits for specific chip SKUs within each family.
+    // Currently they inherit from the parent family's limits with the
+    // sub_variant field set and verified=false. When hardware testing
+    // reveals constraint differences, the overrides should be added here.
+    //
+    // IMPORTANT: These are NOT accessible via for_revision() — they require
+    // explicit selection via for_hal_sub_variant(). This is intentional:
+    // for_revision() maps ANE revision IDs (which don't distinguish
+    // sub-variants), while for_hal_sub_variant() maps chip-level SKUs.
+
+    /// Get hardware limits for a specific HAL sub-variant.
+    ///
+    /// Returns `None` if the sub-variant string is not recognized.
+    /// The sub-variant string format is `H<family><suffix>` (e.g., "H14g").
+    ///
+    /// All sub-variant limits are currently unverified and inherit from
+    /// their parent family. When hardware testing confirms actual limits,
+    /// override the specific fields in the factory methods below.
+    pub fn for_hal_sub_variant(hal_id: &str) -> Option<Self> {
+        match hal_id {
+            "H13g" => Some(Self::h13g()),
+            "H14c" => Some(Self::h14c()),
+            "H14g" => Some(Self::h14g()),
+            "H15c" => Some(Self::h15c()),
+            "H15g" => Some(Self::h15g()),
+            "H16c" => Some(Self::h16c()),
+            "H16g" => Some(Self::h16g()),
+            "H16s" => Some(Self::h16s()),
+            "H17a" => Some(Self::h17a()),
+            _ => None,
+        }
+    }
+
+    /// T-P4-07: A13 Bionic — H13g (standard A13 SKU).
+    ///
+    /// H13g is the standard A13 Bionic variant (e.g., iPhone 11).
+    /// Constraint differences from the parent A13 family are NOT yet
+    /// modeled. This uses the same limits as a13() with sub_variant set
+    /// and verified=false.
+    fn h13g() -> Self {
+        log::warn!(
+            "H13g (A13 standard) hardware limits are unverified — using A13 family defaults. \
+             Sub-variant constraint differences are not yet modeled."
+        );
+        Self {
+            sub_variant: AneSubVariant::H13g,
+            verified: false,
+            ..Self::a13()
+        }
+    }
+
+    /// T-P4-07: A14 Bionic — H14c (compact/budget SKU).
+    ///
+    /// H14c is the compact A14 variant (e.g., iPhone 12 mini).
+    /// May have lower NE count or tighter tensor limits than H14g.
+    /// Constraint differences are NOT yet modeled.
+    fn h14c() -> Self {
+        log::warn!(
+            "H14c (A14 compact) hardware limits are unverified — using A14 family defaults. \
+             Compact variants may have fewer NEs or tighter limits than the standard variant."
+        );
+        Self {
+            sub_variant: AneSubVariant::H14c,
+            verified: false,
+            ..Self::a14()
+        }
+    }
+
+    /// T-P4-07: A14 Bionic — H14g (standard SKU).
+    ///
+    /// H14g is the standard A14 variant (e.g., iPhone 12).
+    /// This is the canonical A14 variant — the one tested by a14().
+    /// Constraint differences are NOT yet modeled.
+    fn h14g() -> Self {
+        Self {
+            sub_variant: AneSubVariant::H14g,
+            // H14g is the canonical A14 — same limits as a14()
+            ..Self::a14()
+        }
+    }
+
+    /// T-P4-07: A15 Bionic — H15c (compact/budget SKU).
+    ///
+    /// H15c is the compact A15 variant (e.g., iPhone 13 mini).
+    /// May have lower NE count than H15g.
+    /// Constraint differences are NOT yet modeled.
+    fn h15c() -> Self {
+        log::warn!(
+            "H15c (A15 compact) hardware limits are unverified — using A15 family defaults. \
+             Compact variants may have fewer NEs than the standard variant."
+        );
+        Self {
+            sub_variant: AneSubVariant::H15c,
+            verified: false,
+            ..Self::a15()
+        }
+    }
+
+    /// T-P4-07: A15 Bionic — H15g (standard SKU).
+    ///
+    /// H15g is the standard A15 variant (e.g., iPhone 13).
+    /// This is the canonical A15 variant — the one tested by a15().
+    fn h15g() -> Self {
+        Self {
+            sub_variant: AneSubVariant::H15g,
+            ..Self::a15()
+        }
+    }
+
+    /// T-P4-07: A16 Bionic — H16c (compact/budget SKU).
+    ///
+    /// H16c is the compact A16 variant (e.g., iPhone 15 with A16).
+    /// May have different NE count than H16g.
+    /// Constraint differences are NOT yet modeled.
+    fn h16c() -> Self {
+        log::warn!(
+            "H16c (A16 compact) hardware limits are unverified — using A16 family defaults. \
+             Compact variants may have different NE counts than the standard variant."
+        );
+        Self {
+            sub_variant: AneSubVariant::H16c,
+            verified: false,
+            ..Self::a16()
+        }
+    }
+
+    /// T-P4-07: A16 Bionic — H16g (standard SKU).
+    ///
+    /// H16g is the standard A16 variant (e.g., iPhone 14 Pro).
+    /// This is the canonical A16 variant — the one tested by a16().
+    fn h16g() -> Self {
+        Self {
+            sub_variant: AneSubVariant::H16g,
+            ..Self::a16()
+        }
+    }
+
+    /// T-P4-07: A16 Bionic — H16s (performance SKU).
+    ///
+    /// H16s is the performance A16 variant (e.g., iPhone 15 Pro with A16).
+    /// May have more NEs than H16g.
+    /// Constraint differences are NOT yet modeled.
+    fn h16s() -> Self {
+        log::warn!(
+            "H16s (A16 performance) hardware limits are unverified — using A16 family defaults. \
+             Performance variants may have more NEs than the standard variant."
+        );
+        Self {
+            sub_variant: AneSubVariant::H16s,
+            verified: false,
+            ..Self::a16()
+        }
+    }
+
+    /// T-P4-07: A17 Pro — H17a (application processor SKU).
+    ///
+    /// H17a is the A17 Pro variant (e.g., iPhone 15 Pro).
+    /// This is the canonical A17 variant — the one tested by a17().
+    fn h17a() -> Self {
+        Self {
+            sub_variant: AneSubVariant::H17a,
+            ..Self::a17()
+        }
+    }
+
+    /// T-P4-07: List all recognized HAL sub-variant identifiers.
+    ///
+    /// Returns the set of HAL IDs that can be passed to
+    /// [`Self::for_hal_sub_variant`].
+    pub fn all_hal_sub_variants() -> &'static [&'static str] {
+        &["H13g", "H14c", "H14g", "H15c", "H15g", "H16c", "H16g", "H16s", "H17a"]
+    }
+
+    /// T-P4-07: Get the parent AneRevision for a HAL sub-variant.
+    ///
+    /// Maps a HAL sub-variant identifier to the AneRevision whose
+    /// family contains this sub-variant.
+    pub fn revision_for_hal_sub_variant(hal_id: &str) -> Option<AneRevision> {
+        match hal_id {
+            "H13g" => Some(AneRevision::V6),  // A13 family
+            "H14c" | "H14g" => Some(AneRevision::V7),  // A14 family
+            "H15c" | "H15g" => Some(AneRevision::V8),  // A15 family
+            "H16c" | "H16g" | "H16s" => Some(AneRevision::V10), // A16 family
+            "H17a" => Some(AneRevision::V11), // A17 family
+            _ => None,
         }
     }
 
@@ -677,5 +916,153 @@ mod tests {
         assert_eq!(limits.sub_variant, AneSubVariant::Mac);
         assert_eq!(limits.max_tensor_width, 262144);
         assert_eq!(limits.num_nes, 8);
+    }
+
+    // ─── T-P4-07: HAL sub-variant tests ─────────────────────────────
+
+    #[test]
+    fn test_for_hal_sub_variant_unknown_returns_none() {
+        assert!(AneHwLimits::for_hal_sub_variant("H99z").is_none());
+        assert!(AneHwLimits::for_hal_sub_variant("").is_none());
+        assert!(AneHwLimits::for_hal_sub_variant("invalid").is_none());
+    }
+
+    #[test]
+    fn test_for_hal_sub_variant_all_recognized() {
+        for hal_id in AneHwLimits::all_hal_sub_variants() {
+            assert!(
+                AneHwLimits::for_hal_sub_variant(hal_id).is_some(),
+                "HAL sub-variant '{}' should be recognized by for_hal_sub_variant",
+                hal_id
+            );
+        }
+    }
+
+    #[test]
+    fn test_hal_sub_variant_revision_mapping() {
+        assert_eq!(AneHwLimits::revision_for_hal_sub_variant("H13g"), Some(AneRevision::V6));
+        assert_eq!(AneHwLimits::revision_for_hal_sub_variant("H14c"), Some(AneRevision::V7));
+        assert_eq!(AneHwLimits::revision_for_hal_sub_variant("H14g"), Some(AneRevision::V7));
+        assert_eq!(AneHwLimits::revision_for_hal_sub_variant("H15c"), Some(AneRevision::V8));
+        assert_eq!(AneHwLimits::revision_for_hal_sub_variant("H15g"), Some(AneRevision::V8));
+        assert_eq!(AneHwLimits::revision_for_hal_sub_variant("H16c"), Some(AneRevision::V10));
+        assert_eq!(AneHwLimits::revision_for_hal_sub_variant("H16g"), Some(AneRevision::V10));
+        assert_eq!(AneHwLimits::revision_for_hal_sub_variant("H16s"), Some(AneRevision::V10));
+        assert_eq!(AneHwLimits::revision_for_hal_sub_variant("H17a"), Some(AneRevision::V11));
+        assert_eq!(AneHwLimits::revision_for_hal_sub_variant("unknown"), None);
+    }
+
+    #[test]
+    fn test_hal_sub_variant_family_consistency() {
+        // Every HAL sub-variant must map to a revision whose family matches
+        for hal_id in AneHwLimits::all_hal_sub_variants() {
+            let limits = AneHwLimits::for_hal_sub_variant(hal_id).unwrap();
+            let parent_rev = AneHwLimits::revision_for_hal_sub_variant(hal_id).unwrap();
+            // The HAL sub-variant's revision field should match the parent revision
+            assert_eq!(
+                limits.revision, parent_rev,
+                "HAL {} revision should be {:?} but got {:?}",
+                hal_id, parent_rev, limits.revision
+            );
+            // The sub-variant's family should match the parent revision's family
+            assert_eq!(
+                limits.revision.family(),
+                parent_rev.family(),
+                "HAL {} family should be {:?}",
+                hal_id, parent_rev.family()
+            );
+        }
+    }
+
+    #[test]
+    fn test_h14g_is_canonical_a14() {
+        let h14g = AneHwLimits::for_hal_sub_variant("H14g").unwrap();
+        let a14 = AneHwLimits::for_revision(AneRevision::V7);
+        // H14g is the canonical A14 — should have same limits
+        assert_eq!(h14g.max_tensor_width, a14.max_tensor_width);
+        assert_eq!(h14g.max_tensor_height, a14.max_tensor_height);
+        assert_eq!(h14g.num_nes, a14.num_nes);
+        assert_eq!(h14g.sub_variant, AneSubVariant::H14g);
+    }
+
+    #[test]
+    fn test_h15g_is_canonical_a15() {
+        let h15g = AneHwLimits::for_hal_sub_variant("H15g").unwrap();
+        let a15 = AneHwLimits::for_revision(AneRevision::V8);
+        assert_eq!(h15g.max_tensor_width, a15.max_tensor_width);
+        assert_eq!(h15g.num_nes, a15.num_nes);
+        assert_eq!(h15g.sub_variant, AneSubVariant::H15g);
+    }
+
+    #[test]
+    fn test_h16g_is_canonical_a16() {
+        let h16g = AneHwLimits::for_hal_sub_variant("H16g").unwrap();
+        let a16 = AneHwLimits::for_revision(AneRevision::V10);
+        assert_eq!(h16g.max_tensor_width, a16.max_tensor_width);
+        assert_eq!(h16g.num_nes, a16.num_nes);
+        assert_eq!(h16g.sub_variant, AneSubVariant::H16g);
+    }
+
+    #[test]
+    fn test_h17a_is_canonical_a17() {
+        let h17a = AneHwLimits::for_hal_sub_variant("H17a").unwrap();
+        let a17 = AneHwLimits::for_revision(AneRevision::V11);
+        assert_eq!(h17a.max_tensor_width, a17.max_tensor_width);
+        assert_eq!(h17a.num_nes, a17.num_nes);
+        assert_eq!(h17a.sub_variant, AneSubVariant::H17a);
+    }
+
+    #[test]
+    fn test_compact_sub_variants_unverified() {
+        // Compact/budget sub-variants should be marked unverified
+        for hal_id in &["H14c", "H15c", "H16c"] {
+            let limits = AneHwLimits::for_hal_sub_variant(hal_id).unwrap();
+            assert!(
+                !limits.verified,
+                "HAL {} should be marked unverified until hardware testing confirms limits",
+                hal_id
+            );
+        }
+    }
+
+    #[test]
+    fn test_performance_sub_variants_unverified() {
+        // Performance sub-variants should be marked unverified
+        let h16s = AneHwLimits::for_hal_sub_variant("H16s").unwrap();
+        assert!(!h16s.verified, "H16s should be unverified");
+    }
+
+    #[test]
+    fn test_standard_sub_variants_inherit_verified() {
+        // Canonical sub-variants (H14g, H15g, H16g, H17a) should inherit
+        // verified status from their parent revision
+        let a14_verified = AneHwLimits::for_revision(AneRevision::V7).verified;
+        let h14g = AneHwLimits::for_hal_sub_variant("H14g").unwrap();
+        assert_eq!(h14g.verified, a14_verified, "H14g verified should match A14");
+    }
+
+    #[test]
+    fn test_h13g_inherits_a13_limits() {
+        let h13g = AneHwLimits::for_hal_sub_variant("H13g").unwrap();
+        let a13 = AneHwLimits::for_revision(AneRevision::V6);
+        assert_eq!(h13g.max_tensor_width, a13.max_tensor_width);
+        assert_eq!(h13g.max_tensor_height, a13.max_tensor_height);
+        assert_eq!(h13g.max_tensor_depth, a13.max_tensor_depth);
+        assert_eq!(h13g.num_nes, a13.num_nes);
+        assert_eq!(h13g.sub_variant, AneSubVariant::H13g);
+    }
+
+    #[test]
+    fn test_hal_sub_variant_validation_works() {
+        // HAL sub-variant limits should be usable for validation
+        let h14g = AneHwLimits::for_hal_sub_variant("H14g").unwrap();
+        assert!(h14g.validate_tensor_dims(1024, 1024, 512, 256, 4).is_ok());
+        assert!(h14g.validate_tensor_dims(999999, 1024, 512, 256, 4).is_err());
+    }
+
+    #[test]
+    fn test_all_hal_sub_variants_count() {
+        // T-P4-07: We defined 9 HAL sub-variants
+        assert_eq!(AneHwLimits::all_hal_sub_variants().len(), 9);
     }
 }

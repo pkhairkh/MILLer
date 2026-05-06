@@ -26,6 +26,58 @@ use ane_ir::mir::{MilDtype, MirOp};
 use ane_ir::shape_ops;
 use std::collections::HashMap;
 
+/// T-P5-04: Shape inference error type for explicit error reporting.
+///
+/// When shape inference fails (e.g., unknown op, missing input shape),
+/// this error provides context about why inference failed rather than
+/// silently returning an empty `Vec` (which means "unknown shape" but
+/// can hide bugs in the inference logic).
+#[derive(Debug, Clone)]
+pub enum ShapeInferenceError {
+    /// The input shape for a referenced node is not available.
+    MissingInputShape {
+        node_name: String,
+        input_id: String,
+    },
+    /// The op variant has no shape inference rule.
+    UnknownOp {
+        node_name: String,
+        op_name: String,
+    },
+    /// Name-based heuristic was used (T-P5-09: should be replaced with explicit fields).
+    NameHeuristicUsed {
+        node_name: String,
+        heuristic: String,
+        inferred_shape: Vec<usize>,
+    },
+    /// Shape could not be determined for any reason.
+    Indeterminate {
+        node_name: String,
+        reason: String,
+    },
+}
+
+impl std::fmt::Display for ShapeInferenceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ShapeInferenceError::MissingInputShape { node_name, input_id } => {
+                write!(f, "Shape inference failed for '{}': input shape for '{}' is not available", node_name, input_id)
+            }
+            ShapeInferenceError::UnknownOp { node_name, op_name } => {
+                write!(f, "Shape inference failed for '{}': no inference rule for op '{}'", node_name, op_name)
+            }
+            ShapeInferenceError::NameHeuristicUsed { node_name, heuristic, inferred_shape } => {
+                write!(f, "Shape inference for '{}' used name heuristic '{}' (shape: {:?})", node_name, heuristic, inferred_shape)
+            }
+            ShapeInferenceError::Indeterminate { node_name, reason } => {
+                write!(f, "Shape inference failed for '{}': {}", node_name, reason)
+            }
+        }
+    }
+}
+
+impl std::error::Error for ShapeInferenceError {}
+
 /// Infer the output dtype for a compat graph input node.
 ///
 /// T-81 (I-56): Previously, this function used `name.contains("input_ids")`
@@ -61,13 +113,17 @@ pub fn compat_input_shape(name: &str, shape: &[usize], max_seq_len: usize) -> Ve
     // Qwen3-style token ID inputs with shape [1, max_seq_len]. This is fragile
     // and will produce incorrect shapes for non-Qwen3 models or tensors that
     // happen to contain "input_ids" in their name but have different shapes.
-    // TODO: Replace with explicit shape/dtype fields from SIR→AIR→MIR (T-P5-04).
+    // T-P5-09: This heuristic should be replaced with explicit shape/dtype
+    // fields from SIR→AIR→MIR. The compat_output_shape_fallible() function
+    // reports this as a ShapeInferenceError::NameHeuristicUsed.
+    // TODO: Replace with explicit shape/dtype fields from SIR→AIR→MIR (T-P5-09).
     if name.contains("input_ids") {
-        log::warn!
-            ("M-018: compat_input_shape: using name-based heuristic \
+        log::warn!(
+            "T-P5-09/M-018: compat_input_shape: using name-based heuristic \
              name.contains(\"input_ids\") to infer shape [1, {}]. This is fragile \
-             and may produce incorrect results for non-Qwen3 models. Node name: {:?}",
-             max_seq_len, name);
+             and should be replaced with explicit shape annotations. Node name: {:?}",
+             max_seq_len, name
+        );
         vec![1, max_seq_len]
     } else {
         vec![1]
@@ -118,13 +174,14 @@ pub fn compat_output_shape(
     // Qwen3-style token ID inputs with shape [1, max_seq_len]. This is fragile
     // and will produce incorrect shapes for non-Qwen3 models or tensors that
     // happen to contain "input_ids" in their name but have different shapes.
-    // TODO: Replace with explicit shape/dtype fields from SIR→AIR→MIR (T-P5-04).
+    // T-P5-09: This heuristic should be replaced with explicit shape annotations.
     if name.contains("input_ids") {
-        log::warn!
-            ("M-018: compat_output_shape: using name-based heuristic \
+        log::warn!(
+            "T-P5-09/M-018: compat_output_shape: using name-based heuristic \
              name.contains(\"input_ids\") to infer shape [1, {}]. This is fragile \
-             and may produce incorrect results for non-Qwen3 models. Node name: {:?}",
-             max_seq_len, name);
+             and should be replaced with explicit shape annotations. Node name: {:?}",
+             max_seq_len, name
+        );
         return vec![1, max_seq_len];
     }
     match op {
@@ -443,17 +500,19 @@ pub fn compat_output_shape(
                 vec![]
             }
         }
-        // M-041: Magic-string shape heuristic — `"__placeholder__"` is a Qwen3-specific
-        // sentinel for graph input placeholders, hardcoded to [1, max_seq_len]. This is
-        // implicit semantics via node naming and will produce incorrect shapes for
-        // non-Qwen3 models or any placeholder with a different shape.
-        // TODO: Replace with explicit shape/dtype fields from SIR→AIR→MIR (T-P5-04).
+        // M-041/T-P5-09: Magic-string shape heuristic — `"__placeholder__"` is a
+        // Qwen3-specific sentinel for graph input placeholders, hardcoded to
+        // [1, max_seq_len]. This is implicit semantics via node naming and will
+        // produce incorrect shapes for non-Qwen3 models or any placeholder with
+        // a different shape. This should be replaced with explicit shape annotations
+        // carried through SIR→AIR→MIR.
         MirOp::MILIdentity { x, .. } if x.0 == "__placeholder__" => {
-            log::warn!
-                ("M-041: compat_output_shape: using magic string \"__placeholder__\" \
-                 heuristic to infer shape [1, {}]. This is fragile and may produce \
-                 incorrect results for non-Qwen3 models. Node name: {:?}",
-                 max_seq_len, name);
+            log::warn!(
+                "T-P5-09/M-041: compat_output_shape: using magic string \"__placeholder__\" \
+                 heuristic to infer shape [1, {}]. This is fragile and should be replaced \
+                 with explicit shape annotations. Node name: {:?}",
+                 max_seq_len, name
+            );
             vec![1, max_seq_len]
         }
         // Identity: propagate input shape
@@ -559,7 +618,113 @@ pub fn compat_output_shape(
         // Catch-all: return empty shape rather than a wrong hardcoded value.
         // An empty shape means "unknown" which Core ML will try to infer from
         // the graph — better than a wrong shape that causes type inference failure.
-        _ => vec![],
+        // T-P5-04: Log a warning when the catch-all is hit so that missing
+        // inference rules are discoverable.
+        _ => {
+            log::warn!(
+                "T-P5-04: compat_output_shape: no inference rule for op '{}' on node '{}'. \
+                 Returning empty shape (unknown). Consider adding an explicit shape inference \
+                 rule or using compat_output_shape_fallible for error handling.",
+                op.mil_op_name(), name
+            );
+            vec![]
+        }
+    }
+}
+
+/// T-P5-04: Fallible version of [`compat_output_shape`] that returns
+/// explicit errors instead of silently returning empty shapes.
+///
+/// This function has the same logic as `compat_output_shape` but returns
+/// `Result<Vec<usize>, ShapeInferenceError>` instead of `Vec<usize>`.
+/// When shape inference fails, it returns an error that describes *why*
+/// inference failed, rather than silently returning `vec![]` (which
+/// ambiguously means "unknown shape").
+///
+/// Use this function when you need to distinguish between:
+/// - A known empty shape (e.g., scalar)
+/// - A genuinely unknown shape (inference failed)
+/// - A shape derived from a name heuristic (fragile)
+///
+/// For backward compatibility, [`compat_output_shape`] continues to
+/// return `vec![]` for unknown shapes.
+pub fn compat_output_shape_fallible(
+    name: &str,
+    op: &MirOp,
+    shape: &[usize],
+    node_shapes: &HashMap<String, Vec<usize>>,
+    max_seq_len: usize,
+) -> Result<Vec<usize>, ShapeInferenceError> {
+    if !shape.is_empty() {
+        return Ok(shape.to_vec());
+    }
+    // T-P5-09: Name heuristic — reports as a NameHeuristicUsed error
+    // rather than silently returning the heuristic result.
+    if name.contains("input_ids") {
+        let inferred = vec![1, max_seq_len];
+        return Err(ShapeInferenceError::NameHeuristicUsed {
+            node_name: name.to_string(),
+            heuristic: "name.contains(\"input_ids\") → [1, max_seq_len]".to_string(),
+            inferred_shape: inferred,
+        });
+    }
+    match op {
+        MirOp::MILReduceMean { x, axes, keep_dims, .. } => {
+            reduce_shape_fallible(x, axes, *keep_dims, node_shapes, name)
+        }
+        MirOp::MILRsqrt { x, .. } => {
+            node_shapes.get(&x.0).cloned().ok_or_else(|| ShapeInferenceError::MissingInputShape {
+                node_name: name.to_string(),
+                input_id: x.0.clone(),
+            })
+        }
+        MirOp::MILLinear { x, .. } => {
+            node_shapes.get(&x.0).cloned().ok_or_else(|| ShapeInferenceError::MissingInputShape {
+                node_name: name.to_string(),
+                input_id: x.0.clone(),
+            })
+        }
+        // Unary ops: propagate input shape
+        MirOp::MILSilu { x, .. }
+        | MirOp::MILAbs { x, .. }
+        | MirOp::MILRelu { x, .. }
+        | MirOp::MILSigmoid { x, .. }
+        | MirOp::MILTanh { x, .. }
+        | MirOp::MILGelu { x, .. }
+        | MirOp::MILExp { x, .. }
+        | MirOp::MILCos { x, .. }
+        | MirOp::MILSin { x, .. }
+        | MirOp::MILCast { x, .. } => {
+            node_shapes.get(&x.0).cloned().ok_or_else(|| ShapeInferenceError::MissingInputShape {
+                node_name: name.to_string(),
+                input_id: x.0.clone(),
+            })
+        }
+        MirOp::MILReshape { shape, .. } => Ok(shape.to_vec()),
+        MirOp::MILFill { shape, .. } => Ok(shape.to_vec()),
+        MirOp::MILReadState { shape, .. } => Ok(shape.clone()),
+        // Catch-all: explicit error for unsupported ops
+        _ => Err(ShapeInferenceError::UnknownOp {
+            node_name: name.to_string(),
+            op_name: op.mil_op_name().to_string(),
+        }),
+    }
+}
+
+/// Fallible version of reduce_shape for T-P5-04.
+fn reduce_shape_fallible(
+    x: &ane_ir::mir::MirNodeId,
+    axes: &[usize],
+    keep_dims: bool,
+    node_shapes: &HashMap<String, Vec<usize>>,
+    node_name: &str,
+) -> Result<Vec<usize>, ShapeInferenceError> {
+    match node_shapes.get(&x.0) {
+        Some(input_shape) => Ok(shape_ops::reduce_shape(input_shape, axes, keep_dims)),
+        None => Err(ShapeInferenceError::MissingInputShape {
+            node_name: node_name.to_string(),
+            input_id: x.0.clone(),
+        }),
     }
 }
 
@@ -2218,5 +2383,118 @@ mod tests {
         let ns = shapes_with(vec![("x", vec![2, 3, 4])]);
         // Flatten all dims: product = 2 * 3 * 4 = 24
         assert_eq!(compat_output_shape_default("node", &op, &[], &ns), vec![24]);
+    }
+
+    // ─── T-P5-04: compat_output_shape_fallible tests ─────────────────────
+
+    #[test]
+    fn test_fallible_known_shape_returns_ok() {
+        let op = MirOp::MILRelu { name: "r".into(), x: nid("x") };
+        let ns = shapes();
+        let result = compat_output_shape_fallible("node", &op, &[3, 4], &ns, 512);
+        assert_eq!(result.unwrap(), vec![3, 4]);
+    }
+
+    #[test]
+    fn test_fallible_input_ids_returns_name_heuristic_error() {
+        let op = MirOp::MILRelu { name: "r".into(), x: nid("x") };
+        let ns = shapes();
+        let result = compat_output_shape_fallible("input_ids_node", &op, &[], &ns, 512);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            ShapeInferenceError::NameHeuristicUsed { node_name, heuristic, inferred_shape } => {
+                assert_eq!(node_name, "input_ids_node");
+                assert!(heuristic.contains("input_ids"));
+                assert_eq!(inferred_shape, vec![1, 512]);
+            }
+            _ => panic!("Expected NameHeuristicUsed error, got: {:?}", err),
+        }
+    }
+
+    #[test]
+    fn test_fallible_unary_with_shape_returns_ok() {
+        let op = MirOp::MILRelu { name: "r".into(), x: nid("x") };
+        let ns = shapes_with(vec![("x", vec![2, 3])]);
+        let result = compat_output_shape_fallible("node", &op, &[], &ns, 512);
+        assert_eq!(result.unwrap(), vec![2, 3]);
+    }
+
+    #[test]
+    fn test_fallible_unary_missing_input_returns_error() {
+        let op = MirOp::MILRelu { name: "r".into(), x: nid("unknown") };
+        let ns = shapes();
+        let result = compat_output_shape_fallible("node", &op, &[], &ns, 512);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ShapeInferenceError::MissingInputShape { node_name, input_id } => {
+                assert_eq!(node_name, "node");
+                assert_eq!(input_id, "unknown");
+            }
+            other => panic!("Expected MissingInputShape, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_fallible_unknown_op_returns_error() {
+        // MILConst is not handled in the fallible function's match
+        let op = MirOp::MILConst { name: "c".into(), value_path: "weights.bin".into(), dtype: MilDtype::Fp16 };
+        let ns = shapes();
+        let result = compat_output_shape_fallible("node", &op, &[], &ns, 512);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ShapeInferenceError::UnknownOp { node_name, op_name } => {
+                assert_eq!(node_name, "node");
+                assert!(op_name.len() > 0);
+            }
+            other => panic!("Expected UnknownOp, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_fallible_reduce_with_shape_returns_ok() {
+        let op = MirOp::MILReduceMean { name: "rm".into(), x: nid("x"), axes: vec![2], keep_dims: true };
+        let ns = shapes_with(vec![("x", vec![1, 512, 1024])]);
+        let result = compat_output_shape_fallible("node", &op, &[], &ns, 512);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), vec![1, 512, 1]);
+    }
+
+    #[test]
+    fn test_fallible_reduce_missing_input_returns_error() {
+        let op = MirOp::MILReduceMean { name: "rm".into(), x: nid("unknown"), axes: vec![2], keep_dims: true };
+        let ns = shapes();
+        let result = compat_output_shape_fallible("node", &op, &[], &ns, 512);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ShapeInferenceError::MissingInputShape { .. } => {}
+            other => panic!("Expected MissingInputShape, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_fallible_reshape_returns_shape() {
+        let op = MirOp::MILReshape { name: "r".into(), x: nid("x"), shape: vec![2, 3, 4] };
+        let ns = shapes();
+        let result = compat_output_shape_fallible("node", &op, &[], &ns, 512);
+        assert_eq!(result.unwrap(), vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn test_shape_inference_error_display() {
+        let err = ShapeInferenceError::MissingInputShape {
+            node_name: "test_node".into(),
+            input_id: "input_0".into(),
+        };
+        let msg = format!("{}", err);
+        assert!(msg.contains("test_node"));
+        assert!(msg.contains("input_0"));
+
+        let err2 = ShapeInferenceError::UnknownOp {
+            node_name: "test_node".into(),
+            op_name: "conv".into(),
+        };
+        let msg2 = format!("{}", err2);
+        assert!(msg2.contains("conv"));
     }
 }
