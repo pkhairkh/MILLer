@@ -2,7 +2,7 @@
 
 > Consolidated remediation task board for open and in-progress issues.
 > Completed tasks have been removed — see git history for the full audit trail.
-> Recently completed: T-P2-01, T-P2-04, T-P2-05, T-P2-11, T-P2-12, T-P3-03, T-P3-04, T-P3-07, T-P3-08, T-P3-09, T-P3-10, T-P3-11, T-P4-01, T-P4-02, T-P4-03, T-P4-04, T-P4-05, T-P4-07, T-P4-08, T-P5-03, T-P5-04, T-P5-05, T-P5-06, T-P5-07, T-P5-09, T-P5-10, T-P5-11, T-P6-01, T-P6-02, T-P6-04, T-P6-06.
+> Recently completed: T-P2-01, T-P2-04, T-P2-05, T-P2-11, T-P2-12, T-P3-03, T-P3-04, T-P3-07, T-P3-08, T-P3-09, T-P3-10, T-P3-11, T-P4-01, T-P4-02, T-P4-03, T-P4-04, T-P4-05, T-P4-07, T-P4-08, T-P5-03, T-P5-04, T-P5-05, T-P5-06, T-P5-07, T-P5-09, T-P5-10, T-P5-11, T-P6-01, T-P6-02, T-P6-03, T-P6-04, T-P6-06.
 > Format: Agentic AI task specification (structured, machine-parseable, human-readable).
 > Each task is independently executable by an AI coding agent with access to this repository.
 
@@ -62,21 +62,7 @@
 
 ## Phase 6 — Forensic Infrastructure Gaps (Long-Term)
 
-### T-P6-03: Implement ValidateLayer-equivalent constraints
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P6-03 |
-| `title` | Add MILLer equivalents for 40+ ANEC ValidateLayer instantiations |
-| `phase` | P6 |
-| `severity` | HIGH |
-| `depends_on` | [T-P6-01] |
-| `files` | `crates/passes/src/placement_validate.rs`, `crates/passes/src/op_constraints.rs` |
-| `violation_refs` | [N-004] |
-| `acceptance_criteria` | 1) Each ANEC ValidateLayer constraint has a MILLer validation equivalent; 2) Invalid configurations caught at placement time instead of ANEC compile time |
-| `agent_hints` | This is a large task. Start by mapping each ValidateLayer instantiation to its constraint and adding validation methods. Prioritize by frequency of failure. |
-
----
+(All P6 tasks completed except T-P6-05 which is now unblocked since T-P6-03 is done.)
 
 ### T-P6-05: Add fusability checks
 

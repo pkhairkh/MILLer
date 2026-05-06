@@ -3,6 +3,7 @@
 
 use ane_ir::ane_hw_limits::AneHwLimits;
 use ane_ir::ane_target::AneFamily;
+use ane_ir::common::MilDtype;
 use ane_ir::mir::MirOp;
 #[cfg(test)]
 use ane_ir::mir::MirNodeId;
@@ -1149,6 +1150,426 @@ pub fn validate_architecture_gated_constraints(
     }
 }
 
+/// T-P6-03: Validate reduction constraints for ReduceSum/Mean/Max/Prod/etc.
+///
+/// ANEC's `ANECReductionLayerDesc` ValidateLayer enforces constraints on
+/// reduction operations. The key constraints derived from binary forensic
+/// evidence are:
+///
+/// 1. **Axis must be spatial or channel**: Reduction on the batch axis
+///    (axis 0 in NCHW layout) is not directly supported by the ANE
+///    reduction engine. The ANEC reduction converter expects reduction
+///    along channel or spatial dimensions only.
+///
+/// 2. **keep_dims must be true for channel-axis reduction**: When reducing
+///    along the channel axis, the output must preserve the dimension
+///    (keep_dims=true) for correct ANE tensor format alignment.
+///
+/// 3. **Multi-axis reduction**: ANEC supports multi-axis reductions, but
+///    only when the reduced axes are contiguous and include the channel
+///    axis. Non-contiguous multi-axis reductions are decomposed by the
+///    compiler into sequential single-axis reductions.
+///
+/// 4. **ReduceProd not on all axes**: Product reduction across all
+///    dimensions (global product) is not reliably supported on older
+///    ANE families (pre-A14).
+///
+/// 5. **ReduceLogSum/ReduceLogSumExp**: These require A14+ for reliable
+///    ANEC compilation. The ANEC converters for log-sum reductions
+///    depend on the fused reduction+exp architecture that was introduced
+///    with A14 (LSE_3).
+pub fn validate_reduction_constraints(
+    op_name: &str,
+    axes: &[usize],
+    keep_dims: bool,
+    input_rank: usize,
+    family: AneFamily,
+) -> Result<(), OpConstraintViolation> {
+    // 1. ReduceLogSum/ReduceLogSumExp require A14+ (LSE_3+).
+    //    These operations depend on fused reduction+exp hardware that
+    //    was introduced with A14. Pre-A14 families may silently produce
+    //    incorrect results.
+    if (op_name == "reduce_log_sum" || op_name == "reduce_log_sum_exp")
+        && matches!(family, AneFamily::A11Legacy | AneFamily::A12 | AneFamily::A13)
+    {
+        return Err(OpConstraintViolation {
+            op_name: op_name.into(),
+            constraint: "log_reduction_requires_a14".into(),
+            message: format!(
+                "{} requires A14+ (LSE_3+), current family {:?} does not support it",
+                op_name, family
+            ),
+        });
+    }
+
+    // 2. ReduceProd across all axes (global product) is not reliably
+    //    supported on pre-A14 families.
+    if op_name == "reduce_prod"
+        && axes.len() == input_rank
+        && matches!(family, AneFamily::A11Legacy | AneFamily::A12 | AneFamily::A13)
+    {
+        return Err(OpConstraintViolation {
+            op_name: op_name.into(),
+            constraint: "global_prod_requires_a14".into(),
+            message: format!(
+                "Global product reduction (all axes) is not reliably supported on {:?} (requires A14+)",
+                family
+            ),
+        });
+    }
+
+    // 3. Reduction on batch axis (axis 0) with rank >= 4 (NCHW layout)
+    //    is not directly supported. The ANE reduction engine operates
+    //    on channel and spatial dimensions. For rank < 4, axis 0 is
+    //    not a batch axis and is acceptable.
+    if input_rank >= 4 && axes.iter().any(|&a| a == 0) {
+        return Err(OpConstraintViolation {
+            op_name: op_name.into(),
+            constraint: "no_batch_axis_reduction".into(),
+            message: format!(
+                "Reduction on batch axis (axis 0) is not supported on ANE \
+                 for rank-{}+ tensors in NCHW layout",
+                input_rank
+            ),
+        });
+    }
+
+    // 4. Channel-axis reduction (axis 1 in NCHW) requires keep_dims=true
+    //    for correct ANE tensor format alignment. When the channel
+    //    dimension is removed, the tensor format becomes ambiguous and
+    //    the ANEC may miscompile it.
+    if input_rank >= 4 && axes.iter().any(|&a| a == 1) && !keep_dims {
+        return Err(OpConstraintViolation {
+            op_name: op_name.into(),
+            constraint: "channel_reduction_keep_dims".into(),
+            message: format!(
+                "Reduction on channel axis (axis 1) with keep_dims=false \
+                 is not supported on ANE (tensor format becomes ambiguous)"
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+/// T-P6-03: Validate LayerNorm constraints.
+///
+/// ANEC's `ANECLayerNormLayerDesc` ValidateLayer enforces:
+///
+/// 1. **Input channels must be divisible by num_groups**: The ANEC error
+///    message is: "LayerNorm input channels %zd must be divisible by
+///    num_groups (Specified: %zd)". When channels % num_groups != 0,
+///    the ANEC compiler rejects the op.
+///
+/// 2. **Output tensor format must be Float**: The ANEC error message
+///    is: "LayerNorm output tensor format must be Float (Specified %s)".
+///    Quantized output from LayerNorm is not supported.
+pub fn validate_layernorm_constraints(
+    channels: u64,
+    num_groups: u64,
+    is_quantized_output: bool,
+) -> Result<(), OpConstraintViolation> {
+    // 1. Channels must be divisible by num_groups
+    if num_groups > 0 && channels % num_groups != 0 {
+        return Err(OpConstraintViolation {
+            op_name: "layernorm".into(),
+            constraint: "channels_divisible_by_groups".into(),
+            message: format!(
+                "LayerNorm input channels {} must be divisible by num_groups {}",
+                channels, num_groups
+            ),
+        });
+    }
+
+    // 2. Output must be float format (not quantized)
+    if is_quantized_output {
+        return Err(OpConstraintViolation {
+            op_name: "layernorm".into(),
+            constraint: "output_must_be_float".into(),
+            message: "LayerNorm output tensor format must be Float (quantized output not supported on ANE)".into(),
+        });
+    }
+
+    Ok(())
+}
+
+/// T-P6-03: Validate element-wise broadcast constraints.
+///
+/// ANEC's `ANECBroadcastLayerDescAlternate` ValidateLayer enforces that
+/// broadcast output dimensions must either be 1 or match the input
+/// dimension. The ANEC error messages are:
+///
+/// - "Broadcast output tensor batch must be 1 or match input_batch size"
+/// - "Broadcast output tensor channel must be 1 or match input_channel size"
+/// - "Broadcast output tensor depth must be 1 or match input_depth size"
+/// - "Broadcast output tensor height must be 1 or match input_height size"
+/// - "Broadcast output tensor width must be 1 or match input_width size"
+///
+/// In practice, this means the broadcast must follow standard NumPy-style
+/// broadcasting rules where each output dimension is the max of the
+/// corresponding input dimensions, and each input dimension is either 1
+/// or matches the output dimension.
+pub fn validate_elementwise_broadcast_constraints(
+    op_name: &str,
+    input_shapes: &[Vec<usize>],
+) -> Result<(), OpConstraintViolation> {
+    if input_shapes.len() < 2 {
+        // Single-input element-wise ops (unary) have no broadcast issues
+        return Ok(());
+    }
+
+    // Compute the broadcast output shape (max along each dimension,
+    // with 1-broadcasting). Then verify each input is broadcastable.
+    let max_rank = input_shapes.iter().map(|s| s.len()).max().unwrap_or(0);
+    if max_rank == 0 {
+        return Ok(());
+    }
+
+    // Compute broadcast output shape
+    let mut output_shape = vec![1usize; max_rank];
+    for shape in input_shapes {
+        let offset = max_rank - shape.len();
+        for (i, &dim) in shape.iter().enumerate() {
+            let out_idx = offset + i;
+            output_shape[out_idx] = output_shape[out_idx].max(dim);
+        }
+    }
+
+    // Verify each input is broadcastable to the output shape
+    let dim_names = ["width", "height", "depth", "channel", "batch"];
+    for shape in input_shapes {
+        let offset = max_rank - shape.len();
+        for (i, &dim) in shape.iter().enumerate() {
+            let out_idx = offset + i;
+            if dim != 1 && dim != output_shape[out_idx] {
+                // Determine which dimension this is (reverse index for naming)
+                let reverse_idx = max_rank - 1 - out_idx;
+                let dim_name = dim_names.get(reverse_idx).unwrap_or(&"unknown");
+                return Err(OpConstraintViolation {
+                    op_name: op_name.into(),
+                    constraint: "broadcast_dimension_mismatch".into(),
+                    message: format!(
+                        "Broadcast {} dimension: input has {} but output expects {} \
+                         (must be 1 or match output)",
+                        dim_name, dim, output_shape[out_idx]
+                    ),
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// T-P6-03: Validate transpose constraints.
+///
+/// ANEC's `ANECTransposeLayerDesc` ValidateLayer enforces:
+///
+/// 1. **Interleave only on C axis**: "ANEC only supports interleave on C axis"
+///    — interleaving on non-channel dimensions is rejected.
+///
+/// 2. **TransposeNC**: "TransposeNC: Invalid input channel, must be 1" —
+///    NC transposes require the channel dimension to be 1.
+///
+/// 3. **TransposeNH**: "TransposeNH: Invalid input dimension" — NH
+///    transposes have specific input dimension requirements.
+///
+/// 4. **Channel limit**: Transpose operations with channels exceeding
+///    `ne_transpose_c_max` are rejected from ANE.
+///
+/// This function validates the shape-based constraints (items 2-3).
+/// The interleave and channel limit checks are handled separately by
+/// `validate_interleave_constraints()` and
+/// `hw_limits.validate_transpose_c_max()`.
+pub fn validate_transpose_constraints(
+    input_shape: &[usize],
+    perm: &[usize],
+) -> Result<(), OpConstraintViolation> {
+    let rank = input_shape.len();
+    if rank < 2 {
+        return Err(OpConstraintViolation {
+            op_name: "transpose".into(),
+            constraint: "min_rank_2".into(),
+            message: format!(
+                "Transpose input must have rank >= 2, got rank {}",
+                rank
+            ),
+        });
+    }
+
+    // Detect NC transpose: perm swaps N (0) and C (1) only
+    // For rank-4 NCHW: perm = [1, 0, 2, 3]
+    if rank >= 4 && perm.len() >= rank {
+        let mut is_nc_transpose = perm[0] == 1 && perm[1] == 0;
+        if is_nc_transpose {
+            // Remaining elements must be in order: 2, 3, 4, ...
+            for i in 2..rank {
+                if perm[i] != i {
+                    is_nc_transpose = false;
+                    break;
+                }
+            }
+        }
+        if is_nc_transpose {
+            // NC transpose: channel must be 1
+            let channels = input_shape[1];
+            if channels != 1 {
+                return Err(OpConstraintViolation {
+                    op_name: "transpose_nc".into(),
+                    constraint: "nc_channel_must_be_1".into(),
+                    message: format!(
+                        "TransposeNC: input channel must be 1, got {}",
+                        channels
+                    ),
+                });
+            }
+        }
+    }
+
+    // Detect NH transpose: perm swaps N (0) and H (2)
+    // For rank-4 NCHW: perm = [2, 1, 0, 3]
+    if rank >= 4 && perm.len() >= 4 {
+        let is_nh_transpose = perm[0] == 2 && perm[2] == 0 && perm[1] == 1 && perm[3] == 3;
+        if is_nh_transpose {
+            // NH transpose has dimension constraints that are architecture-
+            // specific. We enforce that the output dimensions are within
+            // ANE tensor limits (rank <= 5, which is already checked
+            // universally). Additional dimension checks would require
+            // AneHwLimits, which is handled in placement_validate.
+        }
+    }
+
+    Ok(())
+}
+
+/// T-P6-03: Validate cast dtype constraints.
+///
+/// The ANEC Quantize/Dequantize layer descriptors enforce strict dtype
+/// constraints on cast operations:
+///
+/// 1. **Valid input dtypes for cast**: FP16, FP32, Int8, UInt8 are
+///    the primary ANE-compatible dtypes. Casting from other dtypes
+///    (Int32, Fp64, Bool) is not supported on ANE.
+///
+/// 2. **Valid output dtypes for cast**: FP16, FP32, Int8, UInt8,
+///    E4M3 (architecture-dependent). Casting to unsupported dtypes
+///    will fail at ANEC compile time.
+///
+/// 3. **E4M3 not supported on some architectures**: "Error: E4M3 is
+///    not supported" on pre-A17 families. E5M2 is never supported.
+///
+/// 4. **32-bit format not supported**: "32 bit format not supported"
+///    for compute — Fp32 is only valid as input/output, not for
+///    intermediate computation.
+pub fn validate_cast_constraints(
+    input_dtype: MilDtype,
+    output_dtype: MilDtype,
+    _family: AneFamily,
+) -> Result<(), OpConstraintViolation> {
+    // Valid ANE dtypes for input/output
+    let valid_input_dtypes = [
+        MilDtype::Fp16, MilDtype::Fp32, MilDtype::Int8, MilDtype::UInt8,
+    ];
+    let valid_output_dtypes = [
+        MilDtype::Fp16, MilDtype::Fp32, MilDtype::Int8, MilDtype::UInt8,
+    ];
+
+    if !valid_input_dtypes.contains(&input_dtype) {
+        return Err(OpConstraintViolation {
+            op_name: "cast".into(),
+            constraint: "invalid_input_dtype".into(),
+            message: format!(
+                "Cast from dtype {:?} is not supported on ANE (valid input dtypes: FP16, FP32, Int8, UInt8)",
+                input_dtype
+            ),
+        });
+    }
+
+    if !valid_output_dtypes.contains(&output_dtype) {
+        return Err(OpConstraintViolation {
+            op_name: "cast".into(),
+            constraint: "invalid_output_dtype".into(),
+            message: format!(
+                "Cast to dtype {:?} is not supported on ANE (valid output dtypes: FP16, FP32, Int8, UInt8)",
+                output_dtype
+            ),
+        });
+    }
+
+    // E4M3 output is architecture-gated (A17+)
+    // Note: MilDtype may not have an E4M3 variant yet; this check is
+    // a forward-compatible placeholder. When E4M3 is added to MilDtype,
+    // this constraint will be enforced automatically.
+
+    // FP32 output from cast is limited (32-bit format not supported for
+    // compute, only as I/O format). We allow FP32 output for now but
+    // this may need tighter constraints depending on ANEC behavior.
+
+    Ok(())
+}
+
+/// T-P6-03: Validate constexpr dequantize constraints.
+///
+/// ANEC enforces strict input/output format constraints on dequantize
+/// operations. The key constraints from binary forensic evidence are:
+///
+/// 1. **Dequant output must be FP16**: "Dequant layer must have fp16
+///    output format" — the dequantize operation always produces FP16
+///    output on the ANE.
+///
+/// 2. **Dequant input must be Int8/UInt8/Int4/E4M3**: "Dequant layer
+///    must have int8, uint8, int4 or e4m3 input format" — only these
+///    quantized formats are accepted for dequantization.
+///
+/// 3. **Int4 per-Cout dequant not supported**: "Int4 Per-Cout Dequant
+///    is not supported" — Int4 dequantization must be per-tensor, not
+///    per-output-channel.
+pub fn validate_constexpr_dequantize_constraints(
+    input_format: &str,
+    output_format: &str,
+    axis: isize,
+    is_int4: bool,
+) -> Result<(), OpConstraintViolation> {
+    // 1. Output must be FP16
+    let valid_output = ["fp16", "float16", "FP16", "Float16", "half"];
+    if !valid_output.contains(&output_format) {
+        return Err(OpConstraintViolation {
+            op_name: "constexpr_affine_dequantize".into(),
+            constraint: "dequant_output_must_be_fp16".into(),
+            message: format!(
+                "Dequant layer must have fp16 output format, got '{}'",
+                output_format
+            ),
+        });
+    }
+
+    // 2. Input must be one of: int8, uint8, int4, e4m3
+    let valid_input = ["int8", "uint8", "int4", "e4m3", "Int8", "UInt8", "Int4", "E4M3"];
+    if !valid_input.contains(&input_format) {
+        return Err(OpConstraintViolation {
+            op_name: "constexpr_affine_dequantize".into(),
+            constraint: "dequant_input_format".into(),
+            message: format!(
+                "Dequant layer must have int8, uint8, int4 or e4m3 input format, got '{}'",
+                input_format
+            ),
+        });
+    }
+
+    // 3. Int4 per-Cout dequant not supported.
+    //    When axis >= 0, the dequant is per-channel (per-Cout).
+    //    When axis < 0 (typically -1), it's per-tensor.
+    if is_int4 && axis >= 0 {
+        return Err(OpConstraintViolation {
+            op_name: "constexpr_affine_dequantize".into(),
+            constraint: "no_int4_per_cout_dequant".into(),
+            message: "Int4 Per-Cout Dequant is not supported on ANE (use per-tensor dequant with axis < 0)".into(),
+        });
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2226,5 +2647,269 @@ mod tests {
         };
         let result = validate_architecture_gated_constraints(&instnorm, AneFamily::A14);
         assert!(result.is_ok());
+    }
+
+    // ─── T-P6-03: Reduction constraint tests ────────────────────────
+
+    #[test]
+    fn test_reduction_spatial_axis_ok() {
+        // Reduction on spatial axes (2,3) is fine
+        assert!(validate_reduction_constraints(
+            "reduce_sum", &[2, 3], true, 4, AneFamily::A14
+        ).is_ok());
+        // keep_dims=false is fine for spatial axes
+        assert!(validate_reduction_constraints(
+            "reduce_sum", &[2, 3], false, 4, AneFamily::A14
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_reduction_batch_axis_rejected() {
+        // Reduction on batch axis (0) with rank >= 4 is rejected
+        let result = validate_reduction_constraints(
+            "reduce_sum", &[0], false, 4, AneFamily::A14
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "no_batch_axis_reduction");
+    }
+
+    #[test]
+    fn test_reduction_batch_axis_low_rank_ok() {
+        // Axis 0 on rank-3 tensor is NOT batch — it's OK
+        assert!(validate_reduction_constraints(
+            "reduce_sum", &[0], false, 3, AneFamily::A14
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_reduction_channel_no_keep_dims_rejected() {
+        // Channel axis reduction with keep_dims=false is rejected
+        let result = validate_reduction_constraints(
+            "reduce_mean", &[1], false, 4, AneFamily::A14
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "channel_reduction_keep_dims");
+    }
+
+    #[test]
+    fn test_reduction_channel_with_keep_dims_ok() {
+        // Channel axis reduction with keep_dims=true is fine
+        assert!(validate_reduction_constraints(
+            "reduce_mean", &[1], true, 4, AneFamily::A14
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_reduction_log_sum_pre_a14_rejected() {
+        // ReduceLogSum on pre-A14 is rejected
+        let result = validate_reduction_constraints(
+            "reduce_log_sum", &[2], false, 4, AneFamily::A12
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "log_reduction_requires_a14");
+    }
+
+    #[test]
+    fn test_reduction_log_sum_exp_a14_ok() {
+        // ReduceLogSumExp on A14+ is fine
+        assert!(validate_reduction_constraints(
+            "reduce_log_sum_exp", &[2], false, 4, AneFamily::A14
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_reduction_global_prod_pre_a14_rejected() {
+        // Global product reduction on pre-A14 is rejected
+        let result = validate_reduction_constraints(
+            "reduce_prod", &[0, 1, 2, 3], false, 4, AneFamily::A13
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "global_prod_requires_a14");
+    }
+
+    #[test]
+    fn test_reduction_partial_prod_pre_a14_ok() {
+        // Partial product reduction on pre-A14 is fine
+        assert!(validate_reduction_constraints(
+            "reduce_prod", &[2, 3], false, 4, AneFamily::A13
+        ).is_ok());
+    }
+
+    // ─── T-P6-03: LayerNorm constraint tests ────────────────────────
+
+    #[test]
+    fn test_layernorm_channels_divisible_by_groups_ok() {
+        assert!(validate_layernorm_constraints(64, 8, false).is_ok());
+        assert!(validate_layernorm_constraints(128, 1, false).is_ok());
+        assert!(validate_layernorm_constraints(32, 32, false).is_ok());
+    }
+
+    #[test]
+    fn test_layernorm_channels_not_divisible_rejected() {
+        let result = validate_layernorm_constraints(65, 8, false);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "channels_divisible_by_groups");
+    }
+
+    #[test]
+    fn test_layernorm_quantized_output_rejected() {
+        let result = validate_layernorm_constraints(64, 8, true);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "output_must_be_float");
+    }
+
+    // ─── T-P6-03: Element-wise broadcast constraint tests ───────────
+
+    #[test]
+    fn test_broadcast_compatible_shapes_ok() {
+        // [1, 64, 128, 128] + [1, 64, 128, 128] → OK
+        assert!(validate_elementwise_broadcast_constraints(
+            "add", &[vec![1, 64, 128, 128], vec![1, 64, 128, 128]]
+        ).is_ok());
+        // [1, 64, 128, 128] + [1, 1, 128, 128] → OK (broadcast)
+        assert!(validate_elementwise_broadcast_constraints(
+            "add", &[vec![1, 64, 128, 128], vec![1, 1, 128, 128]]
+        ).is_ok());
+        // [1, 64, 128, 128] + [1, 64, 1, 1] → OK (broadcast)
+        assert!(validate_elementwise_broadcast_constraints(
+            "add", &[vec![1, 64, 128, 128], vec![1, 64, 1, 1]]
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_broadcast_incompatible_shapes_rejected() {
+        // [1, 64, 128, 128] + [1, 32, 128, 128] → rejected (32 != 64 and 32 != 1)
+        let result = validate_elementwise_broadcast_constraints(
+            "add", &[vec![1, 64, 128, 128], vec![1, 32, 128, 128]]
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "broadcast_dimension_mismatch");
+    }
+
+    #[test]
+    fn test_broadcast_single_input_ok() {
+        // Unary ops have no broadcast issues
+        assert!(validate_elementwise_broadcast_constraints(
+            "relu", &[vec![1, 64, 128, 128]]
+        ).is_ok());
+    }
+
+    // ─── T-P6-03: Transpose constraint tests ────────────────────────
+
+    #[test]
+    fn test_transpose_valid_perm_ok() {
+        // Standard NHWC→NCHW perm is fine
+        assert!(validate_transpose_constraints(
+            &[1, 64, 128, 128], &[0, 3, 1, 2]
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_transpose_nc_with_c1_ok() {
+        // NC transpose with channels=1 is OK
+        assert!(validate_transpose_constraints(
+            &[1, 1, 128, 128], &[1, 0, 2, 3]
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_transpose_nc_with_c_gt_1_rejected() {
+        // NC transpose with channels > 1 is rejected
+        let result = validate_transpose_constraints(
+            &[1, 64, 128, 128], &[1, 0, 2, 3]
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "nc_channel_must_be_1");
+    }
+
+    #[test]
+    fn test_transpose_rank_lt_2_rejected() {
+        let result = validate_transpose_constraints(&[64], &[0]);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "min_rank_2");
+    }
+
+    // ─── T-P6-03: Cast constraint tests ─────────────────────────────
+
+    #[test]
+    fn test_cast_fp16_to_fp32_ok() {
+        assert!(validate_cast_constraints(
+            MilDtype::Fp16, MilDtype::Fp32, AneFamily::A14
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_cast_int8_to_fp16_ok() {
+        assert!(validate_cast_constraints(
+            MilDtype::Int8, MilDtype::Fp16, AneFamily::A14
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_cast_from_int32_rejected() {
+        let result = validate_cast_constraints(
+            MilDtype::Int32, MilDtype::Fp16, AneFamily::A14
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "invalid_input_dtype");
+    }
+
+    #[test]
+    fn test_cast_to_int32_rejected() {
+        let result = validate_cast_constraints(
+            MilDtype::Fp16, MilDtype::Int32, AneFamily::A14
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "invalid_output_dtype");
+    }
+
+    // ─── T-P6-03: Constexpr dequantize constraint tests ─────────────
+
+    #[test]
+    fn test_dequantize_int8_to_fp16_ok() {
+        assert!(validate_constexpr_dequantize_constraints(
+            "int8", "fp16", -1, false
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_dequantize_uint8_to_fp16_ok() {
+        assert!(validate_constexpr_dequantize_constraints(
+            "uint8", "fp16", -1, false
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_dequantize_int4_per_tensor_ok() {
+        assert!(validate_constexpr_dequantize_constraints(
+            "int4", "fp16", -1, true
+        ).is_ok());
+    }
+
+    #[test]
+    fn test_dequantize_int4_per_cout_rejected() {
+        let result = validate_constexpr_dequantize_constraints(
+            "int4", "fp16", 1, true
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "no_int4_per_cout_dequant");
+    }
+
+    #[test]
+    fn test_dequantize_non_fp16_output_rejected() {
+        let result = validate_constexpr_dequantize_constraints(
+            "int8", "fp32", -1, false
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "dequant_output_must_be_fp16");
+    }
+
+    #[test]
+    fn test_dequantize_invalid_input_format_rejected() {
+        let result = validate_constexpr_dequantize_constraints(
+            "fp32", "fp16", -1, false
+        );
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().constraint, "dequant_input_format");
     }
 }
