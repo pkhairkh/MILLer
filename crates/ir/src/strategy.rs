@@ -838,7 +838,7 @@ impl CompilationPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+    use crate::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
 
     fn make_simple_graph() -> SirGraph {
         SirGraph {
@@ -853,6 +853,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("rms_0".to_string()),
@@ -869,6 +870,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![SirNodeId("input".to_string())],

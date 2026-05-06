@@ -23,7 +23,7 @@
 //! When implemented, these scales should be emitted as `Const + Mul`
 //! ops inserted before the RMSNorm in the SIR graph.
 
-use ane_ir::sir::{SirGraph, SirNode, SirNodeId, SirOp};
+use ane_ir::sir::{SirGraph, SirNode, SirNodeId, SirOp, SirTargetAnnotation};
 
 /// Result of the normalization stabilization pass.
 #[derive(Debug, Clone)]
@@ -109,10 +109,10 @@ pub fn run_slanc_scales_pass(graph: &mut SirGraph) -> NormStabilizationResult {
             op: SirOp::Const {
                 value_path: scale_name.clone(),
                 dtype: ane_ir::mir::MilDtype::Fp16,
-                palette_bits: None,
             },
             name: format!("norm_stabilization_const_{}", node.id.0),
             metadata: node.metadata.clone(),
+        target_annotation: SirTargetAnnotation::default(),
         };
 
         // Create the Mul op that applies the pre-scale
@@ -123,6 +123,7 @@ pub fn run_slanc_scales_pass(graph: &mut SirGraph) -> NormStabilizationResult {
             op: SirOp::Mul { x: input_id, y: const_id },
             name: format!("norm_stabilization_prescale_{}", node.id.0),
             metadata: node.metadata.clone(),
+        target_annotation: SirTargetAnnotation::default(),
         };
 
         // Update the RMSNorm to use the pre-scaled input
@@ -131,6 +132,7 @@ pub fn run_slanc_scales_pass(graph: &mut SirGraph) -> NormStabilizationResult {
             op: SirOp::RMSNorm { input: mul_id, weight: weight_name, epsilon, axes: axes.clone() },
             name: node.name.clone(),
             metadata: node.metadata.clone(),
+        target_annotation: SirTargetAnnotation::default(),
         };
 
         // Replace the RMSNorm node with the updated version
@@ -172,6 +174,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("input_0".to_string())],
             outputs: vec![SirNodeId("rms_0".to_string())],
@@ -227,6 +230,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("rms_1".to_string()),
@@ -243,6 +247,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![],
@@ -274,6 +279,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("input_0".to_string())],
             outputs: vec![SirNodeId("rms_0".to_string())],

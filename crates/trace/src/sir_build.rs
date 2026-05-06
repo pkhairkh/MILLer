@@ -47,7 +47,7 @@ use crate::graph::{ModelConfig, TracedGraph, TracedNode, TracedOp};
 use crate::versioned::VersionedCompiler;
 use ane_ir::ane_target::AneFamily;
 use ane_ir::mir::MilDtype;
-use ane_ir::sir::{QualityContract, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+use ane_ir::sir::{QualityContract, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
 
 /// Build a SIR graph from a traced computation graph.
 ///
@@ -192,7 +192,7 @@ impl<'a> SirBuildContext<'a> {
                     }
                 }
 
-                let sir_node = SirNode { id: id.clone(), op, name, metadata };
+                let sir_node = SirNode { id: id.clone(), op, name, metadata, target_annotation: SirTargetAnnotation::default() };
 
                 // Track inputs/outputs
                 if matches!(traced_node.op, TracedOp::Placeholder) {
@@ -438,7 +438,6 @@ impl<'a> SirBuildContext<'a> {
                         input: input_id,
                         weight: weight_name,
                         bias: bias_name,
-                        palette_bits: None,
                     },
                     format!("linear_{}_{}", in_features, out_features),
                 )])
@@ -663,7 +662,6 @@ impl<'a> SirBuildContext<'a> {
                         SirOp::Const {
                             value_path: "scalar://fp16/1.0".to_string(),
                             dtype: MilDtype::Fp16,
-                            palette_bits: None,
                         },
                         "where_one".to_string(),
                     ),
@@ -851,7 +849,6 @@ impl<'a> SirBuildContext<'a> {
                 input: input_id.clone(),
                 weight: q_weight,
                 bias: None,
-                palette_bits: None,
             },
             format!("q_proj_{}", q_proj_dim),
         ));
@@ -863,7 +860,6 @@ impl<'a> SirBuildContext<'a> {
                 input: input_id.clone(),
                 weight: k_weight,
                 bias: None,
-                palette_bits: None,
             },
             format!("k_proj_{}", kv_proj_dim),
         ));
@@ -875,7 +871,6 @@ impl<'a> SirBuildContext<'a> {
                 input: input_id,
                 weight: v_weight,
                 bias: None,
-                palette_bits: None,
             },
             format!("v_proj_{}", kv_proj_dim),
         ));
@@ -1063,7 +1058,6 @@ impl<'a> SirBuildContext<'a> {
             SirOp::Const {
                 value_path: format!("attn_scale_{}_{:.8}", node.id, scale_value),
                 dtype: MilDtype::Fp16,
-                palette_bits: None,
             },
             "attn_scale_const".to_string(),
         ));
@@ -1083,7 +1077,6 @@ impl<'a> SirBuildContext<'a> {
             SirOp::Const {
                 value_path: "static_tables/rope_tables_shared/mask_tab".to_string(),
                 dtype: MilDtype::Fp16,
-                palette_bits: None,
             },
             "causal_mask".to_string(),
         ));
@@ -1268,7 +1261,6 @@ impl<'a> SirBuildContext<'a> {
                 input: attn_flat_id,
                 weight: out_weight,
                 bias: None,
-                palette_bits: None,
             },
             format!("out_proj_{}", embed_dim),
         ));
@@ -1346,7 +1338,6 @@ impl<'a> SirBuildContext<'a> {
                     input: input_id.clone(),
                     weight: gate_weight,
                     bias: None,
-                    palette_bits: None,
                 },
                 format!("gate_proj_{}_{}", input_dim, hidden_dim),
             ));
@@ -1362,7 +1353,6 @@ impl<'a> SirBuildContext<'a> {
                     input: input_id,
                     weight: up_weight,
                     bias: None,
-                    palette_bits: None,
                 },
                 format!("up_proj_{}_{}", input_dim, hidden_dim),
             ));
@@ -1378,7 +1368,6 @@ impl<'a> SirBuildContext<'a> {
                     input: swiglu_id,
                     weight: down_weight,
                     bias: None,
-                    palette_bits: None,
                 },
                 format!("down_proj_{}_{}", hidden_dim, output_dim),
             ));
@@ -1401,7 +1390,6 @@ impl<'a> SirBuildContext<'a> {
                     input: input_id,
                     weight: up_weight_resolved,
                     bias: None,
-                    palette_bits: None,
                 },
                 format!("up_proj_{}_{}", input_dim, hidden_dim),
             ));
@@ -1437,7 +1425,6 @@ impl<'a> SirBuildContext<'a> {
                     input: act_id,
                     weight: down_weight,
                     bias: None,
-                    palette_bits: None,
                 },
                 format!("down_proj_{}_{}", hidden_dim, output_dim),
             ));
@@ -1602,7 +1589,6 @@ impl<'a> SirBuildContext<'a> {
             SirOp::Const {
                 value_path: format!("sdpa_scale_{}_{:.8}", node.id, scale_f32),
                 dtype: MilDtype::Fp16,
-                palette_bits: None,
             },
             "sdpa_scale_const".to_string(),
         ));

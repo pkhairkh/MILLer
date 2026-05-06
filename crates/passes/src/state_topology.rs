@@ -140,7 +140,7 @@ impl StateTopologyPass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ane_ir::sir::{SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+    use ane_ir::sir::{SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
 
     /// Helper: create a minimal SirMetadata for test nodes.
     fn test_metadata() -> SirMetadata {
@@ -187,6 +187,7 @@ mod tests {
             op: SirOp::Identity { input: SirNodeId("input_0".to_string()) },
             name: "identity_0".to_string(),
             metadata: test_metadata(),
+        target_annotation: SirTargetAnnotation::default(),
         }];
         let graph = make_graph(nodes);
         let node_count = graph.nodes.len();
@@ -209,6 +210,7 @@ mod tests {
                 },
                 name: "state_read_0".to_string(),
                 metadata: test_metadata(),
+            target_annotation: SirTargetAnnotation::default(),
             },
             SirNode {
                 id: SirNodeId("state_write_0".to_string()),
@@ -219,6 +221,7 @@ mod tests {
                 },
                 name: "state_write_0".to_string(),
                 metadata: test_metadata(),
+            target_annotation: SirTargetAnnotation::default(),
             },
         ];
         let graph = make_graph(nodes);
@@ -241,6 +244,7 @@ mod tests {
             },
             name: "state_read_0".to_string(),
             metadata: test_metadata(),
+        target_annotation: SirTargetAnnotation::default(),
         }];
         let graph = make_graph(nodes);
 
@@ -278,6 +282,7 @@ mod tests {
             },
             name: "state_read_0".to_string(),
             metadata: test_metadata(),
+        target_annotation: SirTargetAnnotation::default(),
         }];
         let graph = make_graph(nodes);
 
@@ -302,6 +307,7 @@ mod tests {
             },
             name: "state_write_0".to_string(),
             metadata: test_metadata(),
+        target_annotation: SirTargetAnnotation::default(),
         }];
         let graph = make_graph(nodes);
 
@@ -324,6 +330,7 @@ mod tests {
             },
             name: "state_write_0".to_string(),
             metadata: test_metadata(),
+        target_annotation: SirTargetAnnotation::default(),
         }];
         let graph2 = make_graph(nodes2);
         let result = pass.run(graph2);

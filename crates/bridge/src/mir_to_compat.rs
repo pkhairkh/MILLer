@@ -638,7 +638,9 @@ fn rename_compat_output(compat: MirOpCompat, new_name: String) -> MirOpCompat {
 /// graph shape map. See T-82 (I-57) for details on the migration.
 #[cfg(test)]
 fn mir_node_to_compat(node: &MirNode, resolver: &dyn WeightResolver) -> Result<MirOpCompat> {
-    let compat = mir_op_to_compat(&node.op, &node.shape, resolver)?;
+    // T-P5-08: Pass ANE quant metadata from target annotation for MILConv ops
+    let ane_quant = node.target_annotation.ane_quant.as_ref();
+    let compat = mir_op_to_compat_with_quant(&node.op, &node.shape, resolver, ane_quant)?;
 
     // CRITICAL: Override the compat op's output name with the MIR node's unique ID.
     // The MirOp's `name` field is set from `air_node.name` which is the SIR node ID,
@@ -925,6 +927,21 @@ pub fn mir_op_to_compat(
     node_shape: &[usize],
     resolver: &dyn WeightResolver,
 ) -> Result<MirOpCompat> {
+    mir_op_to_compat_with_quant(op, node_shape, resolver, None)
+}
+
+/// T-P5-08: Extended version of mir_op_to_compat that accepts ANE quant metadata.
+///
+/// When `ane_quant` is provided for a MILConv op, the quantization attributes
+/// are carried through to MirOpCompat::Conv for emission. This separates the
+/// target-agnostic IR (MirOp::MILConv) from the ANE-specific quant metadata
+/// (AneQuantMetadata) that was previously embedded in the IR.
+pub fn mir_op_to_compat_with_quant(
+    op: &MirOp,
+    node_shape: &[usize],
+    resolver: &dyn WeightResolver,
+    ane_quant: Option<&ane_ir::mir::AneQuantMetadata>,
+) -> Result<MirOpCompat> {
     match op {
         MirOp::MILConst { name, value_path, dtype } => {
             let compat_dtype = mil_dtype_to_compat(dtype);
@@ -1207,9 +1224,6 @@ pub fn mir_op_to_compat(
             strides,
             pad_amounts,
             dilations,
-            kernel_scale,
-            kernel_zero_point,
-            kernel_palettized_lut,
         } => {
             // T-116: Validate ANEC attribute shapes before dropping them.
             // The mir_to_compat layer discards strides, pad_amounts, and dilations
@@ -1229,23 +1243,28 @@ pub fn mir_op_to_compat(
                     name, e, strides, pad_amounts, dilations
                 );
             }
-            // T-98: Log quantized conv attributes if present. These are carried
-            // through to the MirOpCompat::Conv for emission.
-            if kernel_scale.is_some() || kernel_zero_point.is_some() || kernel_palettized_lut.is_some() {
-                log::info!(
-                    "T-98: Conv '{}' has quantized weight attributes: scale={:?}, zero_point={:?}, palettized_lut={:?}",
-                    name, kernel_scale, kernel_zero_point, kernel_palettized_lut
-                );
-            }
+            // T-P5-08: Quantized conv attributes now come from the target annotation
+            // (ane_quant parameter) rather than from MILConv fields directly.
+            let (kernel_scale, kernel_zero_point, kernel_palettized_lut) = match ane_quant {
+                Some(q) => {
+                    log::info!(
+                        "T-P5-08: Conv '{}' has quantized weight attributes from target annotation: \
+                         scale={}, zero_point={}, palettized_lut={}",
+                        name, q.kernel_scale, q.kernel_zero_point, q.kernel_palettized_lut
+                    );
+                    (Some(q.kernel_scale), Some(q.kernel_zero_point), Some(q.kernel_palettized_lut.clone()))
+                }
+                None => (None, None, None),
+            };
             Ok(MirOpCompat::Conv {
                 name: name.clone(),
                 x: x.0.clone(),
                 weight: weight.0.clone(),
                 pad_type: pad_type.clone(),
                 groups: *groups as i64,
-                kernel_scale: *kernel_scale,
-                kernel_zero_point: *kernel_zero_point,
-                kernel_palettized_lut: kernel_palettized_lut.clone(),
+                kernel_scale,
+                kernel_zero_point,
+                kernel_palettized_lut,
             })
         },
         MirOp::MILSplit { name, x, axis, num_splits } => Ok(MirOpCompat::Split {
@@ -2391,9 +2410,6 @@ mod tests {
                     strides: vec![],
                     pad_amounts: vec![],
                     dilations: vec![],
-                    kernel_scale: None,
-                    kernel_zero_point: None,
-                    kernel_palettized_lut: None,
                 },
                 &[],
             ),
@@ -2434,9 +2450,6 @@ mod tests {
                     strides: vec![],
                     pad_amounts: vec![],
                     dilations: vec![],
-                    kernel_scale: None,
-                    kernel_zero_point: None,
-                    kernel_palettized_lut: None,
                 },
                 vec![],
             ),

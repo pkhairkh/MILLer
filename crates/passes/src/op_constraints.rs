@@ -2468,9 +2468,6 @@ mod tests {
             strides: vec![1, 1],
             pad_amounts: vec![0, 0, 0, 0],
             dilations: vec![2, 2], // dilation > 1
-            kernel_scale: None,
-            kernel_zero_point: None,
-            kernel_palettized_lut: None,
         };
         // Dilation + vector_palettize should be rejected
         let result = validate_cross_constraint_combinations(&conv, true, false, false);
@@ -2490,9 +2487,6 @@ mod tests {
             strides: vec![1, 1],
             pad_amounts: vec![0, 0, 0, 0],
             dilations: vec![1, 1],
-            kernel_scale: None,
-            kernel_zero_point: None,
-            kernel_palettized_lut: None,
         };
         // Aliasing + vector_palettize should be rejected
         let result = validate_cross_constraint_combinations(&conv, true, true, false);
@@ -2512,9 +2506,6 @@ mod tests {
             strides: vec![1, 8], // stride > 4
             pad_amounts: vec![0, 0, 0, 0],
             dilations: vec![1, 1],
-            kernel_scale: None,
-            kernel_zero_point: None,
-            kernel_palettized_lut: None,
         };
         // Vector palettize + large stride should be rejected
         let result = validate_cross_constraint_combinations(&conv, true, false, false);
@@ -2534,9 +2525,6 @@ mod tests {
             strides: vec![1, 1],
             pad_amounts: vec![0, 0, 0, 0],
             dilations: vec![1, 1],
-            kernel_scale: None,
-            kernel_zero_point: None,
-            kernel_palettized_lut: None,
         };
         // Depthwise conv + per_channel_palettize should be rejected
         let result = validate_cross_constraint_combinations(&conv, false, false, true);
@@ -2556,9 +2544,6 @@ mod tests {
             strides: vec![1, 1],
             pad_amounts: vec![0, 0, 0, 0],
             dilations: vec![1, 1],
-            kernel_scale: None,
-            kernel_zero_point: None,
-            kernel_palettized_lut: None,
         };
         // No cross-constraint violations
         let result = validate_cross_constraint_combinations(&conv, false, false, false);

@@ -417,9 +417,6 @@ mod tests {
             strides: vec![1],
             pad_amounts: vec![0],
             dilations: vec![1],
-            kernel_scale: None,
-            kernel_zero_point: None,
-            kernel_palettized_lut: None,
         };
         assert_eq!(op.proto_input_refs(), vec!["input", "w"]);
     }
@@ -657,9 +654,6 @@ mod tests {
                 strides: vec![1],
                 pad_amounts: vec![0],
                 dilations: vec![1],
-                kernel_scale: None,
-                kernel_zero_point: None,
-                kernel_palettized_lut: None,
             },
             MirOp::MILAdd { name: "a".into(), x: nid("x"), y: nid("y") },
             MirOp::MILAbs { name: "ab".into(), x: nid("x") },

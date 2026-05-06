@@ -4770,7 +4770,7 @@ mod tests {
         PrecisionHazardInfo, RiskInfo,
     };
     use ane_ir::air::LegalityStatus;
-    use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+    use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
 
     /// A mock knowledge query that reports mb.linear as ANE-legal with high confidence.
     struct MockLinearLegalKnowledge;
@@ -4879,6 +4879,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("output".into()),
@@ -4886,7 +4887,6 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "weight".into(),
                         bias: Some("bias".into()),
-                        palette_bits: None,
                     },
                     name: "linear_out".into(),
                     metadata: SirMetadata {
@@ -4895,6 +4895,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![SirNodeId("input".into())],
@@ -5073,6 +5074,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("attn".into())],
@@ -5142,6 +5144,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("decode".into())],
@@ -5226,6 +5229,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("norm".into())],
@@ -5261,6 +5265,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("rope".into())],
@@ -5315,6 +5320,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("sampler".into())],
@@ -5354,6 +5360,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("attn".into())],
@@ -5447,6 +5454,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("attn".into())],
@@ -5505,6 +5513,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("decode".into())],
@@ -5620,6 +5629,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("decode".into())],
@@ -5724,7 +5734,7 @@ mod tests {
     /// q_norm weight cannot broadcast with [1,512,2048] flat projection.
     #[test]
     fn test_rms_norm_4d_reshape_for_qk_norm() {
-        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
 
         // Simulate a q_norm RMSNorm SIR node: axes=[3] means per-head-dimension norm
         let sir = SirGraph {
@@ -5743,6 +5753,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("sir_3_layer_0_self_attn".into())],
             outputs: vec![SirNodeId("sir_6_layer_0_self_attn".into())],
@@ -5812,7 +5823,7 @@ mod tests {
     /// node ID (since SIR node IDs are counter-based like "sir_7_layer_0_self_attn").
     #[test]
     fn test_rms_norm_4d_reshape_k_norm_uses_kv_heads() {
-        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
 
         // Simulate a k_norm RMSNorm: the SIR node ID is counter-based (no "k_norm"),
         // but the WEIGHT name contains "k_norm" for detection.
@@ -5832,6 +5843,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("sir_4_layer_0_self_attn".into())],
             outputs: vec![SirNodeId("sir_7_layer_0_self_attn".into())],
@@ -5866,7 +5878,7 @@ mod tests {
     /// should fall back to axes=[2] or skip the 4D reshape safely.
     #[test]
     fn test_rms_norm_axes3_without_context_falls_back_gracefully() {
-        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
 
         let sir = SirGraph {
             nodes: vec![SirNode {
@@ -5884,6 +5896,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("sir_3_layer_0_self_attn".into())],
             outputs: vec![SirNodeId("sir_6_layer_0_self_attn".into())],
@@ -5941,7 +5954,7 @@ mod tests {
     ///   residual add:    [1, 512, 1024]   (attn_out + residual)
     #[test]
     fn test_full_attention_block_with_qk_norm_shape_flow() {
-        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
 
         // Build a minimal SIR that mimics the Qwen3 attention decomposition:
         // LinearProjection(q) → RMSNorm(q, axes=3) → LinearProjection(k) →
@@ -5963,7 +5976,6 @@ mod tests {
                         input: input_id.clone(),
                         weight: "model.layers.0.self_attn.q_proj.weight".into(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "q_proj_2048".into(),
                     metadata: SirMetadata {
@@ -5972,6 +5984,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: k_proj_id.clone(),
@@ -5979,7 +5992,6 @@ mod tests {
                         input: input_id.clone(),
                         weight: "model.layers.0.self_attn.k_proj.weight".into(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "k_proj_1024".into(),
                     metadata: SirMetadata {
@@ -5988,6 +6000,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: v_proj_id.clone(),
@@ -5995,7 +6008,6 @@ mod tests {
                         input: input_id.clone(),
                         weight: "model.layers.0.self_attn.v_proj.weight".into(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "v_proj_1024".into(),
                     metadata: SirMetadata {
@@ -6004,6 +6016,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: q_norm_id.clone(),
@@ -6020,6 +6033,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: k_norm_id.clone(),
@@ -6036,6 +6050,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("sir_8_layer_0_self_attn".into()),
@@ -6053,6 +6068,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![input_id.clone(), residual_id],
@@ -6462,6 +6478,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("token_input".into()), SirNodeId("position_0".into())],
             outputs: vec![SirNodeId("decode_0".into())],
@@ -6629,7 +6646,6 @@ mod tests {
                         input: SirNodeId("hidden_state".into()),
                         weight: "model.layers.0.self_attn.q_proj.weight".into(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "q_proj".into(),
                     metadata: SirMetadata {
@@ -6638,6 +6654,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: k_id.clone(),
@@ -6645,7 +6662,6 @@ mod tests {
                         input: SirNodeId("hidden_state".into()),
                         weight: "model.layers.0.self_attn.k_proj.weight".into(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "k_proj".into(),
                     metadata: SirMetadata {
@@ -6654,6 +6670,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: v_id.clone(),
@@ -6661,7 +6678,6 @@ mod tests {
                         input: SirNodeId("hidden_state".into()),
                         weight: "model.layers.0.self_attn.v_proj.weight".into(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "v_proj".into(),
                     metadata: SirMetadata {
@@ -6670,6 +6686,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("attn_0".into()),
@@ -6681,6 +6698,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![SirNodeId("hidden_state".into())],
@@ -6828,6 +6846,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("decode_layer_1".into()),
@@ -6853,6 +6872,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![SirNodeId("token_input".into()), SirNodeId("position_0".into())],
@@ -6937,7 +6957,6 @@ mod tests {
                         input: input_id.clone(),
                         weight: "model.layers.0.self_attn.q_proj.weight".into(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "q_proj".into(),
                     metadata: SirMetadata {
@@ -6946,6 +6965,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: k_proj_id.clone(),
@@ -6953,7 +6973,6 @@ mod tests {
                         input: input_id.clone(),
                         weight: "model.layers.0.self_attn.k_proj.weight".into(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "k_proj".into(),
                     metadata: SirMetadata {
@@ -6962,6 +6981,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: v_proj_id.clone(),
@@ -6969,7 +6989,6 @@ mod tests {
                         input: input_id.clone(),
                         weight: "model.layers.0.self_attn.v_proj.weight".into(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "v_proj".into(),
                     metadata: SirMetadata {
@@ -6978,6 +6997,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: q_norm_id.clone(),
@@ -6994,6 +7014,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: k_norm_id.clone(),
@@ -7010,6 +7031,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: attn_id.clone(),
@@ -7027,6 +7049,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: reshape_id.clone(),
@@ -7038,6 +7061,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: add_id.clone(),
@@ -7049,6 +7073,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![input_id, residual_id],
@@ -7159,6 +7184,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("token_input".into())],
             outputs: vec![SirNodeId("decode_0".into())],
@@ -7325,7 +7351,6 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "model.layers.0.self_attn.q_proj.weight".into(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "q_proj".into(),
                     metadata: SirMetadata {
@@ -7334,6 +7359,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("k_proj".into()),
@@ -7341,7 +7367,6 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "model.layers.0.self_attn.k_proj.weight".into(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "k_proj".into(),
                     metadata: SirMetadata {
@@ -7350,6 +7375,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("v_proj".into()),
@@ -7357,7 +7383,6 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "model.layers.0.self_attn.v_proj.weight".into(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "v_proj".into(),
                     metadata: SirMetadata {
@@ -7366,6 +7391,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("o_proj".into()),
@@ -7373,7 +7399,6 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "model.layers.0.self_attn.o_proj.weight".into(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "o_proj".into(),
                     metadata: SirMetadata {
@@ -7382,6 +7407,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("gate_proj".into()),
@@ -7389,7 +7415,6 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "model.layers.0.mlp.gate_proj.weight".into(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "gate_proj".into(),
                     metadata: SirMetadata {
@@ -7398,6 +7423,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("down_proj".into()),
@@ -7405,7 +7431,6 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "model.layers.0.mlp.down_proj.weight".into(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "down_proj".into(),
                     metadata: SirMetadata {
@@ -7414,6 +7439,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("lm_head".into()),
@@ -7421,7 +7447,6 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "lm_head.weight".into(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "lm_head".into(),
                     metadata: SirMetadata {
@@ -7430,6 +7455,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![SirNodeId("input".into())],
@@ -7482,6 +7508,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: Some("fp32".into()),
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("decode_0".into()),
@@ -7509,6 +7536,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![SirNodeId("input".into()), SirNodeId("pos".into())],
@@ -7574,6 +7602,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("tile_0".into())],
@@ -7617,6 +7646,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("tile_0".into())],
@@ -7704,6 +7734,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("tile_0".into())],
@@ -7768,6 +7799,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("where_0".into()),
@@ -7783,6 +7815,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![
@@ -7847,6 +7880,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("input_b".into()),
@@ -7858,6 +7892,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("add_0".into()),
@@ -7872,6 +7907,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("mul_0".into()),
@@ -7883,6 +7919,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("reshape_0".into()),
@@ -7897,6 +7934,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("transpose_0".into()),
@@ -7911,6 +7949,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![SirNodeId("input_a".into()), SirNodeId("input_b".into())],
@@ -7957,6 +7996,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("rope_0".into()),
@@ -7971,6 +8011,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("decode_0".into()),
@@ -7996,6 +8037,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![SirNodeId("input".into())],
@@ -8062,7 +8104,7 @@ mod tests {
     /// attention decomposition infrastructure.
     #[test]
     fn test_t90_attention_uses_stack_not_concat() {
-        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
 
         let sir = SirGraph {
             nodes: vec![SirNode {
@@ -8081,6 +8123,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("attn".into())],
@@ -8112,7 +8155,7 @@ mod tests {
     /// instead of Concat for head merging.
     #[test]
     fn test_t90_decode_step_uses_stack_not_concat() {
-        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+        use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
 
         let sir = SirGraph {
             nodes: vec![SirNode {
@@ -8139,6 +8182,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+                target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![SirNodeId("input".into())],
             outputs: vec![SirNodeId("decode".into())],

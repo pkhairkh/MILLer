@@ -4795,7 +4795,7 @@ fn build_decode_step_sir(
     num_layers: usize,
 ) -> ane_ir::sir::SirGraph {
     use ane_ir::sir::{
-        QualityContract, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin,
+        QualityContract, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin,
     };
 
     let mut sir_nodes: Vec<SirNode> = Vec::new();
@@ -4851,6 +4851,7 @@ fn build_decode_step_sir(
             },
             name: format!("input_norm_{}", layer_idx),
             metadata: make_metadata(),
+            target_annotation: SirTargetAnnotation::default(),
         });
 
         // Step 2: Attention with KV cache (DecodeStep)
@@ -4879,6 +4880,7 @@ fn build_decode_step_sir(
             },
             name: format!("decode_step_{}", layer_idx),
             metadata: make_metadata(),
+            target_annotation: SirTargetAnnotation::default(),
         });
 
         // Step 3: Residual connection (hidden + attention_output)
@@ -4889,6 +4891,7 @@ fn build_decode_step_sir(
             op: SirOp::Add { x: current_hidden.clone(), y: attn_id },
             name: format!("residual1_{}", layer_idx),
             metadata: make_metadata(),
+            target_annotation: SirTargetAnnotation::default(),
         });
 
         // Step 4: Post-attention RMS norm
@@ -4905,6 +4908,7 @@ fn build_decode_step_sir(
             },
             name: format!("post_attn_norm_{}", layer_idx),
             metadata: make_metadata(),
+            target_annotation: SirTargetAnnotation::default(),
         });
 
         // Step 5: MLP (SwiGLU)
@@ -4917,10 +4921,10 @@ fn build_decode_step_sir(
                 input: post_attn_norm_id.clone(),
                 weight: format!("{}.gate_proj.weight", mlp_prefix),
                 bias: None,
-                palette_bits: None,
             },
             name: format!("gate_proj_{}", layer_idx),
             metadata: make_metadata(),
+            target_annotation: SirTargetAnnotation::default(),
         });
 
         // up_proj: hidden_size → intermediate_size
@@ -4932,10 +4936,10 @@ fn build_decode_step_sir(
                 input: post_attn_norm_id,
                 weight: format!("{}.up_proj.weight", mlp_prefix),
                 bias: None,
-                palette_bits: None,
             },
             name: format!("up_proj_{}", layer_idx),
             metadata: make_metadata(),
+            target_annotation: SirTargetAnnotation::default(),
         });
 
         // Silu(gate)
@@ -4946,6 +4950,7 @@ fn build_decode_step_sir(
             op: SirOp::Silu { input: gate_id },
             name: format!("gate_silu_{}", layer_idx),
             metadata: make_metadata(),
+            target_annotation: SirTargetAnnotation::default(),
         });
 
         // mlp_hidden = Silu(gate) * up
@@ -4956,6 +4961,7 @@ fn build_decode_step_sir(
             op: SirOp::Mul { x: gate_silu_id, y: up_id },
             name: format!("mlp_hidden_{}", layer_idx),
             metadata: make_metadata(),
+            target_annotation: SirTargetAnnotation::default(),
         });
 
         // down_proj: intermediate_size → hidden_size
@@ -4967,10 +4973,10 @@ fn build_decode_step_sir(
                 input: mlp_hidden_id,
                 weight: format!("{}.down_proj.weight", mlp_prefix),
                 bias: None,
-                palette_bits: None,
             },
             name: format!("down_proj_{}", layer_idx),
             metadata: make_metadata(),
+            target_annotation: SirTargetAnnotation::default(),
         });
 
         // Step 6: Residual connection (post-attn residual + MLP output)
@@ -4981,6 +4987,7 @@ fn build_decode_step_sir(
             op: SirOp::Add { x: residual1_id, y: mlp_out_id },
             name: format!("residual2_{}", layer_idx),
             metadata: make_metadata(),
+            target_annotation: SirTargetAnnotation::default(),
         });
 
         current_hidden = residual2_id;
@@ -4999,6 +5006,7 @@ fn build_decode_step_sir(
         },
         name: "final_norm".to_string(),
         metadata: make_metadata(),
+        target_annotation: SirTargetAnnotation::default(),
     });
 
     // lm_head: hidden_size → vocab_size
@@ -5009,10 +5017,10 @@ fn build_decode_step_sir(
             input: final_norm_id,
             weight: "lm_head.weight".to_string(),
             bias: None,
-            palette_bits: None,
         },
         name: "lm_head".to_string(),
         metadata: make_metadata(),
+        target_annotation: SirTargetAnnotation::default(),
     });
 
     // Output: logits [1, vocab_size]

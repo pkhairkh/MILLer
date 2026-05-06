@@ -101,9 +101,6 @@ mod tests {
             strides: vec![1, 1],
             pad_amounts: vec![0, 0],
             dilations: vec![1, 1],
-            kernel_scale: None,
-            kernel_zero_point: None,
-            kernel_palettized_lut: None,
         };
         assert_eq!(engine_for_op(&op, None), Some(AneEngine::NE));
     }

@@ -919,7 +919,7 @@ mod tests {
         ComputePlanPlacementInfo, LegalityInfo, NoKnowledge, PrecisionHazardInfo, RiskInfo,
     };
     use ane_ir::pir::ShardPartitionEntry;
-    use ane_ir::sir::{SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+    use ane_ir::sir::{SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
 
     /// Mock knowledge query that reports high fallback risk for mb.matmul.
     ///
@@ -1086,6 +1086,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("weight".into()),
@@ -1097,6 +1098,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("output".into()),
@@ -1104,7 +1106,6 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "weight".into(),
                         bias: Some("bias".into()),
-                        palette_bits: None,
                     },
                     name: "linear_out".into(),
                     metadata: SirMetadata {
@@ -1113,6 +1114,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![SirNodeId("input".into())],
@@ -1696,7 +1698,6 @@ mod tests {
                 input: SirNodeId("input_0".to_string()),
                 weight: "weight_0".to_string(),
                 bias: None,
-                palette_bits: None,
             },
             name: "linear_0".to_string(),
             metadata: SirMetadata {
@@ -1705,6 +1706,7 @@ mod tests {
                 quality_contract: None,
                 precision_override: None,
             },
+            target_annotation: SirTargetAnnotation::default(),
         }];
         let graph = SirGraph {
             nodes,
@@ -1728,7 +1730,6 @@ mod tests {
                 op: SirOp::Const {
                     value_path: "weights/fp32_weight.bin".to_string(),
                     dtype: MilDtype::Fp32,
-                    palette_bits: None,
                 },
                 name: "const_fp32".to_string(),
                 metadata: SirMetadata {
@@ -1737,6 +1738,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+                target_annotation: SirTargetAnnotation::default(),
             },
             SirNode {
                 id: SirNodeId("linear_0".to_string()),
@@ -1744,7 +1746,6 @@ mod tests {
                     input: SirNodeId("const_fp32".to_string()),
                     weight: "weight_0".to_string(),
                     bias: None,
-                    palette_bits: None,
                 },
                 name: "linear_0".to_string(),
                 metadata: SirMetadata {
@@ -1753,6 +1754,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+                target_annotation: SirTargetAnnotation::default(),
             },
         ];
         let graph = SirGraph {
@@ -1831,6 +1833,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+                target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![],
             outputs: vec![],
@@ -1863,6 +1866,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("state_write_0".into()),
@@ -1878,6 +1882,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![],
@@ -1911,6 +1916,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+                target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![],
             outputs: vec![],
@@ -1942,6 +1948,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("state_read_0".into()),
@@ -1958,6 +1965,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("state_write_0".into()),
@@ -1973,6 +1981,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("sampler_0".into()),
@@ -1992,6 +2001,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![],

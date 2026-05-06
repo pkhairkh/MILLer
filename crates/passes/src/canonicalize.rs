@@ -147,12 +147,11 @@ impl CanonicalizePass {
 
         match op {
             SirOp::Identity { input } => SirOp::Identity { input: r!(input) },
-            SirOp::LinearProjection { input, weight, bias, palette_bits } => {
+            SirOp::LinearProjection { input, weight, bias } => {
                 SirOp::LinearProjection {
                     input: r!(input),
                     weight: weight.clone(),
                     bias: bias.clone(),
-                    palette_bits: *palette_bits,
                 }
             }
             SirOp::RMSNorm { input, weight, epsilon, axes } => SirOp::RMSNorm {
@@ -318,7 +317,7 @@ impl CanonicalizePass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ane_ir::sir::{QualityContract, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+    use ane_ir::sir::{QualityContract, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
 
     fn make_node(id: &str, op: SirOp) -> SirNode {
         SirNode {
@@ -331,6 +330,7 @@ mod tests {
                 quality_contract: None,
                 precision_override: None,
             },
+            target_annotation: SirTargetAnnotation::default(),
         }
     }
 
@@ -348,7 +348,6 @@ mod tests {
                         input: SirNodeId("input".to_string()),
                         weight: "w".to_string(),
                         bias: None,
-                        palette_bits: None,
                     },
                 ),
                 make_node("output", SirOp::Identity { input: SirNodeId("linear".to_string()) }),
@@ -396,7 +395,6 @@ mod tests {
                         input: SirNodeId("c".to_string()),
                         weight: "w".to_string(),
                         bias: None,
-                        palette_bits: None,
                     },
                 ),
             ],

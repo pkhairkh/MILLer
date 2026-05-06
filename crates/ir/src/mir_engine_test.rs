@@ -54,9 +54,6 @@ fn all_mir_op_variants() -> Vec<(String, MirOp)> {
                 strides: vec![1],
                 pad_amounts: vec![0],
                 dilations: vec![1],
-                kernel_scale: None,
-                kernel_zero_point: None,
-                kernel_palettized_lut: None,
             },
         ),
         (
@@ -1030,9 +1027,6 @@ fn test_ne_pipeline_ops_map_to_ne() {
             strides: vec![1],
             pad_amounts: vec![0],
             dilations: vec![1],
-            kernel_scale: None,
-            kernel_zero_point: None,
-            kernel_palettized_lut: None,
         },
         MirOp::MILScaledDotProductAttention {
             name: "sdpa".into(),

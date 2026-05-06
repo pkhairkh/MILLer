@@ -46,12 +46,9 @@ pub enum SirOp {
         input: SirNodeId,
         weight: String,
         bias: Option<String>,
-        /// Palette bit-width for GroupedLut quantization.
-        /// When `Some(bits)`, the weight should be palettized with the given
-        /// bit-width during Core ML emission. Valid values: {3, 4, 6, 8}.
-        /// When `None`, no palettization is applied.
-        #[serde(default)]
-        palette_bits: Option<usize>,
+        // T-P5-08: palette_bits moved to SirTargetAnnotation.
+        // The IR is now target-agnostic; ANE palette metadata is in the
+        // target annotation layer on SirNode.
     },
     AttentionBlock {
         q: SirNodeId,
@@ -154,12 +151,9 @@ pub enum SirOp {
     Const {
         value_path: String,
         dtype: MilDtype,
-        /// Palette bit-width for kmeans palettization.
-        /// When `Some(bits)`, the constant should be palettized with the given
-        /// bit-width during Core ML emission. Valid values: {3, 4, 6, 8}.
-        /// When `None`, no palettization is applied.
-        #[serde(default)]
-        palette_bits: Option<usize>,
+        // T-P5-08: palette_bits moved to SirTargetAnnotation.
+        // The IR is now target-agnostic; ANE palette metadata is in the
+        // target annotation layer on SirNode.
     },
 
     // ─── Linear / FC ─────────────────────────────────────────────
@@ -986,14 +980,30 @@ pub enum SirOp {
 }
 
 impl SirOp {
-    /// Validate palette_bits field if present, returning an error if invalid.
+    /// Validate palette_bits field if present on the SirTargetAnnotation.
+    /// T-P5-08: palette_bits was moved from SirOp variants to SirTargetAnnotation.
+    /// This method now validates the annotation's palette_bits.
+    #[deprecated(
+        since = "0.8.0",
+        note = "T-P5-08: palette_bits is now on SirTargetAnnotation. Use SirTargetAnnotation::validate_palette_bits() instead."
+    )]
     pub fn validate_palette_bits(&self) -> Result<(), String> {
-        let bits = match self {
-            SirOp::LinearProjection { palette_bits: Some(b), .. } => b,
-            SirOp::Const { palette_bits: Some(b), .. } => b,
-            _ => return Ok(()),
-        };
-        crate::ane_layout::validate_palette_bits(*bits)
+        // palette_bits no longer on SirOp variants; always Ok.
+        // Callers should use SirTargetAnnotation::validate_palette_bits() instead.
+        Ok(())
+    }
+}
+
+impl SirTargetAnnotation {
+    /// Validate palette_bits field if present, returning an error if invalid.
+    ///
+    /// Checks that the palette bit-width is one of the ANE-supported values
+    /// {3, 4, 6, 8}. Returns `Ok(())` if `palette_bits` is `None` or valid.
+    pub fn validate_palette_bits(&self) -> Result<(), String> {
+        match self.palette_bits {
+            Some(bits) => crate::ane_layout::validate_palette_bits(bits),
+            None => Ok(()),
+        }
     }
 }
 
@@ -1006,6 +1016,27 @@ pub struct SirNode {
     pub op: SirOp,
     pub name: String,
     pub metadata: SirMetadata,
+    /// T-P5-08: Target-specific annotation capturing ANE placement attributes.
+    /// Separates target concerns (palette_bits, etc.) from pure IR.
+    #[serde(default)]
+    pub target_annotation: SirTargetAnnotation,
+}
+
+/// T-P5-08: Target-specific annotation for a SIR node.
+///
+/// Captures ANE-specific attributes that were previously embedded in
+/// `SirOp` variants (e.g., `palette_bits` on `LinearProjection` and `Const`).
+/// Moving these to a separate annotation makes the SIR target-agnostic,
+/// enabling representation of non-ANE targets.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SirTargetAnnotation {
+    /// Palette bit-width for GroupedLut/kmeans palettization.
+    /// Previously on `SirOp::LinearProjection` and `SirOp::Const`.
+    /// When `Some(bits)`, the weight/constant should be palettized with
+    /// the given bit-width during Core ML emission. Valid values: {3, 4, 6, 8}.
+    /// When `None`, no palettization is applied.
+    #[serde(default)]
+    pub palette_bits: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1107,8 +1138,8 @@ impl SirGraph {
                 return Err(e);
             }
 
-            // Validate palette_bits if present
-            if let Err(msg) = node.op.validate_palette_bits() {
+            // Validate palette_bits if present (T-P5-08: moved to target_annotation)
+            if let Err(msg) = node.target_annotation.validate_palette_bits() {
                 return Err(VerifyError::InvalidDtype {
                     node_id: node_id.to_string(),
                     dtype: msg,
@@ -1496,7 +1527,6 @@ mod tests {
             op: SirOp::Const {
                 value_path: "weights/embed.bin".into(),
                 dtype: MilDtype::Fp16,
-                palette_bits: None,
             },
             name: "const1".into(),
             metadata: SirMetadata {
@@ -1505,6 +1535,7 @@ mod tests {
                 quality_contract: None,
                 precision_override: None,
             },
+            target_annotation: SirTargetAnnotation::default(),
         };
         let add_node = SirNode {
             id: sid("add1"),
@@ -1519,6 +1550,7 @@ mod tests {
                 quality_contract: None,
                 precision_override: None,
             },
+            target_annotation: SirTargetAnnotation::default(),
         };
         SirGraph {
             nodes: vec![const_node, add_node],
@@ -1546,6 +1578,7 @@ mod tests {
                 quality_contract: None,
                 precision_override: None,
             },
+            target_annotation: SirTargetAnnotation::default(),
         });
         let err = g.verify().unwrap_err();
         assert_eq!(err, super::super::common::VerifyError::DuplicateNodeId { node_id: "add1".into() });

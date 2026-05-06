@@ -39,7 +39,7 @@ pub fn plan_for_trace(sir: &SirGraph, target_family: AneFamily) -> CompilationPl
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ane_ir::sir::{SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+    use ane_ir::sir::{SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
 
     fn make_rms_norm_graph() -> SirGraph {
         SirGraph {
@@ -54,6 +54,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("rms_0".to_string()),
@@ -70,6 +71,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![SirNodeId("input".to_string())],

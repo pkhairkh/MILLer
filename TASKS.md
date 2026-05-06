@@ -2,7 +2,7 @@
 
 > Consolidated remediation task board for open and in-progress issues.
 > Completed tasks have been removed — see git history for the full audit trail.
-> Recently completed: T-P2-01, T-P2-04, T-P2-05, T-P2-11, T-P2-12, T-P3-03, T-P3-04, T-P3-07, T-P3-08, T-P3-09, T-P3-10, T-P3-11, T-P4-01, T-P4-02, T-P4-03, T-P4-04, T-P4-05, T-P4-07, T-P4-08, T-P5-03, T-P5-04, T-P5-05, T-P5-06, T-P5-07, T-P5-09, T-P5-10, T-P5-11, T-P6-01, T-P6-02, T-P6-03, T-P6-04, T-P6-06.
+> Recently completed: T-P2-01, T-P2-04, T-P2-05, T-P2-11, T-P2-12, T-P3-03, T-P3-04, T-P3-07, T-P3-08, T-P3-09, T-P3-10, T-P3-11, T-P4-01, T-P4-02, T-P4-03, T-P4-04, T-P4-05, T-P4-07, T-P4-08, T-P5-03, T-P5-04, T-P5-05, T-P5-06, T-P5-07, T-P5-08, T-P5-09, T-P5-10, T-P5-11, T-P6-01, T-P6-02, T-P6-03, T-P6-04, T-P6-05, T-P6-06.
 > Format: Agentic AI task specification (structured, machine-parseable, human-readable).
 > Each task is independently executable by an AI coding agent with access to this repository.
 
@@ -44,36 +44,10 @@
 
 ## Phase 5 — MLIR-Method Architectural Remediation
 
-### T-P5-08: Remove ANE-specific attributes from SIR and MIR
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P5-08 |
-| `title` | Move palette_bits, kernel_scale, kernel_zero_point, kernel_palettized_lut to target layer |
-| `phase` | P5 |
-| `severity` | MEDIUM |
-| `depends_on` | [T-P5-07] |
-| `files` | `crates/ir/src/sir.rs`, `crates/ir/src/mir.rs` |
-| `violation_refs` | [M-028] |
-| `acceptance_criteria` | 1) SirOp::LinearProjection no longer has palette_bits; 2) MirOp::MILConv no longer has ANEC attributes; 3) Target-specific layer adds these during ANE lowering; 4) SIR can represent non-ANE targets |
-| `agent_hints` | Move palette_bits from SirOp to a separate SirOpMetadata or target annotation. Move kernel_scale/kernel_zero_point/kernel_palettized_lut from MirOp to ane_placement metadata. This is a significant refactor — break into smaller PRs. |
+(All P5 tasks completed.)
 
 ---
 
 ## Phase 6 — Forensic Infrastructure Gaps (Long-Term)
 
-(All P6 tasks completed except T-P6-05 which is now unblocked since T-P6-03 is done.)
-
-### T-P6-05: Add fusability checks
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P6-05 |
-| `title` | Implement IsFusable-equivalent checks for ANE layer fusion |
-| `phase` | P6 |
-| `severity` | HIGH |
-| `depends_on` | [T-P6-03] |
-| `files` | New module `crates/passes/src/fusability.rs` |
-| `violation_refs` | [N-006] |
-| `acceptance_criteria` | 1) Fusability check module exists; 2) Ops that individually pass placement but fail to fuse are caught; 3) ANEC fusion constraints modeled |
-| `agent_hints` | This requires understanding ANEC's fusion rules from binary research. Create a fusability module that checks if adjacent ops can be fused into a single engine layer. |
+(All P6 tasks completed.)

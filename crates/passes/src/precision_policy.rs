@@ -434,7 +434,7 @@ mod tests {
     use crate::knowledge_query::{
         ComputePlanPlacementInfo, LegalityInfo, NoKnowledge, PrecisionHazardInfo, RiskInfo,
     };
-    use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+    use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
 
     /// A mock knowledge query that reports a precision hazard for LinearProjection.
     struct MockPrecisionHazardKnowledge;
@@ -587,6 +587,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("output".into()),
@@ -594,7 +595,6 @@ mod tests {
                         input: SirNodeId("input".into()),
                         weight: "weight".into(),
                         bias: Some("bias".into()),
-                        palette_bits: None,
                     },
                     name: "linear_out".into(),
                     metadata: SirMetadata {
@@ -603,6 +603,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![SirNodeId("input".into())],
@@ -765,6 +766,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }
         }
 
@@ -938,6 +940,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }
         }
 
@@ -950,7 +953,6 @@ mod tests {
                 input: SirNodeId("i".into()),
                 weight: "w".into(),
                 bias: None,
-                palette_bits: None,
             })),
         );
         specific_patterns.insert(
@@ -1381,6 +1383,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
+            target_annotation: SirTargetAnnotation::default(),
             }
         }
 

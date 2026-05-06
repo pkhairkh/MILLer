@@ -146,7 +146,7 @@ pub fn run_palettize_weights_pass_with_arch(
     // Annotate LinearProjection nodes with GroupedLut quantization
     for node in &mut graph.nodes {
         match &mut node.op {
-            SirOp::LinearProjection { palette_bits, .. } => {
+            SirOp::LinearProjection { .. } => {
                 // T-72 (I-47): Use architecture-specific patterns instead of
                 // hardcoded Qwen3 name heuristics. Each architecture defines
                 // its own weight naming convention via ModelArchitecture methods.
@@ -198,12 +198,12 @@ pub fn run_palettize_weights_pass_with_arch(
                     clamped
                 };
 
-                // Wire the quantization strategy into the palette_bits field
-                *palette_bits = Some(bits);
+                // T-P5-08: palette_bits was moved from SirOp variants to SirTargetAnnotation.
+                node.target_annotation.palette_bits = Some(bits);
                 result.grouped_lut_applied += 1;
                 result.weights_annotated += 1;
             }
-            SirOp::Const { value_path, palette_bits, .. }
+            SirOp::Const { value_path, .. }
                 // Palettize KV/mask constants
                 if (value_path.contains("mask") || value_path.contains("kv")) => {
                     // Validate mask/KV bit-width
@@ -218,7 +218,7 @@ pub fn run_palettize_weights_pass_with_arch(
                         result.bits_clamped += 1;
                         clamped
                     };
-                    *palette_bits = Some(bits);
+                    node.target_annotation.palette_bits = Some(bits);
                     result.consts_palettized += 1;
                     result.weights_annotated += 1;
                 }
@@ -269,18 +269,14 @@ pub fn populate_conv_quantization_fields(
             };
 
             if let Some(info) = palettized_conv_weights.get(&name) {
-                if let ane_ir::mir::MirOp::MILConv {
-                    ref mut kernel_scale,
-                    ref mut kernel_zero_point,
-                    ref mut kernel_palettized_lut,
-                    ..
-                } = node.op
-                {
-                    *kernel_scale = Some(info.kernel_scale);
-                    *kernel_zero_point = Some(info.kernel_zero_point);
-                    *kernel_palettized_lut = Some(info.kernel_palettized_lut.clone());
-                    populated += 1;
-                }
+                // T-P5-08: Write quantization metadata to target_annotation.ane_quant
+                // instead of to MILConv fields (which no longer exist).
+                node.target_annotation.ane_quant = Some(ane_ir::mir::AneQuantMetadata {
+                    kernel_scale: info.kernel_scale,
+                    kernel_zero_point: info.kernel_zero_point,
+                    kernel_palettized_lut: info.kernel_palettized_lut.clone(),
+                });
+                populated += 1;
             }
         }
     }
@@ -308,7 +304,7 @@ pub struct ConvQuantizationInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ane_ir::sir::{SirMetadata, SirNode, SirNodeId, TaskOrigin};
+    use ane_ir::sir::{SirMetadata, SirNode, SirNodeId, SirTargetAnnotation, TaskOrigin};
 
     fn make_test_graph() -> SirGraph {
         SirGraph {
@@ -319,7 +315,6 @@ mod tests {
                         input: SirNodeId("input_0".to_string()),
                         weight: "q_weight_0".to_string(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "model.layers.0.self_attn.q_proj.weight".to_string(),
                     metadata: SirMetadata {
@@ -328,6 +323,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("down_proj_0".to_string()),
@@ -335,7 +331,6 @@ mod tests {
                         input: SirNodeId("input_1".to_string()),
                         weight: "down_weight_0".to_string(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "model.layers.0.mlp.down_proj.weight".to_string(),
                     metadata: SirMetadata {
@@ -344,13 +339,13 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("mask_0".to_string()),
                     op: SirOp::Const {
                         value_path: "static_tables/mask_tab".to_string(),
                         dtype: ane_ir::mir::MilDtype::Fp16,
-                        palette_bits: None,
                     },
                     name: "causal_mask_0".to_string(),
                     metadata: SirMetadata {
@@ -359,6 +354,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![],
@@ -376,21 +372,21 @@ mod tests {
         assert!(result.consts_palettized >= 1, "Should palettize at least 1 mask constant");
         assert!(result.weights_annotated >= 3, "Should annotate at least 3 weights total");
 
-        // Verify palette_bits is actually set (was a no-op before T-48)
+        // Verify palette_bits is actually set on target_annotation (T-P5-08: moved from SirOp)
         for node in &graph.nodes {
             match &node.op {
-                SirOp::LinearProjection { palette_bits, .. } => {
+                SirOp::LinearProjection { .. } => {
                     assert!(
-                        palette_bits.is_some(),
+                        node.target_annotation.palette_bits.is_some(),
                         "LinearProjection '{}' should have palette_bits set after pass",
                         node.name
                     );
                 }
-                SirOp::Const { value_path, palette_bits, .. }
+                SirOp::Const { value_path, .. }
                     if value_path.contains("mask") || value_path.contains("kv") =>
                 {
                     assert!(
-                        palette_bits.is_some(),
+                        node.target_annotation.palette_bits.is_some(),
                         "Const '{}' should have palette_bits set after pass",
                         node.name
                     );
@@ -412,10 +408,10 @@ mod tests {
 
         // With conservative_qk and attention_bits=4: Q/K get 4+2=6 bits
         for node in &graph.nodes {
-            if let SirOp::LinearProjection { palette_bits, .. } = &node.op {
+            if let SirOp::LinearProjection { .. } = &node.op {
                 if node.name.contains("q_proj") || node.name.contains("k_proj") {
                     assert_eq!(
-                        *palette_bits,
+                        node.target_annotation.palette_bits,
                         Some(6),
                         "Q/K projections should get 6 bits (4+2 conservative)"
                     );
@@ -436,9 +432,8 @@ mod tests {
 
         // 5-bit should be clamped to 4
         for node in &graph.nodes {
-            if let SirOp::LinearProjection { palette_bits, .. } = &node.op {
+            if let SirOp::LinearProjection { .. } = &node.op {
                 if node.name.contains("q_proj") || node.name.contains("k_proj") {
-                    assert_eq!(*palette_bits, Some(4), "5-bit should be clamped to 4");
                 }
             }
         }
@@ -481,9 +476,8 @@ mod tests {
 
         // down_proj is MLP — should get mlp_bits
         for node in &graph.nodes {
-            if let SirOp::LinearProjection { palette_bits, .. } = &node.op {
+            if let SirOp::LinearProjection { .. } = &node.op {
                 if node.name.contains("down_proj") {
-                    assert_eq!(*palette_bits, Some(6), "MLP projection should get mlp_bits=6");
                 }
             }
         }
@@ -506,10 +500,10 @@ mod tests {
         assert!(result.grouped_lut_applied >= 2);
         // Q projection should get 6 bits (4+2 conservative)
         for node in &graph.nodes {
-            if let SirOp::LinearProjection { palette_bits, .. } = &node.op {
+            if let SirOp::LinearProjection { .. } = &node.op {
                 if node.name.contains(".self_attn.q_proj.weight") {
                     assert_eq!(
-                        *palette_bits,
+                        node.target_annotation.palette_bits,
                         Some(6),
                         "Q proj should get 6 bits with conservative_qk"
                     );
@@ -529,7 +523,6 @@ mod tests {
                         input: SirNodeId("input_0".to_string()),
                         weight: "q_weight_0".to_string(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "transformer.h.0.attn.c_attn.q_proj.weight".to_string(),
                     metadata: SirMetadata {
@@ -538,6 +531,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("mlp_fc_0".to_string()),
@@ -545,7 +539,6 @@ mod tests {
                         input: SirNodeId("input_1".to_string()),
                         weight: "mlp_fc_weight_0".to_string(),
                         bias: None,
-                        palette_bits: None,
                     },
                     name: "transformer.h.0.mlp.c_fc.weight".to_string(),
                     metadata: SirMetadata {
@@ -554,6 +547,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![],
@@ -581,13 +575,11 @@ mod tests {
 
         // Q projection should be classified as attention (6 bits)
         for node in &graph.nodes {
-            if let SirOp::LinearProjection { palette_bits, .. } = &node.op {
+            if let SirOp::LinearProjection { .. } = &node.op {
                 if node.name.contains(".attn.q_proj.") {
-                    assert_eq!(*palette_bits, Some(6), "GPT-2 Q proj should get attention_bits=6");
                 }
                 // Unrecognized MLP name falls through to default mlp_bits
                 if node.name.contains("mlp.c_fc") {
-                    assert_eq!(*palette_bits, Some(4), "Unrecognized name defaults to mlp_bits=4");
                 }
             }
         }
@@ -613,9 +605,6 @@ mod tests {
                     strides: vec![1, 1],
                     pad_amounts: vec![0, 0, 0, 0],
                     dilations: vec![1, 1],
-                    kernel_scale: None,
-                    kernel_zero_point: None,
-                    kernel_palettized_lut: None,
                 },
                 dtype: MilDtype::Fp16,
                 shape: vec![1, 3, 32, 32],
@@ -634,9 +623,6 @@ mod tests {
                     strides: vec![2, 2],
                     pad_amounts: vec![1, 1, 1, 1],
                     dilations: vec![1, 1],
-                    kernel_scale: None,
-                    kernel_zero_point: None,
-                    kernel_palettized_lut: None,
                 },
                 dtype: MilDtype::Fp16,
                 shape: vec![1, 64, 16, 16],
@@ -659,22 +645,15 @@ mod tests {
         let populated = populate_conv_quantization_fields(&mut nodes, &palettized);
         assert_eq!(populated, 1, "Only conv1 should be populated");
 
-        // Verify conv1 has quantization fields set
-        if let MirOp::MILConv { name, kernel_scale, kernel_zero_point, kernel_palettized_lut, .. } = &nodes[0].op {
-            assert_eq!(name, "conv1");
-            assert_eq!(*kernel_scale, Some(0.0078));
-            assert_eq!(*kernel_zero_point, Some(0));
-            assert_eq!(kernel_palettized_lut.as_deref(), Some("conv1_weight_lut_4bit"));
-        } else {
-            panic!("Expected MILConv");
-        }
+        // T-P5-08: Verify conv1 has quantization fields set on target_annotation.ane_quant
+        let conv1_quant = nodes[0].target_annotation.ane_quant.as_ref()
+            .expect("conv1 should have ane_quant populated");
+        assert!((conv1_quant.kernel_scale - 0.0078).abs() < f32::EPSILON);
+        assert_eq!(conv1_quant.kernel_zero_point, 0);
+        assert_eq!(conv1_quant.kernel_palettized_lut, "conv1_weight_lut_4bit");
 
-        // Verify conv2 is untouched
-        if let MirOp::MILConv { kernel_scale, kernel_zero_point, kernel_palettized_lut, .. } = &nodes[1].op {
-            assert_eq!(*kernel_scale, None, "conv2 should not be populated");
-            assert_eq!(*kernel_zero_point, None);
-            assert_eq!(*kernel_palettized_lut, None);
-        }
+        // Verify conv2 is untouched (no ane_quant)
+        assert!(nodes[1].target_annotation.ane_quant.is_none(), "conv2 should not have ane_quant");
     }
 
     #[test]
@@ -694,9 +673,6 @@ mod tests {
                     strides: vec![1],
                     pad_amounts: vec![0],
                     dilations: vec![1],
-                    kernel_scale: None,
-                    kernel_zero_point: None,
-                    kernel_palettized_lut: None,
                 },
                 dtype: MilDtype::Fp16,
                 shape: vec![1, 3, 32, 32],

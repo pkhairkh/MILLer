@@ -2222,16 +2222,20 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             MirOp::MILEinsum { name, .. } => unsupported("einsum", &name, &op_json),
 
             // ─── Convolution ─────────────────────────────────────────
-            MirOp::MILConv { name, x, weight, pad_type, groups, kernel_scale, kernel_zero_point, kernel_palettized_lut, .. } => {
+            MirOp::MILConv { name, x, weight, pad_type, groups, .. } => {
+                // T-P5-08: kernel_scale/kernel_zero_point/kernel_palettized_lut
+                // are now on MirOpTargetAnnotation::ane_quant, not on MILConv.
+                // This path creates MirOpCompat::Conv without quant attributes.
+                // Use mir_op_to_compat_with_quant() for the full quant path.
                 mir_compat::MirOpCompat::Conv {
                     name,
                     x: nid(x),
                     weight: nid(weight),
                     pad_type,
                     groups: groups as i64,
-                    kernel_scale,
-                    kernel_zero_point,
-                    kernel_palettized_lut,
+                    kernel_scale: None,
+                    kernel_zero_point: None,
+                    kernel_palettized_lut: None,
                 }
             }
             MirOp::MILConvTranspose { name, .. } => unsupported("conv_transpose", &name, &op_json),

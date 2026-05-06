@@ -2571,9 +2571,6 @@ mod tests {
             strides: vec![1, 1],
             pad_amounts: vec![0, 0, 0, 0],
             dilations: vec![2, 2], // dilation > 1
-            kernel_scale: None,
-            kernel_zero_point: None,
-            kernel_palettized_lut: None,
         };
         let shapes: Vec<Vec<usize>> = vec![];
         let ctx = PlacementContext {
@@ -2604,9 +2601,6 @@ mod tests {
             strides: vec![1, 1],
             pad_amounts: vec![0, 0, 0, 0],
             dilations: vec![1, 1],
-            kernel_scale: None,
-            kernel_zero_point: None,
-            kernel_palettized_lut: None,
         };
         let shapes: Vec<Vec<usize>> = vec![];
         let ctx = PlacementContext::empty();
@@ -2628,9 +2622,6 @@ mod tests {
             strides: vec![1, 1],
             pad_amounts: vec![0, 0, 0, 0],
             dilations: vec![1, 1],
-            kernel_scale: None,
-            kernel_zero_point: None,
-            kernel_palettized_lut: None,
         };
         let shapes: Vec<Vec<usize>> = vec![];
         let ctx = PlacementContext {
@@ -2725,9 +2716,6 @@ mod tests {
             strides: vec![1, 1],
             pad_amounts: vec![0, 0, 0, 0],
             dilations: vec![1, 1],
-            kernel_scale: None,
-            kernel_zero_point: None,
-            kernel_palettized_lut: None,
         };
         let shapes = vec![vec![1, 64, 128, 128], vec![64, 64, 3, 3]]; // 3x3 kernel
         let ctx = PlacementContext {
@@ -2752,9 +2740,6 @@ mod tests {
             strides: vec![1, 1],
             pad_amounts: vec![0, 0, 0, 0],
             dilations: vec![1, 1],
-            kernel_scale: None,
-            kernel_zero_point: None,
-            kernel_palettized_lut: None,
         };
         let shapes = vec![vec![1, 40000, 8, 8]]; // 40K channels → exceeds 32K
         let ctx = PlacementContext {

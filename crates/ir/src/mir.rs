@@ -19,6 +19,12 @@ use crate::toproto::ToProto;
 /// Captures ANE placement attributes that are determined after
 /// engine assignment but before emission. This separates target
 /// concerns from the pure IR representation.
+///
+/// T-P5-08: ANE-specific quantization attributes (kernel_scale,
+/// kernel_zero_point, kernel_palettized_lut) have been moved here from
+/// the MirOp::MILConv variant, and palette_bits from SirOp variants
+/// has been moved to `SirTargetAnnotation`. The IR should be
+/// target-agnostic; ANE-specific metadata lives in the annotation layer.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct MirOpTargetAnnotation {
     /// The assigned ANE engine for this op, if any.
@@ -27,6 +33,43 @@ pub struct MirOpTargetAnnotation {
     pub demoted_to_cpu: bool,
     /// The target ANE revision, if known.
     pub target_revision: Option<super::ane_target::AneRevision>,
+    /// T-P5-08: ANE quantization metadata for conv weights.
+    ///
+    /// Previously embedded directly in `MirOp::MILConv` as `kernel_scale`,
+    /// `kernel_zero_point`, and `kernel_palettized_lut`. Moved here because
+    /// these are ANEC-specific emission attributes, not part of the core IR.
+    /// Populated by `palettize_weights::populate_conv_quantization_fields()`.
+    #[serde(default)]
+    pub ane_quant: Option<AneQuantMetadata>,
+}
+
+/// T-P5-08: ANE-specific quantization metadata for convolution weights.
+///
+/// Captures the ANEC `kernel_scale`, `kernel_zero_point`, and
+/// `kernel_palettized_LUT` attributes needed for quantized/palettized
+/// convolution emission on the ANE. These attributes are not part of
+/// the core IR — they are ANE target-layer concerns populated during
+/// the palettization pass and consumed during ANE lowering/emission.
+///
+/// This struct was previously represented as inline fields on
+/// `MirOp::MILConv` (T-98). T-P5-08 moves them to the target
+/// annotation layer so that the IR remains target-agnostic and
+/// can represent non-ANE targets.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AneQuantMetadata {
+    /// Per-op scale factor for quantized/palettized conv weights.
+    /// Maps to ANEC `kernel_scale` attribute. Used to dequantize
+    /// int4/int8 weights back to floating point.
+    pub kernel_scale: f32,
+    /// Zero-point offset for quantized conv weights.
+    /// Maps to ANEC `kernel_zero_point` attribute. Zero indicates
+    /// symmetric quantization.
+    pub kernel_zero_point: i32,
+    /// Name of the palettized LUT weight entry for this conv.
+    /// Maps to ANEC `kernel_palettized_LUT` attribute. References a
+    /// weight entry in the weight blob that contains the lookup table
+    /// for palettized (kmeans) weights.
+    pub kernel_palettized_lut: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -81,16 +124,10 @@ pub enum MirOp {
         strides: Vec<usize>,
         pad_amounts: Vec<usize>,
         dilations: Vec<usize>,
-        /// T-98 (V-110): Per-op scale factor for quantized/palettized weights.
-        /// Maps to ANEC `kernel_scale` attribute. `None` for unquantized weights.
-        kernel_scale: Option<f32>,
-        /// T-98 (V-110): Zero-point offset for quantized weights.
-        /// Maps to ANEC `kernel_zero_point` attribute. `None` for symmetric quant.
-        kernel_zero_point: Option<i32>,
-        /// T-98 (V-110): Name of the palettized LUT weight for this conv.
-        /// Maps to ANEC `kernel_palettized_LUT` attribute. `None` when not
-        /// palettized. When set, references a weight entry in the weight blob.
-        kernel_palettized_lut: Option<String>,
+        // T-P5-08: kernel_scale, kernel_zero_point, kernel_palettized_lut
+        // moved to MirOpTargetAnnotation::ane_quant (AneQuantMetadata).
+        // The IR is now target-agnostic; ANE quant metadata is in the
+        // target annotation layer, populated by palettize_weights pass.
     },
     MILConvTranspose {
         name: String,
@@ -2716,7 +2753,7 @@ impl MirOp {
 mod tests {
     use super::super::ane_engine::AneEngine;
     use super::super::ane_target::AneRevision;
-    use super::{MirNodeId, MirOp};
+    use super::{AneQuantMetadata, MirNodeId, MirOp, MirOpTargetAnnotation};
 
     fn nid(s: &str) -> MirNodeId {
         MirNodeId(s.to_string())
@@ -2738,9 +2775,6 @@ mod tests {
             strides: vec![1],
             pad_amounts: vec![0],
             dilations: vec![1],
-            kernel_scale: None,
-            kernel_zero_point: None,
-            kernel_palettized_lut: None,
         };
         assert_eq!(conv.default_engine(), Some(AneEngine::NE));
 
@@ -2864,9 +2898,6 @@ mod tests {
             strides: vec![1],
             pad_amounts: vec![0],
             dilations: vec![1],
-            kernel_scale: None,
-            kernel_zero_point: None,
-            kernel_palettized_lut: None,
         };
 
         // Conv should always return NE regardless of revision
@@ -2923,41 +2954,13 @@ mod tests {
         assert_eq!(sdpa.default_engine_for_revision(None), Some(AneEngine::NE));
     }
 
-    // ─── T-98: MILConv quantization fields ─────────────────────────────
+    // ─── T-P5-08: MILConv ANE attrs moved to target annotation ───────
 
-    /// T-98: Verify that MILConv can be constructed with quantized weight
-    /// attributes (kernel_scale, kernel_zero_point, kernel_palettized_lut).
+    /// T-P5-08: Verify that MILConv no longer has ANE-specific quantization
+    /// fields (kernel_scale, kernel_zero_point, kernel_palettized_lut).
+    /// These have been moved to MirOpTargetAnnotation::ane_quant.
     #[test]
-    fn test_t98_conv_quantization_fields() {
-        let conv = MirOp::MILConv {
-            name: "quant_conv".into(),
-            x: nid("x"),
-            weight: nid("w"),
-            pad_type: "valid".into(),
-            groups: 1,
-            strides: vec![1, 1],
-            pad_amounts: vec![0, 0],
-            dilations: vec![1, 1],
-            kernel_scale: Some(0.0078),
-            kernel_zero_point: Some(0),
-            kernel_palettized_lut: Some("conv_weight_lut_4bit".into()),
-        };
-
-        if let MirOp::MILConv { kernel_scale, kernel_zero_point, kernel_palettized_lut, .. } = &conv {
-            assert_eq!(*kernel_scale, Some(0.0078));
-            assert_eq!(*kernel_zero_point, Some(0));
-            assert_eq!(kernel_palettized_lut.as_deref(), Some("conv_weight_lut_4bit"));
-        } else {
-            panic!("Expected MILConv");
-        }
-
-        // Conv with quantization fields still maps to NE engine
-        assert_eq!(conv.default_engine(), Some(AneEngine::NE));
-    }
-
-    /// T-98: Verify that MILConv defaults quantization fields to None.
-    #[test]
-    fn test_t98_conv_quantization_fields_default_none() {
+    fn test_tp5_08_conv_no_ane_quant_fields() {
         let conv = MirOp::MILConv {
             name: "plain_conv".into(),
             x: nid("x"),
@@ -2967,16 +2970,74 @@ mod tests {
             strides: vec![1],
             pad_amounts: vec![0],
             dilations: vec![1],
-            kernel_scale: None,
-            kernel_zero_point: None,
-            kernel_palettized_lut: None,
         };
 
-        if let MirOp::MILConv { kernel_scale, kernel_zero_point, kernel_palettized_lut, .. } = &conv {
-            assert_eq!(*kernel_scale, None, "Default kernel_scale should be None");
-            assert_eq!(*kernel_zero_point, None, "Default kernel_zero_point should be None");
-            assert_eq!(*kernel_palettized_lut, None, "Default kernel_palettized_lut should be None");
-        }
+        // Conv still maps to NE engine (target-agnostic IR)
+        assert_eq!(conv.default_engine(), Some(AneEngine::NE));
+
+        // Conv has no ANE quant fields — they live on MirOpTargetAnnotation
+        // Verify MirOpTargetAnnotation defaults to no ane_quant
+        let annotation = MirOpTargetAnnotation::default();
+        assert!(annotation.ane_quant.is_none());
+    }
+
+    /// T-P5-08: Verify that AneQuantMetadata captures conv quantization info
+    /// and is stored in MirOpTargetAnnotation.
+    #[test]
+    fn test_tp5_08_ane_quant_metadata() {
+        let quant = AneQuantMetadata {
+            kernel_scale: 0.0078,
+            kernel_zero_point: 0,
+            kernel_palettized_lut: "conv_weight_lut_4bit".to_string(),
+        };
+
+        assert!((quant.kernel_scale - 0.0078).abs() < f32::EPSILON);
+        assert_eq!(quant.kernel_zero_point, 0);
+        assert_eq!(quant.kernel_palettized_lut, "conv_weight_lut_4bit");
+
+        // Store in target annotation
+        let annotation = MirOpTargetAnnotation {
+            assigned_engine: Some(AneEngine::NE),
+            demoted_to_cpu: false,
+            target_revision: None,
+            ane_quant: Some(quant.clone()),
+        };
+
+        let retrieved = annotation.ane_quant.as_ref().unwrap();
+        assert!((retrieved.kernel_scale - 0.0078).abs() < f32::EPSILON);
+        assert_eq!(retrieved.kernel_zero_point, 0);
+        assert_eq!(retrieved.kernel_palettized_lut, "conv_weight_lut_4bit");
+    }
+
+    /// T-P5-08: Verify AneQuantMetadata serialization round-trip.
+    #[test]
+    fn test_tp5_08_ane_quant_metadata_serde() {
+        let quant = AneQuantMetadata {
+            kernel_scale: 0.0156,
+            kernel_zero_point: -128,
+            kernel_palettized_lut: "conv_weight_lut_8bit".to_string(),
+        };
+        let annotation = MirOpTargetAnnotation {
+            assigned_engine: Some(AneEngine::NE),
+            demoted_to_cpu: false,
+            target_revision: None,
+            ane_quant: Some(quant),
+        };
+
+        let json = serde_json::to_string(&annotation).unwrap();
+        let deserialized: MirOpTargetAnnotation = serde_json::from_str(&json).unwrap();
+        assert_eq!(annotation, deserialized);
+    }
+
+    /// T-P5-08: Verify MirOpTargetAnnotation with ane_quant=None deserializes
+    /// from JSON that lacks the ane_quant field (backward compat).
+    #[test]
+    fn test_tp5_08_annotation_backward_compat_deser() {
+        // JSON without ane_quant field (old format)
+        let old_json = r#"{"assigned_engine":null,"demoted_to_cpu":false,"target_revision":null}"#;
+        let deserialized: MirOpTargetAnnotation = serde_json::from_str(old_json).unwrap();
+        assert!(deserialized.ane_quant.is_none());
+        assert!(!deserialized.demoted_to_cpu);
     }
 
     // ─── T-131: MatMul transpose flags ──────────────────────────────────

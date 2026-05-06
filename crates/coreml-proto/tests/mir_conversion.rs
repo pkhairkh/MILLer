@@ -167,9 +167,6 @@ fn test_mir_op_to_compat_exhaustive_coverage() {
         strides: vec![1],
         pad_amounts: vec![0],
         dilations: vec![1],
-        kernel_scale: None,
-        kernel_zero_point: None,
-        kernel_palettized_lut: None,
     };
     assert!(matches!(MirOpCompat::from(op), MirOpCompat::Conv { .. }));
 

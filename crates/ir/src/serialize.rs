@@ -51,7 +51,7 @@ mod tests {
         FunctionEntry, Handoff, HandoffKind, Package, PackageRole, PirGraph, ShardPartitionEntry,
         ShardRole, ShardTemplate, TensorSpec,
     };
-    use crate::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+    use crate::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
     use std::collections::HashMap;
 
     // ─── Helpers ──────────────────────────────────────────────────────
@@ -67,7 +67,6 @@ mod tests {
                     op: SirOp::Const {
                         value_path: "weight.npy".into(),
                         dtype: MilDtype::Fp16,
-                        palette_bits: None,
                     },
                     name: "weight".into(),
                     metadata: SirMetadata {
@@ -76,6 +75,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: output_id.clone(),
@@ -83,7 +83,6 @@ mod tests {
                         input: input_id.clone(),
                         weight: "weight.npy".into(),
                         bias: Some("bias.npy".into()),
-                        palette_bits: None,
                     },
                     name: "linear".into(),
                     metadata: SirMetadata {
@@ -92,6 +91,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
+                    target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![input_id],

@@ -18,7 +18,7 @@ pub use super::payload::*;
 pub use super::shard_desc::*;
 
 use crate::mir::{ComputeUnitHint, MilDtype, MirGraph, MirNode, MirNodeId, MirOp};
-use crate::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+use crate::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
 use crate::task_spec::{SyntheticTaskSpec, TaskOp};
 
 /// Build a SIR graph from a synthetic linear projection task spec.
@@ -63,6 +63,7 @@ pub fn sir_from_linear_projection(spec: &SyntheticTaskSpec) -> Result<SirGraph, 
                 quality_contract: None,
                 precision_override: None,
             },
+            target_annotation: SirTargetAnnotation::default(),
         },
         SirNode {
             id: bias_id.clone(),
@@ -74,6 +75,7 @@ pub fn sir_from_linear_projection(spec: &SyntheticTaskSpec) -> Result<SirGraph, 
                 quality_contract: None,
                 precision_override: None,
             },
+            target_annotation: SirTargetAnnotation::default(),
         },
         SirNode {
             id: output_id.clone(),
@@ -81,7 +83,6 @@ pub fn sir_from_linear_projection(spec: &SyntheticTaskSpec) -> Result<SirGraph, 
                 input: input_id.clone(),
                 weight: "weight".into(),
                 bias: Some("bias".into()),
-                palette_bits: None,
             },
             name: "linear_out".into(),
             metadata: SirMetadata {
@@ -90,6 +91,7 @@ pub fn sir_from_linear_projection(spec: &SyntheticTaskSpec) -> Result<SirGraph, 
                 quality_contract: None,
                 precision_override: None,
             },
+            target_annotation: SirTargetAnnotation::default(),
         },
     ];
 
