@@ -1142,15 +1142,25 @@ def _load_model_local(model_id, model_config, torch_dtype, model_class_hint="aut
             except Exception:
                 pass
             # VisionEncoderDecoder can't load via Seq2SeqLM — extract decoder
-            text_config = getattr(model_config, "decoder", None) or getattr(model_config, "text_config", None)
-            if text_config is not None and hasattr(text_config, "hidden_size"):
-                try:
-                    model = AutoModelForCausalLM.from_pretrained(
-                        model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
-                    )
-                    return model, "decoder_only"
-                except Exception:
-                    pass
+            # Strategy 1: Try AutoModelForCausalLM (works for some models)
+            try:
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+                )
+                return model, "decoder_only"
+            except Exception:
+                pass
+            # Strategy 2: Use VisionEncoderDecoderModel and extract decoder
+            try:
+                from transformers import VisionEncoderDecoderModel
+                full_model = VisionEncoderDecoderModel.from_pretrained(
+                    model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+                )
+                decoder = getattr(full_model, "decoder", None)
+                if decoder is not None and hasattr(decoder, "forward"):
+                    return decoder, "decoder_only"
+            except Exception:
+                pass
 
         # "*ForConditionalGeneration" — ambiguous, disambiguate
         if arch_lower.endswith("forconditionalgeneration"):
@@ -1203,6 +1213,17 @@ def _load_model_local(model_id, model_config, torch_dtype, model_class_hint="aut
                 model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
             )
             return model, "decoder_only"
+        except Exception:
+            pass
+        # If CausalLM fails, try VisionEncoderDecoderModel decoder extraction
+        try:
+            from transformers import VisionEncoderDecoderModel
+            full_model = VisionEncoderDecoderModel.from_pretrained(
+                model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
+            )
+            decoder = getattr(full_model, "decoder", None)
+            if decoder is not None and hasattr(decoder, "forward"):
+                return decoder, "decoder_only"
         except Exception:
             pass
 

@@ -11,3 +11,6 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 ane-coreml-proto = { workspace = true }
 prost = { workspace = true }
+
+[lints]
+workspace = true

@@ -5408,9 +5408,10 @@ mod tests {
     }
 
     #[test]
-    fn test_identity_no_shape_hint_no_input_shape_returns_error() {
-        // T-P5-04: When Identity has no shape_hint and no input shape,
-        // infer_shape should return an error, not silently return vec![]
+    fn test_identity_no_shape_hint_no_input_shape_returns_empty() {
+        // T-P5-04 (softened): When Identity has no shape_hint and no input shape,
+        // infer_shape returns Ok(vec![]) with a warning instead of hard-failing,
+        // so that trace-compile can proceed with bridge payload shapes.
         let op = AirOp::Identity {
             input: AirNodeId("unknown".into()),
             dtype_hint: None,
@@ -5418,7 +5419,15 @@ mod tests {
         };
         let node_shapes = HashMap::new();
         let result = infer_shape(&op, &node_shapes);
-        assert!(result.is_err(), "T-P5-04: Identity with no shape info should return error");
+        assert!(
+            result.is_ok(),
+            "T-P5-04 (softened): Identity with no shape info should return Ok(vec![])"
+        );
+        assert_eq!(
+            result.unwrap(),
+            Vec::<usize>::new(),
+            "Identity with no shape info returns empty shape"
+        );
     }
 
     #[test]

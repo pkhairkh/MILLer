@@ -124,8 +124,10 @@ fn test_open_dir_without_store_index_initializes_new() {
     // This should now succeed by initializing a new store in the
     // existing directory instead of panicking.
     let store = KnowledgeStore::open(&store_path.to_string_lossy()).unwrap();
-    assert!(store_path.join("store_index.json").exists(),
-        "Opening an existing dir without store_index.json should create one");
+    assert!(
+        store_path.join("store_index.json").exists(),
+        "Opening an existing dir without store_index.json should create one"
+    );
 }
 
 // ─── Additional should_panic tests (T-18) ─────────────────────────

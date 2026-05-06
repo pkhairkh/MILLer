@@ -1115,7 +1115,13 @@ def _load_model(model_id, model_config, torch_dtype, model_class_hint="auto"):
                 )
                 return model, "seq2seq_lm"
             except Exception as e:
-                sys.stderr.write(f"  AutoModelForSeq2SeqLM failed: {e}, trying alternatives\n")
+                sys.stderr.write(f"  AutoModelForSeq2SeqLM failed: {e}, trying decoder extraction\n")
+            # Seq2SeqLM can't load VisionEncoderDecoder — extract the decoder
+            sys.stderr.write("  → _load_decoder_from_multimodal (VisionEncoderDecoder decoder extraction)\n")
+            try:
+                return _load_decoder_from_multimodal(model_id, model_config, torch_dtype)
+            except Exception as e2:
+                sys.stderr.write(f"  Decoder extraction failed: {e2}, trying alternatives\n")
 
         # "*ForConditionalGeneration" — ambiguous! Disambiguate:
         # - is_encoder_decoder=True → Seq2SeqLM (BART, T5, mBART, etc.)

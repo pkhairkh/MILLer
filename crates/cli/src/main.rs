@@ -730,11 +730,10 @@ fn resolve_default_knowledge_dir() -> Option<&'static str> {
 /// - If seed files are corrupt, logs an error but continues (seeds are
 ///   supplementary, not required).
 ///
-/// `temp_store_id` is used to create a unique temp directory when the
-/// provided path is a seed directory rather than an existing store.
+/// `temp_store_id` is unused but retained for API compatibility.
 fn open_knowledge_store_with_seeds(
     knowledge_dir: Option<&str>,
-    temp_store_id: &str,
+    _temp_store_id: &str,
 ) -> Option<ane_knowledge::store::KnowledgeStore> {
     let effective_dir = knowledge_dir
         .map(|s| s.to_string())
@@ -757,69 +756,60 @@ fn open_knowledge_store_with_seeds(
         return None;
     }
 
-    if store_path.join("store_index.json").exists() {
-        // Existing store: open it and also load any new seeds from the
-        // default knowledge/ directory (seeds may have been added since
-        // the store was last opened).
-        match ane_knowledge::store::KnowledgeStore::open(&kdir) {
-            Ok(mut store) => {
+    // KnowledgeStore::open handles both cases:
+    // - Existing store with store_index.json → loads it
+    // - Directory without store_index.json → auto-creates a new store
+    match ane_knowledge::store::KnowledgeStore::open(&kdir) {
+        Ok(mut store) => {
+            let (seeds, obs) = store.counts();
+            // If the store is empty, try to load seeds from the directory
+            // (handles the case where knowledge/ has seed files but no prior store)
+            if seeds == 0 {
+                match store.load_seeds_from_directory(&kdir) {
+                    Ok(count) if count > 0 => {
+                        println!("  Knowledge seeds: {} entries loaded from {}", count, kdir);
+                    }
+                    Ok(_) => {
+                        println!(
+                            "  Knowledge store: {} seeds, {} observations available",
+                            seeds, obs
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("  Warning: error loading knowledge seeds from {}: {}", kdir, e);
+                    }
+                }
                 let (seeds, obs) = store.counts();
                 println!("  Knowledge store: {} seeds, {} observations available", seeds, obs);
-                // Also attempt to load seeds from the default knowledge/ dir
-                // if the store was opened from an explicit path that differs.
-                if let Some(default_dir) = resolve_default_knowledge_dir() {
-                    if default_dir != kdir {
-                        match store.load_seeds_from_directory(default_dir) {
-                            Ok(count) if count > 0 => {
-                                println!(
-                                    "  Loaded {} additional seed entries from default knowledge/",
-                                    count
-                                );
-                            }
-                            Ok(_) => {}
-                            Err(e) => {
-                                eprintln!(
-                                    "  Warning: error loading seeds from default knowledge/: {}",
-                                    e
-                                );
-                            }
+            } else {
+                println!("  Knowledge store: {} seeds, {} observations available", seeds, obs);
+            }
+            // Also attempt to load seeds from the default knowledge/ dir
+            // if the store was opened from an explicit path that differs.
+            if let Some(default_dir) = resolve_default_knowledge_dir() {
+                if default_dir != kdir {
+                    match store.load_seeds_from_directory(default_dir) {
+                        Ok(count) if count > 0 => {
+                            println!(
+                                "  Loaded {} additional seed entries from default knowledge/",
+                                count
+                            );
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            eprintln!(
+                                "  Warning: error loading seeds from default knowledge/: {}",
+                                e
+                            );
                         }
                     }
                 }
-                Some(store)
             }
-            Err(e) => {
-                eprintln!("  Warning: failed to open knowledge store at {}: {}", kdir, e);
-                None
-            }
+            Some(store)
         }
-    } else {
-        // Seed directory (no store_index.json): create a temp store and
-        // load seeds from it.
-        let tmp_store_dir =
-            std::env::temp_dir().join(format!("ane_{}_knowledge_store", temp_store_id));
-        let tmp_store_dir_str = tmp_store_dir.to_string_lossy().into_owned();
-        match ane_knowledge::store::KnowledgeStore::open(&tmp_store_dir_str) {
-            Ok(mut store) => match store.load_seeds_from_directory(&kdir) {
-                Ok(count) => {
-                    if count > 0 {
-                        println!("  Knowledge seeds: {} entries loaded from {}", count, kdir);
-                        Some(store)
-                    } else {
-                        eprintln!("  Warning: no seed entries loaded from {}", kdir);
-                        None
-                    }
-                }
-                Err(e) => {
-                    // Seed files are supplementary — log error but don't fail
-                    eprintln!("  Warning: error loading knowledge seeds from {}: {}", kdir, e);
-                    None
-                }
-            },
-            Err(e) => {
-                eprintln!("  Warning: failed to create temporary knowledge store: {}", e);
-                None
-            }
+        Err(e) => {
+            eprintln!("  Warning: failed to open knowledge store at {}: {}", kdir, e);
+            None
         }
     }
 }
