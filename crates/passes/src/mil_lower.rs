@@ -89,7 +89,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         // Linear is produced by the SIR→AIR lowering for linear projection ops.
         // The weight is stored as (out_features, in_features) and transposed
         // during emission, so the output shape is (*, out_features).
-        AirOp::Linear { input, weight, .. } => {
+        AirOp::Linear { input, weight: _, .. } => {
             Ok(if let Some(input_shape) = node_shapes.get(input) {
                 // Weight filename encodes dimensions: try to infer from input shape.
                 // For Linear, output_shape = (*input_batch_dims, out_features).

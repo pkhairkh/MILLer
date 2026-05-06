@@ -2756,7 +2756,7 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             MirOp::MILStack { name, values, axis } => mir_compat::MirOpCompat::Stack {
                 name,
                 values: values.into_iter().map(|v| nid(v)).collect(),
-                axis: *axis as i64,
+                axis: axis as i64,
             },
             MirOp::MILTile { name, x, reps } => mir_compat::MirOpCompat::Tile {
                 name,
