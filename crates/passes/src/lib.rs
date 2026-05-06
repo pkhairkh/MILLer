@@ -16,6 +16,7 @@ pub mod canonicalize;
 pub mod cpu_only_ops;
 pub mod dtype_constraints;
 pub mod knowledge_query;
+pub mod l2_budget;
 pub mod legality_rewrite;
 pub mod mil_lower;
 pub mod op_constraints;

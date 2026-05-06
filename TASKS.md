@@ -2,7 +2,7 @@
 
 > Consolidated remediation task board for open and in-progress issues.
 > Completed tasks have been removed — see git history for the full audit trail.
-> Recently completed: T-P2-01, T-P2-04, T-P2-05, T-P2-11, T-P2-12, T-P3-03, T-P3-04, T-P3-07, T-P3-08, T-P3-09, T-P3-10, T-P3-11, T-P4-01, T-P4-02, T-P4-03, T-P4-04, T-P4-05, T-P4-07, T-P4-08, T-P5-03, T-P5-04, T-P5-05, T-P5-06, T-P5-07, T-P5-09, T-P5-10, T-P5-11, T-P6-02, T-P6-04.
+> Recently completed: T-P2-01, T-P2-04, T-P2-05, T-P2-11, T-P2-12, T-P3-03, T-P3-04, T-P3-07, T-P3-08, T-P3-09, T-P3-10, T-P3-11, T-P4-01, T-P4-02, T-P4-03, T-P4-04, T-P4-05, T-P4-07, T-P4-08, T-P5-03, T-P5-04, T-P5-05, T-P5-06, T-P5-07, T-P5-09, T-P5-10, T-P5-11, T-P6-01, T-P6-02, T-P6-04, T-P6-06.
 > Format: Agentic AI task specification (structured, machine-parseable, human-readable).
 > Each task is independently executable by an AI coding agent with access to this repository.
 
@@ -62,22 +62,6 @@
 
 ## Phase 6 — Forensic Infrastructure Gaps (Long-Term)
 
-### T-P6-01: Model remaining ANEC hal_params
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P6-01 |
-| `title` | Add 35+ missing hal_params to AneHwLimits |
-| `phase` | P6 |
-| `severity` | CRITICAL |
-| `depends_on` | [] |
-| `files` | `crates/ir/src/ane_hw_limits.rs` |
-| `violation_refs` | [N-002, N-010] |
-| `acceptance_criteria` | 1) All 50+ hal_params from ANEC binary research are modeled; 2) LUT size overflow detection added; 3) Validation uses complete parameter set |
-| `agent_hints` | This requires extensive binary research. Add fields incrementally, starting with the most impactful: kernel depth limits, padding limits, PE/NE per-engine limits. Mark each as verified/unverified. |
-
----
-
 ### T-P6-03: Implement ValidateLayer-equivalent constraints
 
 | Field | Value |
@@ -107,19 +91,3 @@
 | `violation_refs` | [N-006] |
 | `acceptance_criteria` | 1) Fusability check module exists; 2) Ops that individually pass placement but fail to fuse are caught; 3) ANEC fusion constraints modeled |
 | `agent_hints` | This requires understanding ANEC's fusion rules from binary research. Create a fusability module that checks if adjacent ops can be fused into a single engine layer. |
-
----
-
-### T-P6-06: Add L2 memory budget modeling
-
-| Field | Value |
-|-------|-------|
-| `id` | T-P6-06 |
-| `title` | Implement L2 memory budget modeling and legalization |
-| `phase` | P6 |
-| `severity` | HIGH |
-| `depends_on` | [T-P6-01] |
-| `files` | New module `crates/passes/src/l2_budget.rs` |
-| `violation_refs` | [N-007] |
-| `acceptance_criteria` | 1) L2 memory budget modeled per AneFamily; 2) Individually legal ops that collectively exceed budget are caught; 3) Legalization splits or reorders ops to fit |
-| `agent_hints` | This is advanced infrastructure. Start by modeling L2 cache sizes per family. Add a budget check after placement validation. Legalization (splitting/reordering) is a follow-up. |

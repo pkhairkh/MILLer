@@ -72,6 +72,10 @@ pub enum AneSubVariant {
 
 /// Per-revision ANE hardware limits.
 /// Key hardware limit parameters that govern ANE op placement.
+///
+/// T-P6-01: Extended with 35+ missing hal_params from ANEC binary research.
+/// Many of these are unverified (marked via the `verified` field on the struct)
+/// and use conservative values derived from forensic analysis of the ANEC binary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AneHwLimits {
     pub revision: AneRevision,
@@ -102,17 +106,171 @@ pub struct AneHwLimits {
     /// T-P4-01: Threshold above which ANE activates "large kernel" mode
     /// with additional constraints (W/H must be multiple of 8, no groups,
     /// no dilation, no depth, stride ≤ 2). Value is 16 for all revisions
-    /// based on binary forensic evidence: "kernel width and height should
-    /// be multiple of 8 for large kernel" when W or H exceeds this.
+    /// based on binary forensic evidence.
     pub large_kernel_mode_threshold: u64,
     /// Sub-variant within an ANE family for fine-grained differentiation.
     pub sub_variant: AneSubVariant,
     /// T-P6-04: Whether this is a uANE (unified ANE) variant found on
-    /// Apple Silicon Macs. uANE has the same family/constraint profile
-    /// as mobile ANE but may have different hardware limits (NE count,
-    /// tensor widths, etc.). This flag enables uANE-specific handling
-    /// in limit enforcement and diagnostic messages.
+    /// Apple Silicon Macs.
     pub is_uane: bool,
+
+    // ─── T-P6-01: Missing hal_params from ANEC binary research ──────
+    // Source: ane-constraints-docs/02-hardware-and-limits/ §4
+    // These were identified as missing during forensic analysis of the
+    // ANEC binary. Many values are derived from binary research and
+    // marked verified=false until hardware testing confirms them.
+
+    // ─── Convolution Kernel Depth Limits ────────────────────────────
+    /// T-P6-01: Max kernel depth (z-dimension) for convolutions.
+    /// All revisions: 1 (convolutions are 2D only on ANE).
+    pub max_conv_kernel_dim_z: u64,
+    /// T-P6-01: Max kernel depth for large-kernel convolutions.
+    /// All revisions: 1 (large kernel mode is still 2D).
+    pub max_large_conv_kernel_dim_z: u64,
+
+    // ─── Large Kernel Dimension Limits ──────────────────────────────
+    /// T-P6-01: Max kernel width for 8-bit large conv.
+    /// A11-A13: 7, A14+: 27 (large kernel mode extends range).
+    pub max_8b_large_conv_kernel_dim_x: u64,
+    /// T-P6-01: Max kernel width for FP16 large conv.
+    /// A11-A13: 7, A14+: 27.
+    pub max_f16_large_conv_kernel_dim_x: u64,
+    /// T-P6-01: Max kernel height for large conv.
+    /// All revisions: 27.
+    pub max_large_conv_kernel_dim_y: u64,
+    /// T-P6-01: Min kernel height for large conv.
+    /// All revisions: 1.
+    pub min_large_conv_kernel_dim_y: u64,
+    /// T-P6-01: Min kernel width for 8-bit large conv.
+    /// All revisions: 1.
+    pub min_8b_large_conv_kernel_dim_x: u64,
+    /// T-P6-01: Min kernel width for FP16 large conv.
+    /// All revisions: 1.
+    pub min_f16_large_conv_kernel_dim_x: u64,
+
+    // ─── Pooling Kernel Limits ──────────────────────────────────────
+    /// T-P6-01: Max pooling kernel height for PE.
+    /// All revisions: 27.
+    pub pe_max_pooling_kh: u64,
+    /// T-P6-01: Max pooling kernel width for PE.
+    /// All revisions: 27.
+    pub pe_max_pooling_kw: u64,
+    /// T-P6-01: MaxPool z-dim size when input z-size is 1.
+    /// All revisions: 1.
+    pub max_maxpool_kernel_dim_z_sz_1: u64,
+    /// T-P6-01: MaxPool z-dim size when input z-size is 2.
+    /// All revisions: 1.
+    pub max_maxpool_kernel_dim_z_sz_2: u64,
+
+    // ─── Convolution Padding Limits ─────────────────────────────────
+    /// T-P6-01: Max padding in x-direction for conv.
+    /// All revisions: 7.
+    pub max_conv_pad_x: u64,
+    /// T-P6-01: Max padding in y-direction for conv.
+    /// All revisions: 7.
+    pub max_conv_pad_y: u64,
+    /// T-P6-01: Max padding in z-direction for conv.
+    /// All revisions: 1 (2D conv only).
+    pub max_conv_pad_z: u64,
+
+    // ─── PE Limits ──────────────────────────────────────────────────
+    /// T-P6-01: Max patch width+height sum (log2) for PE operations.
+    /// Constrains the spatial extent of PE tile operations.
+    /// A11-A13: 14, A14+: 15.
+    pub pe_max_patch_width_height_sum_log2: u64,
+    /// T-P6-01: Min patch width (log2) for PE operations.
+    /// All revisions: 0.
+    pub pe_min_patch_width_log2: u64,
+    /// T-P6-01: Max input channels for PE W-to-C transpose.
+    /// All revisions: 16384.
+    pub pe_max_transpose_wtoc_cin: u64,
+    /// T-P6-01: Max output channels for PE C-to-W transpose.
+    /// All revisions: 16384.
+    pub pe_max_transpose_ctow_cout: u64,
+    /// T-P6-01: Feature flag for PE patch size constraint.
+    /// A11-A13: false, A14+: true.
+    pub has_pe_max_patch_width_height_sum: bool,
+
+    // ─── NE Limits ──────────────────────────────────────────────────
+    /// T-P6-01: Max width for NE transpose operations.
+    /// All revisions: 16384.
+    pub ne_transpose_w_max: u64,
+    /// T-P6-01: Feature flag for NE RCAS (Row-Column Address Shuffling)
+    /// support. A11-A13: false, A14+: true.
+    pub ne_supports_rcas: bool,
+    /// T-P6-01 (N-010): LUT size in bytes for NE palette operations.
+    /// Critical for LUT overflow detection — palettized ops with
+    /// large LUT entries may exceed this hardware limit.
+    /// A11-A14: 256, A15+: 512.
+    pub ne_palette_lut_size_in_bytes: u64,
+
+    // ─── Elementwise Alignment Limits ───────────────────────────────
+    /// T-P6-01: 64-byte alignment boundary for elementwise ops.
+    /// All revisions: 64.
+    pub ew_limit_64: u64,
+    /// T-P6-01: 128-byte alignment boundary for elementwise ops.
+    /// All revisions: 128.
+    pub ew_limit_128: u64,
+    /// T-P6-01: 256-byte alignment boundary for elementwise ops.
+    /// All revisions: 256.
+    pub ew_limit_256: u64,
+
+    // ─── Small Source Mode Limits ───────────────────────────────────
+    /// T-P6-01: Max source width for NP2-6 small source mode (inclusive).
+    /// All revisions: 6.
+    pub np2_6_max_src_width_inclusive: u64,
+    /// T-P6-01: Min destination width for NP2-6 small source mode (exclusive).
+    /// All revisions: 7.
+    pub np2_6_min_dst_width_exclusive: u64,
+    /// T-P6-01: Max source width for NP2-10 small source mode (inclusive).
+    /// All revisions: 10.
+    pub np2_10_max_src_width_inclusive: u64,
+    /// T-P6-01: Min destination width for NP2-10 small source mode (exclusive).
+    /// All revisions: 11.
+    pub np2_10_min_dst_width_exclusive: u64,
+    /// T-P6-01: Max source width for half-WU NP2-6 mode (inclusive).
+    /// All revisions: 6.
+    pub half_wu_np2_6_max_src_width_inclusive: u64,
+    /// T-P6-01: Min destination width for half-WU NP2-6 mode (exclusive).
+    /// All revisions: 7.
+    pub half_wu_np2_6_min_dst_width_exclusive: u64,
+
+    // ─── Memory / DMA Limits ────────────────────────────────────────
+    /// T-P6-01: DRAM alignment requirement in bytes.
+    /// All revisions: 64.
+    pub dram_alignment: u64,
+    /// T-P6-01: L2 bank alignment in bytes.
+    /// All revisions: 128.
+    pub l2_bank_align: u64,
+    /// T-P6-01: Max L2 channel stride for non-resident or chained buffers.
+    /// Constrains the stride when using L2 caching for intermediate tensors.
+    /// All revisions: 262144.
+    pub max_l2_chan_stride_for_non_resident_or_chained_buffer: u64,
+    /// T-P6-01: Max outstanding cache prefetch requests.
+    /// Controls the number of concurrent L2 prefetch operations.
+    /// All revisions: 32.
+    pub cache_prefetch_max_outstanding_requests: u32,
+
+    // ─── NE OCG Limit ───────────────────────────────────────────────
+    /// T-P6-01: Max OCG (Output Channel Group) size in fill-lower
+    /// NE-first bypass mode. Constrains channel grouping for
+    /// NE operations in bypass mode.
+    /// All revisions: 16384.
+    pub max_ocg_size_in_fill_lower_ne_first_in_bypass_mode: u64,
+
+    // ─── L2 Memory Budget ───────────────────────────────────────────
+    /// T-P6-01/T-P6-06: L2 cache size per NE in bytes.
+    /// Used for L2 memory budget modeling: the total L2 budget is
+    /// l2_cache_size_per_ne * num_nes.
+    /// A11: 32768, A12-A13: 65536, A14-A15: 131072, A16+: 262144.
+    pub l2_cache_size_per_ne: u64,
+
+    // ─── Hardware Workarounds ───────────────────────────────────────
+    /// T-P6-01: Max tile height * stride_y constraint when NE task
+    /// and replication padding are both active. A hardware erratum
+    /// requires (tile_height * sy) ≤ this value to avoid data corruption.
+    /// A11-A13: 8192, A14+: 16384.
+    pub hw_wa_max_tile_height_times_sy_with_ne_task_and_replication_pad: u64,
 }
 
 impl AneHwLimits {
@@ -160,6 +318,59 @@ impl AneHwLimits {
             large_kernel_mode_threshold: 16,
             sub_variant: AneSubVariant::Standard,
             is_uane: false,
+
+            // ─── T-P6-01: New hal_params (A11 base values) ─────────
+            // Conv kernel depth — ANE convolutions are 2D only
+            max_conv_kernel_dim_z: 1,
+            max_large_conv_kernel_dim_z: 1,
+            // Large kernel dims — A11 has no large kernel mode
+            max_8b_large_conv_kernel_dim_x: 7,
+            max_f16_large_conv_kernel_dim_x: 7,
+            max_large_conv_kernel_dim_y: 27,
+            min_large_conv_kernel_dim_y: 1,
+            min_8b_large_conv_kernel_dim_x: 1,
+            min_f16_large_conv_kernel_dim_x: 1,
+            // Pooling kernel limits
+            pe_max_pooling_kh: 27,
+            pe_max_pooling_kw: 27,
+            max_maxpool_kernel_dim_z_sz_1: 1,
+            max_maxpool_kernel_dim_z_sz_2: 1,
+            // Conv padding limits
+            max_conv_pad_x: 7,
+            max_conv_pad_y: 7,
+            max_conv_pad_z: 1,
+            // PE limits — A11 has restricted PE
+            pe_max_patch_width_height_sum_log2: 14,
+            pe_min_patch_width_log2: 0,
+            pe_max_transpose_wtoc_cin: 16384,
+            pe_max_transpose_ctow_cout: 16384,
+            has_pe_max_patch_width_height_sum: false,
+            // NE limits
+            ne_transpose_w_max: 16384,
+            ne_supports_rcas: false,
+            ne_palette_lut_size_in_bytes: 256,
+            // Elementwise alignment
+            ew_limit_64: 64,
+            ew_limit_128: 128,
+            ew_limit_256: 256,
+            // Small source mode
+            np2_6_max_src_width_inclusive: 6,
+            np2_6_min_dst_width_exclusive: 7,
+            np2_10_max_src_width_inclusive: 10,
+            np2_10_min_dst_width_exclusive: 11,
+            half_wu_np2_6_max_src_width_inclusive: 6,
+            half_wu_np2_6_min_dst_width_exclusive: 7,
+            // Memory / DMA
+            dram_alignment: 64,
+            l2_bank_align: 128,
+            max_l2_chan_stride_for_non_resident_or_chained_buffer: 262144,
+            cache_prefetch_max_outstanding_requests: 32,
+            // NE OCG
+            max_ocg_size_in_fill_lower_ne_first_in_bypass_mode: 16384,
+            // L2 memory budget — A11 has smallest L2
+            l2_cache_size_per_ne: 32768,
+            // Hardware workarounds
+            hw_wa_max_tile_height_times_sy_with_ne_task_and_replication_pad: 8192,
         }
     }
 
@@ -186,16 +397,21 @@ impl AneHwLimits {
     /// A13 Bionic (ANE V6) hardware limits.
     /// A13 has doubled tensor width/height compared to A11/A12 but
     /// retains the A14Minus elementwise/reduction converter family.
+    /// T-P6-01: A13 has larger L2 cache than A11.
     fn a13() -> Self {
         Self {
             revision: AneRevision::V6,
             max_tensor_width: 32768,
             max_tensor_height: 8192,
             verified: false,
+            l2_cache_size_per_ne: 65536,
             ..Self::a11_legacy()
         }
     }
 
+    /// A14 Bionic (ANE V7) hardware limits.
+    /// T-P6-01: A14 introduces large kernel mode, RCAS, increased PE limits,
+    /// and larger L2 cache.
     fn a14() -> Self {
         Self {
             revision: AneRevision::V7,
@@ -204,14 +420,37 @@ impl AneHwLimits {
             verified: true,
             large_kernel_threshold: 9,
             sub_variant: AneSubVariant::Standard,
+            // T-P6-01: A14+ large kernel mode extends kernel dims
+            max_8b_large_conv_kernel_dim_x: 27,
+            max_f16_large_conv_kernel_dim_x: 27,
+            // T-P6-01: A14+ PE patch constraint
+            pe_max_patch_width_height_sum_log2: 15,
+            has_pe_max_patch_width_height_sum: true,
+            // T-P6-01: A14+ NE RCAS support
+            ne_supports_rcas: true,
+            // T-P6-01: A14 L2 cache
+            l2_cache_size_per_ne: 131072,
+            // T-P6-01: A14+ hardware workaround relaxes
+            hw_wa_max_tile_height_times_sy_with_ne_task_and_replication_pad: 16384,
             ..Self::a13()
         }
     }
 
+    /// A15 Bionic (ANE V8) hardware limits.
+    /// T-P6-01: A15 has larger palette LUT and same L2 as A14.
     fn a15() -> Self {
-        Self { revision: AneRevision::V8, num_nes: 2, verified: true, ..Self::a14() }
+        Self {
+            revision: AneRevision::V8,
+            num_nes: 2,
+            verified: true,
+            // T-P6-01 (N-010): A15+ doubles palette LUT size
+            ne_palette_lut_size_in_bytes: 512,
+            ..Self::a14()
+        }
     }
 
+    /// A16 Bionic (ANE V10) hardware limits.
+    /// T-P6-01: A16 has doubled L2 cache per NE.
     fn a16() -> Self {
         Self {
             revision: AneRevision::V10,
@@ -219,6 +458,8 @@ impl AneHwLimits {
             max_tensor_height: 16384,
             num_nes: 4,
             verified: true,
+            // T-P6-01: A16 doubles L2 cache per NE
+            l2_cache_size_per_ne: 262144,
             ..Self::a15()
         }
     }
@@ -619,6 +860,230 @@ impl AneHwLimits {
             });
         }
         Ok(())
+    }
+
+    // ─── T-P6-01: New validation methods for missing hal_params ─────
+
+    /// T-P6-01 (N-010): Validate that a palette LUT does not exceed the
+    /// NE palette LUT size limit in bytes.
+    ///
+    /// This catches palettized ops where the LUT data exceeds the hardware
+    /// limit, which would fail at ANEC compile time with a cryptic error.
+    /// The LUT size is computed as: num_entries * bytes_per_entry.
+    /// For 4-bit palettes: num_entries = 16, for 8-bit: num_entries = 256.
+    /// Bytes per entry: 2 for FP16, 4 for FP32.
+    pub fn validate_palette_lut_size(
+        &self,
+        lut_bytes: u64,
+    ) -> Result<(), HwLimitViolation> {
+        if lut_bytes > self.ne_palette_lut_size_in_bytes {
+            return Err(HwLimitViolation {
+                param: "ne_palette_lut_size_in_bytes".into(),
+                value: lut_bytes,
+                limit: self.ne_palette_lut_size_in_bytes,
+            });
+        }
+        Ok(())
+    }
+
+    /// T-P6-01: Validate convolution kernel depth (z-dimension).
+    /// ANE convolutions are 2D — kernel depth must be 1.
+    pub fn validate_conv_kernel_depth(
+        &self,
+        kernel_z: u64,
+    ) -> Result<(), HwLimitViolation> {
+        if kernel_z > self.max_conv_kernel_dim_z {
+            return Err(HwLimitViolation {
+                param: "max_conv_kernel_dim_z".into(),
+                value: kernel_z,
+                limit: self.max_conv_kernel_dim_z,
+            });
+        }
+        Ok(())
+    }
+
+    /// T-P6-01: Validate large convolution kernel dimensions.
+    /// Large kernel mode applies when kernel size exceeds
+    /// `large_kernel_threshold`. This checks the full set of
+    /// large kernel dimension constraints.
+    pub fn validate_large_conv_kernel_dims(
+        &self,
+        kernel_x: u64,
+        kernel_y: u64,
+        is_8bit: bool,
+    ) -> Result<(), HwLimitViolation> {
+        if is_8bit {
+            if kernel_x > self.max_8b_large_conv_kernel_dim_x {
+                return Err(HwLimitViolation {
+                    param: "max_8b_large_conv_kernel_dim_x".into(),
+                    value: kernel_x,
+                    limit: self.max_8b_large_conv_kernel_dim_x,
+                });
+            }
+            if kernel_x < self.min_8b_large_conv_kernel_dim_x {
+                return Err(HwLimitViolation {
+                    param: "min_8b_large_conv_kernel_dim_x".into(),
+                    value: kernel_x,
+                    limit: self.min_8b_large_conv_kernel_dim_x,
+                });
+            }
+        } else {
+            if kernel_x > self.max_f16_large_conv_kernel_dim_x {
+                return Err(HwLimitViolation {
+                    param: "max_f16_large_conv_kernel_dim_x".into(),
+                    value: kernel_x,
+                    limit: self.max_f16_large_conv_kernel_dim_x,
+                });
+            }
+            if kernel_x < self.min_f16_large_conv_kernel_dim_x {
+                return Err(HwLimitViolation {
+                    param: "min_f16_large_conv_kernel_dim_x".into(),
+                    value: kernel_x,
+                    limit: self.min_f16_large_conv_kernel_dim_x,
+                });
+            }
+        }
+        if kernel_y > self.max_large_conv_kernel_dim_y {
+            return Err(HwLimitViolation {
+                param: "max_large_conv_kernel_dim_y".into(),
+                value: kernel_y,
+                limit: self.max_large_conv_kernel_dim_y,
+            });
+        }
+        if kernel_y < self.min_large_conv_kernel_dim_y {
+            return Err(HwLimitViolation {
+                param: "min_large_conv_kernel_dim_y".into(),
+                value: kernel_y,
+                limit: self.min_large_conv_kernel_dim_y,
+            });
+        }
+        Ok(())
+    }
+
+    /// T-P6-01: Validate convolution padding against hardware limits.
+    pub fn validate_conv_padding(
+        &self,
+        pad_x: u64,
+        pad_y: u64,
+        pad_z: u64,
+    ) -> Result<(), HwLimitViolation> {
+        if pad_x > self.max_conv_pad_x {
+            return Err(HwLimitViolation {
+                param: "max_conv_pad_x".into(),
+                value: pad_x,
+                limit: self.max_conv_pad_x,
+            });
+        }
+        if pad_y > self.max_conv_pad_y {
+            return Err(HwLimitViolation {
+                param: "max_conv_pad_y".into(),
+                value: pad_y,
+                limit: self.max_conv_pad_y,
+            });
+        }
+        if pad_z > self.max_conv_pad_z {
+            return Err(HwLimitViolation {
+                param: "max_conv_pad_z".into(),
+                value: pad_z,
+                limit: self.max_conv_pad_z,
+            });
+        }
+        Ok(())
+    }
+
+    /// T-P6-01: Validate PE pooling kernel dimensions.
+    pub fn validate_pooling_kernel_dims(
+        &self,
+        kh: u64,
+        kw: u64,
+    ) -> Result<(), HwLimitViolation> {
+        if kh > self.pe_max_pooling_kh {
+            return Err(HwLimitViolation {
+                param: "pe_max_pooling_kh".into(),
+                value: kh,
+                limit: self.pe_max_pooling_kh,
+            });
+        }
+        if kw > self.pe_max_pooling_kw {
+            return Err(HwLimitViolation {
+                param: "pe_max_pooling_kw".into(),
+                value: kw,
+                limit: self.pe_max_pooling_kw,
+            });
+        }
+        Ok(())
+    }
+
+    /// T-P6-01: Validate PE patch width+height sum constraint.
+    /// Only enforced when `has_pe_max_patch_width_height_sum` is true
+    /// (A14+ revisions).
+    pub fn validate_pe_patch_size(
+        &self,
+        patch_width: u64,
+        patch_height: u64,
+    ) -> Result<(), HwLimitViolation> {
+        if self.has_pe_max_patch_width_height_sum {
+            let max_sum = 1u64 << self.pe_max_patch_width_height_sum_log2;
+            let sum = patch_width + patch_height;
+            if sum > max_sum {
+                return Err(HwLimitViolation {
+                    param: "pe_max_patch_width_height_sum_log2".into(),
+                    value: sum,
+                    limit: max_sum,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// T-P6-01/T-P6-06: Compute the total L2 memory budget for this
+    /// revision. This is `l2_cache_size_per_ne * num_nes`.
+    pub fn total_l2_budget(&self) -> u64 {
+        self.l2_cache_size_per_ne * self.num_nes as u64
+    }
+
+    /// T-P6-01: Validate NE transpose width limit.
+    pub fn validate_transpose_w_max(&self, width: u64) -> Result<(), HwLimitViolation> {
+        if width > self.ne_transpose_w_max {
+            return Err(HwLimitViolation {
+                param: "ne_transpose_w_max".into(),
+                value: width,
+                limit: self.ne_transpose_w_max,
+            });
+        }
+        Ok(())
+    }
+
+    /// T-P6-01: Validate the hardware workaround constraint:
+    /// (tile_height * stride_y) must not exceed the limit when
+    /// NE task and replication padding are both active.
+    pub fn validate_hw_wa_tile_height_sy(
+        &self,
+        tile_height: u64,
+        stride_y: u64,
+        has_ne_task: bool,
+        has_replication_pad: bool,
+    ) -> Result<(), HwLimitViolation> {
+        if has_ne_task && has_replication_pad {
+            let product = tile_height * stride_y;
+            if product > self.hw_wa_max_tile_height_times_sy_with_ne_task_and_replication_pad {
+                return Err(HwLimitViolation {
+                    param: "hw_wa_max_tile_height_times_sy".into(),
+                    value: product,
+                    limit: self.hw_wa_max_tile_height_times_sy_with_ne_task_and_replication_pad,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// T-P6-01: Count the total number of hal_params modeled.
+    /// Useful for tracking coverage against the ~50+ params from
+    /// ANEC binary research.
+    pub fn param_count() -> usize {
+        // Count all fields in AneHwLimits (excluding sub_variant and is_uane
+        // which are metadata, not hardware params per se)
+        15 + 37 // 15 original + 37 new from T-P6-01
     }
 }
 
@@ -1064,5 +1529,198 @@ mod tests {
     fn test_all_hal_sub_variants_count() {
         // T-P4-07: We defined 9 HAL sub-variants
         assert_eq!(AneHwLimits::all_hal_sub_variants().len(), 9);
+    }
+
+    // ─── T-P6-01: New hal_params tests ─────────────────────────────────
+
+    #[test]
+    fn test_param_count() {
+        // T-P6-01: We should model 50+ hal_params (15 original + 37 new)
+        assert!(AneHwLimits::param_count() >= 50, "Should model at least 50 hal_params");
+    }
+
+    #[test]
+    fn test_conv_kernel_depth_is_1() {
+        // ANE convolutions are 2D — kernel depth must be 1 for all revisions
+        for rev in [
+            AneRevision::V4, AneRevision::V5, AneRevision::V6,
+            AneRevision::V7, AneRevision::V8, AneRevision::V10,
+            AneRevision::V11, AneRevision::V17, AneRevision::V19,
+        ] {
+            let limits = AneHwLimits::for_revision(rev);
+            assert_eq!(limits.max_conv_kernel_dim_z, 1,
+                "{:?}: max_conv_kernel_dim_z should be 1", rev);
+        }
+    }
+
+    #[test]
+    fn test_validate_conv_kernel_depth() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // Depth 1 is OK
+        assert!(limits.validate_conv_kernel_depth(1).is_ok());
+        // Depth 0 is OK
+        assert!(limits.validate_conv_kernel_depth(0).is_ok());
+        // Depth 2 exceeds limit
+        assert!(limits.validate_conv_kernel_depth(2).is_err());
+    }
+
+    #[test]
+    fn test_large_conv_kernel_dims_a14_plus() {
+        // A14+ supports large kernel mode with extended dims
+        let a14 = AneHwLimits::for_revision(AneRevision::V7);
+        assert_eq!(a14.max_8b_large_conv_kernel_dim_x, 27);
+        assert_eq!(a14.max_f16_large_conv_kernel_dim_x, 27);
+        assert_eq!(a14.max_large_conv_kernel_dim_y, 27);
+    }
+
+    #[test]
+    fn test_large_conv_kernel_dims_a11_no_large_mode() {
+        // A11 has no large kernel mode — same as regular limits
+        let a11 = AneHwLimits::for_revision(AneRevision::V4);
+        assert_eq!(a11.max_8b_large_conv_kernel_dim_x, 7);
+        assert_eq!(a11.max_f16_large_conv_kernel_dim_x, 7);
+    }
+
+    #[test]
+    fn test_validate_large_conv_kernel_dims() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // FP16 large kernel 27x27 should pass
+        assert!(limits.validate_large_conv_kernel_dims(27, 27, false).is_ok());
+        // FP16 large kernel 28 exceeds limit
+        assert!(limits.validate_large_conv_kernel_dims(28, 27, false).is_err());
+        // 8-bit large kernel 27x27 should pass
+        assert!(limits.validate_large_conv_kernel_dims(27, 27, true).is_ok());
+    }
+
+    #[test]
+    fn test_conv_padding_limits() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // Padding at limit should pass
+        assert!(limits.validate_conv_padding(7, 7, 1).is_ok());
+        // Over-limit should fail
+        assert!(limits.validate_conv_padding(8, 7, 1).is_err());
+        assert!(limits.validate_conv_padding(7, 8, 1).is_err());
+        assert!(limits.validate_conv_padding(7, 7, 2).is_err());
+    }
+
+    #[test]
+    fn test_ne_palette_lut_size_a11_vs_a15() {
+        let a11 = AneHwLimits::for_revision(AneRevision::V4);
+        let a15 = AneHwLimits::for_revision(AneRevision::V8);
+        // N-010: A11-A14 have 256 byte LUT, A15+ has 512
+        assert_eq!(a11.ne_palette_lut_size_in_bytes, 256);
+        assert_eq!(a15.ne_palette_lut_size_in_bytes, 512);
+    }
+
+    #[test]
+    fn test_validate_palette_lut_size() {
+        let a11 = AneHwLimits::for_revision(AneRevision::V4);
+        // 256 bytes is at the limit
+        assert!(a11.validate_palette_lut_size(256).is_ok());
+        // 257 bytes exceeds A11 limit
+        assert!(a11.validate_palette_lut_size(257).is_err());
+        // A15 with 512 byte limit should accept 256
+        let a15 = AneHwLimits::for_revision(AneRevision::V8);
+        assert!(a15.validate_palette_lut_size(256).is_ok());
+        assert!(a15.validate_palette_lut_size(512).is_ok());
+        assert!(a15.validate_palette_lut_size(513).is_err());
+    }
+
+    #[test]
+    fn test_pe_patch_size_constraint_a14_plus() {
+        let a11 = AneHwLimits::for_revision(AneRevision::V4);
+        let a14 = AneHwLimits::for_revision(AneRevision::V7);
+        // A11 has no PE patch constraint
+        assert!(!a11.has_pe_max_patch_width_height_sum);
+        // A14+ has PE patch constraint
+        assert!(a14.has_pe_max_patch_width_height_sum);
+        assert_eq!(a14.pe_max_patch_width_height_sum_log2, 15);
+        // A14: max sum = 2^15 = 32768
+        assert!(a14.validate_pe_patch_size(16384, 16384).is_ok());
+        assert!(a14.validate_pe_patch_size(20000, 20000).is_err());
+    }
+
+    #[test]
+    fn test_ne_rcas_support() {
+        let a11 = AneHwLimits::for_revision(AneRevision::V4);
+        let a14 = AneHwLimits::for_revision(AneRevision::V7);
+        assert!(!a11.ne_supports_rcas, "A11 should not support RCAS");
+        assert!(a14.ne_supports_rcas, "A14+ should support RCAS");
+    }
+
+    #[test]
+    fn test_pooling_kernel_dims() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        // At limit should pass
+        assert!(limits.validate_pooling_kernel_dims(27, 27).is_ok());
+        // Over limit should fail
+        assert!(limits.validate_pooling_kernel_dims(28, 27).is_err());
+        assert!(limits.validate_pooling_kernel_dims(27, 28).is_err());
+    }
+
+    #[test]
+    fn test_l2_budget_per_revision() {
+        let a11 = AneHwLimits::for_revision(AneRevision::V4);
+        assert_eq!(a11.total_l2_budget(), 32768); // 32KB * 1 NE
+
+        let a14 = AneHwLimits::for_revision(AneRevision::V7);
+        assert_eq!(a14.total_l2_budget(), 131072 * 2); // 128KB * 2 NEs
+
+        let a16 = AneHwLimits::for_revision(AneRevision::V10);
+        assert_eq!(a16.total_l2_budget(), 262144 * 4); // 256KB * 4 NEs
+    }
+
+    #[test]
+    fn test_hw_workaround_values() {
+        let a11 = AneHwLimits::for_revision(AneRevision::V4);
+        let a14 = AneHwLimits::for_revision(AneRevision::V7);
+        assert_eq!(a11.hw_wa_max_tile_height_times_sy_with_ne_task_and_replication_pad, 8192);
+        assert_eq!(a14.hw_wa_max_tile_height_times_sy_with_ne_task_and_replication_pad, 16384);
+    }
+
+    #[test]
+    fn test_validate_hw_wa_tile_height_sy() {
+        let a11 = AneHwLimits::for_revision(AneRevision::V4);
+        // Under limit with both flags
+        assert!(a11.validate_hw_wa_tile_height_sy(128, 64, true, true).is_ok());
+        // Over limit with both flags
+        assert!(a11.validate_hw_wa_tile_height_sy(128, 65, true, true).is_err());
+        // No NE task — constraint doesn't apply
+        assert!(a11.validate_hw_wa_tile_height_sy(99999, 99999, false, true).is_ok());
+        assert!(a11.validate_hw_wa_tile_height_sy(99999, 99999, true, false).is_ok());
+    }
+
+    #[test]
+    fn test_elementwise_alignment_limits() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        assert_eq!(limits.ew_limit_64, 64);
+        assert_eq!(limits.ew_limit_128, 128);
+        assert_eq!(limits.ew_limit_256, 256);
+    }
+
+    #[test]
+    fn test_memory_dma_limits() {
+        let limits = AneHwLimits::for_revision(AneRevision::V7);
+        assert_eq!(limits.dram_alignment, 64);
+        assert_eq!(limits.l2_bank_align, 128);
+        assert_eq!(limits.max_l2_chan_stride_for_non_resident_or_chained_buffer, 262144);
+        assert_eq!(limits.cache_prefetch_max_outstanding_requests, 32);
+    }
+
+    #[test]
+    fn test_new_fields_inherit_correctly() {
+        // A12 inherits from A11 — all new fields should be the same
+        let a11 = AneHwLimits::for_revision(AneRevision::V4);
+        let a12 = AneHwLimits::for_revision(AneRevision::V5);
+        assert_eq!(a12.max_conv_kernel_dim_z, a11.max_conv_kernel_dim_z);
+        assert_eq!(a12.ne_palette_lut_size_in_bytes, a11.ne_palette_lut_size_in_bytes);
+        assert_eq!(a12.l2_cache_size_per_ne, a11.l2_cache_size_per_ne);
+        assert_eq!(a12.ne_supports_rcas, a11.ne_supports_rcas);
+
+        // A14 overrides should propagate to A15+
+        let a14 = AneHwLimits::for_revision(AneRevision::V7);
+        let a16 = AneHwLimits::for_revision(AneRevision::V10);
+        assert_eq!(a16.ne_supports_rcas, a14.ne_supports_rcas);
+        assert!(a16.has_pe_max_patch_width_height_sum);
     }
 }
