@@ -57,6 +57,33 @@ from verify import pre_emit_verification
 
 logger = logging.getLogger(__name__)
 
+
+def _int(val):
+    """Safely convert a numeric value to Python int.
+
+    Command payloads may contain numpy integer types (np.int32, np.int64)
+    which cause coremltools reshape/shape errors. This helper ensures
+    all dimension values are plain Python ints.
+    """
+    return int(val)
+
+
+def _sanitize_dims(command: dict, dim_keys: list) -> dict:
+    """Convert all dimension values in a command dict to plain Python ints.
+
+    Command payloads deserialized from JSON or passed through numpy may
+    contain np.int32/np.int64 values which cause coremltools reshape and
+    TensorSpec errors. This helper sanitizes dimension fields to ensure
+    they are plain Python ints.
+
+    Returns a new dict with the sanitized values (does not mutate input).
+    """
+    sanitized = dict(command)
+    for key in dim_keys:
+        if key in sanitized and sanitized[key] is not None:
+            sanitized[key] = _int(sanitized[key])
+    return sanitized
+
 def _resolve_dtype(dtype_str):
     """Resolve dtype string to numpy dtype and MIL dtype string.
 
@@ -91,6 +118,7 @@ def build_linear_projection_program(command: dict):
         task_name, input_dim, output_dim, batch_size, dtype,
         opset_version, seed
     """
+    command = _sanitize_dims(command, ["input_dim", "output_dim", "batch_size"])
     ct, mb, types, np = _import_coremltools()
 
     task_name = command.get("task_name", "linear_projection")
@@ -433,6 +461,7 @@ def build_lut_projection_program(command: dict):
         task_name, vocab_size, embed_dim, num_groups, lut_bitwidth,
         batch_size, dtype, opset_version, seed
     """
+    command = _sanitize_dims(command, ["vocab_size", "embed_dim", "num_groups", "lut_bitwidth", "batch_size"])
     ct, mb, types, np = _import_coremltools()
 
     task_name = command.get("task_name", "lut_projection")
@@ -514,6 +543,7 @@ def build_decode_step_program(command: dict):
         task_name, embed_dim, num_heads, head_dim, kv_len, batch_size,
         dtype, opset_version, seed
     """
+    command = _sanitize_dims(command, ["embed_dim", "num_heads", "head_dim", "kv_len", "batch_size"])
     ct, mb, types, np = _import_coremltools()
 
     task_name = command.get("task_name", "decode_step")
@@ -650,6 +680,7 @@ def build_stateful_decode_step_program(command: dict):
         task_name, embed_dim, num_heads, head_dim, kv_len, batch_size,
         dtype, opset_version, seed
     """
+    command = _sanitize_dims(command, ["embed_dim", "num_heads", "head_dim", "kv_len", "batch_size"])
     ct, mb, types, np = _import_coremltools()
 
     task_name = command.get("task_name", "stateful_decode_step")
@@ -825,6 +856,10 @@ def build_shard_decode_step_program(command: dict):
         shard_role: str — "Entry", "Interior", or "Exit" (required)
         shard_hidden_dim, shard_num_heads, shard_head_dim, shard_output_dim (optional)
     """
+    command = _sanitize_dims(command, [
+        "embed_dim", "num_heads", "head_dim", "kv_len", "batch_size",
+        "shard_hidden_dim", "shard_num_heads", "shard_head_dim", "shard_output_dim",
+    ])
     ct, mb, types, np = _import_coremltools()
 
     shard_role = command.get("shard_role", "Entry")
@@ -1153,6 +1188,7 @@ def build_mlp_block_program(command: dict):
         task_name, input_dim, hidden_dim, output_dim, activation,
         batch_size, dtype, opset_version, seed
     """
+    command = _sanitize_dims(command, ["input_dim", "hidden_dim", "output_dim", "batch_size"])
     ct, mb, types, np = _import_coremltools()
 
     task_name = command.get("task_name", "mlp_block")
@@ -1229,6 +1265,7 @@ def build_attention_program(command: dict):
         task_name, embed_dim, num_heads, head_dim, seq_len,
         batch_size, dtype, opset_version, seed, causal (optional, default True)
     """
+    command = _sanitize_dims(command, ["embed_dim", "num_heads", "head_dim", "seq_len", "batch_size"])
     ct, mb, types, np = _import_coremltools()
 
     task_name = command.get("task_name", "attention")
@@ -1424,6 +1461,7 @@ def build_multifunction_program(command: dict):
         task_name, embed_dim, num_heads, head_dim, kv_len, batch_size,
         dtype, opset_version, seed
     """
+    command = _sanitize_dims(command, ["embed_dim", "num_heads", "head_dim", "kv_len", "batch_size"])
     ct, mb, types, np = _import_coremltools()
 
     task_name = command.get("task_name", "multifunction")
@@ -1752,6 +1790,7 @@ def build_multifunction_program_with_shared_weights(command: dict):
         task_name, embed_dim, num_heads, head_dim, kv_len, batch_size,
         dtype, opset_version, seed, share_weights (bool, default True)
     """
+    command = _sanitize_dims(command, ["embed_dim", "num_heads", "head_dim", "kv_len", "batch_size"])
     ct, mb, types, np = _import_coremltools()
 
     task_name = command.get("task_name", "multifunction_shared")

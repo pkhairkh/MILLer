@@ -12,7 +12,7 @@
 #
 # Phases:
 #   1. prereqs     — Verify M2 Mac, Rust, Python, coremltools
-#   2. build       — Build ane-compile CLI in release mode
+#   2. build       — Build ane-cli CLI in release mode
 #   3. synthetic   — Compile all synthetic task specs (7 families)
 #   4. bridge      — Test Python bridge directly (all 7 emitters)
 #   5. qwen3       — trace-compile Qwen3-0.6B from HuggingFace
@@ -107,9 +107,9 @@ should_run_phase() {
 require_cmd() { command -v "$1" &>/dev/null; }
 
 ane_compile() {
-    local bin="${TEST_WORKDIR}/release/ane-compile"
+    local bin="${TEST_WORKDIR}/release/ane-cli"
     if [[ ! -x "$bin" ]]; then
-        bin="${MILLER_ROOT}/target/release/ane-compile"
+        bin="${MILLER_ROOT}/target/release/ane-cli"
     fi
     "$bin" "$@"
 }
@@ -220,7 +220,7 @@ phase_prereqs() {
 # Phase 2: Build
 # =============================================================================
 phase_build() {
-    log_phase 2 "Build MILLer (ane-compile)"
+    log_phase 2 "Build MILLer (ane-cli)"
 
     if [[ "$SKIP_BUILD" -eq 1 ]]; then
         record_result "Build (skipped)" "pass"
@@ -238,11 +238,11 @@ phase_build() {
     fi
 
     # Copy binary
-    if [[ -f "${MILLER_ROOT}/target/release/ane-compile" ]]; then
-        cp "${MILLER_ROOT}/target/release/ane-compile" "${TEST_WORKDIR}/release/ane-compile"
+    if [[ -f "${MILLER_ROOT}/target/release/ane-cli" ]]; then
+        cp "${MILLER_ROOT}/target/release/ane-cli" "${TEST_WORKDIR}/release/ane-cli"
         record_result "CLI binary copied" "pass"
     else
-        record_result "CLI binary" "fail" "target/release/ane-compile not found"
+        record_result "CLI binary" "fail" "target/release/ane-cli not found"
         return 1
     fi
 
@@ -251,9 +251,9 @@ phase_build() {
     local ver
     ver=$(ane_compile --version 2>&1 || true)
     if [[ -n "$ver" ]]; then
-        record_result "ane-compile --version" "pass" "$ver"
+        record_result "ane-cli --version" "pass" "$ver"
     else
-        record_result "ane-compile --version" "fail" "No output"
+        record_result "ane-cli --version" "fail" "No output"
     fi
 
     # Verify key subcommands
