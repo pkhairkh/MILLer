@@ -1171,6 +1171,12 @@ pub fn mir_op_to_compat_with_quant(
             axis: *axis as i64,
         }),
 
+        MirOp::MILStack { name, values, axis } => Ok(MirOpCompat::Stack {
+            name: name.clone(),
+            values: values.iter().map(|id| id.0.clone()).collect(),
+            axis: *axis as i64,
+        }),
+
         MirOp::MILSoftmax { name, x, axis } => {
             Ok(MirOpCompat::Softmax { name: name.clone(), x: x.0.clone(), axis: *axis as i64 })
         }
@@ -1909,7 +1915,7 @@ fn mir_op_to_unsupported(op: &MirOp) -> (String, String, String) {
         MirOp::MILBatchToSpace { name, .. } => ("batch_to_space".into(), name.clone(), "{}".into()),
         MirOp::MILSpaceToBatch { name, .. } => ("space_to_batch".into(), name.clone(), "{}".into()),
         MirOp::MILPad { .. } => unreachable!("MILPad is handled by mir_op_to_compat"),
-        MirOp::MILStack { name, .. } => ("stack".into(), name.clone(), "{}".into()),
+        MirOp::MILStack { .. } => unreachable!("MILStack is handled by mir_op_to_compat"),
         MirOp::MILTile { .. } => unreachable!("MILTile is handled by mir_op_to_compat"),
         MirOp::MILCumsum { name, .. } => ("cumsum".into(), name.clone(), "{}".into()),
         MirOp::MILFill { .. } => unreachable!("MILFill is handled by mir_op_to_compat"),

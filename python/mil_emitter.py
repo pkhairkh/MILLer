@@ -235,11 +235,22 @@ def save_mlpackage(mlmodel, mlpackage_path: str) -> dict:
         causing SIGABRT. However, the .mlpackage files are written to disk
         BEFORE the crash.
 
-        We use a subprocess to isolate the save. The MLModel is pickled
-        to a temp file and restored in the child process. Pickle works
-        correctly here because MILLer builds models using the coremltools
-        MIL Builder API (mb.program, mb.linear, etc.), not PyTorch tensors,
-        so there are no Torch lambda closures in the MLModel objects.
+        We use a subprocess to isolate the save. Two serialization strategies
+        are tried in order:
+
+        1. Pickle: The MLModel is pickled to a temp file and restored in the
+           child process. This works for models without Torch lambda closures
+           in their weight data. However, coremltools internally references
+           Torch lambdas (e.g., make_float.<locals>.double) for some dtype
+           conversions, which causes pickle to fail.
+
+        2. Spec serialization: The protobuf spec is extracted via
+           mlmodel.get_spec().SerializeToString() and written to a temp file.
+           In the subprocess, the spec is loaded with ct.models.utils.load_spec()
+           and reconstructed with ct.models.MLModel(spec, skip_model_load=True).
+           The skip_model_load=True parameter (coremltools 8.0+) avoids the
+           compilation step that triggers SIGABRT. For older coremltools, it
+           falls back to full compilation.
 
         If the child process crashes (SIGABRT or non-zero exit) but the
         .mlpackage exists on disk, we treat it as a successful save.
@@ -252,10 +263,13 @@ def save_mlpackage(mlmodel, mlpackage_path: str) -> dict:
     import subprocess
     import sys
 
-    # Write a saver script that unpickles the MLModel and saves it.
-    # Pickle is safe here because MILLer uses the MIL Builder API, not
-    # PyTorch tensors, so there are no Torch lambda closures.
-    saver_script = """
+    tmp_dir = Path(mlpackage_path).parent / ".save_tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    exit_code = -1
+
+    # --- Strategy 1: Pickle serialization (fast path) ---
+    pickle_saver_script = """
 import sys
 import warnings
 warnings.filterwarnings("ignore")
@@ -272,43 +286,84 @@ with open(model_data_path, "rb") as f:
 
 mlmodel.save(mlpackage_path)
 """
-
-    # Pickle the MLModel to a temp file for the subprocess to load.
-    tmp_dir = Path(mlpackage_path).parent / ".save_tmp"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
     model_data_path = tmp_dir / "model_data.pkl"
-
     try:
-        # Pickle the MLModel to a temp file
         import pickle
         with open(model_data_path, "wb") as f:
             pickle.dump(mlmodel, f, protocol=4)
 
-        # Run the saver script in a subprocess
         result = subprocess.run(
-            [sys.executable, "-c", saver_script, str(mlpackage_path), str(model_data_path)],
+            [sys.executable, "-c", pickle_saver_script, str(mlpackage_path), str(model_data_path)],
             capture_output=True,
             timeout=120,
         )
-
         exit_code = result.returncode
+        logger.debug(f"save_mlpackage: pickle strategy exit_code={exit_code}")
     except Exception as e:
-        # If subprocess itself fails, try direct save as last resort
-        logger.warning(f"save_mlpackage: subprocess approach failed ({e}), trying direct save")
-        try:
-            mlmodel.save(str(mlpackage_path))
-            exit_code = 0
-        except Exception as save_err:
-            raise RuntimeError(f"save_mlpackage: both subprocess and direct save failed: {save_err}")
+        logger.warning(f"save_mlpackage: pickle strategy failed ({e})")
     finally:
-        # Clean up temp files
         try:
             if model_data_path.exists():
                 model_data_path.unlink()
-            if tmp_dir.exists() and not any(tmp_dir.iterdir()):
-                tmp_dir.rmdir()
         except OSError:
             pass
+
+    # --- Strategy 2: Spec serialization with skip_model_load ---
+    # Used when pickle fails (Torch lambda closures) or didn't produce .mlpackage.
+    if not mlpackage_path.exists():
+        spec_saver_script = """
+import sys
+import warnings
+warnings.filterwarnings("ignore")
+
+import logging
+logging.disable(logging.CRITICAL)
+
+mlpackage_path = sys.argv[1]
+spec_path = sys.argv[2]
+
+import coremltools as ct
+spec = ct.models.utils.load_spec(spec_path)
+
+# Try skip_model_load to avoid compilation SIGABRT (coremltools 8.0+).
+# This creates the MLModel without triggering the macOS compilation step
+# that can crash with "coremldata.bin is not a valid .mlmodelc file".
+try:
+    mlmodel = ct.models.MLModel(spec, skip_model_load=True)
+except TypeError:
+    # Older coremltools without skip_model_load parameter
+    mlmodel = ct.models.MLModel(spec)
+
+mlmodel.save(mlpackage_path)
+"""
+        spec_path = tmp_dir / "model_spec.pb"
+        try:
+            spec_bytes = mlmodel.get_spec().SerializeToString()
+            with open(spec_path, "wb") as f:
+                f.write(spec_bytes)
+
+            result = subprocess.run(
+                [sys.executable, "-c", spec_saver_script, str(mlpackage_path), str(spec_path)],
+                capture_output=True,
+                timeout=120,
+            )
+            exit_code = result.returncode
+            logger.debug(f"save_mlpackage: spec strategy exit_code={exit_code}")
+        except Exception as e:
+            logger.warning(f"save_mlpackage: spec strategy failed ({e})")
+        finally:
+            try:
+                if spec_path.exists():
+                    spec_path.unlink()
+            except OSError:
+                pass
+
+    # Clean up temp dir
+    try:
+        if tmp_dir.exists() and not any(tmp_dir.iterdir()):
+            tmp_dir.rmdir()
+    except OSError:
+        pass
 
     if not mlpackage_path.exists():
         if exit_code < 0:
