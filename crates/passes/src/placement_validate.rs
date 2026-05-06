@@ -1165,6 +1165,21 @@ fn op_name(op: &MirOp) -> &'static str {
         // T-P4-08: ANEC internal ops
         MirOp::AnecFusedConvActivate { .. } => "AnecFusedConvActivate",
         MirOp::AnecFusedLinearActivate { .. } => "AnecFusedLinearActivate",
+        // T-P4-08: Unmapped ANEC operation stubs
+        MirOp::AnecBroadcast { .. } => "AnecBroadcast",
+        MirOp::AnecScaledElementwise { .. } => "AnecScaledElementwise",
+        MirOp::AnecGlobalArgMinMax { .. } => "AnecGlobalArgMinMax",
+        MirOp::AnecDegamma { .. } => "AnecDegamma",
+        MirOp::AnecDirac { .. } => "AnecDirac",
+        MirOp::AnecGainOffsetControl { .. } => "AnecGainOffsetControl",
+        MirOp::AnecNRelu { .. } => "AnecNRelu",
+        MirOp::AnecHighPrecisionSigmoid { .. } => "AnecHighPrecisionSigmoid",
+        MirOp::AnecLog2 { .. } => "AnecLog2",
+        MirOp::AnecTrunc { .. } => "AnecTrunc",
+        MirOp::AnecInvert { .. } => "AnecInvert",
+        MirOp::AnecUnflatten { .. } => "AnecUnflatten",
+        MirOp::AnecChannelToSpace { .. } => "AnecChannelToSpace",
+        MirOp::AnecSpaceToChannel { .. } => "AnecSpaceToChannel",
         // Future variants added via #[non_exhaustive]
         _ => "<unknown>",
     }

@@ -45,25 +45,28 @@ pub struct RoleMirBuilder {
     default_compute_hint: ComputeUnitHint,
     /// Model architecture configuration for model-specific constants
     /// (vocab_size, embed_dim, head_dim, max_seq_len, architecture).
-    /// When `None`, falls back to `ModelArchConfig::default()` (Qwen3-0.6B).
+    /// T-P2-11: This is now required — callers must provide an explicit config.
     /// T-36 (I-15): replaces hardcoded vocab_size=32000, embed_dim=128.
-    arch_config: Option<ModelArchConfig>,
+    arch_config: ModelArchConfig,
 }
 
 impl Default for RoleMirBuilder {
     fn default() -> Self {
-        Self::new()
+        Self::with_arch_config(ModelArchConfig::qwen3_0_6b())
     }
 }
 
 impl RoleMirBuilder {
-    /// Create a new builder with fp16 dtype, CPU+NE compute hint,
-    /// and no model architecture config (uses default Qwen3-0.6B values).
-    pub fn new() -> Self {
+    /// Create a new builder with an explicit model architecture configuration.
+    ///
+    /// T-P2-11: Architecture config is now required. The old `new()` constructor
+    /// that silently defaulted to Qwen3-0.6B has been removed. Use this method
+    /// or `Default::default()` (which explicitly uses Qwen3-0.6B) to create a builder.
+    pub fn with_arch_config(arch_config: ModelArchConfig) -> Self {
         Self {
             default_dtype: MilDtype::Fp16,
             default_compute_hint: ComputeUnitHint::CPUAndNE,
-            arch_config: None,
+            arch_config,
         }
     }
 
@@ -84,36 +87,12 @@ impl RoleMirBuilder {
         self
     }
 
-    /// Create a builder with a model architecture configuration.
+    /// Returns the model architecture config.
     ///
-    /// T-36 (I-15): The config provides model-specific constants
-    /// (vocab_size, embed_dim, head_dim, max_seq_len, architecture)
-    /// that were previously hardcoded. Without this, the builder
-    /// uses Qwen3-0.6B defaults.
-    pub fn with_arch_config(mut self, config: ModelArchConfig) -> Self {
-        self.arch_config = Some(config);
-        self
-    }
-
-    /// Returns the effective model architecture config, falling back
-    /// to the default (Qwen3-0.6B) when none was provided.
-    ///
-    /// M-035: Warns when falling back to default values so callers know
-    /// they are using model-specific defaults without having set an
-    /// explicit config.
+    /// T-P2-11: This is always present now — the builder requires it at
+    /// construction time, eliminating silent Qwen3-0.6B fallback.
     fn arch_config(&self) -> &ModelArchConfig {
-        match self.arch_config.as_ref() {
-            Some(cfg) => cfg,
-            None => {
-                static DEFAULT: std::sync::OnceLock<ModelArchConfig> = std::sync::OnceLock::new();
-                log::warn!(
-                    "RoleMirBuilder: no arch_config provided — falling back to \
-                     ModelArchConfig::default() (Qwen3-0.6B). Set one via \
-                     with_arch_config() to avoid model-specific defaults."
-                );
-                DEFAULT.get_or_init(ModelArchConfig::default)
-            }
-        }
+        &self.arch_config
     }
 
     /// Build a MIR graph from a shard specification.
@@ -1024,7 +1003,7 @@ mod tests {
     /// - Exit produces [Const, Linear, LayerNorm]
     #[test]
     fn test_roles_produce_different_op_structures() {
-        let builder = RoleMirBuilder::new();
+        let builder = RoleMirBuilder::with_arch_config(ModelArchConfig::qwen3_0_6b());
 
         let entry_mir = builder.build_mir(&make_entry_spec()).unwrap();
         let interior_mir = builder.build_mir(&make_interior_spec()).unwrap();
@@ -1053,7 +1032,7 @@ mod tests {
     /// Verify Entry shard has Reshape op (unique to Entry).
     #[test]
     fn test_entry_has_reshape() {
-        let builder = RoleMirBuilder::new();
+        let builder = RoleMirBuilder::with_arch_config(ModelArchConfig::qwen3_0_6b());
         let mir = builder.build_mir(&make_entry_spec()).unwrap();
 
         let has_reshape = mir.nodes.iter().any(|n| matches!(n.op, MirOp::MILReshape { .. }));
@@ -1063,7 +1042,7 @@ mod tests {
     /// Verify Interior shard has GELU activation (unique to Interior).
     #[test]
     fn test_interior_has_gelu() {
-        let builder = RoleMirBuilder::new();
+        let builder = RoleMirBuilder::with_arch_config(ModelArchConfig::qwen3_0_6b());
         let mir = builder.build_mir(&make_interior_spec()).unwrap();
 
         let has_gelu = mir.nodes.iter().any(|n| matches!(n.op, MirOp::MILGelu { .. }));
@@ -1073,7 +1052,7 @@ mod tests {
     /// Verify Exit shard has LayerNorm (unique to Exit).
     #[test]
     fn test_exit_has_layernorm() {
-        let builder = RoleMirBuilder::new();
+        let builder = RoleMirBuilder::with_arch_config(ModelArchConfig::qwen3_0_6b());
         let mir = builder.build_mir(&make_exit_spec()).unwrap();
 
         let has_ln = mir.nodes.iter().any(|n| matches!(n.op, MirOp::MILLayerNorm { .. }));
@@ -1083,7 +1062,7 @@ mod tests {
     /// Verify LinearOnly produces [Const, Linear] (backward compat).
     #[test]
     fn test_linear_only_backward_compat() {
-        let builder = RoleMirBuilder::new();
+        let builder = RoleMirBuilder::with_arch_config(ModelArchConfig::qwen3_0_6b());
         let spec = ShardSpec {
             shard_name: "legacy".into(),
             role: ShardRole::Interior,
@@ -1114,7 +1093,7 @@ mod tests {
     /// Test decode-step pipeline: QKV, Attention, OutputProjection all differ.
     #[test]
     fn test_decode_step_roles_produce_different_structures() {
-        let builder = RoleMirBuilder::new();
+        let builder = RoleMirBuilder::with_arch_config(ModelArchConfig::qwen3_0_6b());
 
         let qkv_spec = ShardSpec {
             shard_name: "qkv".into(),
@@ -1214,7 +1193,7 @@ mod tests {
     /// Test IO and Sampler shards have correct compute unit hints.
     #[test]
     fn test_io_and_sampler_use_cpu_gpu() {
-        let builder = RoleMirBuilder::new();
+        let builder = RoleMirBuilder::with_arch_config(ModelArchConfig::qwen3_0_6b());
 
         let io_spec = ShardSpec {
             shard_name: "io".into(),
@@ -1284,7 +1263,7 @@ mod tests {
     /// Before Sprint 57, RoleMirBuilder always used CPUAndNE regardless of spec.
     #[test]
     fn test_compute_units_from_spec_propagates_to_mir_nodes() {
-        let builder = RoleMirBuilder::new();
+        let builder = RoleMirBuilder::with_arch_config(ModelArchConfig::qwen3_0_6b());
         let mut spec = make_entry_spec();
         spec.compute_units = ComputeUnitHint::CPUAndGPU;
 
@@ -1317,7 +1296,7 @@ mod tests {
                 reshape_target: None,
             },
         };
-        let builder = RoleMirBuilder::new();
+        let builder = RoleMirBuilder::with_arch_config(ModelArchConfig::qwen3_0_6b());
         let result = builder.build_mir(&spec);
         assert!(result.is_err(), "EntryLinear with empty specs should return an error");
     }

@@ -2101,7 +2101,7 @@ fn run_compile_full_sharded(
                 .map_err(|e| format!("Failed to create shard output dir: {}", e))?;
 
             let emit_result =
-                emit_role_shard_proto_direct(shard_spec, mlpackage_path.to_str().unwrap_or(""))
+                emit_role_shard_proto_direct(shard_spec, mlpackage_path.to_str().unwrap_or(""), &ane_ir::common::ModelArchitecture::Qwen3, 32768)
                     .map_err(|e| {
                         format!(
                             "Proto-direct emission failed for shard {}: {}",
@@ -2671,7 +2671,7 @@ fn run_compile_sharded(
                 .map_err(|e| format!("Failed to create shard output dir: {}", e))?;
 
             let emit_result =
-                emit_role_shard_proto_direct(shard_spec, mlpackage_path.to_str().unwrap_or(""))
+                emit_role_shard_proto_direct(shard_spec, mlpackage_path.to_str().unwrap_or(""), &ane_ir::common::ModelArchitecture::Qwen3, 32768)
                     .map_err(|e| {
                         format!(
                             "Proto-direct emission failed for shard {}: {}",

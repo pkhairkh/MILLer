@@ -25,6 +25,7 @@ use crate::mir_to_compat::{mir_graph_to_compat_with_arch, EmptyWeightResolver};
 use ane_coreml_emit::ProtoEmitter;
 use ane_coreml_emit::ValidationPolicy;
 use ane_coreml_proto::mir_compat::MirGraphCompat;
+use ane_ir::common::ModelArchConfig;
 use ane_ir::mir::MirGraph;
 use ane_ir::pir::ShardSpec;
 use ane_passes::role_mir::RoleMirBuilder;
@@ -168,31 +169,53 @@ pub fn emit_proto_direct_multifunction_with_policy(
 pub fn emit_role_shard_proto_direct(
     spec: &ShardSpec,
     output_path: &str,
+    architecture: &ane_ir::common::ModelArchitecture,
+    max_seq_len: usize,
 ) -> Result<ProtoDirectResult> {
-    emit_role_shard_proto_direct_with_policy(spec, output_path, ValidationPolicy::default())
+    emit_role_shard_proto_direct_with_policy(spec, output_path, architecture, max_seq_len, ValidationPolicy::default())
 }
 
 /// Emit a role-specific shard with a custom validation policy.
 ///
 /// Use `ValidationPolicy::warn_only()` for development/testing where
 /// small test tensors don't meet the 49KB IOSurface minimum.
+///
+/// T-P2-11: `architecture` and `max_seq_len` are now required parameters.
+/// Previously these defaulted to Qwen3 and 32768, which was a correctness
+/// hazard for non-Qwen3 models.
 pub fn emit_role_shard_proto_direct_with_policy(
     spec: &ShardSpec,
     output_path: &str,
+    architecture: &ane_ir::common::ModelArchitecture,
+    max_seq_len: usize,
     validation_policy: ValidationPolicy,
 ) -> Result<ProtoDirectResult> {
-    let builder = RoleMirBuilder::new();
+    let arch_config = match architecture {
+        ane_ir::common::ModelArchitecture::Qwen3 => ModelArchConfig::qwen3_0_6b(),
+        ane_ir::common::ModelArchitecture::Generic { .. } => {
+            // For generic architectures, build a config from the architecture
+            // with sensible defaults. The caller should use
+            // emit_mir_graph_proto_direct() directly for precise control.
+            ModelArchConfig {
+                vocab_size: 32000,
+                embed_dim: 1024,
+                head_dim: 128,
+                num_heads: 16,
+                kv_heads: 16,
+                intermediate_size: 4096,
+                max_seq_len,
+                architecture: architecture.clone(),
+            }
+        }
+    };
+    let builder = RoleMirBuilder::with_arch_config(arch_config);
     let mir_graph = builder.build_mir(spec)?;
 
-    // T-P2-11: Default to Qwen3 architecture for role-shard emission.
-    // The ShardSpec doesn't carry architecture info, so this uses the
-    // legacy default. Callers needing a different architecture should use
-    // emit_mir_graph_proto_direct() directly.
     emit_mir_graph_proto_direct_with_policy(
         &mir_graph,
         output_path,
-        &ane_ir::common::ModelArchitecture::Qwen3,
-        32768,
+        architecture,
+        max_seq_len,
         validation_policy,
     )
 }
@@ -586,11 +609,7 @@ mod tests {
         let output_path = tmp.path().join("entry_shard.mlpackage");
 
         let result =
-            emit_role_shard_proto_direct_with_policy(
-                &make_entry_spec(),
-                output_path.to_str().unwrap(),
-                ValidationPolicy::warn_only(),
-            ).unwrap();
+            emit_role_shard_proto_direct_with_policy(&make_entry_spec(), output_path.to_str().unwrap(), &ane_ir::common::ModelArchitecture::Qwen3, 32768, ValidationPolicy::warn_only()).unwrap();
 
         assert_eq!(result.emission_method, "proto-direct");
         assert_eq!(result.function_count, 1);
@@ -605,11 +624,7 @@ mod tests {
         let output_path = tmp.path().join("interior_shard.mlpackage");
 
         let result =
-            emit_role_shard_proto_direct_with_policy(
-                &make_interior_spec(),
-                output_path.to_str().unwrap(),
-                ValidationPolicy::warn_only(),
-            ).unwrap();
+            emit_role_shard_proto_direct_with_policy(&make_interior_spec(), output_path.to_str().unwrap(), &ane_ir::common::ModelArchitecture::Qwen3, 32768, ValidationPolicy::warn_only()).unwrap();
 
         assert_eq!(result.emission_method, "proto-direct");
         assert_eq!(result.function_count, 1);
@@ -623,11 +638,7 @@ mod tests {
         let output_path = tmp.path().join("exit_shard.mlpackage");
 
         let result =
-            emit_role_shard_proto_direct_with_policy(
-                &make_exit_spec(),
-                output_path.to_str().unwrap(),
-                ValidationPolicy::warn_only(),
-            ).unwrap();
+            emit_role_shard_proto_direct_with_policy(&make_exit_spec(), output_path.to_str().unwrap(), &ane_ir::common::ModelArchitecture::Qwen3, 32768, ValidationPolicy::warn_only()).unwrap();
 
         assert_eq!(result.emission_method, "proto-direct");
         assert_eq!(result.function_count, 1);
@@ -646,25 +657,13 @@ mod tests {
         let exit_path = tmp.path().join("exit.mlpackage");
 
         let entry_result =
-            emit_role_shard_proto_direct_with_policy(
-                &make_entry_spec(),
-                entry_path.to_str().unwrap(),
-                ValidationPolicy::warn_only(),
-            ).unwrap();
+            emit_role_shard_proto_direct_with_policy(&make_entry_spec(), entry_path.to_str().unwrap(), &ane_ir::common::ModelArchitecture::Qwen3, 32768, ValidationPolicy::warn_only()).unwrap();
 
         let interior_result =
-            emit_role_shard_proto_direct_with_policy(
-                &make_interior_spec(),
-                interior_path.to_str().unwrap(),
-                ValidationPolicy::warn_only(),
-            ).unwrap();
+            emit_role_shard_proto_direct_with_policy(&make_interior_spec(), interior_path.to_str().unwrap(), &ane_ir::common::ModelArchitecture::Qwen3, 32768, ValidationPolicy::warn_only()).unwrap();
 
         let exit_result =
-            emit_role_shard_proto_direct_with_policy(
-                &make_exit_spec(),
-                exit_path.to_str().unwrap(),
-                ValidationPolicy::warn_only(),
-            ).unwrap();
+            emit_role_shard_proto_direct_with_policy(&make_exit_spec(), exit_path.to_str().unwrap(), &ane_ir::common::ModelArchitecture::Qwen3, 32768, ValidationPolicy::warn_only()).unwrap();
 
         // All three must have different content hashes (different op structures)
         assert_ne!(

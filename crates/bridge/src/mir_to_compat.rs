@@ -162,56 +162,7 @@ impl WeightResolver for EmptyWeightResolver {
 ///
 /// This function automatically materializes `MirOpCompat::Const` entries for
 /// every weight name referenced by ops like `MILLinear` and `MILLayerNorm`.
-/// The weight data is looked up via the `resolver`. If the resolver can't find
-/// a weight, a hard error is returned by default (T-91/I-66). Use
-/// `mir_graph_to_compat_with_allow_missing()` to opt into zero-filled placeholders.
-///
-/// **Deprecated** (T-P2-11): This function defaults to Qwen3 architecture and
-/// max_seq_len=32768. Use [`mir_graph_to_compat_with_arch`] with explicit
-/// parameters instead.
-pub fn mir_graph_to_compat(
-    graph: &MirGraph,
-    resolver: &dyn WeightResolver,
-) -> Result<MirGraphCompat> {
-    log::warn!(
-        "mir_graph_to_compat: using deprecated default architecture=Qwen3, max_seq_len=32768. \
-         Use mir_graph_to_compat_with_arch() with explicit parameters instead."
-    );
-    mir_graph_to_compat_with_arch(
-        graph,
-        resolver,
-        &ane_ir::common::ModelArchitecture::Qwen3,
-        32768,
-        false,
-    )
-}
 
-/// Convert a MIR graph to compat representation, allowing missing weights.
-///
-/// When `allow_missing_weights` is true, unresolved weights produce zero-filled
-/// placeholders with a warning. This is intended for development/testing only —
-/// production models should never use zero-filled weights (T-91/I-66/V-007).
-///
-/// **Deprecated** (T-P2-11): This function defaults to Qwen3 architecture and
-/// max_seq_len=32768. Use [`mir_graph_to_compat_with_arch`] with explicit
-/// parameters instead.
-pub fn mir_graph_to_compat_with_allow_missing(
-    graph: &MirGraph,
-    resolver: &dyn WeightResolver,
-    allow_missing_weights: bool,
-) -> Result<MirGraphCompat> {
-    log::warn!(
-        "mir_graph_to_compat_with_allow_missing: using deprecated default architecture=Qwen3, \
-         max_seq_len=32768. Use mir_graph_to_compat_with_arch() with explicit parameters instead."
-    );
-    mir_graph_to_compat_with_arch(
-        graph,
-        resolver,
-        &ane_ir::common::ModelArchitecture::Qwen3,
-        32768,
-        allow_missing_weights,
-    )
-}
 
 /// Convert a MIR graph to compat representation with architecture-specific
 /// weight name patterns.
@@ -2014,7 +1965,7 @@ mod tests {
         let graph = make_test_graph();
         let resolver = EmptyWeightResolver;
         // EmptyWeightResolver returns None for all weights, so allow_missing_weights=true
-        let compat = mir_graph_to_compat_with_allow_missing(&graph, &resolver, true).unwrap();
+        let compat = mir_graph_to_compat_with_arch(&graph, &resolver, &ane_ir::common::ModelArchitecture::Qwen3, 32768, true).unwrap();
 
         // 3 original ops + 1 auto-materialized weight (Linear references "weight"
         // but the existing Const was renamed to "x" via rename_compat_output,
@@ -2035,7 +1986,7 @@ mod tests {
 
         // The resolver has "weights/weight.bin" but the graph references "weight"
         // (auto-materialized), so allow_missing_weights=true for the auto-materialized weight.
-        let compat = mir_graph_to_compat_with_allow_missing(&graph, &resolver, true).unwrap();
+        let compat = mir_graph_to_compat_with_arch(&graph, &resolver, &ane_ir::common::ModelArchitecture::Qwen3, 32768, true).unwrap();
 
         // Check that Const ops have proper data.
         // Note: The ops list is [auto-materialized "weight", renamed "x", "bias", Linear].
@@ -2154,7 +2105,7 @@ mod tests {
             MilDtypeCompat::Int32,
         );
 
-        let compat = mir_graph_to_compat_with_allow_missing(&graph, &resolver, true).unwrap();
+        let compat = mir_graph_to_compat_with_arch(&graph, &resolver, &ane_ir::common::ModelArchitecture::Qwen3, 32768, true).unwrap();
 
         // Find the Const for "embed_weight" (the node ID — the value_path
         // "model.embed_tokens.weight" is used for weight resolution, not the op name)
@@ -2185,7 +2136,7 @@ mod tests {
         let resolver = EmptyWeightResolver; // returns None for all weights
 
         // Default behavior: should error because weights are missing
-        let result = mir_graph_to_compat(&graph, &resolver);
+        let result = mir_graph_to_compat_with_arch(&graph, &resolver, &ane_ir::common::ModelArchitecture::Qwen3, 32768, false);
         assert!(result.is_err(), "Expected hard error for missing weights by default");
         let err_msg = result.unwrap_err().to_string();
         assert!(
@@ -2206,7 +2157,7 @@ mod tests {
         let resolver = EmptyWeightResolver;
 
         // With allow_missing_weights=true, should succeed with zero-filled placeholders
-        let result = mir_graph_to_compat_with_allow_missing(&graph, &resolver, true);
+        let result = mir_graph_to_compat_with_arch(&graph, &resolver, &ane_ir::common::ModelArchitecture::Qwen3, 32768, true);
         assert!(result.is_ok(), "Should succeed with allow_missing_weights=true");
     }
 

@@ -1091,6 +1091,80 @@ pub enum MirOp {
         weight: String,
         activation: String,
     },
+    // ─── T-P4-08: Unmapped ANEC operation stubs ────────────────────
+    // These 14 ops are genuinely unmapped ANEC operations identified
+    // during forensic analysis. They are CPU-only stubs — no ANEC
+    // converter exists for any family.
+    /// ANEC-internal: broadcast operation.
+    AnecBroadcast {
+        name: String,
+        x: MirNodeId,
+    },
+    /// ANEC-internal: scaled elementwise operation.
+    AnecScaledElementwise {
+        name: String,
+        x: MirNodeId,
+    },
+    /// ANEC-internal: global arg min/max operation.
+    AnecGlobalArgMinMax {
+        name: String,
+        x: MirNodeId,
+    },
+    /// ANEC-internal: degamma operation.
+    AnecDegamma {
+        name: String,
+        x: MirNodeId,
+    },
+    /// ANEC-internal: Dirac delta operation.
+    AnecDirac {
+        name: String,
+        x: MirNodeId,
+    },
+    /// ANEC-internal: gain/offset control operation.
+    AnecGainOffsetControl {
+        name: String,
+        x: MirNodeId,
+    },
+    /// ANEC-internal: N-ReLU operation.
+    AnecNRelu {
+        name: String,
+        x: MirNodeId,
+    },
+    /// ANEC-internal: high-precision sigmoid operation.
+    AnecHighPrecisionSigmoid {
+        name: String,
+        x: MirNodeId,
+    },
+    /// ANEC-internal: log2 operation.
+    AnecLog2 {
+        name: String,
+        x: MirNodeId,
+    },
+    /// ANEC-internal: trunc(ate) operation.
+    AnecTrunc {
+        name: String,
+        x: MirNodeId,
+    },
+    /// ANEC-internal: invert operation.
+    AnecInvert {
+        name: String,
+        x: MirNodeId,
+    },
+    /// ANEC-internal: unflatten operation.
+    AnecUnflatten {
+        name: String,
+        x: MirNodeId,
+    },
+    /// ANEC-internal: channel-to-space operation.
+    AnecChannelToSpace {
+        name: String,
+        x: MirNodeId,
+    },
+    /// ANEC-internal: space-to-channel operation.
+    AnecSpaceToChannel {
+        name: String,
+        x: MirNodeId,
+    },
 }
 
 impl MirOp {
@@ -1366,7 +1440,22 @@ impl MirOp {
             | MirOp::MILNeg { .. }
             // ─── T-P4-08: ANEC internal ops (CPU-only stubs) ──────
             | MirOp::AnecFusedConvActivate { .. }
-            | MirOp::AnecFusedLinearActivate { .. } => None,
+            | MirOp::AnecFusedLinearActivate { .. }
+            // ─── T-P4-08: Unmapped ANEC operation stubs (CPU-only) ──
+            | MirOp::AnecBroadcast { .. }
+            | MirOp::AnecScaledElementwise { .. }
+            | MirOp::AnecGlobalArgMinMax { .. }
+            | MirOp::AnecDegamma { .. }
+            | MirOp::AnecDirac { .. }
+            | MirOp::AnecGainOffsetControl { .. }
+            | MirOp::AnecNRelu { .. }
+            | MirOp::AnecHighPrecisionSigmoid { .. }
+            | MirOp::AnecLog2 { .. }
+            | MirOp::AnecTrunc { .. }
+            | MirOp::AnecInvert { .. }
+            | MirOp::AnecUnflatten { .. }
+            | MirOp::AnecChannelToSpace { .. }
+            | MirOp::AnecSpaceToChannel { .. } => None,
         }
     }
 
@@ -1605,6 +1694,21 @@ impl MirOp {
             MirOp::MILClassify { .. } => "classify",
             MirOp::AnecFusedConvActivate { .. } => "anec_fused_conv_activate",
             MirOp::AnecFusedLinearActivate { .. } => "anec_fused_linear_activate",
+            // ─── T-P4-08: Unmapped ANEC operation stubs ──────────────
+            MirOp::AnecBroadcast { .. } => "anec_broadcast",
+            MirOp::AnecScaledElementwise { .. } => "anec_scaled_elementwise",
+            MirOp::AnecGlobalArgMinMax { .. } => "anec_global_arg_min_max",
+            MirOp::AnecDegamma { .. } => "anec_degamma",
+            MirOp::AnecDirac { .. } => "anec_dirac",
+            MirOp::AnecGainOffsetControl { .. } => "anec_gain_offset_control",
+            MirOp::AnecNRelu { .. } => "anec_n_relu",
+            MirOp::AnecHighPrecisionSigmoid { .. } => "anec_high_precision_sigmoid",
+            MirOp::AnecLog2 { .. } => "anec_log2",
+            MirOp::AnecTrunc { .. } => "anec_trunc",
+            MirOp::AnecInvert { .. } => "anec_invert",
+            MirOp::AnecUnflatten { .. } => "anec_unflatten",
+            MirOp::AnecChannelToSpace { .. } => "anec_channel_to_space",
+            MirOp::AnecSpaceToChannel { .. } => "anec_space_to_channel",
         }
     }
 }
@@ -1792,6 +1896,21 @@ impl ToProto for MirOp {
             MirOp::MILClassify { name, .. } => name,
             MirOp::AnecFusedConvActivate { name, .. } => name,
             MirOp::AnecFusedLinearActivate { name, .. } => name,
+            // ─── T-P4-08: Unmapped ANEC operation stubs ──────────────
+            MirOp::AnecBroadcast { name, .. } => name,
+            MirOp::AnecScaledElementwise { name, .. } => name,
+            MirOp::AnecGlobalArgMinMax { name, .. } => name,
+            MirOp::AnecDegamma { name, .. } => name,
+            MirOp::AnecDirac { name, .. } => name,
+            MirOp::AnecGainOffsetControl { name, .. } => name,
+            MirOp::AnecNRelu { name, .. } => name,
+            MirOp::AnecHighPrecisionSigmoid { name, .. } => name,
+            MirOp::AnecLog2 { name, .. } => name,
+            MirOp::AnecTrunc { name, .. } => name,
+            MirOp::AnecInvert { name, .. } => name,
+            MirOp::AnecUnflatten { name, .. } => name,
+            MirOp::AnecChannelToSpace { name, .. } => name,
+            MirOp::AnecSpaceToChannel { name, .. } => name,
         }
     }
 
@@ -2129,6 +2248,21 @@ impl ToProto for MirOp {
             // ─── ANEC Internal Ops (T-P4-08) ─────────────────────────
             MirOp::AnecFusedConvActivate { x, weight, .. } => vec![x.0.clone(), weight.0.clone()],
             MirOp::AnecFusedLinearActivate { x, weight, .. } => vec![x.0.clone(), weight.clone()],
+            // ─── T-P4-08: Unmapped ANEC operation stubs ──────────────
+            MirOp::AnecBroadcast { x, .. } => vec![x.0.clone()],
+            MirOp::AnecScaledElementwise { x, .. } => vec![x.0.clone()],
+            MirOp::AnecGlobalArgMinMax { x, .. } => vec![x.0.clone()],
+            MirOp::AnecDegamma { x, .. } => vec![x.0.clone()],
+            MirOp::AnecDirac { x, .. } => vec![x.0.clone()],
+            MirOp::AnecGainOffsetControl { x, .. } => vec![x.0.clone()],
+            MirOp::AnecNRelu { x, .. } => vec![x.0.clone()],
+            MirOp::AnecHighPrecisionSigmoid { x, .. } => vec![x.0.clone()],
+            MirOp::AnecLog2 { x, .. } => vec![x.0.clone()],
+            MirOp::AnecTrunc { x, .. } => vec![x.0.clone()],
+            MirOp::AnecInvert { x, .. } => vec![x.0.clone()],
+            MirOp::AnecUnflatten { x, .. } => vec![x.0.clone()],
+            MirOp::AnecChannelToSpace { x, .. } => vec![x.0.clone()],
+            MirOp::AnecSpaceToChannel { x, .. } => vec![x.0.clone()],
         }
     }
 
@@ -2559,6 +2693,21 @@ impl MirOp {
             MirOp::MILClassify { x, .. } => vec![x],
             MirOp::AnecFusedConvActivate { x, weight, .. } => vec![x, weight],
             MirOp::AnecFusedLinearActivate { x, .. } => vec![x],
+            // ─── T-P4-08: Unmapped ANEC operation stubs ──────────────
+            MirOp::AnecBroadcast { x, .. } => vec![x],
+            MirOp::AnecScaledElementwise { x, .. } => vec![x],
+            MirOp::AnecGlobalArgMinMax { x, .. } => vec![x],
+            MirOp::AnecDegamma { x, .. } => vec![x],
+            MirOp::AnecDirac { x, .. } => vec![x],
+            MirOp::AnecGainOffsetControl { x, .. } => vec![x],
+            MirOp::AnecNRelu { x, .. } => vec![x],
+            MirOp::AnecHighPrecisionSigmoid { x, .. } => vec![x],
+            MirOp::AnecLog2 { x, .. } => vec![x],
+            MirOp::AnecTrunc { x, .. } => vec![x],
+            MirOp::AnecInvert { x, .. } => vec![x],
+            MirOp::AnecUnflatten { x, .. } => vec![x],
+            MirOp::AnecChannelToSpace { x, .. } => vec![x],
+            MirOp::AnecSpaceToChannel { x, .. } => vec![x],
         }
     }
 }

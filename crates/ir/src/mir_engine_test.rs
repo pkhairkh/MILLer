@@ -973,6 +973,21 @@ fn all_mir_op_variants() -> Vec<(String, MirOp)> {
                 activation: "relu".into(),
             },
         ),
+        // ─── T-P4-08: Unmapped ANEC operation stubs ────────────────────
+        ("AnecBroadcast".into(), MirOp::AnecBroadcast { name: "ab".into(), x: nid("x") }),
+        ("AnecScaledElementwise".into(), MirOp::AnecScaledElementwise { name: "ase".into(), x: nid("x") }),
+        ("AnecGlobalArgMinMax".into(), MirOp::AnecGlobalArgMinMax { name: "agam".into(), x: nid("x") }),
+        ("AnecDegamma".into(), MirOp::AnecDegamma { name: "ad".into(), x: nid("x") }),
+        ("AnecDirac".into(), MirOp::AnecDirac { name: "adr".into(), x: nid("x") }),
+        ("AnecGainOffsetControl".into(), MirOp::AnecGainOffsetControl { name: "agoc".into(), x: nid("x") }),
+        ("AnecNRelu".into(), MirOp::AnecNRelu { name: "anr".into(), x: nid("x") }),
+        ("AnecHighPrecisionSigmoid".into(), MirOp::AnecHighPrecisionSigmoid { name: "ahps".into(), x: nid("x") }),
+        ("AnecLog2".into(), MirOp::AnecLog2 { name: "al2".into(), x: nid("x") }),
+        ("AnecTrunc".into(), MirOp::AnecTrunc { name: "at".into(), x: nid("x") }),
+        ("AnecInvert".into(), MirOp::AnecInvert { name: "ai".into(), x: nid("x") }),
+        ("AnecUnflatten".into(), MirOp::AnecUnflatten { name: "auf".into(), x: nid("x") }),
+        ("AnecChannelToSpace".into(), MirOp::AnecChannelToSpace { name: "acts".into(), x: nid("x") }),
+        ("AnecSpaceToChannel".into(), MirOp::AnecSpaceToChannel { name: "astc".into(), x: nid("x") }),
     ]
 }
 
