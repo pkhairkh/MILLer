@@ -959,6 +959,10 @@ fn all_mir_op_variants() -> Vec<(String, MirOp)> {
                 x: nid("x"),
                 weight: nid("w"),
                 activation: "relu".into(),
+                strides: vec![1, 1],
+                pad_amounts: vec![0, 0, 0, 0],
+                dilations: vec![1, 1],
+                groups: 1,
             },
         ),
         (
@@ -972,7 +976,7 @@ fn all_mir_op_variants() -> Vec<(String, MirOp)> {
         ),
         // ─── T-P4-08: Unmapped ANEC operation stubs ────────────────────
         ("AnecBroadcast".into(), MirOp::AnecBroadcast { name: "ab".into(), x: nid("x") }),
-        ("AnecScaledElementwise".into(), MirOp::AnecScaledElementwise { name: "ase".into(), x: nid("x") }),
+        ("AnecScaledElementwise".into(), MirOp::AnecScaledElementwise { name: "ase".into(), x: nid("x"), y: nid("y"), scale_a: 1.0, scale_b: 1.0 }),
         ("AnecGlobalArgMinMax".into(), MirOp::AnecGlobalArgMinMax { name: "agam".into(), x: nid("x") }),
         ("AnecDegamma".into(), MirOp::AnecDegamma { name: "ad".into(), x: nid("x") }),
         ("AnecDirac".into(), MirOp::AnecDirac { name: "adr".into(), x: nid("x") }),

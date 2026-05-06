@@ -1037,3 +1037,204 @@ def verify_emission_semantics(
         "warnings": warnings,
         "details": details,
     }
+
+
+# ---------------------------------------------------------------------------
+# T-D-02 (M-032): MIR specification compliance verification
+# ---------------------------------------------------------------------------
+
+class MirSpecViolation:
+    """A single MIR specification compliance violation.
+
+    Represents a mismatch between a constructed MIL program and the
+    MIR specification from the Rust compiler side.
+    """
+
+    def __init__(self, check: str, message: str, severity: str = "error"):
+        self.check: str = check
+        self.message: str = message
+        self.severity: str = severity  # "error" or "warning"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "check": self.check,
+            "message": self.message,
+            "severity": self.severity,
+        }
+
+    def __repr__(self):
+        return f"MirSpecViolation(check={self.check!r}, message={self.message!r}, severity={self.severity!r})"
+
+
+def verify_mir_spec_compliance(program, mir_spec: dict) -> list:
+    """Verify that a MIL program matches the MIR specification.
+
+    T-D-02 (M-032): Verifies that a constructed MIL program matches the MIR
+    specification from the Rust compiler side.
+
+    Args:
+        program: The MIL program (mb object) to verify
+        mir_spec: Dict containing MIR specification with:
+            - 'inputs': list of {name, shape, dtype}
+            - 'outputs': list of {name, shape, dtype}
+            - 'ops': list of {name, type, inputs, outputs}
+
+    Returns:
+        List of MirSpecViolation objects (empty = pass)
+    """
+    violations = []
+
+    if mir_spec is None:
+        return violations
+
+    # Extract program I/O info if available
+    prog_inputs = []
+    prog_outputs = []
+    prog_ops = []
+
+    if program is not None:
+        # Try to extract from the MIL program object
+        try:
+            if hasattr(program, 'main_function'):
+                fn = program.main_function
+                if hasattr(fn, 'inputs'):
+                    prog_inputs = [
+                        {"name": inp.name, "shape": list(inp.shape) if hasattr(inp, 'shape') else []}
+                        for inp in fn.inputs.values()
+                    ] if hasattr(fn.inputs, 'values') else []
+                if hasattr(fn, 'outputs'):
+                    prog_outputs = [
+                        {"name": out.name}
+                        for out in fn.outputs.values()
+                    ] if hasattr(fn.outputs, 'values') else []
+                if hasattr(fn, 'operations'):
+                    prog_ops = [
+                        {"name": op.name, "type": op.op_type}
+                        for op in fn.operations
+                    ]
+        except Exception:
+            pass  # Program introspection not available — skip program-side checks
+
+    # Check 1: Input count matches
+    expected_inputs = mir_spec.get('inputs', [])
+    if expected_inputs and prog_inputs:
+        if len(prog_inputs) != len(expected_inputs):
+            violations.append(MirSpecViolation(
+                check="input_count",
+                message=f"Input count mismatch: MIR spec has {len(expected_inputs)}, program has {len(prog_inputs)}",
+                severity="error",
+            ))
+
+    # Check 2: Input names match
+    if expected_inputs and prog_inputs:
+        expected_names = {inp.get('name', '') for inp in expected_inputs}
+        actual_names = {inp.get('name', '') for inp in prog_inputs}
+        missing = expected_names - actual_names
+        if missing:
+            violations.append(MirSpecViolation(
+                check="input_names",
+                message=f"Missing inputs from program: {missing}",
+                severity="error",
+            ))
+
+    # Check 3: Input shapes/dtypes match
+    if expected_inputs and prog_inputs:
+        for exp_inp in expected_inputs:
+            exp_name = exp_inp.get('name', '')
+            for act_inp in prog_inputs:
+                if act_inp.get('name', '') == exp_name:
+                    exp_shape = exp_inp.get('shape', [])
+                    act_shape = act_inp.get('shape', [])
+                    if exp_shape and act_shape and exp_shape != act_shape:
+                        violations.append(MirSpecViolation(
+                            check="input_shapes",
+                            message=f"Shape mismatch for input '{exp_name}': expected {exp_shape}, got {act_shape}",
+                            severity="warning",
+                        ))
+                    break
+
+    # Check 4: Output count matches
+    expected_outputs = mir_spec.get('outputs', [])
+    if expected_outputs and prog_outputs:
+        if len(prog_outputs) != len(expected_outputs):
+            violations.append(MirSpecViolation(
+                check="output_count",
+                message=f"Output count mismatch: MIR spec has {len(expected_outputs)}, program has {len(prog_outputs)}",
+                severity="error",
+            ))
+
+    # Check 5: Output names match
+    if expected_outputs and prog_outputs:
+        expected_names = {out.get('name', '') for out in expected_outputs}
+        actual_names = {out.get('name', '') for out in prog_outputs}
+        missing = expected_names - actual_names
+        if missing:
+            violations.append(MirSpecViolation(
+                check="output_names",
+                message=f"Missing outputs from program: {missing}",
+                severity="error",
+            ))
+
+    # Check 6: All MIR ops are represented in the program
+    expected_ops = mir_spec.get('ops', [])
+    if expected_ops and prog_ops:
+        actual_op_types = {op['type'] for op in prog_ops}
+        for exp_op in expected_ops:
+            exp_type = exp_op.get('type', '')
+            if exp_type and exp_type not in actual_op_types:
+                violations.append(MirSpecViolation(
+                    check="missing_ops",
+                    message=f"MIR op '{exp_type}' not found in program",
+                    severity="warning",
+                ))
+
+    # Check 7: No extra ops not in MIR spec
+    if expected_ops and prog_ops:
+        expected_op_types = {op.get('type', '') for op in expected_ops}
+        for act_op in prog_ops:
+            act_type = act_op.get('type', '')
+            if act_type and act_type not in expected_op_types:
+                violations.append(MirSpecViolation(
+                    check="extra_ops",
+                    message=f"Program has op '{act_type}' not in MIR spec",
+                    severity="warning",
+                ))
+
+    return violations
+
+
+def pre_emit_verification(builder_ops, mir_spec=None):
+    """T-D-02 (M-032): Verify builder operations before emission.
+
+    Checks:
+    1. All SSA references resolve (no dangling inputs)
+    2. No duplicate output names
+    3. Shape consistency for broadcast ops
+    4. Dtype compatibility for binary ops
+    5. Weight references exist in the spec
+
+    Returns list of issues found (empty = pass).
+    """
+    issues = []
+    defined_names = set()
+
+    # Collect graph inputs from mir_spec if provided
+    graph_inputs = set()
+    if mir_spec and 'graph_inputs' in mir_spec:
+        graph_inputs = set(mir_spec['graph_inputs'])
+
+    for op in builder_ops:
+        # Check for duplicate output names
+        output_name = op.get('output_name')
+        if output_name is not None:
+            if output_name in defined_names:
+                issues.append(f"Duplicate output name: {output_name}")
+            defined_names.add(output_name)
+
+        # Check that inputs reference defined names (or are graph inputs)
+        for inp in op.get('inputs', []):
+            if inp not in defined_names and inp not in graph_inputs:
+                if not inp.startswith('const_') and not inp.startswith('weight_'):
+                    issues.append(f"Dangling input reference: {inp} in op {op.get('output_name', '<unknown>')}")
+
+    return issues

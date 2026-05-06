@@ -38,6 +38,7 @@ Deduplication (C-13, T-06):
 """
 
 import hashlib
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -52,6 +53,9 @@ from program_builder import (
     SHARD_ROLE_OP_MAP,
     emit_program,
 )
+from verify import pre_emit_verification
+
+logger = logging.getLogger(__name__)
 
 def _resolve_dtype(dtype_str):
     """Resolve dtype string to numpy dtype and MIL dtype string.
@@ -1274,12 +1278,31 @@ def emit_attention(command: dict) -> dict:
     )
 
 
+def _verify_before_emit(builder_ops, mir_spec=None):
+    """T-D-02 (M-032): Run pre-emit verification checks (logging-only).
+
+    This is a non-blocking check that logs any issues found during
+    pre-emit verification. It does NOT raise errors to maintain
+    backward compatibility.
+    """
+    verification_issues = pre_emit_verification(builder_ops, mir_spec)
+    for issue in verification_issues:
+        logger.warning(f"M-032: Pre-emit verification issue: {issue}")
+    return verification_issues
+
+
 def emit_mlprogram(command: dict) -> dict:
     """Emit an ML program using the clean build → convert → save pipeline.
 
     For linear projection tasks, this is functionally equivalent to
     emit_linear_projection but uses the separated pipeline explicitly.
     """
+    # T-D-02 (M-032): Pre-emit verification
+    mir_spec = command.get('mir_spec', None)
+    builder_ops = command.get('builder_ops', [])
+    if builder_ops:
+        _verify_before_emit(builder_ops, mir_spec)
+
     return emit_program(
         command,
         build_fn=build_linear_projection_program,
@@ -1476,6 +1499,12 @@ def emit_multifunction(command: dict) -> dict:
     After saving, validates that the resulting model has 2 functions.
     """
     try:
+        # T-D-02 (M-032): Pre-emit verification
+        mir_spec = command.get('mir_spec', None)
+        builder_ops = command.get('builder_ops', [])
+        if builder_ops:
+            _verify_before_emit(builder_ops, mir_spec)
+
         ct = _ensure_coremltools()
 
         from converter import convert_milprogram, make_stateful_pass_pipeline

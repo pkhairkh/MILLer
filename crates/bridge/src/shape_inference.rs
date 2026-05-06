@@ -7,9 +7,14 @@
 //!
 //! ## Design
 //!
-//! The main entry point is [`compat_output_shape`], which takes a `MirOp`
-//! and a map of already-known node shapes, and returns the inferred output
-//! shape. The inference propagates shapes forward through the graph:
+//! The primary entry points are [`compat_output_shape_explicit`] and
+//! [`compat_input_shape_explicit`], which take explicit shape hints and avoid
+//! name-based heuristics. The legacy [`compat_output_shape`] and
+//! [`compat_input_shape`] functions are deprecated (M-019) — they delegate to
+//! the `_explicit` variants with `None` for the shape hint, which may fall
+//! back to fragile name-matching behavior.
+//!
+//! Shape inference propagates forward through the graph:
 //!
 //! - **Unary ops** (e.g., `Silu`, `Relu`, `Abs`): propagate the input shape.
 //! - **Binary ops** (e.g., `Add`, `Mul`): propagate the first operand shape.
@@ -106,8 +111,13 @@ pub fn compat_input_dtype(_name: &str, dtype: &MilDtype) -> MilDtypeCompat {
 /// `input_shapes` seed from `mil_lower.rs` which is populated from
 /// the traced graph's actual input dimensions.
 ///
-/// **Deprecated (M-018):** Prefer [`compat_input_shape_explicit`] which accepts
+/// **Deprecated (M-019):** Prefer [`compat_input_shape_explicit`] which accepts
 /// an explicit shape hint instead of relying on name-based heuristics.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use compat_input_shape_explicit instead. This function uses name-based heuristics when no shape is provided."
+)]
+#[allow(deprecated)] // delegates to compat_input_shape_explicit
 pub fn compat_input_shape(name: &str, shape: &[usize], max_seq_len: usize) -> Vec<usize> {
     compat_input_shape_explicit(name, shape, max_seq_len, None)
 }
@@ -172,8 +182,13 @@ pub fn compat_input_shape_explicit(
 /// `512` fallback for input_ids and placeholder nodes. Callers should pass
 /// the model's actual max sequence length from `ModelArchConfig::max_seq_len`.
 ///
-/// **Deprecated (M-018):** Prefer [`compat_output_shape_explicit`] which accepts
+/// **Deprecated (M-019):** Prefer [`compat_output_shape_explicit`] which accepts
 /// an explicit shape hint instead of relying on name-based heuristics.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use compat_output_shape_explicit instead. This function uses name-based heuristics when no shape is provided."
+)]
+#[allow(deprecated)] // delegates to compat_output_shape_explicit
 pub fn compat_output_shape(
     name: &str,
     op: &MirOp,
@@ -499,6 +514,22 @@ pub fn compat_output_shape_explicit(
         MirOp::MILConv { x, weight, strides, pad_amounts, dilations, .. } => {
             conv_output_shape(x, weight, strides, pad_amounts, dilations, node_shapes)
         }
+        // F-OPS-01: AnecFusedConvActivate — output shape = conv output shape
+        MirOp::AnecFusedConvActivate { x, weight, strides, pad_amounts, dilations, .. } => {
+            conv_output_shape(x, weight, strides, pad_amounts, dilations, node_shapes)
+        }
+        // F-OPS-01: AnecScaledElementwise — output shape = broadcast(x, y)
+        MirOp::AnecScaledElementwise { x, y, .. } => {
+            let shape_a = node_shapes.get(&x.0).cloned().unwrap_or_default();
+            let shape_b = node_shapes.get(&y.0).cloned().unwrap_or_default();
+            if !shape_a.is_empty() && !shape_b.is_empty() {
+                broadcast_shape_compat(&shape_a, &shape_b).unwrap_or_else(|| shape_a.clone())
+            } else if !shape_a.is_empty() {
+                shape_a
+            } else {
+                shape_b
+            }
+        }
         // Select: propagate first operand shape (like Where)
         MirOp::MILSelect { x, .. } => node_shapes.get(&x.0).cloned().unwrap_or_default(),
         MirOp::MILSplit { x, axis, num_splits, .. } => {
@@ -697,8 +728,12 @@ pub fn compat_output_shape_explicit(
 /// For backward compatibility, [`compat_output_shape`] continues to
 /// return `vec![]` for unknown shapes.
 ///
-/// **Deprecated (M-018):** Prefer the `_explicit` variants which accept
+/// **Deprecated (M-019):** Prefer [`compat_output_shape_explicit`] which accepts
 /// explicit shape hints instead of relying on name-based heuristics.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use compat_output_shape_explicit instead."
+)]
 pub fn compat_output_shape_fallible(
     name: &str,
     op: &MirOp,
@@ -748,6 +783,26 @@ pub fn compat_output_shape_fallible(
         // Weight is a MirNodeId, so we can look up its shape from node_shapes.
         MirOp::MILConv { x, weight, strides, pad_amounts, dilations, .. } => {
             conv_output_shape_fallible(x, weight, strides, pad_amounts, dilations, node_shapes, name)
+        }
+        // F-OPS-01: AnecFusedConvActivate — output shape = conv output shape
+        MirOp::AnecFusedConvActivate { x, weight, strides, pad_amounts, dilations, .. } => {
+            conv_output_shape_fallible(x, weight, strides, pad_amounts, dilations, node_shapes, name)
+        }
+        // F-OPS-01: AnecScaledElementwise — output shape = broadcast(x, y)
+        MirOp::AnecScaledElementwise { x, y, .. } => {
+            let shape_a = node_shapes.get(&x.0).cloned();
+            let shape_b = node_shapes.get(&y.0).cloned();
+            match (shape_a, shape_b) {
+                (Some(a), Some(b)) => {
+                    Ok(broadcast_shape_compat(&a, &b).unwrap_or_else(|| a.clone()))
+                }
+                (Some(a), None) => Ok(a),
+                (None, Some(b)) => Ok(b),
+                _ => Err(ShapeInferenceError::MissingInputShape {
+                    node_name: name.to_string(),
+                    input_id: x.0.clone(),
+                }),
+            }
         }
         MirOp::MILGather { x, indices, axis, .. } => {
             match (node_shapes.get(&x.0), node_shapes.get(&indices.0)) {
@@ -1299,6 +1354,7 @@ fn reduce_shape(
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // M-019: test module uses legacy compat_input_shape / compat_output_shape
 mod tests {
     use super::*;
     use ane_ir::mir::{MilDtype, MirNodeId, MirOp};

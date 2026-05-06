@@ -1040,6 +1040,31 @@ pub mod mir_compat {
             axis: i64,
             output_dtype: MilDtypeCompat,
         },
+        // ─── F-OPS-01: ANEC ops promoted from CPU-only ──────────────────
+        /// ANEC-internal: fused conv+activation operation.
+        /// Decomposed to conv + activation during proto emission since
+        /// Core ML proto doesn't have a fused conv+activate op.
+        AnecFusedConvActivate {
+            name: String,
+            x: String,
+            weight: String,
+            activation: String,
+            strides: Vec<i32>,
+            pad_amounts: Vec<i32>,
+            dilations: Vec<i32>,
+            groups: i64,
+        },
+        /// ANEC-internal: scaled elementwise operation.
+        /// Decomposed to mul(x, scale_a) + mul(y, scale_b) during proto
+        /// emission since Core ML proto doesn't have a native scaled
+        /// elementwise op.
+        AnecScaledElementwise {
+            name: String,
+            x: String,
+            y: String,
+            scale_a: f32,
+            scale_b: f32,
+        },
         /// Catch-all for MIL ops that don't have specialized compat representations.
         /// The proto emission layer handles these by emitting the appropriate
         /// MIL builder call based on the op_kind string.
@@ -1165,6 +1190,8 @@ pub mod mir_compat {
                 L2Norm,
                 Quantize,
                 Dequantize,
+                AnecFusedConvActivate,
+                AnecScaledElementwise,
                 Unsupported,
             )
         }
@@ -1343,6 +1370,13 @@ pub mod mir_compat {
                 // T-66 (I-40): Quantize / Dequantize ops
                 MirOpCompat::Quantize { x, .. } | MirOpCompat::Dequantize { x, .. } => {
                     vec![x.clone()]
+                }
+                // F-OPS-01: ANEC ops promoted from CPU-only
+                MirOpCompat::AnecFusedConvActivate { x, weight, .. } => {
+                    vec![x.clone(), weight.clone()]
+                }
+                MirOpCompat::AnecScaledElementwise { x, y, .. } => {
+                    vec![x.clone(), y.clone()]
                 }
                 // T-P5-10: Unsupported ops now carry their input references
                 // in the `inputs` field, preventing silent weight materialization gaps.
@@ -1703,6 +1737,35 @@ pub mod mir_compat {
                 }
                 MirOpCompat::Dequantize { name, x, scale, zero_point, axis, output_dtype } => {
                     MirOpCompat::Dequantize { name, x: f(x), scale, zero_point, axis, output_dtype }
+                }
+                // F-OPS-01: ANEC ops promoted from CPU-only
+                MirOpCompat::AnecFusedConvActivate {
+                    name,
+                    x,
+                    weight,
+                    activation,
+                    strides,
+                    pad_amounts,
+                    dilations,
+                    groups,
+                } => MirOpCompat::AnecFusedConvActivate {
+                    name,
+                    x: f(x),
+                    weight: f(weight),
+                    activation,
+                    strides,
+                    pad_amounts,
+                    dilations,
+                    groups,
+                },
+                MirOpCompat::AnecScaledElementwise { name, x, y, scale_a, scale_b } => {
+                    MirOpCompat::AnecScaledElementwise {
+                        name,
+                        x: f(x),
+                        y: f(y),
+                        scale_a,
+                        scale_b,
+                    }
                 }
                 // T-P5-10: Remap input references in Unsupported ops
                 MirOpCompat::Unsupported { op_kind, name, params_json, inputs } => {
@@ -2095,6 +2158,29 @@ pub mod mir_compat {
                         axis,
                         output_dtype,
                     }
+                }
+                // F-OPS-01: ANEC ops promoted from CPU-only
+                MirOpCompat::AnecFusedConvActivate {
+                    name: _,
+                    x,
+                    weight,
+                    activation,
+                    strides,
+                    pad_amounts,
+                    dilations,
+                    groups,
+                } => MirOpCompat::AnecFusedConvActivate {
+                    name: new_name,
+                    x,
+                    weight,
+                    activation,
+                    strides,
+                    pad_amounts,
+                    dilations,
+                    groups,
+                },
+                MirOpCompat::AnecScaledElementwise { name: _, x, y, scale_a, scale_b } => {
+                    MirOpCompat::AnecScaledElementwise { name: new_name, x, y, scale_a, scale_b }
                 }
                 // T-P5-10: preserve inputs when renaming output
                 MirOpCompat::Unsupported { op_kind, name: _, params_json, inputs } => {
@@ -3635,7 +3721,11 @@ pub fn mir_op_to_proto_op(
         | op @ mir_compat::MirOpCompat::InstanceNorm { .. }
         | op @ mir_compat::MirOpCompat::L2Norm { .. }
         | op @ mir_compat::MirOpCompat::Quantize { .. }
-        | op @ mir_compat::MirOpCompat::Dequantize { .. } => {
+        | op @ mir_compat::MirOpCompat::Dequantize { .. }
+        // F-OPS-01: ANEC ops promoted from CPU-only — legacy proto uses
+        // identity pass-through; Apple proto path does actual decomposition.
+        | op @ mir_compat::MirOpCompat::AnecFusedConvActivate { .. }
+        | op @ mir_compat::MirOpCompat::AnecScaledElementwise { .. } => {
             // These ops have proper MirOpCompat representations but the
             // legacy proto format doesn't have dedicated message types.
             // Emit as identity pass-through to preserve graph structure;
@@ -3654,6 +3744,8 @@ pub fn mir_op_to_proto_op(
                 mir_compat::MirOpCompat::L2Norm { .. } => "l2_norm",
                 mir_compat::MirOpCompat::Quantize { .. } => "quantize",
                 mir_compat::MirOpCompat::Dequantize { .. } => "dequantize",
+                mir_compat::MirOpCompat::AnecFusedConvActivate { .. } => "anec_fused_conv_activate",
+                mir_compat::MirOpCompat::AnecScaledElementwise { .. } => "anec_scaled_elementwise",
                 _ => unreachable!(),
             };
             (
@@ -6502,6 +6594,261 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
+        // ─── F-OPS-01: ANEC ops promoted from CPU-only ──────────────
+        // AnecFusedConvActivate: decompose to conv + activation.
+        // Core ML proto doesn't have a fused conv+activate op, so we emit
+        // a conv operation followed by an activation operation.
+        mir_compat::MirOpCompat::AnecFusedConvActivate {
+            name,
+            x,
+            weight,
+            activation,
+            strides,
+            pad_amounts,
+            dilations,
+            groups,
+        } => {
+            let mut ops: Vec<apple_proto::mil_spec::Operation> = Vec::new();
+
+            // Emit preceding const ops for conv parameters
+            let stride_const_name = format!("{name}_stride");
+            let stride_shape: Vec<u64> = vec![strides.len() as u64];
+            let mut stride_attrs = HashMap::new();
+            add_name_attribute(&mut stride_attrs, &stride_const_name);
+            stride_attrs.insert("val".to_string(), make_immediate_int32_value(
+                strides.iter().map(|&d| d as i32).collect(),
+                &stride_shape,
+            ));
+            ops.push(apple_proto::mil_spec::Operation {
+                r#type: "const".to_string(),
+                inputs: HashMap::new(),
+                outputs: vec![make_apple_named_value_type(
+                    &stride_const_name,
+                    apple_proto::mil_spec::DataType::Int32 as i32,
+                    &stride_shape,
+                )],
+                blocks: vec![],
+                attributes: stride_attrs,
+            });
+
+            let pad_const_name = format!("{name}_pad");
+            let pad_shape: Vec<u64> = vec![pad_amounts.len() as u64];
+            let mut pad_attrs = HashMap::new();
+            add_name_attribute(&mut pad_attrs, &pad_const_name);
+            pad_attrs.insert("val".to_string(), make_immediate_int32_value(
+                pad_amounts.iter().map(|&d| d as i32).collect(),
+                &pad_shape,
+            ));
+            ops.push(apple_proto::mil_spec::Operation {
+                r#type: "const".to_string(),
+                inputs: HashMap::new(),
+                outputs: vec![make_apple_named_value_type(
+                    &pad_const_name,
+                    apple_proto::mil_spec::DataType::Int32 as i32,
+                    &pad_shape,
+                )],
+                blocks: vec![],
+                attributes: pad_attrs,
+            });
+
+            let dil_const_name = format!("{name}_dilation");
+            let dil_shape: Vec<u64> = vec![dilations.len() as u64];
+            let mut dil_attrs = HashMap::new();
+            add_name_attribute(&mut dil_attrs, &dil_const_name);
+            dil_attrs.insert("val".to_string(), make_immediate_int32_value(
+                dilations.iter().map(|&d| d as i32).collect(),
+                &dil_shape,
+            ));
+            ops.push(apple_proto::mil_spec::Operation {
+                r#type: "const".to_string(),
+                inputs: HashMap::new(),
+                outputs: vec![make_apple_named_value_type(
+                    &dil_const_name,
+                    apple_proto::mil_spec::DataType::Int32 as i32,
+                    &dil_shape,
+                )],
+                blocks: vec![],
+                attributes: dil_attrs,
+            });
+
+            let groups_const_name = format!("{name}_groups");
+            let mut groups_attrs = HashMap::new();
+            add_name_attribute(&mut groups_attrs, &groups_const_name);
+            groups_attrs.insert("val".to_string(), make_immediate_int32_value(vec![*groups as i32], &[]));
+            ops.push(apple_proto::mil_spec::Operation {
+                r#type: "const".to_string(),
+                inputs: HashMap::new(),
+                outputs: vec![make_apple_named_value_type(
+                    &groups_const_name,
+                    apple_proto::mil_spec::DataType::Int32 as i32,
+                    &[],
+                )],
+                blocks: vec![],
+                attributes: groups_attrs,
+            });
+
+            // Emit the conv operation
+            let conv_output_name = format!("{name}_conv");
+            let mut conv_inputs = HashMap::new();
+            conv_inputs.insert("x".to_string(), make_name_arg(x));
+            conv_inputs.insert("weight".to_string(), make_name_arg(weight));
+            conv_inputs.insert("stride".to_string(), make_name_arg(&stride_const_name));
+            conv_inputs.insert("pad".to_string(), make_name_arg(&pad_const_name));
+            conv_inputs.insert("dilation".to_string(), make_name_arg(&dil_const_name));
+            conv_inputs.insert("groups".to_string(), make_name_arg(&groups_const_name));
+
+            let mut conv_attrs = HashMap::new();
+            add_name_attribute(&mut conv_attrs, &conv_output_name);
+
+            ops.push(apple_proto::mil_spec::Operation {
+                r#type: "conv".to_string(),
+                inputs: conv_inputs,
+                outputs: vec![make_apple_named_value_type(
+                    &conv_output_name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
+                blocks: vec![],
+                attributes: conv_attrs,
+            });
+
+            // Emit the activation operation following the conv
+            // The activation type is determined by the `activation` field
+            let act_type = match activation.as_str() {
+                "relu" => "relu",
+                "sigmoid" => "sigmoid",
+                "tanh" => "tanh",
+                "silu" => "silu",
+                "gelu" => "gelu",
+                "linear" => "identity", // linear activation = no-op
+                other => other, // fallback: use the activation name directly
+            };
+
+            let mut act_inputs = HashMap::new();
+            act_inputs.insert("x".to_string(), make_name_arg(&conv_output_name));
+
+            let mut act_attrs = HashMap::new();
+            add_name_attribute(&mut act_attrs, name);
+
+            ops.push(apple_proto::mil_spec::Operation {
+                r#type: act_type.to_string(),
+                inputs: act_inputs,
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
+                blocks: vec![],
+                attributes: act_attrs,
+            });
+
+            ops
+        }
+
+        // AnecScaledElementwise: decompose to mul(x, scale_a) + mul(y, scale_b).
+        // Core ML proto doesn't have a native scaled elementwise op.
+        mir_compat::MirOpCompat::AnecScaledElementwise {
+            name,
+            x,
+            y,
+            scale_a,
+            scale_b,
+        } => {
+            let mut ops: Vec<apple_proto::mil_spec::Operation> = Vec::new();
+
+            // Emit const for scale_a
+            let scale_a_const_name = format!("{name}_scale_a");
+            let mut scale_a_attrs = HashMap::new();
+            add_name_attribute(&mut scale_a_attrs, &scale_a_const_name);
+            scale_a_attrs.insert("val".to_string(), make_immediate_float32_value(*scale_a));
+            ops.push(apple_proto::mil_spec::Operation {
+                r#type: "const".to_string(),
+                inputs: HashMap::new(),
+                outputs: vec![make_apple_named_value_type(
+                    &scale_a_const_name,
+                    apple_proto::mil_spec::DataType::Float32 as i32,
+                    &[],
+                )],
+                blocks: vec![],
+                attributes: scale_a_attrs,
+            });
+
+            // Emit const for scale_b
+            let scale_b_const_name = format!("{name}_scale_b");
+            let mut scale_b_attrs = HashMap::new();
+            add_name_attribute(&mut scale_b_attrs, &scale_b_const_name);
+            scale_b_attrs.insert("val".to_string(), make_immediate_float32_value(*scale_b));
+            ops.push(apple_proto::mil_spec::Operation {
+                r#type: "const".to_string(),
+                inputs: HashMap::new(),
+                outputs: vec![make_apple_named_value_type(
+                    &scale_b_const_name,
+                    apple_proto::mil_spec::DataType::Float32 as i32,
+                    &[],
+                )],
+                blocks: vec![],
+                attributes: scale_b_attrs,
+            });
+
+            // Emit mul(x, scale_a)
+            let mul_a_output_name = format!("{name}_scaled_x");
+            let mut mul_a_inputs = HashMap::new();
+            mul_a_inputs.insert("x".to_string(), make_name_arg(x));
+            mul_a_inputs.insert("y".to_string(), make_name_arg(&scale_a_const_name));
+            let mut mul_a_attrs = HashMap::new();
+            add_name_attribute(&mut mul_a_attrs, &mul_a_output_name);
+            ops.push(apple_proto::mil_spec::Operation {
+                r#type: "mul".to_string(),
+                inputs: mul_a_inputs,
+                outputs: vec![make_apple_named_value_type(
+                    &mul_a_output_name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
+                blocks: vec![],
+                attributes: mul_a_attrs,
+            });
+
+            // Emit mul(y, scale_b)
+            let mul_b_output_name = format!("{name}_scaled_y");
+            let mut mul_b_inputs = HashMap::new();
+            mul_b_inputs.insert("x".to_string(), make_name_arg(y));
+            mul_b_inputs.insert("y".to_string(), make_name_arg(&scale_b_const_name));
+            let mut mul_b_attrs = HashMap::new();
+            add_name_attribute(&mut mul_b_attrs, &mul_b_output_name);
+            ops.push(apple_proto::mil_spec::Operation {
+                r#type: "mul".to_string(),
+                inputs: mul_b_inputs,
+                outputs: vec![make_apple_named_value_type(
+                    &mul_b_output_name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
+                blocks: vec![],
+                attributes: mul_b_attrs,
+            });
+
+            // Emit add(scaled_x, scaled_y)
+            let mut add_inputs = HashMap::new();
+            add_inputs.insert("x".to_string(), make_name_arg(&mul_a_output_name));
+            add_inputs.insert("y".to_string(), make_name_arg(&mul_b_output_name));
+            let mut add_attrs = HashMap::new();
+            add_name_attribute(&mut add_attrs, name);
+            ops.push(apple_proto::mil_spec::Operation {
+                r#type: "add".to_string(),
+                inputs: add_inputs,
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
+                blocks: vec![],
+                attributes: add_attrs,
+            });
+
+            ops
+        }
+
         // T-66 (I-40): Pooling, spatial rearrangement, normalization, and
         // quantize/dequantize ops — Apple proto path fallback until dedicated
         // emission is implemented.

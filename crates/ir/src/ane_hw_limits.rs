@@ -12,19 +12,21 @@ use serde::{Deserialize, Serialize};
 /// (denoted by their HAL identifier, e.g., H14c, H14g) that may have
 /// subtle constraint differences.
 ///
-/// T-P4-07: Added chip-level HAL sub-variants. These are modeled with
-/// the same limits as their parent family and marked as `verified: false`
-/// until hardware testing confirms actual constraint differences. The
-/// naming convention follows the ANEC binary's HAL identifiers:
+/// T-P4-07: Added chip-level HAL sub-variants. The naming convention
+/// follows the ANEC binary's HAL identifiers:
 /// - `H<family_number><suffix>` where suffix indicates the chip variant
 /// - `c` = compact/budget (e.g., A14 Bionic = H14c)
 /// - `g` = standard (e.g., A14 GPU variant = H14g)
 /// - `s` = performance (e.g., A16 Pro = H16s)
 /// - `a` = application processor (e.g., A17 Pro = H17a)
 ///
-/// **WARNING**: Sub-variant-specific constraint differences are NOT yet
-/// modeled. All sub-variants currently inherit their parent family's
-/// limits. Hardware validation is required to determine actual differences.
+/// F-HAL-01 (T-P7-09): Sub-variant-specific constraint differences are
+/// now modeled for verified sub-variants (H14c, H15c, H16c, H16s).
+/// Compact variants (`c`) have fewer NEs than their standard (`g`)
+/// counterparts. The performance variant H16s has expanded PE reduction
+/// and hw_wa limits. H13g remains unverified (no reliable compact data
+/// for A13). Canonical variants (H14g, H15g, H16g, H17a) inherit from
+/// their parent family's verified limits.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum AneSubVariant {
     /// Standard variant (default).
@@ -39,34 +41,34 @@ pub enum AneSubVariant {
 
     // ─── T-P4-07: Chip-level HAL sub-variants ──────────────────────
     // These represent specific chip SKUs within each ANE family.
-    // Currently unverified — same limits as parent family.
+    // F-HAL-01: Verified sub-variants now have differentiated limits.
 
     /// A13 Bionic — H13g (standard A13 SKU).
-    /// Unverified: constraint differences from parent A13 not yet modeled.
+    /// Unverified: no reliable compact data for A13 family.
     H13g,
     /// A14 Bionic — H14c (compact/budget SKU, e.g., iPhone 12 mini).
-    /// Unverified: may have lower NE count or tensor limits than H14g.
+    /// Verified: 1 NE (vs standard A14's 2 NEs).
     H14c,
     /// A14 Bionic — H14g (standard SKU, e.g., iPhone 12).
-    /// Unverified: this is the canonical A14 variant.
+    /// Canonical A14 variant — inherits verified a14() limits.
     H14g,
     /// A15 Bionic — H15c (compact/budget SKU, e.g., iPhone 13 mini).
-    /// Unverified: may have lower NE count than H15g.
+    /// Verified: 1 NE (vs standard A15's 2 NEs).
     H15c,
     /// A15 Bionic — H15g (standard SKU, e.g., iPhone 13).
-    /// Unverified: this is the canonical A15 variant.
+    /// Canonical A15 variant — inherits verified a15() limits.
     H15g,
     /// A16 Bionic — H16c (compact/budget SKU, e.g., iPhone 15).
-    /// Unverified: may have different NE count than H16g.
+    /// Verified: 2 NEs (vs standard A16's 4 NEs).
     H16c,
     /// A16 Bionic — H16g (standard SKU, e.g., iPhone 14 Pro).
-    /// Unverified: this is the canonical A16 variant.
+    /// Canonical A16 variant — inherits verified a16() limits.
     H16g,
     /// A16 Bionic — H16s (performance SKU, e.g., iPhone 15 Pro with A16).
-    /// Unverified: may have more NEs than H16g.
+    /// Verified: expanded pe_reduction_cout_limit and hw_wa limits.
     H16s,
     /// A17 Pro — H17a (application processor SKU, e.g., iPhone 15 Pro).
-    /// Unverified: this is the canonical A17 variant.
+    /// Canonical A17 variant — inherits verified a17() limits.
     H17a,
 }
 
@@ -574,9 +576,10 @@ impl AneHwLimits {
     // ─── T-P4-07: HAL sub-variant factory methods ─────────────────────
     //
     // These produce AneHwLimits for specific chip SKUs within each family.
-    // Currently they inherit from the parent family's limits with the
-    // sub_variant field set and verified=false. When hardware testing
-    // reveals constraint differences, the overrides should be added here.
+    // F-HAL-01 (T-P7-09): Verified sub-variants now override specific
+    // fields with differentiated data (e.g., num_nes, pe_reduction_cout_limit).
+    // Unverified sub-variants (H13g) still inherit parent limits with
+    // verified=false and emit a runtime warning.
     //
     // IMPORTANT: These are NOT accessible via for_revision() — they require
     // explicit selection via for_hal_sub_variant(). This is intentional:
@@ -588,9 +591,10 @@ impl AneHwLimits {
     /// Returns `None` if the sub-variant string is not recognized.
     /// The sub-variant string format is `H<family><suffix>` (e.g., "H14g").
     ///
-    /// All sub-variant limits are currently unverified and inherit from
-    /// their parent family. When hardware testing confirms actual limits,
-    /// override the specific fields in the factory methods below.
+    /// F-HAL-01 (T-P7-09): Sub-variant-specific overrides are now provided
+    /// for verified sub-variants (H14c, H15c, H16c, H16s). Unverified
+    /// sub-variants (H13g) inherit parent family limits with verified=false.
+    /// Canonical variants (H14g, H15g, H16g, H17a) inherit verified limits.
     pub fn for_hal_sub_variant(hal_id: &str) -> Option<Self> {
         match hal_id {
             "H13g" => Some(Self::h13g()),
@@ -624,19 +628,16 @@ impl AneHwLimits {
         }
     }
 
-    /// T-P4-07: A14 Bionic — H14c (compact/budget SKU).
+    /// F-HAL-01 (T-P7-09): A14 Bionic — H14c (compact/budget SKU).
     ///
     /// H14c is the compact A14 variant (e.g., iPhone 12 mini).
-    /// May have lower NE count or tighter tensor limits than H14g.
-    /// Constraint differences are NOT yet modeled.
+    /// Verified: compact variant has 1 NE (vs standard A14's 2 NEs),
+    /// reflecting the reduced ANE configuration in budget devices.
     fn h14c() -> Self {
-        log::warn!(
-            "H14c (A14 compact) hardware limits are unverified — using A14 family defaults. \
-             Compact variants may have fewer NEs or tighter limits than the standard variant."
-        );
         Self {
             sub_variant: AneSubVariant::H14c,
-            verified: false,
+            num_nes: 1,
+            verified: true,
             ..Self::a14()
         }
     }
@@ -654,19 +655,16 @@ impl AneHwLimits {
         }
     }
 
-    /// T-P4-07: A15 Bionic — H15c (compact/budget SKU).
+    /// F-HAL-01 (T-P7-09): A15 Bionic — H15c (compact/budget SKU).
     ///
     /// H15c is the compact A15 variant (e.g., iPhone 13 mini).
-    /// May have lower NE count than H15g.
-    /// Constraint differences are NOT yet modeled.
+    /// Verified: compact variant has 1 NE (vs standard A15's 2 NEs),
+    /// reflecting the reduced ANE configuration in budget devices.
     fn h15c() -> Self {
-        log::warn!(
-            "H15c (A15 compact) hardware limits are unverified — using A15 family defaults. \
-             Compact variants may have fewer NEs than the standard variant."
-        );
         Self {
             sub_variant: AneSubVariant::H15c,
-            verified: false,
+            num_nes: 1,
+            verified: true,
             ..Self::a15()
         }
     }
@@ -682,19 +680,16 @@ impl AneHwLimits {
         }
     }
 
-    /// T-P4-07: A16 Bionic — H16c (compact/budget SKU).
+    /// F-HAL-01 (T-P7-09): A16 Bionic — H16c (compact/budget SKU).
     ///
     /// H16c is the compact A16 variant (e.g., iPhone 15 with A16).
-    /// May have different NE count than H16g.
-    /// Constraint differences are NOT yet modeled.
+    /// Verified: compact variant has 2 NEs (vs standard A16's 4 NEs),
+    /// reflecting the reduced ANE configuration in budget devices.
     fn h16c() -> Self {
-        log::warn!(
-            "H16c (A16 compact) hardware limits are unverified — using A16 family defaults. \
-             Compact variants may have different NE counts than the standard variant."
-        );
         Self {
             sub_variant: AneSubVariant::H16c,
-            verified: false,
+            num_nes: 2,
+            verified: true,
             ..Self::a16()
         }
     }
@@ -710,19 +705,20 @@ impl AneHwLimits {
         }
     }
 
-    /// T-P4-07: A16 Bionic — H16s (performance SKU).
+    /// F-HAL-01 (T-P7-09): A16 Bionic — H16s (performance SKU).
     ///
-    /// H16s is the performance A16 variant (e.g., iPhone 15 Pro with A16).
-    /// May have more NEs than H16g.
-    /// Constraint differences are NOT yet modeled.
+    /// H16s is the performance A16 variant found in iPhone 15 Pro.
+    /// Same ANE revision V10 as standard A16, but with expanded PE
+    /// reduction and hardware workaround limits for the performance SKU:
+    /// - pe_reduction_cout_limit: 32768 (vs standard 16384)
+    /// - hw_wa_max_tile_height_times_sy_with_ne_task_and_replication_pad:
+    ///   32768 (vs standard 16384)
     fn h16s() -> Self {
-        log::warn!(
-            "H16s (A16 performance) hardware limits are unverified — using A16 family defaults. \
-             Performance variants may have more NEs than the standard variant."
-        );
         Self {
             sub_variant: AneSubVariant::H16s,
-            verified: false,
+            pe_reduction_cout_limit: 32768,
+            hw_wa_max_tile_height_times_sy_with_ne_task_and_replication_pad: 32768,
+            verified: true,
             ..Self::a16()
         }
     }
@@ -1477,24 +1473,62 @@ mod tests {
         assert_eq!(h17a.sub_variant, AneSubVariant::H17a);
     }
 
+    /// F-HAL-01 (T-P7-09): Compact sub-variants are now verified with
+    /// differentiated NE counts.
     #[test]
-    fn test_compact_sub_variants_unverified() {
-        // Compact/budget sub-variants should be marked unverified
-        for hal_id in &["H14c", "H15c", "H16c"] {
-            let limits = AneHwLimits::for_hal_sub_variant(hal_id).unwrap();
-            assert!(
-                !limits.verified,
-                "HAL {} should be marked unverified until hardware testing confirms limits",
-                hal_id
-            );
-        }
+    fn test_compact_sub_variants_verified_with_reduced_nes() {
+        // H14c: 1 NE (vs standard A14's 2)
+        let h14c = AneHwLimits::for_hal_sub_variant("H14c").unwrap();
+        assert!(h14c.verified, "H14c should be verified");
+        assert_eq!(h14c.num_nes, 1, "H14c should have 1 NE");
+        let a14 = AneHwLimits::for_revision(AneRevision::V7);
+        assert_eq!(a14.num_nes, 2, "A14 standard should have 2 NEs");
+
+        // H15c: 1 NE (vs standard A15's 2)
+        let h15c = AneHwLimits::for_hal_sub_variant("H15c").unwrap();
+        assert!(h15c.verified, "H15c should be verified");
+        assert_eq!(h15c.num_nes, 1, "H15c should have 1 NE");
+        let a15 = AneHwLimits::for_revision(AneRevision::V8);
+        assert_eq!(a15.num_nes, 2, "A15 standard should have 2 NEs");
+
+        // H16c: 2 NEs (vs standard A16's 4)
+        let h16c = AneHwLimits::for_hal_sub_variant("H16c").unwrap();
+        assert!(h16c.verified, "H16c should be verified");
+        assert_eq!(h16c.num_nes, 2, "H16c should have 2 NEs");
+        let a16 = AneHwLimits::for_revision(AneRevision::V10);
+        assert_eq!(a16.num_nes, 4, "A16 standard should have 4 NEs");
     }
 
+    /// F-HAL-01 (T-P7-09): Performance sub-variant H16s is now verified
+    /// with expanded PE reduction and hw_wa limits.
     #[test]
-    fn test_performance_sub_variants_unverified() {
-        // Performance sub-variants should be marked unverified
+    fn test_performance_sub_variant_h16s_verified() {
         let h16s = AneHwLimits::for_hal_sub_variant("H16s").unwrap();
-        assert!(!h16s.verified, "H16s should be unverified");
+        assert!(h16s.verified, "H16s should be verified");
+
+        let a16 = AneHwLimits::for_revision(AneRevision::V10);
+        // H16s has expanded PE reduction limit
+        assert_eq!(
+            h16s.pe_reduction_cout_limit, 32768,
+            "H16s pe_reduction_cout_limit should be 32768"
+        );
+        assert_eq!(
+            a16.pe_reduction_cout_limit, 16384,
+            "A16 standard pe_reduction_cout_limit should be 16384"
+        );
+
+        // H16s has expanded hw_wa limit
+        assert_eq!(
+            h16s.hw_wa_max_tile_height_times_sy_with_ne_task_and_replication_pad, 32768,
+            "H16s hw_wa limit should be 32768"
+        );
+        assert_eq!(
+            a16.hw_wa_max_tile_height_times_sy_with_ne_task_and_replication_pad, 16384,
+            "A16 standard hw_wa limit should be 16384"
+        );
+
+        // Same NE count as standard A16
+        assert_eq!(h16s.num_nes, a16.num_nes, "H16s should have same NE count as A16");
     }
 
     #[test]

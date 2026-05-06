@@ -1115,11 +1115,17 @@ pub enum MirOp {
     // They are not exposed as MIL builder calls and are used for
     // internal tracking and debugging only.
     /// ANEC-internal: fused conv+activation operation.
+    /// F-OPS-01: Promoted from CPU-only stub — now carries conv parameters
+    /// for MIR-to-proto emission (decomposed to conv + activation in proto).
     AnecFusedConvActivate {
         name: String,
         x: MirNodeId,
         weight: MirNodeId,
         activation: String,
+        strides: Vec<usize>,
+        pad_amounts: Vec<usize>,
+        dilations: Vec<usize>,
+        groups: usize,
     },
     /// ANEC-internal: fused linear+activation operation.
     AnecFusedLinearActivate {
@@ -1138,9 +1144,15 @@ pub enum MirOp {
         x: MirNodeId,
     },
     /// ANEC-internal: scaled elementwise operation.
+    /// F-OPS-01: Promoted from CPU-only stub — now carries per-operand
+    /// scaling factors for MIR-to-proto emission (decomposed to
+    /// mul(x, scale_a) + mul(y, scale_b) in proto).
     AnecScaledElementwise {
         name: String,
         x: MirNodeId,
+        y: MirNodeId,
+        scale_a: f32,
+        scale_b: f32,
     },
     /// ANEC-internal: global arg min/max operation.
     AnecGlobalArgMinMax {
@@ -1228,6 +1240,11 @@ impl MirOp {
             | MirOp::MILConv { .. }
             | MirOp::MILConvTranspose { .. }
             | MirOp::MILScaledDotProductAttention { .. }
+            // ─── F-OPS-01: ANEC ops promoted from CPU-only ───────────
+            // AnecFusedConvActivate: decomposed to conv + activation in proto
+            | MirOp::AnecFusedConvActivate { .. }
+            // AnecScaledElementwise: decomposed to scaled mul + add in proto
+            | MirOp::AnecScaledElementwise { .. }
             | MirOp::MILMaxPool { .. }
             | MirOp::MILAvgPool { .. }
             | MirOp::MILL2Pool { .. }
@@ -1476,11 +1493,9 @@ impl MirOp {
             // "negative" instead of "neg" (I-42).
             | MirOp::MILNeg { .. }
             // ─── T-P4-08: ANEC internal ops (CPU-only stubs) ──────
-            | MirOp::AnecFusedConvActivate { .. }
             | MirOp::AnecFusedLinearActivate { .. }
             // ─── T-P4-08: Unmapped ANEC operation stubs (CPU-only) ──
             | MirOp::AnecBroadcast { .. }
-            | MirOp::AnecScaledElementwise { .. }
             | MirOp::AnecGlobalArgMinMax { .. }
             | MirOp::AnecDegamma { .. }
             | MirOp::AnecDirac { .. }
@@ -2287,7 +2302,7 @@ impl ToProto for MirOp {
             MirOp::AnecFusedLinearActivate { x, weight, .. } => vec![x.0.clone(), weight.clone()],
             // ─── T-P4-08: Unmapped ANEC operation stubs ──────────────
             MirOp::AnecBroadcast { x, .. } => vec![x.0.clone()],
-            MirOp::AnecScaledElementwise { x, .. } => vec![x.0.clone()],
+            MirOp::AnecScaledElementwise { x, y, .. } => vec![x.0.clone(), y.0.clone()],
             MirOp::AnecGlobalArgMinMax { x, .. } => vec![x.0.clone()],
             MirOp::AnecDegamma { x, .. } => vec![x.0.clone()],
             MirOp::AnecDirac { x, .. } => vec![x.0.clone()],
@@ -2732,7 +2747,7 @@ impl MirOp {
             MirOp::AnecFusedLinearActivate { x, .. } => vec![x],
             // ─── T-P4-08: Unmapped ANEC operation stubs ──────────────
             MirOp::AnecBroadcast { x, .. } => vec![x],
-            MirOp::AnecScaledElementwise { x, .. } => vec![x],
+            MirOp::AnecScaledElementwise { x, y, .. } => vec![x, y],
             MirOp::AnecGlobalArgMinMax { x, .. } => vec![x],
             MirOp::AnecDegamma { x, .. } => vec![x],
             MirOp::AnecDirac { x, .. } => vec![x],

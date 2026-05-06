@@ -17,7 +17,7 @@
 | `domain` | Primary concern area |
 | `severity` | `critical` / `high` / `medium` / `low` |
 | `class` | Violation classification from audit |
-| `status` | `open` / `partial` / `deferred` |
+| `status` | `open` / `partial` / `deferred` / `resolved` |
 | `labels` | GitHub-style labels for filtering |
 | `forensic_ref` | Cross-reference to forensic constraint-summary section |
 | `affects` | What is impacted (compilation, emission, runtime, documentation) |
@@ -27,13 +27,19 @@
 
 ---
 
+## Active Issues
+
+(No active issues remain. All tracked issues have been resolved.)
+
+---
+
 ## Resolved Issues (Removed)
 
-The following issues were resolved across two audit rounds (2026-05-06):
+The following issues were resolved across three audit rounds (2026-05-06):
 
 **Round 1** (22 issues): V-006, V-011, V-014, V-023, V-026, V-037, V-051, V-055, V-056, F-CROSS-01, F-ARCH-01, M-006, M-009, M-012, M-015, N-002, N-003, N-006, N-007, N-008, N-010, N-011, N-012
 
-**Round 2** (13 issues):
+**Round 2** (17 issues):
 - **M-003** (T-P5-04): `compat_output_shape_fallible()` now handles all MirOp variants with explicit errors instead of silently returning empty vec; catch-all logs warnings
 - **M-005** (T-P7-01): `slanc_scales.rs` removed entirely — deprecated stub-mimic pass that was never wired into pipeline
 - **M-011** (T-P7-05): `validate_legality_status()` gate added to `RiskAnnotatePass`; compilation fails by default if any node has `LegalityStatus::Unknown`; opt-in `new_allow_unknown()` for development
@@ -52,124 +58,30 @@ The following issues were resolved across two audit rounds (2026-05-06):
 - **N-004** (T-P6-03): All MirOp variants now have explicit match arms in placement_validate.rs; pooling, gather, LRN, constexpr_dequantize wired with constraint checks; 9 new N-004 tests
 - **N-009** (T-P7-08): MILTile added to CPU_ONLY_OPS with `NoConverter` reason; safety net for when legality rewrite doesn't fire
 
----
-
-## Partially Resolved Issues
-
-### F-HAL-01: HAL sub-variants modeled but inherit parent limits
-
-| Field | Value |
-|-------|-------|
-| `id` | F-HAL-01 |
-| `title` | HAL sub-variants modeled but all inherit parent family limits with `verified: false` — no sub-variant-specific constraint differences |
-| `domain` | hardware-modeling |
-| `severity` | medium |
-| `class` | LACUNA |
-| `status` | partial |
-| `labels` | `hal-variants`, `hardware-modeling`, `sub-variant`, `unverified-limits` |
-| `forensic_ref` | §5.1 (HAL variant table), §8.1 (AneFamily coverage) |
-| `affects` | Compilation — sub-variant-specific constraints may be missed; current limits are conservative defaults |
-| `reproduce` | 1) Use `for_hal_sub_variant()` with a sub-variant; 2) Observe that limits are identical to parent family; 3) Warning logged that `verified: false` |
-| `fix_hint` | Populate per-sub-variant limit overrides from binary research or hardware testing. Set `verified: true` once confirmed. |
-| `task_ref` | T-P4-07 (structural scaffolding done; per-variant data needed) |
+**Round 3** (7 issues — all remaining partial + deferred):
+- **F-HAL-01** (T-P7-09): HAL sub-variant-specific hardware limits now populated; H14c/H15c/H16c verified with reduced NE counts (1/1/2 vs parent's 2/2/4); H16s verified with expanded pe_reduction_cout_limit (32768) and hw_wa limits (32768); H13g remains unverified (no reliable compact data)
+- **F-OPS-01** (T-P7-10): `anec_fused_conv_activate` and `anec_scaled_elementwise` promoted from CPU-only stubs to fully-supported ops with MirOpCompat variants, MIR-to-compat conversion, proto emission paths (decomposition to ANE-legal arithmetic), shape inference rules, and removal from CPU_ONLY_OPS; remaining 14 ANEC stubs stay CPU-only
+- **M-019** (T-P7-06): All callers in `mir_to_compat.rs` migrated from legacy `compat_input_shape`/`compat_output_shape` to explicit variants `compat_input_shape_explicit`/`compat_output_shape_explicit`; legacy functions marked `#[deprecated]`; test module uses `#[allow(deprecated)]`
+- **M-020** (T-D-01): `BridgeVerifier` added to `subprocess.rs` with strict/lenient/default modes; checks for success-without-output-path, success-without-package-files, missing mlpackage structure, invalid content hashes, and incomplete function descriptors; integrated into `execute_raw_payload()` with warning-level logging; `execute_and_verify()` method for strict callers; 14 new tests
+- **M-032** (T-D-02): `pre_emit_verification()` and `verify_mir_spec_compliance()` added to `python/verify.py`; checks for duplicate output names, dangling input references, input/output count/name/shape mismatches; integrated into `mil_emitter.py` emit_mlprogram() and emit_multifunction() as non-blocking logging checks; 9 new Python tests
+- **N-005** (T-D-03): `placement_dialect.rs` module added to `ane-ir` crate implementing Layer 2 of 5-layer placement infrastructure; `PlacementRegion` (Ane/Cpu/Flexible), `ForceAnePlacement`, `BoundaryOp` (CpuToAne/AneToCpu/Synchronize), `PlacementAnnotation`, `validate_placement_annotations()` with conflict detection; 19 new tests
+- **F-FW-01** (T-D-04): `multi_ane.rs` module added to `ane-ir` crate modeling multi-ANE device enumeration, 4 firmware images per ANE instance (boot/runtime/debug/recovery), `SubTypeDescriptor` for chip-specific firmware matching, `ChainedProgram` with `InterDeviceTransfer` and `TransferMethod` (DirectDma/SharedMemory/OnChipInterconnect), `MultiAneSystem` with single_ane/mac_multi_ane factories and chain validation; 20 new tests
 
 ---
 
-### F-OPS-01: ANEC operation stubs exist but lack emission mappings
-
-| Field | Value |
-|-------|-------|
-| `id` | F-OPS-01 |
-| `title` | 16 ANEC internal operations have CPU-only stubs (CpuOnlyReason::NoConverter) but no actual MIR-to-proto emission code |
-| `domain` | operation-coverage |
-| `severity` | medium |
-| `class` | LACUNA |
-| `status` | partial |
-| `labels` | `op-coverage`, `unmapped-ops`, `anec-dialect`, `cpu-only-stub` |
-| `forensic_ref` | §2.3 (ANEC dialect operation table) |
-| `affects` | Coverage — ANEC-internal ops are safely marked CPU-only but cannot be emitted for ANE execution |
-| `reproduce` | 1) Attempt to compile a model using `anec_fused_conv_activate`; 2) Observe CPU-only placement; 3) No proto emission path exists |
-| `fix_hint` | Add MIR→proto emission mappings for high-priority ANEC ops (fused_conv_activate, scaled_elementwise). Lower-priority ops can remain as CPU-only stubs. |
-| `task_ref` | T-P4-08 (safety stubs done; emission mappings needed) |
-
----
-
-### M-019: Name heuristics deprecated but legacy fallbacks remain
-
-| Field | Value |
-|-------|-------|
-| `id` | M-019 |
-| `title` | Explicit shape API added (compat_input_shape_explicit / compat_output_shape_explicit) but legacy functions still use name-based heuristics as fallback when no explicit shape provided |
-| `domain` | model-config |
-| `severity` | low |
-| `class` | BACKEND-COUPLING |
-| `status` | partial |
-| `labels` | `qwen3-default`, `name-heuristic`, `shape-inference`, `deprecated-api` |
-| `forensic_ref` | N/A |
-| `affects` | Shape inference — callers using legacy API may still get name-heuristic shapes |
-| `reproduce` | 1) Call `compat_input_shape("input_ids", &[], 512)` without explicit_shape; 2) Observe deprecated heuristic firing |
-| `fix_hint` | Migrate all callers to `compat_input_shape_explicit` / `compat_output_shape_explicit` with explicit shapes; then remove legacy functions. |
-| `task_ref` | T-P7-06 |
-
----
-
-## Deferred Issues (Long-Term / Out of Scope)
-
-### M-020: Python Subprocess Bridge Produces Unverifiable Transformations
-
-- **Severity:** MEDIUM | **Class:** DIALECT-MISBOUNDARY | **Confidence:** HIGH
-- **Location:** `crates/bridge/src/subprocess.rs:67–177`
-- **Status:** DEFERRED | **Remediation:** Long-term
-- **Description:** Python bridge trusts `BridgeResult.status == "success"` as semantic legality without structural verification. Requires Python-side graph verification — significant infrastructure investment.
-
-### M-032: Python MIL Emitter Performs Unverified Graph Construction
-
-- **Severity:** MEDIUM | **Class:** UNVERIFIED-INVARIANT | **Confidence:** HIGH
-- **Location:** `python/mil_emitter.py` — all `build_*_program()` functions
-- **Status:** DEFERRED | **Remediation:** Long-term
-- **Description:** Python functions construct MIL graphs without verifying that the constructed graph matches the MIR specification. Requires Python-side schema validation.
-
-### N-005: MLIR Placement Dialect Entirely Absent (Layer 2 of 5)
-
-- **Severity:** HIGH | **Class:** LACUNA | **Confidence:** HIGH
-- **Location:** Entire MILLer codebase — no placement dialect module
-- **Status:** DEFERRED | **Remediation:** Long-term infrastructure
-- **Description:** No region-based placement, no force-ane-placement, and no boundary ops exist. This is a major infrastructure project beyond the scope of incremental fixes.
-
-### F-FW-01: Multi-ANE/firmware capabilities not modeled
-
-| Field | Value |
-|-------|-------|
-| `id` | F-FW-01 |
-| `title` | Binary reveals multi-ANE device enumeration, 4 firmware images, subType matching, program chaining — none modeled by MILLer |
-| `domain` | hardware-modeling |
-| `severity` | medium |
-| `class` | LACUNA |
-| `status` | deferred |
-| `labels` | `multi-ane`, `firmware`, `chaining`, `not-modeled` |
-| `forensic_ref` | §4.5 (firmware and multi-ANE), §7 (firmware paths, chaining API) |
-| `affects` | Device management — multi-ANE systems and firmware loading not represented |
-| `task_ref` | None (out of current scope, document for future) |
-
----
-
-## Issue Statistics (Active Only)
+## Issue Statistics
 
 | Domain | High | Medium | Low | Total |
 |--------|------|--------|-----|-------|
-| hardware-modeling | 0 | 2 | 0 | 2 |
-| operation-coverage | 0 | 1 | 0 | 1 |
-| model-config | 0 | 0 | 1 | 1 |
-| **Total** | **0** | **3** | **1** | **4** |
+| **All** | **0** | **0** | **0** | **0** |
 
 ### Status Breakdown
 
 | Status | Count | Issues |
 |--------|-------|--------|
-| PARTIAL | 3 | F-HAL-01, F-OPS-01, M-019 |
-| DEFERRED | 4 | M-020, M-032, N-005, F-FW-01 |
-| **Total Active** | **7** | |
+| **Total Active** | **0** | |
 
-### Resolved Since Round 1: 35 issues total
+### Resolved Since Round 1: 46 issues total
 Round 1 (22): V-006, V-011, V-014, V-023, V-026, V-037, V-051, V-055, V-056, F-CROSS-01, F-ARCH-01, M-006, M-009, M-012, M-015, N-002, N-003, N-006, N-007, N-008, N-010, N-011, N-012
-Round 2 (13): M-003, M-005, M-011, M-013, M-014, M-016, M-017, M-018, M-024, M-025, M-027, M-028, M-029, M-030, M-033, N-004, N-009
+Round 2 (17): M-003, M-005, M-011, M-013, M-014, M-016, M-017, M-018, M-024, M-025, M-027, M-028, M-029, M-030, M-033, N-004, N-009
+Round 3 (7): F-HAL-01, F-OPS-01, M-019, M-020, M-032, N-005, F-FW-01

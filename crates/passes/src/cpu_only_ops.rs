@@ -289,12 +289,16 @@ pub static CPU_ONLY_OPS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "l2_norm",
         "quantize",
         "dequantize",
+        // F-OPS-01: Removed "anec_fused_conv_activate" and "anec_scaled_elementwise"
+        // — these are now promoted from CPU-only stubs to proper MirOpCompat variants
+        // with MIR-to-proto emission code.
     ];
     ops.iter().copied().collect()
 });
 
 /// Detailed CPU-only op catalog with reason codes.
-/// T-128: Expanded to cover ALL ops in CPU_ONLY_OPS (154 entries).
+/// T-128: Expanded to cover ALL ops in CPU_ONLY_OPS (152 entries, reduced from 154
+/// after F-OPS-01 promotion of anec_fused_conv_activate and anec_scaled_elementwise).
 pub static CPU_ONLY_OPS_DETAILED: LazyLock<Vec<CpuOnlyOp>> = LazyLock::new(|| {
     vec![
         // ─── Trigonometric inverses ────────────────────────────────
@@ -468,12 +472,12 @@ pub static CPU_ONLY_OPS_DETAILED: LazyLock<Vec<CpuOnlyOp>> = LazyLock::new(|| {
         CpuOnlyOp { mil_name: "prune", reason: CpuOnlyReason::NoConverter },
         CpuOnlyOp { mil_name: "pruning_metric", reason: CpuOnlyReason::NoConverter },
         CpuOnlyOp { mil_name: "pruning_structure", reason: CpuOnlyReason::NoConverter },
-        // ─── T-P4-08: ANEC internal ops (CPU-only stubs) ────────────
-        CpuOnlyOp { mil_name: "anec_fused_conv_activate", reason: CpuOnlyReason::NoConverter },
+        // ─── T-P4-08: ANEC internal ops
+        // F-OPS-01: anec_fused_conv_activate REMOVED — now has MIR-to-proto emission
         CpuOnlyOp { mil_name: "anec_fused_linear_activate", reason: CpuOnlyReason::NoConverter },
         // ─── T-P4-08: Unmapped ANEC operation stubs (CPU-only) ──────
         CpuOnlyOp { mil_name: "anec_broadcast", reason: CpuOnlyReason::NoConverter },
-        CpuOnlyOp { mil_name: "anec_scaled_elementwise", reason: CpuOnlyReason::NoConverter },
+        // F-OPS-01: anec_scaled_elementwise REMOVED — now has MIR-to-proto emission
         CpuOnlyOp { mil_name: "anec_global_arg_min_max", reason: CpuOnlyReason::NoConverter },
         CpuOnlyOp { mil_name: "anec_degamma", reason: CpuOnlyReason::NoConverter },
         CpuOnlyOp { mil_name: "anec_dirac", reason: CpuOnlyReason::NoConverter },
@@ -737,10 +741,12 @@ mod tests {
     #[test]
     fn test_cpu_only_set_size() {
         // T-128: After expanding DETAILED and verifying no duplicates,
-        // CPU_ONLY_OPS has exactly 154 unique entries.
+        // CPU_ONLY_OPS has exactly 152 unique entries (reduced from 154
+        // after F-OPS-01 promotion of anec_fused_conv_activate and
+        // anec_scaled_elementwise).
         assert!(
-            CPU_ONLY_OPS.len() >= 154,
-            "CPU_ONLY_OPS has {} entries, expected >= 154",
+            CPU_ONLY_OPS.len() >= 152,
+            "CPU_ONLY_OPS has {} entries, expected >= 152",
             CPU_ONLY_OPS.len()
         );
     }

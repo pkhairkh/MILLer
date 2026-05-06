@@ -43,7 +43,7 @@ use ane_ir::toproto::ToProto;
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 
-use crate::shape_inference::{compat_input_dtype, compat_input_shape, compat_output_shape};
+use crate::shape_inference::{compat_input_dtype, compat_input_shape_explicit, compat_output_shape_explicit};
 
 /// Resolver for weight data referenced by `MILConst.value_path`.
 ///
@@ -327,7 +327,7 @@ pub fn mir_graph_to_compat_with_arch(
             match node_map.get(id.0.as_str()) {
                 Some(node) => Ok(TensorDescCompat {
                     name: node.id.0.clone(),
-                    shape: compat_input_shape(&node.id.0, &node.shape, max_seq_len),
+                    shape: compat_input_shape_explicit(&node.id.0, &node.shape, max_seq_len, None),
                     dtype: compat_input_dtype(&node.id.0, &node.dtype),
                 }),
                 None => {
@@ -382,7 +382,7 @@ pub fn mir_graph_to_compat_with_arch(
     // Seed with graph input shapes
     for id in &graph.inputs {
         if let Some(node) = node_map.get(id.0.as_str()) {
-            let shape = compat_input_shape(&node.id.0, &node.shape, max_seq_len);
+            let shape = compat_input_shape_explicit(&node.id.0, &node.shape, max_seq_len, None);
             if !shape.is_empty() {
                 node_shapes.insert(node.id.0.clone(), shape);
             }
@@ -434,7 +434,7 @@ pub fn mir_graph_to_compat_with_arch(
         }
         // Fall back to the static compat_output_shape for this op
         let shape =
-            compat_output_shape(&node.id.0, &node.op, &node.shape, &node_shapes, max_seq_len);
+            compat_output_shape_explicit(&node.id.0, &node.op, &node.shape, &node_shapes, max_seq_len, None);
         if !shape.is_empty() {
             node_shapes.insert(node.id.0.clone(), shape);
         }
@@ -452,7 +452,7 @@ pub fn mir_graph_to_compat_with_arch(
                     shape: node_shapes
                         .get(&node.id.0)
                         .cloned()
-                        .unwrap_or_else(|| compat_output_shape(&node.id.0, &node.op, &node.shape, &node_shapes, max_seq_len)),
+                        .unwrap_or_else(|| compat_output_shape_explicit(&node.id.0, &node.op, &node.shape, &node_shapes, max_seq_len, None)),
                     dtype: mil_dtype_to_compat(&node.dtype),
                 }),
                 None => {
@@ -491,8 +491,8 @@ fn compat_input_names(op: &MirOpCompat) -> Vec<String> {
 }
 
 // Shape inference functions have been moved to crate::shape_inference.
-// Use `crate::shape_inference::compat_output_shape`,
-// `crate::shape_inference::compat_input_shape`, and
+// Use `crate::shape_inference::compat_output_shape_explicit`,
+// `crate::shape_inference::compat_input_shape_explicit`, and
 // `crate::shape_inference::compat_input_dtype` instead.
 
 /// Build a map of SIR alias names to their resolved MIR node IDs.
@@ -1602,6 +1602,36 @@ pub fn mir_op_to_compat_with_quant(
                 zero_point: *zero_point,
                 axis: *axis as i64,
                 output_dtype: mil_dtype_to_compat(output_dtype),
+            })
+        }
+
+        // ─── F-OPS-01: ANEC ops promoted from CPU-only ────────────────
+        MirOp::AnecFusedConvActivate {
+            name,
+            x,
+            weight,
+            activation,
+            strides,
+            pad_amounts,
+            dilations,
+            groups,
+        } => Ok(MirOpCompat::AnecFusedConvActivate {
+            name: name.clone(),
+            x: x.0.clone(),
+            weight: weight.0.clone(),
+            activation: activation.clone(),
+            strides: strides.iter().map(|&d| d as i32).collect(),
+            pad_amounts: pad_amounts.iter().map(|&d| d as i32).collect(),
+            dilations: dilations.iter().map(|&d| d as i32).collect(),
+            groups: *groups as i64,
+        }),
+        MirOp::AnecScaledElementwise { name, x, y, scale_a, scale_b } => {
+            Ok(MirOpCompat::AnecScaledElementwise {
+                name: name.clone(),
+                x: x.0.clone(),
+                y: y.0.clone(),
+                scale_a: *scale_a,
+                scale_b: *scale_b,
             })
         }
 
