@@ -144,12 +144,26 @@ impl KnowledgeStore {
     /// Open or create a knowledge store at the given path.
     ///
     /// If the directory exists and contains a store_index.json, loads existing data.
-    /// If not, creates a new empty store.
+    /// If the directory exists but has no store_index.json (e.g., a seed-only
+    /// knowledge directory), creates a new store alongside the existing files.
+    /// If the directory doesn't exist, creates a new empty store.
     pub fn open(path: &str) -> Result<Self> {
         let store_path = PathBuf::from(path);
 
         if store_path.exists() {
-            Self::load_existing(&store_path)
+            let index_path = store_path.join("store_index.json");
+            if index_path.exists() {
+                Self::load_existing(&store_path)
+            } else {
+                // Directory exists (e.g., seed knowledge dir) but has no
+                // store_index.json — initialize a new store in it.
+                log::warn!(
+                    "Knowledge directory {} exists but has no store_index.json — \
+                     initializing new store alongside existing files",
+                    store_path.display()
+                );
+                Self::create_new(&store_path)
+            }
         } else {
             Self::create_new(&store_path)
         }

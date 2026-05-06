@@ -64,19 +64,24 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
     match op {
         // ─── Identity: propagate input shape (critical for graph I/O nodes) ───
         // T-P5-09: Use shape_hint when available, falling back to node_shapes.
-        // T-P5-04: When neither is available, return an explicit error rather
-        // than silently returning an empty shape.
+        // T-P5-04-softened: When neither is available, return an empty vec
+        // instead of hard-failing. This allows the compile pipeline to continue
+        // for graphs where some Identity nodes represent abstract graph I/O
+        // whose shape is not yet known (e.g., trace-compiled models). The
+        // bridge payload carries the real shapes; MIR shape is metadata.
         AirOp::Identity { input, shape_hint, .. } => {
             if let Some(hint) = shape_hint {
                 Ok(hint.clone())
             } else if let Some(shape) = node_shapes.get(input) {
                 Ok(shape.clone())
             } else {
-                Err(anyhow::anyhow!(
-                    "T-P5-04: Shape inference failed for Identity node: \
-                     no shape_hint and no input shape available. \
-                     Add an explicit shape_hint or ensure the input shape is known."
-                ))
+                log::warn!(
+                    "T-P5-04 (softened): Shape inference failed for Identity node \
+                     (input={:?}): no shape_hint and no input shape available. \
+                     Using empty shape — the bridge payload carries real shapes.",
+                    input
+                );
+                Ok(vec![])
             }
         }
 

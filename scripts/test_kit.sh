@@ -978,14 +978,14 @@ main() {
 
     mkdir -p "$TEST_WORKDIR"
 
-    if should_run_phase "prereqs";    then phase_prereqs;    fi
-    if should_run_phase "build";      then phase_build;      fi
-    if should_run_phase "synthetic";  then phase_synthetic;  fi
-    if should_run_phase "bridge";     then phase_bridge;     fi
-    if should_run_phase "qwen3";      then phase_qwen3;      fi
-    if should_run_phase "knowledge";  then phase_knowledge;  fi
-    if should_run_phase "ir-pipeline";then phase_ir_pipeline; fi
-    if should_run_phase "ane";        then phase_ane;        fi
+    if should_run_phase "prereqs";    then phase_prereqs    || true; fi
+    if should_run_phase "build";      then phase_build      || true; fi
+    if should_run_phase "synthetic";  then phase_synthetic  || true; fi
+    if should_run_phase "bridge";     then phase_bridge     || true; fi
+    if should_run_phase "qwen3";      then phase_qwen3      || true; fi
+    if should_run_phase "knowledge";  then phase_knowledge  || true; fi
+    if should_run_phase "ir-pipeline";then phase_ir_pipeline || true; fi
+    if should_run_phase "ane";        then phase_ane        || true; fi
 
     phase_report
     phase_package

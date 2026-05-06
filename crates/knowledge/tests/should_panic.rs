@@ -113,16 +113,19 @@ fn test_ingest_zero_evidence_count_panics() {
 }
 
 #[test]
-#[should_panic(expected = "Store directory exists but has no store_index.json")]
-fn test_open_corrupted_store_panics() {
+fn test_open_dir_without_store_index_initializes_new() {
     let tmp = tempfile::tempdir().unwrap();
-    let store_path = tmp.path().join("corrupted_store");
+    let store_path = tmp.path().join("seed_only_dir");
 
-    // Create directory but no store_index.json
+    // Create directory but no store_index.json (mimics the project's
+    // knowledge/ directory which contains only seed JSON files).
     std::fs::create_dir_all(&store_path).unwrap();
 
-    // This should fail with an error about missing store_index.json
-    KnowledgeStore::open(&store_path.to_string_lossy()).unwrap();
+    // This should now succeed by initializing a new store in the
+    // existing directory instead of panicking.
+    let store = KnowledgeStore::open(&store_path.to_string_lossy()).unwrap();
+    assert!(store_path.join("store_index.json").exists(),
+        "Opening an existing dir without store_index.json should create one");
 }
 
 // ─── Additional should_panic tests (T-18) ─────────────────────────
