@@ -556,7 +556,7 @@ pub fn is_cpu_only(mil_op_name: &str) -> bool {
 /// The string-based `is_cpu_only()` is kept for backward compatibility
 /// and for cases where only the op name is available (e.g., from JSON).
 pub fn is_cpu_only_unified(op: &ane_ir::mir::MirOp) -> bool {
-    op.default_engine().is_none()
+    op.default_engine_for_revision(None).is_none()
 }
 
 /// Get the reason an op is CPU-only, if it is.
@@ -576,8 +576,6 @@ pub fn get_cpu_only_reason(mil_op_name: &str) -> Option<&CpuOnlyReason> {
 #[cfg(test)]
 mod unified_check {
     use super::*;
-    use ane_ir::mir::MirOp;
-
     /// Ops that are in CPU_ONLY_OPS but still have default_engine() != None.
     /// These are intentionally kept in CPU_ONLY_OPS as a defensive measure
     /// (e.g., ops that have an engine assignment but lack an ANEC converter
@@ -589,7 +587,7 @@ mod unified_check {
     /// T-P2-12: Each entry must satisfy BOTH conditions:
     ///   1. It is in CPU_ONLY_OPS (the string-based set)
     ///   2. It has default_engine() != None (confirmed by MirOp)
-    /// If either condition is not met, the entry is stale and should be removed.
+    ///      If either condition is not met, the entry is stale and should be removed.
     const ALLOWED_DIVERGENCES: &[&str] = &[
         // These ops have Some(AneEngine::NE) or Some(AneEngine::PE) in
         // default_engine() but are in CPU_ONLY_OPS because they lack

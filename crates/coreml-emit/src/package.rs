@@ -368,7 +368,7 @@ mod tests {
         // Verify weight.bin was written with actual weight data
         let weight_bin_path = format!("{output_path}/Data/com.apple.CoreML/weights/weight.bin");
         let weight_data = std::fs::read(&weight_bin_path).unwrap();
-        assert!(weight_data.len() > 0, "weight.bin should have data");
+        assert!(!weight_data.is_empty(), "weight.bin should have data");
 
         // Verify Manifest.json uses Apple's schema
         let manifest_path = format!("{output_path}/Manifest.json");

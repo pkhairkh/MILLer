@@ -4,12 +4,10 @@
 //! serializing/deserializing through all stages produces consistent
 //! and well-formed output.
 
-use ane_ir::common::{ComputeUnitHint, IrNodeId, MilDtype};
-use ane_ir::linear_slice::{
-    lower_linear_projection_to_mir, sir_from_linear_projection, FamilyPayload,
-};
-use ane_ir::mir::{MirGraph, MirNode, MirNodeId, MirOp};
-use ane_ir::sir::{QualityContract, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, TaskOrigin};
+use ane_ir::common::{IrNodeId, MilDtype};
+use ane_ir::linear_slice::{lower_linear_projection_to_mir, sir_from_linear_projection};
+use ane_ir::mir::MirGraph;
+use ane_ir::sir::SirGraph;
 use ane_ir::task_spec::{MeasurementConfig, SyntheticTaskSpec, TaskOp};
 
 /// Helper: build a simple LinearProjection task spec.
@@ -130,6 +128,7 @@ fn test_mir_ops_have_valid_engine_assignments() {
 
     // Every MIR op should have a valid default_engine() result
     for node in &mir.nodes {
+        #[allow(deprecated)]
         let engine = node.op.default_engine();
         // engine is Option<AneEngine> — valid values are Some(NE), Some(PE),
         // Some(TransposeEngine), or None (CPU-only). All are valid.

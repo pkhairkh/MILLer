@@ -228,7 +228,7 @@ mod tests {
     fn test_t120_compilation_limit_constants() {
         assert_eq!(COMPILATION_LIMIT, 119, "Orion #5: ANE compilation limit is ~119");
         assert_eq!(COMPILATION_WARNING_THRESHOLD, 95, "Warning at 80% of limit");
-        assert!(COMPILATION_WARNING_THRESHOLD < COMPILATION_LIMIT);
+        const { assert!(COMPILATION_WARNING_THRESHOLD < COMPILATION_LIMIT) };
     }
 
     #[test]

@@ -884,6 +884,7 @@ fn family_level(family: AneFamily) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ane_ir::sir::SirNodeId;
 
     #[test]
     fn test_a16_supports_sdpa() {
@@ -1101,6 +1102,3 @@ mod tests {
         );
     }
 }
-
-#[cfg(test)]
-use ane_ir::sir::SirNodeId;

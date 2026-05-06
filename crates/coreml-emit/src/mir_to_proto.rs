@@ -400,7 +400,7 @@ pub fn convert_mir_to_proto_multifunction_with_policy(
                             graph_states.push(TensorDesc {
                                 name: state_id.clone(),
                                 shape: shape.iter().map(|&d| d as u64).collect(),
-                                dtype: dtype.clone(),
+                                dtype: *dtype,
                                 is_state: true,
                             });
                         } else {
@@ -422,7 +422,7 @@ pub fn convert_mir_to_proto_multifunction_with_policy(
                             graph_states.push(TensorDesc {
                                 name: state_ref.clone(),
                                 shape: shape.iter().map(|&d| d as u64).collect(),
-                                dtype: dtype.clone(),
+                                dtype: *dtype,
                                 is_state: true,
                             });
                         } else {
@@ -1084,8 +1084,10 @@ mod tests {
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
 
         let model_type = parsed.r#type.as_ref().unwrap();
-        let program = match model_type {
-            ane_coreml_proto::apple_proto::model::Type::MlProgram(p) => p,
+        #[allow(irrefutable_let_patterns)]
+        let ane_coreml_proto::apple_proto::model::Type::MlProgram(program) = model_type
+        else {
+            panic!("Expected MlProgram type");
         };
         let main_func = program.functions.get("main").unwrap();
         assert_eq!(main_func.opset, "CoreML9");
@@ -1156,8 +1158,10 @@ mod tests {
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
 
         let model_type = parsed.r#type.as_ref().unwrap();
-        let program = match model_type {
-            ane_coreml_proto::apple_proto::model::Type::MlProgram(p) => p,
+        #[allow(irrefutable_let_patterns)]
+        let ane_coreml_proto::apple_proto::model::Type::MlProgram(program) = model_type
+        else {
+            panic!("Expected MlProgram type");
         };
         let main_func = program.functions.get("main").unwrap();
         let block = main_func.block_specializations.get("CoreML9").unwrap();
@@ -1299,8 +1303,10 @@ mod tests {
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
 
         let model_type = parsed.r#type.as_ref().unwrap();
-        let program = match model_type {
-            ane_coreml_proto::apple_proto::model::Type::MlProgram(p) => p,
+        #[allow(irrefutable_let_patterns)]
+        let ane_coreml_proto::apple_proto::model::Type::MlProgram(program) = model_type
+        else {
+            panic!("Expected MlProgram type");
         };
         let func = program.functions.get("main").unwrap();
         let block = func.block_specializations.get("CoreML9").unwrap();
@@ -1664,11 +1670,11 @@ mod tests {
         assert_eq!(element_size, 2, "FP16 = 2 bytes per element");
 
         // 1x1 output = 2 bytes — way below 49 KB
-        let small_size: u64 = 1 * 1 * element_size;
+        let small_size: u64 = element_size;
         assert!(small_size < MIN_IOSURFACE_BYTES);
 
         // 1x25088 output = 50176 bytes — above 49 KB
-        let large_size: u64 = 1 * 25088 * element_size;
+        let large_size: u64 = 25088 * element_size;
         assert!(large_size >= MIN_IOSURFACE_BYTES);
     }
 

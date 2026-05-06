@@ -45,7 +45,7 @@ fn test_manifest_serialization_roundtrip() {
         packages: vec![PackageEntry {
             name: "main_pkg".into(),
             role: "prefill".into(),
-            path: Some(model_path.into()),
+            path: Some(model_path),
             content_hash: Some("sha256:def456".into()),
             size_bytes: 1024,
             functions: vec![FunctionDescriptor {

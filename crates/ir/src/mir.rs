@@ -2783,6 +2783,7 @@ mod tests {
     /// Test that default_engine() still returns the same results as before
     /// (backward compatibility). With None revision, no overrides are applied.
     #[test]
+    #[allow(deprecated)]
     fn test_default_engine_backward_compat() {
         // NE pipeline ops
         let conv = MirOp::MILConv {
@@ -2997,6 +2998,7 @@ mod tests {
     /// fields (kernel_scale, kernel_zero_point, kernel_palettized_lut).
     /// These have been moved to MirOpTargetAnnotation::ane_quant.
     #[test]
+    #[allow(deprecated)]
     fn test_tp5_08_conv_no_ane_quant_fields() {
         let conv = MirOp::MILConv {
             name: "plain_conv".into(),

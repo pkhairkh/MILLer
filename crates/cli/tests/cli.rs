@@ -10,8 +10,7 @@ use std::process::Command;
 fn cli_binary() -> Command {
     // The binary name is `ane-cli` (from the crate name) or `ane-compile`
     // depending on how it was built. We try `ane-cli` first.
-    let cmd = Command::new(env!("CARGO_BIN_EXE_ane-cli"));
-    cmd
+    Command::new(env!("CARGO_BIN_EXE_ane-cli"))
 }
 
 #[test]

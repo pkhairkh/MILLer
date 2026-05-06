@@ -164,7 +164,7 @@ impl WeightResolver for EmptyWeightResolver {
 ///
 /// This function automatically materializes `MirOpCompat::Const` entries for
 /// every weight name referenced by ops like `MILLinear` and `MILLayerNorm`.
-
+///
 /// Convert a MIR graph to compat representation with architecture-specific
 /// weight name patterns.
 ///

@@ -316,9 +316,7 @@ impl CanonicalizePass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ane_ir::sir::{
-        QualityContract, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin,
-    };
+    use ane_ir::sir::{SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
 
     fn make_node(id: &str, op: SirOp) -> SirNode {
         SirNode {

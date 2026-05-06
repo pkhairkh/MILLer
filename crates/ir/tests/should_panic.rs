@@ -3,7 +3,7 @@
 //! Tests that verify invalid IR graph configurations panic
 //! when validated or used incorrectly.
 
-use ane_ir::common::{ComputeUnitHint, IrNodeId, MilDtype};
+use ane_ir::common::{ComputeUnitHint, MilDtype};
 use ane_ir::mir::{MirGraph, MirNode, MirNodeId, MirOp};
 
 /// Helper to create a dummy MirNodeId.

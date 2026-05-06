@@ -6641,10 +6641,7 @@ fn mir_op_to_apple_ops(
             add_name_attribute(&mut stride_attrs, &stride_const_name);
             stride_attrs.insert(
                 "val".to_string(),
-                make_immediate_int32_value(
-                    strides.iter().map(|&d| d as i32).collect(),
-                    &stride_shape,
-                ),
+                make_immediate_int32_value(strides.to_vec(), &stride_shape),
             );
             ops.push(apple_proto::mil_spec::Operation {
                 r#type: "const".to_string(),
@@ -6664,10 +6661,7 @@ fn mir_op_to_apple_ops(
             add_name_attribute(&mut pad_attrs, &pad_const_name);
             pad_attrs.insert(
                 "val".to_string(),
-                make_immediate_int32_value(
-                    pad_amounts.iter().map(|&d| d as i32).collect(),
-                    &pad_shape,
-                ),
+                make_immediate_int32_value(pad_amounts.to_vec(), &pad_shape),
             );
             ops.push(apple_proto::mil_spec::Operation {
                 r#type: "const".to_string(),
@@ -6687,10 +6681,7 @@ fn mir_op_to_apple_ops(
             add_name_attribute(&mut dil_attrs, &dil_const_name);
             dil_attrs.insert(
                 "val".to_string(),
-                make_immediate_int32_value(
-                    dilations.iter().map(|&d| d as i32).collect(),
-                    &dil_shape,
-                ),
+                make_immediate_int32_value(dilations.to_vec(), &dil_shape),
             );
             ops.push(apple_proto::mil_spec::Operation {
                 r#type: "const".to_string(),
@@ -8322,7 +8313,7 @@ mod tests {
         };
         let ops = mir_op_to_apple_ops(&fill_op, &[], &std::collections::HashMap::new());
         // Fill is now decomposed to const + add (ANE-legal), not raw "fill"
-        let const_op =
+        let _const_op =
             ops.iter().find(|op| op.r#type == "const").expect("const op in Fill decomposition");
         let add_op =
             ops.iter().find(|op| op.r#type == "add").expect("add op in Fill decomposition");

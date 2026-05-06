@@ -19,6 +19,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.95"
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -52,6 +54,8 @@ jobs:
         with:
           toolchain: "1.95"
           components: clippy
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -72,6 +76,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.95"
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -83,3 +89,16 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-test-
       - name: Run tests
         run: cargo test --workspace
+
+  python-tests:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r python/requirements.txt
+      - name: Run Python tests
+        run: python3 -m pytest python/tests/ -v

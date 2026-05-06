@@ -1022,7 +1022,8 @@ fn test_every_mir_op_variant_has_engine_assignment() {
     let variants = all_mir_op_variants();
     assert!(variants.len() > 100, "Should have many MirOp variants, got {}", variants.len());
 
-    for (name, op) in &variants {
+    #[allow(deprecated)]
+    for (_name, op) in &variants {
         // Call default_engine for every variant — this must not panic
         let engine = op.default_engine();
 

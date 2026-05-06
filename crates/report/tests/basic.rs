@@ -3,7 +3,7 @@
 //! Tests JSON and markdown report generation through the public API,
 //! verifying that output formats are well-formed and contain expected content.
 
-use ane_report::json_report::{JsonReport, JsonReporter};
+use ane_report::json_report::JsonReporter;
 use ane_report::markdown::MarkdownReporter;
 
 // ─── Helpers ──────────────────────────────────────────────────────

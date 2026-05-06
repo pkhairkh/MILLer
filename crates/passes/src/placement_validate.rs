@@ -884,13 +884,15 @@ pub fn validate_placement_with_context(
                 )
             };
             if let Err(violation) = crate::op_constraints::validate_deconv_constraints(
-                is_dilated,
-                sox,
-                kernel_w,
-                kernel_h,
-                kernel_d,
-                max_stride,
-                ctx.is_vector_palettized,
+                &crate::op_constraints::DeconvParams {
+                    is_dilated,
+                    sox,
+                    kernel_w,
+                    kernel_h,
+                    kernel_d,
+                    stride: max_stride,
+                    is_vector_palettized: ctx.is_vector_palettized,
+                },
                 &hw_limits,
             ) {
                 return PlacementDecision::CpuOnly(format!(
@@ -1354,7 +1356,7 @@ pub fn validate_placement_with_context(
                     op.mil_op_name()
                 ));
             }
-            if op.default_engine().is_none() {
+            if op.default_engine_for_revision(None).is_none() {
                 PlacementDecision::CpuOnly(format!(
                     "{:?} has no ANE engine assignment",
                     op_name(op)
@@ -1408,7 +1410,7 @@ pub fn validate_placement_with_context(
                     op.mil_op_name()
                 ));
             }
-            if op.default_engine().is_none() {
+            if op.default_engine_for_revision(None).is_none() {
                 PlacementDecision::CpuOnly(format!(
                     "{:?} has no ANE engine assignment",
                     op_name(op)
@@ -3106,7 +3108,7 @@ mod tests {
         // Typical LLM linear weight: [1, 896, 1, 896] (NCHW)
         // OLD (wrong): c=1 (batch), d=896 (channels) — channels bypass check
         // NEW (correct): c=896, d=1 — channels properly checked
-        let (w, h, d, c) = extract_whdc(&[1, 896, 1, 896]);
+        let (_w, _h, d, c) = extract_whdc(&[1, 896, 1, 896]);
         assert_eq!(c, 896, "channels should be 896, not 1");
         assert_eq!(d, 1, "depth should be 1 for NCHW rank-4");
     }

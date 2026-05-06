@@ -709,12 +709,7 @@ fn resolve_default_knowledge_dir() -> Option<&'static str> {
     // Candidate paths, ordered by preference. Using leaked static str is
     // fine here — this runs at most once per CLI invocation.
     const CANDIDATES: &[&str] = &["knowledge", "../../knowledge", "../../../knowledge"];
-    for candidate in CANDIDATES {
-        if std::path::Path::new(candidate).exists() {
-            return Some(candidate);
-        }
-    }
-    None
+    CANDIDATES.iter().find(|&&candidate| std::path::Path::new(candidate).exists()).copied()
 }
 
 /// Open a knowledge store, loading seeds from either an explicit directory

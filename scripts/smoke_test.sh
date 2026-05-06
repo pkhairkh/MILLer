@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-CLI="${1:-./target/debug/ane-compile}"
+CLI="${1:-./target/debug/ane-cli}"
 BRIDGE="${2:-python/bridge.py}"
 TASK_SPEC="benchmarks/synthetic/linear_projection_slice.toml"
 OUTPUT_DIR="/tmp/ane_smoke_test_$$"

@@ -371,12 +371,12 @@ mod tests {
         // Check sin_tab
         let sin_data = resolver.resolve("static_tables/rope_tables_0/sin_tab").unwrap();
         assert_eq!(sin_data.shape, vec![1, 1, 8, 128]);
-        assert_eq!(sin_data.data.len(), 1 * 1 * 8 * 128 * 2); // fp16 = 2 bytes
+        assert_eq!(sin_data.data.len(), 8 * 128 * 2); // fp16 = 2 bytes
 
         // Check cos_tab
         let cos_data = resolver.resolve("static_tables/rope_tables_0/cos_tab").unwrap();
         assert_eq!(cos_data.shape, vec![1, 1, 8, 128]);
-        assert_eq!(cos_data.data.len(), 1 * 1 * 8 * 128 * 2);
+        assert_eq!(cos_data.data.len(), 8 * 128 * 2);
 
         // eye_tab and mask_tab are computed for small seq_len (≤ 8192).
         // Verify they exist for seq_len=8.

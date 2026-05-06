@@ -43,6 +43,8 @@
 //!   cannot find a mapping, making debugging easier instead of silently
 //!   producing `__unresolved_N__` node references.
 
+#![allow(clippy::items_after_test_module)]
+
 use crate::graph::{ModelConfig, TracedGraph, TracedNode, TracedOp};
 use crate::versioned::VersionedCompiler;
 use ane_ir::ane_target::AneFamily;

@@ -3,7 +3,7 @@
 //! Tests JSON and markdown report generation, verifying that
 //! output formats are well-formed and contain expected fields.
 
-use crate::json_report::{JsonReport, JsonReporter};
+use crate::json_report::JsonReporter;
 use crate::markdown::MarkdownReporter;
 
 fn sample_manifest() -> serde_json::Value {

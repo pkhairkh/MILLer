@@ -163,12 +163,10 @@ impl SyntheticTransfer {
                 // PrecisionHazard: quality_impact must not be opposite
                 let a_impact = payload_quality_impact(&a.payload);
                 let b_impact = payload_quality_impact(&b.payload);
-                match (a_impact, b_impact) {
-                    (Some("negligible"), Some("severe")) | (Some("severe"), Some("negligible")) => {
-                        false
-                    }
-                    _ => true,
-                }
+                !matches!(
+                    (a_impact, b_impact),
+                    (Some("negligible"), Some("severe")) | (Some("severe"), Some("negligible"))
+                )
             }
             KnowledgeType::SurvivalMatrixEntry => {
                 // SurvivalMatrix: survival_rate should not diverge significantly.

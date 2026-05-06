@@ -5012,7 +5012,7 @@ mod tests {
         // StaticLUTProjection was removed per T-P4-03.
         // It is superseded by ConstexprLutToDense.
         // This test exists to confirm the removal is complete.
-        assert!(true, "StaticLUTProjection has been removed from AirOp per T-P4-03");
+        // StaticLUTProjection has been removed from AirOp per T-P4-03
     }
 
     // --- Sprint 57: Shape propagation tests ---
@@ -5395,7 +5395,7 @@ mod tests {
             dtype_hint: None,
             shape_hint: Some(vec![1, 2048]),
         };
-        let mut node_shapes = HashMap::new();
+        let node_shapes = HashMap::new();
         // No shape for "x" in node_shapes — shape_hint should be used
         let result = infer_shape(&op, &node_shapes);
         assert!(result.is_ok());

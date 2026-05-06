@@ -324,6 +324,21 @@ pub fn validate_stencil_constraints(
     Ok(())
 }
 
+/// Parameters for deconvolution constraint validation.
+///
+/// Groups the 7 deconv-specific parameters into a single struct to keep
+/// the validation function signature under clippy's `too_many_arguments` threshold.
+#[derive(Debug, Clone)]
+pub struct DeconvParams {
+    pub is_dilated: bool,
+    pub sox: u64,
+    pub kernel_w: u64,
+    pub kernel_h: u64,
+    pub kernel_d: u64,
+    pub stride: u64,
+    pub is_vector_palettized: bool,
+}
+
 /// T-94: Validate deconvolution (ConvTranspose) constraints.
 ///
 /// Five ANEC-specific constraints from binary forensic evidence:
@@ -333,15 +348,18 @@ pub fn validate_stencil_constraints(
 /// 4. No vector palettization ("deconv with vector palettization is not supported")
 /// 5. Stride > 2 does not support kernel depth > 1
 pub fn validate_deconv_constraints(
-    is_dilated: bool,
-    sox: u64,
-    kernel_w: u64,
-    kernel_h: u64,
-    kernel_d: u64,
-    stride: u64,
-    is_vector_palettized: bool,
+    params: &DeconvParams,
     limits: &AneHwLimits,
 ) -> Result<(), OpConstraintViolation> {
+    let DeconvParams {
+        is_dilated,
+        sox,
+        kernel_w,
+        kernel_h,
+        kernel_d,
+        stride,
+        is_vector_palettized,
+    } = *params;
     // 1. No dilation
     if is_dilated {
         return Err(OpConstraintViolation {
@@ -1415,8 +1433,8 @@ pub fn validate_transpose_constraints(
         let mut is_nc_transpose = perm[0] == 1 && perm[1] == 0;
         if is_nc_transpose {
             // Remaining elements must be in order: 2, 3, 4, ...
-            for i in 2..rank {
-                if perm[i] != i {
+            for (i, &val) in perm.iter().enumerate().take(rank).skip(2) {
+                if val != i {
                     is_nc_transpose = false;
                     break;
                 }
@@ -1720,13 +1738,36 @@ mod tests {
     fn test_deconv_valid() {
         let limits = test_limits();
         // All valid: no dilation, SOx=2, small kernel, no vector palett
-        assert!(validate_deconv_constraints(false, 2, 4, 4, 1, 1, false, &limits).is_ok());
+        assert!(validate_deconv_constraints(
+            &DeconvParams {
+                is_dilated: false,
+                sox: 2,
+                kernel_w: 4,
+                kernel_h: 4,
+                kernel_d: 1,
+                stride: 1,
+                is_vector_palettized: false
+            },
+            &limits
+        )
+        .is_ok());
     }
 
     #[test]
     fn test_deconv_dilation_rejected() {
         let limits = test_limits();
-        let result = validate_deconv_constraints(true, 2, 4, 4, 1, 1, false, &limits);
+        let result = validate_deconv_constraints(
+            &DeconvParams {
+                is_dilated: true,
+                sox: 2,
+                kernel_w: 4,
+                kernel_h: 4,
+                kernel_d: 1,
+                stride: 1,
+                is_vector_palettized: false,
+            },
+            &limits,
+        );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "no_dilation");
     }
@@ -1734,7 +1775,18 @@ mod tests {
     #[test]
     fn test_deconv_sox_not_2_rejected() {
         let limits = test_limits();
-        let result = validate_deconv_constraints(false, 3, 4, 4, 1, 1, false, &limits);
+        let result = validate_deconv_constraints(
+            &DeconvParams {
+                is_dilated: false,
+                sox: 3,
+                kernel_w: 4,
+                kernel_h: 4,
+                kernel_d: 1,
+                stride: 1,
+                is_vector_palettized: false,
+            },
+            &limits,
+        );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "sox_must_be_2");
     }
@@ -1742,7 +1794,18 @@ mod tests {
     #[test]
     fn test_deconv_large_kernel_rejected() {
         let limits = test_limits();
-        let result = validate_deconv_constraints(false, 2, 32, 4, 1, 1, false, &limits);
+        let result = validate_deconv_constraints(
+            &DeconvParams {
+                is_dilated: false,
+                sox: 2,
+                kernel_w: 32,
+                kernel_h: 4,
+                kernel_d: 1,
+                stride: 1,
+                is_vector_palettized: false,
+            },
+            &limits,
+        );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "no_large_kernel");
     }
@@ -1750,7 +1813,18 @@ mod tests {
     #[test]
     fn test_deconv_vector_palettization_rejected() {
         let limits = test_limits();
-        let result = validate_deconv_constraints(false, 2, 4, 4, 1, 1, true, &limits);
+        let result = validate_deconv_constraints(
+            &DeconvParams {
+                is_dilated: false,
+                sox: 2,
+                kernel_w: 4,
+                kernel_h: 4,
+                kernel_d: 1,
+                stride: 1,
+                is_vector_palettized: true,
+            },
+            &limits,
+        );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "no_vector_palettization");
     }
@@ -1759,7 +1833,18 @@ mod tests {
     fn test_deconv_stride_gt_2_with_depth_rejected() {
         let limits = test_limits();
         // Stride > 2 with kernel_d > 1 is rejected
-        let result = validate_deconv_constraints(false, 2, 4, 4, 2, 3, false, &limits);
+        let result = validate_deconv_constraints(
+            &DeconvParams {
+                is_dilated: false,
+                sox: 2,
+                kernel_w: 4,
+                kernel_h: 4,
+                kernel_d: 2,
+                stride: 3,
+                is_vector_palettized: false,
+            },
+            &limits,
+        );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "stride_gt_2_no_depth");
     }
@@ -1768,7 +1853,19 @@ mod tests {
     fn test_deconv_stride_gt_2_no_depth_ok() {
         let limits = test_limits();
         // Stride > 2 with kernel_d == 1 is OK
-        assert!(validate_deconv_constraints(false, 2, 4, 4, 1, 3, false, &limits).is_ok());
+        assert!(validate_deconv_constraints(
+            &DeconvParams {
+                is_dilated: false,
+                sox: 2,
+                kernel_w: 4,
+                kernel_h: 4,
+                kernel_d: 1,
+                stride: 3,
+                is_vector_palettized: false
+            },
+            &limits
+        )
+        .is_ok());
     }
 
     #[test]

@@ -378,7 +378,7 @@ impl SafetensorsWeightResolver {
         // we derive the element size from the actual data length and shape.
         let total_elements: usize = entry.shape.iter().product();
         let bytes_per_element = if total_elements > 0 {
-            entry.data.len() / total_elements
+            entry.data.len().checked_div(total_elements).unwrap_or(2)
         } else {
             2 // fallback to FP16 if shape is degenerate
         };
@@ -728,7 +728,7 @@ mod tests {
         // This BF16 value is far below FP16's normal range, so it becomes
         // a subnormal or flushes to zero. The `half` crate handles this correctly.
         assert!(
-            fp16_result.is_normal() == false || fp16_result.to_bits() == 0x0000,
+            !fp16_result.is_normal() || fp16_result.to_bits() == 0x0000,
             "BF16 small normal should map to FP16 subnormal or zero, got {:?}",
             fp16_result
         );
@@ -974,7 +974,7 @@ mod tests {
     fn test_f32_to_fp16_value_preservation() {
         // Verify that the converted values are approximately preserved.
         // FP16 has less precision than F32, so we check approximate equality.
-        let f32_values: Vec<f32> = vec![0.0, 1.0, -1.0, 0.5, 2.0, 0.1, 3.14159];
+        let f32_values: Vec<f32> = vec![0.0, 1.0, -1.0, 0.5, 2.0, 0.1, std::f32::consts::PI];
 
         let mut f32_bytes = Vec::new();
         for &val in &f32_values {

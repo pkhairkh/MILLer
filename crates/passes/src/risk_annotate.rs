@@ -827,7 +827,7 @@ mod tests {
     fn test_gate_reports_multiple_unknown_nodes() {
         // M-011: The gate should report all Unknown node IDs, not just
         // the first one.
-        let pass = RiskAnnotatePass::new();
+        let _pass = RiskAnnotatePass::new();
         let graph = AirGraph {
             nodes: vec![
                 AirNode {

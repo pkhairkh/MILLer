@@ -677,7 +677,7 @@ mod tests {
         assert_eq!(payload.batch_size, 1);
         assert_eq!(payload.dtype, "fp16");
         assert_eq!(payload.seed, 42);
-        assert_eq!(payload.functions[0].stateful, false);
+        assert!(!payload.functions[0].stateful);
     }
 
     #[test]
@@ -725,7 +725,7 @@ mod tests {
         // k_state shape: [1, num_heads, kv_len, head_dim]
         assert_eq!(payload.functions[0].inputs[1].shape, vec![1, 4, 64, 32]);
         // Decode step is stateful
-        assert_eq!(payload.functions[0].stateful, true);
+        assert!(payload.functions[0].stateful);
     }
 
     #[test]

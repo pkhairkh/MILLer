@@ -344,7 +344,7 @@ mod tests {
         let deserialized: ModelStructureResult =
             serde_json::from_str(&json).expect("should deserialize");
 
-        assert_eq!(deserialized.available, true);
+        assert!(deserialized.available);
         assert_eq!(deserialized.functions.len(), 1);
         assert_eq!(deserialized.functions[0].name, "main");
         assert_eq!(deserialized.operations[0].op_type, "linear");

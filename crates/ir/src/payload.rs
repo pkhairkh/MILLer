@@ -835,7 +835,7 @@ mod tests {
         assert_eq!(payload.seed, DEFAULT_SEED);
         assert_eq!(payload.functions.len(), 1);
         assert_eq!(payload.functions[0].name, "main");
-        assert_eq!(payload.functions[0].stateful, false);
+        assert!(!payload.functions[0].stateful);
     }
 
     #[test]
@@ -911,7 +911,7 @@ mod tests {
         assert_eq!(payload.kv_len, 64);
         assert_eq!(payload.batch_size, 1);
         // DecodeStep is stateful
-        assert_eq!(payload.functions[0].stateful, true);
+        assert!(payload.functions[0].stateful);
     }
 
     #[test]
@@ -945,7 +945,7 @@ mod tests {
         assert_eq!(payload.output_dim, 128);
         assert_eq!(payload.activation, "gelu");
         assert_eq!(payload.batch_size, 1);
-        assert_eq!(payload.functions[0].stateful, false);
+        assert!(!payload.functions[0].stateful);
     }
 
     #[test]
@@ -1136,7 +1136,7 @@ mod tests {
         assert_eq!(de.inputs[0].dtype, "fp16");
         assert_eq!(de.outputs[0].name, "output");
         assert_eq!(de.outputs[0].shape, vec![1, 128]);
-        assert_eq!(de.stateful, false);
+        assert!(!de.stateful);
     }
 
     #[test]

@@ -616,7 +616,7 @@ mod tests {
         assert_eq!(deserialized.num_attention_heads, 16);
         assert_eq!(deserialized.num_key_value_heads, Some(8));
         assert_eq!(deserialized.rope_theta, 1000000.0);
-        assert_eq!(deserialized.has_qk_norm, true);
+        assert!(deserialized.has_qk_norm);
         assert_eq!(deserialized.head_dim, Some(128));
     }
 
@@ -776,7 +776,7 @@ mod tests {
     fn test_trace_metadata_serialization() {
         let meta = TraceMetadata {
             timestamp: "2025-06-15T12:00:00Z".to_string(),
-            trace_duration_secs: 2.7183,
+            trace_duration_secs: std::f64::consts::E,
             num_nodes: 42,
             num_parameters: 1_000_000,
             parameter_bytes: 2_000_000,
@@ -786,7 +786,7 @@ mod tests {
         let json = serde_json::to_string(&meta).unwrap();
         let deserialized: TraceMetadata = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.timestamp, "2025-06-15T12:00:00Z");
-        assert!((deserialized.trace_duration_secs - 2.7183).abs() < f64::EPSILON);
+        assert!((deserialized.trace_duration_secs - std::f64::consts::E).abs() < f64::EPSILON);
         assert_eq!(deserialized.num_nodes, 42);
         assert_eq!(deserialized.warnings, vec!["test warning"]);
     }

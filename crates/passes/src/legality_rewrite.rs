@@ -5124,9 +5124,9 @@ mod tests {
         // Without context (heads=0), falls back to SDPA — no split/MatMul/Concat.
         // These ops are present only when DecompositionContext provides head count.
         let has_out_proj = air.nodes.iter().any(|n| matches!(n.op, AirOp::Conv1x1AsLinear { .. }));
-        let has_sdpa =
+        let _has_sdpa =
             air.nodes.iter().any(|n| matches!(n.op, AirOp::ScaledDotProductAttention { .. }));
-        let has_tile = air.nodes.iter().any(|n| matches!(n.op, AirOp::Tile { .. }));
+        let _has_tile = air.nodes.iter().any(|n| matches!(n.op, AirOp::Tile { .. }));
 
         assert!(
             has_reshape,
@@ -6579,7 +6579,7 @@ mod tests {
         // Conv1x1AsLinear output_dim for Q projection should be num_heads*head_dim = 16*128 = 2048
         let q_proj = air.nodes.iter().find(|n| {
             if let AirOp::Conv1x1AsLinear { weight, output_dim, .. } = &n.op {
-                weight.contains("q_proj") && output_dim.map_or(false, |d| d > 0)
+                weight.contains("q_proj") && output_dim.is_some_and(|d| d > 0)
             } else {
                 false
             }
@@ -6597,7 +6597,7 @@ mod tests {
         // K projection output_dim should be kv_heads*head_dim = 8*128 = 1024
         let k_proj = air.nodes.iter().find(|n| {
             if let AirOp::Conv1x1AsLinear { weight, output_dim, .. } = &n.op {
-                weight.contains("k_proj") && output_dim.map_or(false, |d| d > 0)
+                weight.contains("k_proj") && output_dim.is_some_and(|d| d > 0)
             } else {
                 false
             }
@@ -6615,7 +6615,7 @@ mod tests {
         // O projection output_dim should be embed_dim = 1024
         let o_proj = air.nodes.iter().find(|n| {
             if let AirOp::Conv1x1AsLinear { weight, output_dim, .. } = &n.op {
-                weight.contains("o_proj") && output_dim.map_or(false, |d| d > 0)
+                weight.contains("o_proj") && output_dim.is_some_and(|d| d > 0)
             } else {
                 false
             }
@@ -6779,7 +6779,7 @@ mod tests {
         );
 
         // Must have Conv1x1AsLinear for output projection
-        let has_out_proj = air
+        let _has_out_proj = air
             .nodes
             .iter()
             .any(|n| matches!(&n.op, AirOp::Conv1x1AsLinear { weight, .. } if weight.contains("o_proj") || n.id.0.contains("out_proj")));
@@ -7245,7 +7245,7 @@ mod tests {
 
         // ── Non-GQA: no RoPE, no QK-norm ──
         // Should NOT have Gather (used for position-based RoPE)
-        let has_gather = air.nodes.iter().any(|n| matches!(n.op, AirOp::Gather { .. }));
+        let _has_gather = air.nodes.iter().any(|n| matches!(n.op, AirOp::Gather { .. }));
         // Gather may still appear for other reasons, so we don't assert its absence.
         // But we should NOT have Rsqrt (which indicates QK-norm)
         // Actually, RMSNorm is still applied in the main decode path (not just QK-norm),
@@ -7254,7 +7254,7 @@ mod tests {
         // ── Output projection dimension should be embed_dim=4096 ──
         let o_proj = air.nodes.iter().find(|n| {
             if let AirOp::Conv1x1AsLinear { weight, output_dim, .. } = &n.op {
-                weight.contains("o_proj") && output_dim.map_or(false, |d| d > 0)
+                weight.contains("o_proj") && output_dim.is_some_and(|d| d > 0)
             } else {
                 false
             }
@@ -7598,7 +7598,7 @@ mod tests {
         let rms_air_nodes: Vec<_> = air
             .nodes
             .iter()
-            .filter(|n| n.sir_source.as_ref().map_or(false, |s| s.0 == "rms_norm"))
+            .filter(|n| n.sir_source.as_ref().is_some_and(|s| s.0 == "rms_norm"))
             .collect();
         assert!(
             !rms_air_nodes.is_empty(),
@@ -7616,7 +7616,7 @@ mod tests {
         let decode_air_nodes: Vec<_> = air
             .nodes
             .iter()
-            .filter(|n| n.sir_source.as_ref().map_or(false, |s| s.0 == "decode_0"))
+            .filter(|n| n.sir_source.as_ref().is_some_and(|s| s.0 == "decode_0"))
             .collect();
         assert!(
             !decode_air_nodes.is_empty(),
