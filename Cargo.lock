@@ -85,6 +85,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "log",
  "serde",
  "serde_json",
  "sha2",
@@ -95,6 +96,7 @@ name = "ane-coreml-emit"
 version = "0.1.0"
 dependencies = [
  "ane-coreml-proto",
+ "ane-passes",
  "anyhow",
  "log",
  "prost",

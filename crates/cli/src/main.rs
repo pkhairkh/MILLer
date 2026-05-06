@@ -701,6 +701,144 @@ fn compute_task_hash(spec: &ane_ir::task_spec::SyntheticTaskSpec) -> String {
     ane_lab::session::compute_task_hash(spec)
 }
 
+/// Resolve the default knowledge seed directory.
+///
+/// Searches for a `knowledge/` directory relative to the current working
+/// directory and common workspace-relative paths. Returns `None` if no
+/// default knowledge directory is found (this is not an error — seeds
+/// are supplementary, not required).
+fn resolve_default_knowledge_dir() -> Option<&'static str> {
+    // Candidate paths, ordered by preference. Using leaked static str is
+    // fine here — this runs at most once per CLI invocation.
+    const CANDIDATES: &[&str] = &["knowledge", "../../knowledge", "../../../knowledge"];
+    for candidate in CANDIDATES {
+        if std::path::Path::new(candidate).exists() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Open a knowledge store, loading seeds from either an explicit directory
+/// or the default `knowledge/` directory.
+///
+/// M-013: Seed files are now loaded automatically when a default
+/// `knowledge/` directory exists, even without an explicit `--knowledge`
+/// flag. This makes seed data functional at runtime rather than decorative.
+///
+/// Behaviour:
+/// - If `knowledge_dir` is provided and points to an existing store
+///   (contains `store_index.json`), opens it and loads seeds into it.
+/// - If `knowledge_dir` is provided but is a seed directory (no
+///   `store_index.json`), creates a temp store and loads seeds from it.
+/// - If `knowledge_dir` is `None`, falls back to the default `knowledge/`
+///   directory if it exists.
+/// - If the directory doesn't exist, logs a warning but returns `None`.
+/// - If seed files are corrupt, logs an error but continues (seeds are
+///   supplementary, not required).
+///
+/// `temp_store_id` is used to create a unique temp directory when the
+/// provided path is a seed directory rather than an existing store.
+fn open_knowledge_store_with_seeds(
+    knowledge_dir: Option<&str>,
+    temp_store_id: &str,
+) -> Option<ane_knowledge::store::KnowledgeStore> {
+    let effective_dir = knowledge_dir
+        .map(|s| s.to_string())
+        .or_else(|| resolve_default_knowledge_dir().map(|s| s.to_string()));
+
+    let kdir = match effective_dir {
+        Some(dir) => dir,
+        None => {
+            // No explicit dir and no default found — this is normal, not an error.
+            return None;
+        }
+    };
+
+    let store_path = PathBuf::from(&kdir);
+    if !store_path.exists() {
+        if knowledge_dir.is_some() {
+            // Explicitly requested but doesn't exist — log warning
+            eprintln!("  Warning: knowledge directory '{}' not found", kdir);
+        }
+        return None;
+    }
+
+    if store_path.join("store_index.json").exists() {
+        // Existing store: open it and also load any new seeds from the
+        // default knowledge/ directory (seeds may have been added since
+        // the store was last opened).
+        match ane_knowledge::store::KnowledgeStore::open(&kdir) {
+            Ok(mut store) => {
+                let (seeds, obs) = store.counts();
+                println!("  Knowledge store: {} seeds, {} observations available", seeds, obs);
+                // Also attempt to load seeds from the default knowledge/ dir
+                // if the store was opened from an explicit path that differs.
+                if let Some(default_dir) = resolve_default_knowledge_dir() {
+                    if default_dir != kdir {
+                        match store.load_seeds_from_directory(default_dir) {
+                            Ok(count) if count > 0 => {
+                                println!(
+                                    "  Loaded {} additional seed entries from default knowledge/",
+                                    count
+                                );
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                eprintln!(
+                                    "  Warning: error loading seeds from default knowledge/: {}",
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+                Some(store)
+            }
+            Err(e) => {
+                eprintln!("  Warning: failed to open knowledge store at {}: {}", kdir, e);
+                None
+            }
+        }
+    } else {
+        // Seed directory (no store_index.json): create a temp store and
+        // load seeds from it.
+        let tmp_store_dir = std::env::temp_dir().join(format!("ane_{}_knowledge_store", temp_store_id));
+        let tmp_store_dir_str = tmp_store_dir.to_string_lossy().into_owned();
+        match ane_knowledge::store::KnowledgeStore::open(&tmp_store_dir_str) {
+            Ok(mut store) => match store.load_seeds_from_directory(&kdir) {
+                Ok(count) => {
+                    if count > 0 {
+                        println!(
+                            "  Knowledge seeds: {} entries loaded from {}",
+                            count, kdir
+                        );
+                        Some(store)
+                    } else {
+                        eprintln!("  Warning: no seed entries loaded from {}", kdir);
+                        None
+                    }
+                }
+                Err(e) => {
+                    // Seed files are supplementary — log error but don't fail
+                    eprintln!(
+                        "  Warning: error loading knowledge seeds from {}: {}",
+                        kdir, e
+                    );
+                    None
+                }
+            },
+            Err(e) => {
+                eprintln!(
+                    "  Warning: failed to create temporary knowledge store: {}",
+                    e
+                );
+                None
+            }
+        }
+    }
+}
+
 /// Run the compile vertical slice.
 fn run_compile(
     input: &str,
@@ -724,37 +862,16 @@ fn run_compile(
 
     // Optionally load knowledge store for awareness (fast-path compile does not
     // drive the pass pipeline, but it records whether knowledge was available).
+    // M-013: Now also loads seeds from the default knowledge/ directory when
+    // no explicit --knowledge flag is provided.
     let mut knowledge_consulted = false;
     let mut knowledge_seed_count: usize = 0;
     let mut knowledge_observation_count: usize = 0;
-    if let Some(kdir) = knowledge_dir {
-        let store_path = PathBuf::from(kdir);
-        if store_path.exists() {
-            if store_path.join("store_index.json").exists() {
-                if let Ok(store) = ane_knowledge::store::KnowledgeStore::open(kdir) {
-                    let (seeds, obs) = store.counts();
-                    println!("  Knowledge store: {} seeds, {} observations available", seeds, obs);
-                    knowledge_consulted = true;
-                    knowledge_seed_count = seeds;
-                    knowledge_observation_count = obs;
-                }
-            } else {
-                // Treat as seed directory
-                let tmp_store_dir = std::env::temp_dir().join("ane_compile_knowledge_store");
-                let tmp_store_dir_str = tmp_store_dir.to_string_lossy().into_owned();
-                if let Ok(mut store) =
-                    ane_knowledge::store::KnowledgeStore::open(&tmp_store_dir_str)
-                {
-                    if let Ok(count) = store.load_seeds_from_directory(kdir) {
-                        if count > 0 {
-                            println!("  Knowledge seeds: {} entries loaded from {}", count, kdir);
-                            knowledge_consulted = true;
-                            knowledge_seed_count = count;
-                        }
-                    }
-                }
-            }
-        }
+    if let Some(store) = open_knowledge_store_with_seeds(knowledge_dir, "compile") {
+        let (seeds, obs) = store.counts();
+        knowledge_consulted = true;
+        knowledge_seed_count = seeds;
+        knowledge_observation_count = obs;
     }
 
     // Step 1: Load task spec
@@ -1014,54 +1131,10 @@ fn run_compile_full(
     );
 
     // Step 2b: Set up knowledge query for the pass pipeline
-    // If a knowledge directory is provided, load seeds and create a StoreKnowledgeQuery.
-    // Otherwise, use NoKnowledge (returns None for all queries, so passes use defaults).
-    let mut knowledge_store: Option<ane_knowledge::store::KnowledgeStore> = None;
-    if let Some(kdir) = knowledge_dir {
-        let store_path = PathBuf::from(kdir);
-        // The knowledge dir might be a seed directory (contains JSON files)
-        // or an existing store (contains store_index.json).
-        if store_path.exists() {
-            if store_path.join("store_index.json").exists() {
-                match ane_knowledge::store::KnowledgeStore::open(kdir) {
-                    Ok(store) => {
-                        let (seeds, obs) = store.counts();
-                        println!("  Knowledge store: {} seeds, {} observations", seeds, obs);
-                        knowledge_store = Some(store);
-                    }
-                    Err(e) => {
-                        eprintln!("  Warning: failed to open knowledge store at {}: {}", kdir, e);
-                    }
-                }
-            } else {
-                // Treat as a seed directory: create a temporary store and load seeds
-                let tmp_store_dir = std::env::temp_dir().join("ane_compile_full_knowledge_store");
-                let tmp_store_dir_str = tmp_store_dir.to_string_lossy().into_owned();
-                match ane_knowledge::store::KnowledgeStore::open(&tmp_store_dir_str) {
-                    Ok(mut store) => match store.load_seeds_from_directory(kdir) {
-                        Ok(count) => {
-                            if count > 0 {
-                                println!(
-                                    "  Knowledge seeds: {} entries loaded from {}",
-                                    count, kdir
-                                );
-                                knowledge_store = Some(store);
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "  Warning: failed to load knowledge seeds from {}: {}",
-                                kdir, e
-                            );
-                        }
-                    },
-                    Err(e) => {
-                        eprintln!("  Warning: failed to create temporary knowledge store: {}", e);
-                    }
-                }
-            }
-        }
-    }
+    // M-013: Now also loads seeds from the default knowledge/ directory when
+    // no explicit --knowledge flag is provided. Seeds are supplementary, so
+    // failures are logged but don't prevent compilation.
+    let knowledge_store = open_knowledge_store_with_seeds(knowledge_dir, "compile_full");
 
     // Step 3: Run CanonicalizePass on SIR (pass-through for now)
     println!("[3/12] Running CanonicalizePass...");
@@ -1209,14 +1282,18 @@ fn run_compile_full(
     );
 
     // Step 6: Run RiskAnnotatePass on AIR
+    // M-011: Use new() (gate enabled) when a knowledge store is present,
+    // and new_allow_unknown() when NoKnowledge is used (since NoKnowledge
+    // always produces Unknown statuses, which the gate would reject).
     println!("[6/12] Running RiskAnnotatePass...");
-    let risk = RiskAnnotatePass::new();
     let air = match &knowledge_store {
         Some(store) => {
+            let risk = RiskAnnotatePass::new();
             let query = StoreKnowledgeQuery::new(store);
             risk.run(air, &query).map_err(|e| format!("RiskAnnotatePass failed: {}", e))?
         }
         None => {
+            let risk = RiskAnnotatePass::new_allow_unknown();
             let no_knowledge = NoKnowledge;
             risk.run(air, &no_knowledge).map_err(|e| format!("RiskAnnotatePass failed: {}", e))?
         }
@@ -1734,8 +1811,12 @@ fn run_compile_full_sharded(
     // Step 3: Build multi-shard plan and PIR with concrete handoffs
     // When a knowledge store is available, load shard template seeds and
     // use them to inform compute unit assignments.
+    // M-013: Now also loads seeds from the default knowledge/ directory.
     println!("[3/8] Building multi-shard plan with concrete handoffs...");
-    let shard_templates = if let Some(kdir) = knowledge_dir {
+    let effective_kdir = knowledge_dir
+        .map(|s| s.to_string())
+        .or_else(|| resolve_default_knowledge_dir().map(|s| s.to_string()));
+    let shard_templates = if let Some(ref kdir) = effective_kdir {
         match ane_knowledge::shard_template::load_shard_template_seeds(kdir) {
             Ok(templates) => {
                 if !templates.is_empty() {
@@ -1754,33 +1835,9 @@ fn run_compile_full_sharded(
 
     // Step 4: Load knowledge store (optional) — moved before plan construction
     // so that risk-based knowledge can inform the multi-shard plan (S37.4).
-    let mut knowledge_store: Option<ane_knowledge::store::KnowledgeStore> = None;
-    if let Some(kdir) = knowledge_dir {
-        let store_path = PathBuf::from(kdir);
-        if store_path.exists() {
-            if store_path.join("store_index.json").exists() {
-                if let Ok(store) = ane_knowledge::store::KnowledgeStore::open(kdir) {
-                    let (seeds, obs) = store.counts();
-                    println!("  Knowledge store: {} seeds, {} observations", seeds, obs);
-                    knowledge_store = Some(store);
-                }
-            } else {
-                let tmp_store_dir =
-                    std::env::temp_dir().join("ane_compile_full_sharded_knowledge_store");
-                let tmp_store_dir_str = tmp_store_dir.to_string_lossy().into_owned();
-                if let Ok(mut store) =
-                    ane_knowledge::store::KnowledgeStore::open(&tmp_store_dir_str)
-                {
-                    if let Ok(count) = store.load_seeds_from_directory(kdir) {
-                        if count > 0 {
-                            println!("  Knowledge seeds: {} entries loaded from {}", count, kdir);
-                            knowledge_store = Some(store);
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // M-013: Now also loads seeds from the default knowledge/ directory when
+    // no explicit --knowledge flag is provided.
+    let knowledge_store = open_knowledge_store_with_seeds(knowledge_dir, "compile_full_sharded");
 
     // Step 3b (S37.4): Build multi-shard plan with both template AND risk knowledge.
     // Previously, only template knowledge was used at the plan-construction level.
@@ -1983,15 +2040,18 @@ fn run_compile_full_sharded(
             }
         };
 
-        let risk = RiskAnnotatePass::new();
+        // M-011: Use new() (gate enabled) when a knowledge store is present,
+        // and new_allow_unknown() when NoKnowledge is used.
         let shard_air = match &knowledge_store {
             Some(store) => {
+                let risk = RiskAnnotatePass::new();
                 let query = StoreKnowledgeQuery::new(store);
                 risk.run(_shard_air, &query).map_err(|e| {
                     format!("RiskAnnotatePass failed for shard {}: {}", shard_spec.shard_name, e)
                 })?
             }
             None => {
+                let risk = RiskAnnotatePass::new_allow_unknown();
                 let no_knowledge = NoKnowledge;
                 risk.run(_shard_air, &no_knowledge).map_err(|e| {
                     format!("RiskAnnotatePass failed for shard {}: {}", shard_spec.shard_name, e)
@@ -2606,10 +2666,14 @@ fn run_compile_sharded(
     }
 
     // Step 3: Build PIR (deployment structure) from the pipeline spec
-    // When a knowledge directory is provided, load shard template seeds and
-    // use them to inform compute unit assignments.
+    // When a knowledge directory is provided (or default knowledge/ exists),
+    // load shard template seeds and use them to inform compute unit assignments.
+    // M-013: Now also loads seeds from the default knowledge/ directory.
     println!("[3/5] Building PIR deployment structure...");
-    let shard_templates = if let Some(kdir) = knowledge_dir {
+    let effective_kdir = knowledge_dir
+        .map(|s| s.to_string())
+        .or_else(|| resolve_default_knowledge_dir().map(|s| s.to_string()));
+    let shard_templates = if let Some(ref kdir) = effective_kdir {
         match load_shard_template_seeds(kdir) {
             Ok(templates) => {
                 if !templates.is_empty() {
@@ -4741,16 +4805,16 @@ fn run_trace_compile(
     println!("  Faithfulness report: {}", report_path.display());
 
     // Step 10: Knowledge consultation (optional)
+    // M-013: Now also loads seeds from the default knowledge/ directory when
+    // no explicit --knowledge flag is provided.
     println!("[10/10] Knowledge consultation...");
-    if let Some(kdir) = knowledge_dir {
-        let store_path = PathBuf::from(kdir);
-        if store_path.exists() {
-            println!("  Knowledge store: {} (available)", kdir);
-        } else {
-            println!("  Knowledge store: {} (not found)", kdir);
-        }
+    if let Some(store) = open_knowledge_store_with_seeds(knowledge_dir, "trace_compile") {
+        let (seeds, obs) = store.counts();
+        println!("  Knowledge store: {} seeds, {} observations available", seeds, obs);
+    } else if knowledge_dir.is_some() {
+        println!("  Knowledge store: specified directory not found");
     } else {
-        println!("  No knowledge store specified");
+        println!("  No knowledge directory found (no --knowledge flag and no default knowledge/ directory)");
     }
 
     println!("\n=== Trace-compile complete ===");

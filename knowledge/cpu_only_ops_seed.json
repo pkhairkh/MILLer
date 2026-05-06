@@ -1102,6 +1102,32 @@
       }
     },
     {
+      "id": "cpu_only_tile",
+      "version": 1,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "knowledge_type": "CpuOnlyOps",
+      "confidence": 0.9,
+      "evidence_source": "SourceCode",
+      "evidence_count": 1,
+      "scope": {
+        "device_classes": [
+          "unknown"
+        ],
+        "os_versions": [
+          "unknown"
+        ],
+        "opset_versions": [
+          "unknown"
+        ]
+      },
+      "conflict_priority": 0,
+      "payload": {
+        "mil_name": "tile",
+        "reason_code": "NoConverter",
+        "ane_legal": false
+      }
+    },
+    {
       "id": "cpu_only_dequantize_lut",
       "version": 1,
       "timestamp": "2025-01-01T00:00:00Z",

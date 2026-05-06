@@ -27,36 +27,22 @@ use ane_coreml_proto::{
     CoreMlComputeUnit, CoreMlDataType, CoreMlFunction, CoreMlModel, ModelDescriptionCompat,
     SharedWeightRef, SpecVersion, TensorDesc, WeightEntry,
 };
+use ane_passes::placement_validate::{
+    FunctionSurfaceInfo, SurfaceConstraintViolation, SurfaceInfo,
+};
+// M-028: ValidationPolicy and MIN_IOSURFACE_BYTES are re-exported below
+// from placement_validate, so don't import them here to avoid duplicate
+// definition errors.
 use anyhow::Result;
 use prost::Message;
 
-/// T-P3-01: Controls whether ANE constraint violations produce errors or warnings.
-/// Default is strict mode (errors) since the ANE rejects these at runtime.
-#[derive(Debug, Clone)]
-pub struct ValidationPolicy {
-    /// When true, ANE constraint violations produce hard errors.
-    /// When false, they produce warnings and emission continues.
-    /// Default: true (strict mode)
-    pub strict: bool,
-}
+// M-028: ValidationPolicy is now defined in placement_validate.rs.
+// Re-export for backward compatibility.
+pub use ane_passes::placement_validate::ValidationPolicy;
 
-impl Default for ValidationPolicy {
-    fn default() -> Self {
-        Self { strict: true }
-    }
-}
-
-impl ValidationPolicy {
-    /// Create a strict validation policy (errors on violations).
-    pub fn strict() -> Self {
-        Self { strict: true }
-    }
-
-    /// Create a warn-only validation policy (warnings on violations, emission continues).
-    pub fn warn_only() -> Self {
-        Self { strict: false }
-    }
-}
+// M-028: MIN_IOSURFACE_BYTES is now defined in placement_validate.rs.
+// Re-export for backward compatibility.
+pub use ane_passes::placement_validate::MIN_IOSURFACE_BYTES;
 
 /// Convert a single-function MIR graph to a CoreMlModel.
 pub fn convert_mir_to_proto(
@@ -551,13 +537,81 @@ pub fn convert_mir_to_proto_multifunction_with_policy(
         states: default_fn.map(|f| f.states.clone()).unwrap_or_default(),
     };
 
-    // T-P3-01: Validate ANE constraints with the specified policy.
-    // In strict mode (default), violations are hard errors since the ANE
-    // rejects these at runtime (0x1d error). In warn-only mode, violations
-    // produce warnings and emission continues.
-    validate_iosurface_sizes(&functions, &validation_policy)?;
-    validate_surface_uniformity(&functions, &validation_policy)?;
-    validate_flat_buffer_layout(&functions, &validation_policy)?;
+    // M-028: ANE surface constraints (IOSurface size, surface uniformity,
+    // flat buffer layout) are now validated in
+    // placement_validate.rs::validate_surface_constraints().
+    // Emission trusts that validation has already passed.
+    {
+        let surface_infos: Vec<FunctionSurfaceInfo> = functions
+            .iter()
+            .map(|f| FunctionSurfaceInfo {
+                name: f.name.clone(),
+                inputs: f
+                    .inputs
+                    .iter()
+                    .map(|i| SurfaceInfo {
+                        name: i.name.clone(),
+                        shape: i.shape.clone(),
+                        element_size: i.dtype.element_size(),
+                    })
+                    .collect(),
+                outputs: f
+                    .outputs
+                    .iter()
+                    .map(|o| SurfaceInfo {
+                        name: o.name.clone(),
+                        shape: o.shape.clone(),
+                        element_size: o.dtype.element_size(),
+                    })
+                    .collect(),
+            })
+            .collect();
+        if let Err(violation) =
+            ane_passes::placement_validate::validate_surface_constraints(
+                &surface_infos,
+                &validation_policy,
+            )
+        {
+            // M-028: Convert SurfaceConstraintViolation to EmissionError
+            // for programmatic error matching by callers.
+            return Err(match violation {
+                SurfaceConstraintViolation::UndersizedIOSurface {
+                    name,
+                    function,
+                    actual_bytes,
+                    min_bytes,
+                } => crate::EmissionError::UndersizedIOSurface {
+                    name,
+                    function,
+                    actual_bytes,
+                    min_bytes,
+                }
+                .into(),
+                SurfaceConstraintViolation::NonUniformSurface {
+                    name,
+                    function,
+                    actual_bytes,
+                    expected_bytes,
+                } => crate::EmissionError::NonUniformSurface {
+                    name,
+                    function,
+                    actual_bytes,
+                    expected_bytes,
+                }
+                .into(),
+                SurfaceConstraintViolation::InvalidFlatBufferLayout {
+                    name,
+                    function,
+                    shape,
+                } => crate::EmissionError::InvalidFlatBufferLayout {
+                    name,
+                    function,
+                    shape,
+                }
+                .into(),
+            });
+        }
+    }
 
     Ok(CoreMlModel {
         spec_version,
@@ -571,207 +625,17 @@ pub fn convert_mir_to_proto_multifunction_with_policy(
     })
 }
 
-/// T-119: Minimum IOSurface size for ANE eval buffers (Orion #4).
-///
-/// The ANE requires output buffers of at least ~49 KB. Models with
-/// smaller output buffers fail at runtime with 0x1d error and no
-/// compile-time indication. This constant defines the minimum byte size.
-pub const MIN_IOSURFACE_BYTES: u64 = 49 * 1024; // ~49 KB
-
-/// T-119 / T-P3-01: Validate that all output tensor buffers meet the minimum
-/// IOSurface size requirement (Orion #4).
-///
-/// For each output tensor, computes `shape_product × dtype_size` and
-/// errors (strict mode) or warns (warn-only mode) if below
-/// `MIN_IOSURFACE_BYTES`. The ANE silently fails with a 0x1d runtime error
-/// for undersized output buffers, so failing early is correct.
-fn validate_iosurface_sizes(
-    functions: &[ane_coreml_proto::CoreMlFunction],
-    policy: &ValidationPolicy,
-) -> Result<()> {
-    for func in functions {
-        for output in &func.outputs {
-            let element_size = output.dtype.element_size() as u64;
-            let shape_product: u64 = output.shape.iter().product::<u64>().max(1);
-            let buffer_size = shape_product * element_size;
-
-            if buffer_size < MIN_IOSURFACE_BYTES {
-                let msg = format!(
-                    "T-119: Output '{}' in function '{}' has buffer size {} bytes \
-                     (shape={:?}, dtype_size={}), below minimum {} bytes (Orion #4). \
-                     The ANE rejects undersized output buffers with 0x1d runtime error.",
-                    output.name,
-                    func.name,
-                    buffer_size,
-                    output.shape,
-                    element_size,
-                    MIN_IOSURFACE_BYTES
-                );
-                if policy.strict {
-                    // T-P3-01: Use typed EmissionError::UndersizedIOSurface instead of
-                    // anyhow::bail! for programmatic error matching.
-                    return Err(crate::EmissionError::UndersizedIOSurface {
-                        name: output.name.clone(),
-                        function: func.name.clone(),
-                        actual_bytes: buffer_size as usize,
-                        min_bytes: MIN_IOSURFACE_BYTES as usize,
-                    }.into());
-                } else {
-                    log::warn!("{}", msg);
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// T-95 / T-P3-01: Validate that all output surfaces and all input surfaces within
-/// each function have uniform byte sizes (Orion #2, #18).
-///
-/// The ANE requires all output buffers in a function to have the same byte
-/// size, and all input buffers to have the same byte size. Non-uniform
-/// sizes cause a 0x1d runtime error with no compile-time indication from
-/// coremlcompiler — the model compiles successfully but fails at inference.
-///
-/// In strict mode (default, T-P3-01), violations are hard errors since the
-/// ANE rejects non-uniform buffers at runtime. In warn-only mode, violations
-/// produce warnings and emission continues.
-fn validate_surface_uniformity(
-    functions: &[ane_coreml_proto::CoreMlFunction],
-    policy: &ValidationPolicy,
-) -> Result<()> {
-    for func in functions {
-        // Check output buffer uniformity (Orion #2)
-        if func.outputs.len() > 1 {
-            let sizes: Vec<(u64, &str)> = func
-                .outputs
-                .iter()
-                .map(|o| {
-                    let element_size = o.dtype.element_size() as u64;
-                    let shape_product: u64 = o.shape.iter().product::<u64>().max(1);
-                    (shape_product * element_size, o.name.as_str())
-                })
-                .collect();
-            let first_size = sizes[0].0;
-            let non_uniform: Vec<&str> =
-                sizes.iter().filter(|(s, _)| *s != first_size).map(|(_, n)| *n).collect();
-            if !non_uniform.is_empty() {
-                let msg = format!(
-                    "T-95: Function '{}' has non-uniform output buffer sizes (Orion #2). \
-                     The ANE requires all output buffers in a function to have the same byte size. \
-                     Non-uniform sizes cause 0x1d runtime error. \
-                     First output size: {} bytes; non-uniform outputs: {:?}",
-                    func.name,
-                    first_size,
-                    non_uniform
-                );
-                if policy.strict {
-                    // T-P3-01: Use typed EmissionError::NonUniformSurface instead of
-                    // anyhow::bail! for programmatic error matching.
-                    return Err(crate::EmissionError::NonUniformSurface {
-                        name: non_uniform[0].to_string(),
-                        function: func.name.clone(),
-                        actual_bytes: sizes.iter().find(|(_, n)| n == &non_uniform[0]).map(|(s, _)| *s).unwrap_or(0) as usize,
-                        expected_bytes: first_size as usize,
-                    }.into());
-                } else {
-                    log::warn!("{}", msg);
-                }
-            }
-        }
-
-        // Check input buffer uniformity (Orion #18)
-        if func.inputs.len() > 1 {
-            let sizes: Vec<(u64, &str)> = func
-                .inputs
-                .iter()
-                .map(|i| {
-                    let element_size = i.dtype.element_size() as u64;
-                    let shape_product: u64 = i.shape.iter().product::<u64>().max(1);
-                    (shape_product * element_size, i.name.as_str())
-                })
-                .collect();
-            let first_size = sizes[0].0;
-            let non_uniform: Vec<&str> =
-                sizes.iter().filter(|(s, _)| *s != first_size).map(|(_, n)| *n).collect();
-            if !non_uniform.is_empty() {
-                let msg = format!(
-                    "T-95: Function '{}' has non-uniform input buffer sizes (Orion #18). \
-                     The ANE requires all input buffers in a function to have the same byte size. \
-                     Non-uniform sizes cause 0x1d runtime error. \
-                     First input size: {} bytes; non-uniform inputs: {:?}",
-                    func.name,
-                    first_size,
-                    non_uniform
-                );
-                if policy.strict {
-                    // T-P3-01: Use typed EmissionError::NonUniformSurface instead of
-                    // anyhow::bail! for programmatic error matching.
-                    return Err(crate::EmissionError::NonUniformSurface {
-                        name: non_uniform[0].to_string(),
-                        function: func.name.clone(),
-                        actual_bytes: sizes.iter().find(|(_, n)| n == &non_uniform[0]).map(|(s, _)| *s).unwrap_or(0) as usize,
-                        expected_bytes: first_size as usize,
-                    }.into());
-                } else {
-                    log::warn!("{}", msg);
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// T-95 / T-P3-01: Validate that tensor shapes conform to the ANE flat buffer layout
-/// convention [1,C,1,S] (Orion #20).
-///
-/// The ANE flat buffer layout packs tensor data in [1,C,1,S] format.
-/// Tensors with rank != 4 or that don't follow this convention may be
-/// silently misinterpreted by the ANE runtime, producing incorrect
-/// inference results without any error message.
-///
-/// In strict mode (default, T-P3-01), violations are hard errors since the
-/// ANE rejects non-[1,C,1,S] layouts at runtime. In warn-only mode, violations
-/// produce warnings and emission continues.
-fn validate_flat_buffer_layout(
-    functions: &[ane_coreml_proto::CoreMlFunction],
-    policy: &ValidationPolicy,
-) -> Result<()> {
-    for func in functions {
-        for output in &func.outputs {
-            // The ANE flat buffer layout is [1,C,1,S]. Rank-4 tensors with
-            // this pattern are the canonical layout. Rank != 4 is acceptable
-            // for scalars/vectors that the runtime will pad automatically.
-            if output.shape.len() == 4 {
-                // For rank-4 tensors, the canonical layout is [1,C,1,S].
-                // Check if dimensions 0 and 2 are 1 (the "1" in [1,C,1,S]).
-                if output.shape[0] != 1 || output.shape[2] != 1 {
-                    let msg = format!(
-                        "T-95: Output '{}' in function '{}' has rank-4 shape {:?} that \
-                         does not follow ANE flat buffer layout [1,C,1,S] (Orion #20). \
-                         Dimensions [0] and [2] should be 1 for the canonical layout. \
-                         Data may be silently misinterpreted by the ANE runtime.",
-                        output.name,
-                        func.name,
-                        output.shape
-                    );
-                    if policy.strict {
-                        // T-P3-01: Use typed EmissionError::InvalidFlatBufferLayout instead of
-                        // anyhow::bail! for programmatic error matching.
-                        return Err(crate::EmissionError::InvalidFlatBufferLayout {
-                            name: output.name.clone(),
-                            function: func.name.clone(),
-                            shape: output.shape.iter().map(|&d| d as usize).collect(),
-                        }.into());
-                    } else {
-                        log::warn!("{}", msg);
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
+// M-028: The following validation items have been moved to the
+// constraint validation layer (placement_validate.rs):
+//
+// - MIN_IOSURFACE_BYTES constant → placement_validate::MIN_IOSURFACE_BYTES
+// - validate_iosurface_sizes()   → placement_validate::validate_iosurface_sizes()
+// - validate_surface_uniformity() → placement_validate::validate_surface_uniformity()
+// - validate_flat_buffer_layout() → placement_validate::validate_flat_buffer_layout()
+//
+// These are called via placement_validate::validate_surface_constraints()
+// which is invoked above in convert_mir_to_proto_multifunction_with_policy().
+// Emission trusts that validation has already passed.
 
 /// Serialize a CoreMlModel to protobuf bytes using Apple's actual wire format.
 ///
@@ -975,6 +839,105 @@ fn generate_deterministic_data(num_elements: usize, element_size: usize, seed: u
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M-028: Helper to convert CoreMlFunction slice to FunctionSurfaceInfo
+    /// for calling the placement_validate surface constraint functions.
+    fn to_surface_infos(functions: &[ane_coreml_proto::CoreMlFunction]) -> Vec<FunctionSurfaceInfo> {
+        functions
+            .iter()
+            .map(|f| FunctionSurfaceInfo {
+                name: f.name.clone(),
+                inputs: f
+                    .inputs
+                    .iter()
+                    .map(|i| SurfaceInfo {
+                        name: i.name.clone(),
+                        shape: i.shape.clone(),
+                        element_size: i.dtype.element_size(),
+                    })
+                    .collect(),
+                outputs: f
+                    .outputs
+                    .iter()
+                    .map(|o| SurfaceInfo {
+                        name: o.name.clone(),
+                        shape: o.shape.clone(),
+                        element_size: o.dtype.element_size(),
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
+
+    /// M-028: Helper to validate IOSurface sizes via placement_validate.
+    fn validate_iosurface_sizes(
+        functions: &[ane_coreml_proto::CoreMlFunction],
+        policy: &ValidationPolicy,
+    ) -> Result<()> {
+        let surface_infos = to_surface_infos(functions);
+        ane_passes::placement_validate::validate_iosurface_sizes(&surface_infos, policy)
+            .map_err(|violation| match violation {
+                SurfaceConstraintViolation::UndersizedIOSurface {
+                    name,
+                    function,
+                    actual_bytes,
+                    min_bytes,
+                } => crate::EmissionError::UndersizedIOSurface {
+                    name,
+                    function,
+                    actual_bytes,
+                    min_bytes,
+                }
+                .into(),
+                other => anyhow::anyhow!("{}", other),
+            })
+    }
+
+    /// M-028: Helper to validate surface uniformity via placement_validate.
+    fn validate_surface_uniformity(
+        functions: &[ane_coreml_proto::CoreMlFunction],
+        policy: &ValidationPolicy,
+    ) -> Result<()> {
+        let surface_infos = to_surface_infos(functions);
+        ane_passes::placement_validate::validate_surface_uniformity(&surface_infos, policy)
+            .map_err(|violation| match violation {
+                SurfaceConstraintViolation::NonUniformSurface {
+                    name,
+                    function,
+                    actual_bytes,
+                    expected_bytes,
+                } => crate::EmissionError::NonUniformSurface {
+                    name,
+                    function,
+                    actual_bytes,
+                    expected_bytes,
+                }
+                .into(),
+                other => anyhow::anyhow!("{}", other),
+            })
+    }
+
+    /// M-028: Helper to validate flat buffer layout via placement_validate.
+    fn validate_flat_buffer_layout(
+        functions: &[ane_coreml_proto::CoreMlFunction],
+        policy: &ValidationPolicy,
+    ) -> Result<()> {
+        let surface_infos = to_surface_infos(functions);
+        ane_passes::placement_validate::validate_flat_buffer_layout(&surface_infos, policy)
+            .map_err(|violation| match violation {
+                SurfaceConstraintViolation::InvalidFlatBufferLayout {
+                    name,
+                    function,
+                    shape,
+                } => crate::EmissionError::InvalidFlatBufferLayout {
+                    name,
+                    function,
+                    shape,
+                }
+                .into(),
+                other => anyhow::anyhow!("{}", other),
+            })
+    }
 
     #[test]
     fn test_convert_single_function() {

@@ -259,6 +259,10 @@ pub static CPU_ONLY_OPS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "nf",
         "unrealized_fold",
         "create_texture_tensor",
+        // ─── N-009: MILTile has PE engine but no ANEC converter.
+        // The legality_rewrite pass already decomposes Tile into broadcast Mul,
+        // so this is a safety net to prevent Tile from landing on ANE.
+        "tile",
         // ─── T-P2-12: Ops with engine assignments but no MirOpCompat emission code ──
         // These ops have Some(AneEngine::NE) in default_engine() but lack
         // MirOpCompat emission code. They should be treated as CPU-only for
@@ -501,6 +505,8 @@ pub static CPU_ONLY_OPS_DETAILED: LazyLock<Vec<CpuOnlyOp>> = LazyLock::new(|| {
         // NOTE: Comparison ops (equal, not_equal, greater, greater_equal, less, less_equal)
         // ARE ANE-legal per per-op support matrix rows 44-50.
         // Removed from CPU_ONLY detailed catalog.
+        // ─── N-009: MILTile has PE engine but no ANEC converter.
+        CpuOnlyOp { mil_name: "tile", reason: CpuOnlyReason::NoConverter },
         // ─── T-P2-12: Ops with engine assignments but no MirOpCompat emission ──
         // These ops have Some(AneEngine::NE) in default_engine() but lack
         // MirOpCompat emission code. They should be treated as CPU-only for
@@ -585,6 +591,7 @@ mod unified_check {
         // default_engine() but are in CPU_ONLY_OPS because they lack
         // MirOpCompat emission code. They will be moved to None as part
         // of T-66 (Add Remaining MirOpCompat Variants).
+        "tile",           // MILTile → Some(PE), no ANEC converter (N-009)
         "max_pool",       // MILMaxPool → Some(NE), lacks MirOpCompat
         "avg_pool",       // MILAvgPool → Some(NE), lacks MirOpCompat
         "l2_pool",        // MILL2Pool → Some(NE), lacks MirOpCompat
@@ -645,6 +652,7 @@ mod unified_check {
         // MirOp actually has an engine assignment. If it doesn't, the entry
         // shouldn't be in the divergence list (it's correctly CPU-only).
         let ops_with_known_engines: &[&str] = &[
+            "tile",
             "max_pool", "avg_pool", "l2_pool", "resize",
             "resize_nearest_neighbor", "resize_bilinear",
             "upsample_nearest_neighbor", "upsample_bilinear",
@@ -949,6 +957,8 @@ mod tests {
             "nf",
             "unrealized_fold",
             "create_texture_tensor",
+            // N-009: MILTile has PE engine but no ANEC converter
+            "tile",
         ];
 
         let unique: HashSet<&str> = source_ops.iter().copied().collect();

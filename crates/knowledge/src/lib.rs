@@ -5,6 +5,7 @@
 //! and shard template seed loading.
 
 pub mod compute_plan_verify;
+pub mod confidence;
 pub mod query;
 pub mod shard_template;
 pub mod snapshot;

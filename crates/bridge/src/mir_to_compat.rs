@@ -761,8 +761,10 @@ pub fn mir_op_to_compat_with_shapes(
                 // node_shape is valid and has no zeros — use it
                 node_shape.iter().map(|&d| d as i32).collect()
             } else if let Some(input_shape) = shape_map.get(&x.0) {
+                // M-033: Pass batch_size from the first dimension of the input shape
+                let batch_size = input_shape.first().copied();
                 // Look up the input node's shape and resolve zeros
-                resolve_reshape_shape(shape, input_shape, name)
+                resolve_reshape_shape(shape, input_shape, name, batch_size)
             } else if !node_shape.is_empty() && node_shape.len() == shape.len() {
                 // node_shape has zeros too, but try positional fallback
                 let mut resolved = shape.clone();
@@ -828,7 +830,7 @@ pub fn mir_op_to_compat_with_shapes(
 ///    - Compute the product of non-zero target dimensions
 ///    - Distribute the remaining elements among the zero dimensions
 ///    - If batch=1 is assumed for the first zero, compute the rest
-fn resolve_reshape_shape(target_shape: &[usize], input_shape: &[usize], _name: &str) -> Vec<i32> {
+fn resolve_reshape_shape(target_shape: &[usize], input_shape: &[usize], _name: &str, batch_size: Option<usize>) -> Vec<i32> {
     let input_elements: usize = input_shape.iter().product();
     if input_elements == 0 {
         return target_shape.iter().map(|&d| d as i32).collect();
@@ -891,25 +893,73 @@ fn resolve_reshape_shape(target_shape: &[usize], input_shape: &[usize], _name: &
             }
         }
         _ => {
-            // Two or more zeros — set all but the last zero to 1 (batch
-            // dimension heuristic), then compute the last from the remaining
-            // product. This is the common case for [0, 0, embed] or
-            // [0, 0, H, D] reshapes in attention.
+            // M-033: Two or more zeros — resolve using batch_size when available.
             //
-            // Previously used `% 1 == 0` which is always true (modulo one
-            // is zero), making the else branch dead code. Fixed to use
-            // `product_so_far` consistently with the element-count
-            // factorization approach.
+            // When batch_size is Some(b), we use it for the first zero dimension
+            // (typically the batch dimension) and distribute remaining elements
+            // among the other zeros.
+            //
+            // When batch_size is None, we fall back to the heuristic of setting
+            // all-but-last zero to 1 (assumes batch=1). This is the legacy
+            // behavior and is incorrect for batch > 1 — a warning is logged.
             let zero_positions: Vec<usize> =
                 resolved.iter().enumerate().filter(|(_, &d)| d == 0).map(|(i, _)| i).collect();
-            let mut product_so_far = 1usize;
-            for &pos in &zero_positions[..zero_positions.len() - 1] {
-                resolved[pos] = 1;
-                product_so_far *= resolved[pos];
-            }
-            if let Some(&last_pos) = zero_positions.last() {
-                if product_so_far > 0 && remaining.is_multiple_of(product_so_far) {
-                    resolved[last_pos] = remaining / product_so_far;
+
+            match batch_size {
+                Some(b) => {
+                    // Use known batch size for the first zero, distribute
+                    // remaining elements among the rest.
+                    //
+                    // After setting the first zero to batch_size, recompute
+                    // the remaining elements that must be distributed among
+                    // the other zero dimensions.
+                    if let Some(&first_pos) = zero_positions.first() {
+                        resolved[first_pos] = b;
+                    }
+                    // Recompute remaining for the other zeros:
+                    // remaining_after_batch = remaining / batch_size
+                    let remaining_after_batch = if b > 0 && remaining.is_multiple_of(b) {
+                        remaining / b
+                    } else {
+                        // batch_size doesn't divide evenly — can't resolve
+                        remaining
+                    };
+                    // For remaining zeros (all but first), try to set them to 1
+                    // and compute the last from remaining_after_batch.
+                    let remaining_zeros: Vec<usize> = zero_positions[1..].to_vec();
+                    let mut product_so_far = 1usize;
+                    for &pos in &remaining_zeros[..remaining_zeros.len().saturating_sub(1)] {
+                        resolved[pos] = 1;
+                        product_so_far *= 1;
+                    }
+                    if let Some(&last_pos) = remaining_zeros.last() {
+                        if product_so_far > 0 && remaining_after_batch.is_multiple_of(product_so_far) {
+                            resolved[last_pos] = remaining_after_batch / product_so_far;
+                        }
+                    }
+                }
+                None => {
+                    // M-033: Legacy heuristic — assumes batch=1 for the first zero.
+                    // This is incorrect for batch > 1 (e.g., [0, 0, 64] from
+                    // [2, 8, 4, 4] would incorrectly give [1, 4, 64] instead
+                    // of [2, 2, 64]).
+                    log::warn!(
+                        "M-033: resolve_reshape_shape: multi-zero reshape with no \
+                         batch_size hint. Assuming batch=1 for first zero dimension. \
+                         This may produce incorrect shapes for batch > 1. \
+                         Target shape: {:?}, input shape: {:?}, zero positions: {:?}",
+                        target_shape, input_shape, zero_positions
+                    );
+                    let mut product_so_far = 1usize;
+                    for &pos in &zero_positions[..zero_positions.len() - 1] {
+                        resolved[pos] = 1;
+                        product_so_far *= resolved[pos];
+                    }
+                    if let Some(&last_pos) = zero_positions.last() {
+                        if product_so_far > 0 && remaining.is_multiple_of(product_so_far) {
+                            resolved[last_pos] = remaining / product_so_far;
+                        }
+                    }
                 }
             }
         }
@@ -2718,22 +2768,22 @@ fn test_resolve_reshape_shape_element_count_inference() {
 
     // Case 1: 3D→4D with same rank (positional works)
     // input [1, 512, 2048] → target [0, 0, 16, 128]
-    let result = resolve_reshape_shape(&[0, 0, 16, 128], &[1, 512, 2048], "test");
+    let result = resolve_reshape_shape(&[0, 0, 16, 128], &[1, 512, 2048], "test", None);
     assert_eq!(result, vec![1, 512, 16, 128], "3D→4D positional should work");
 
     // Case 2: 4D→3D (positional WRONG, element-count needed)
     // input [1, 16, 512, 128] → target [0, 0, 2048]
     // Positional would give [1, 16, 2048] (wrong), element-count gives [1, 512, 2048]
-    let result = resolve_reshape_shape(&[0, 0, 2048], &[1, 16, 512, 128], "test");
+    let result = resolve_reshape_shape(&[0, 0, 2048], &[1, 16, 512, 128], "test", None);
     assert_eq!(result, vec![1, 512, 2048], "4D→3D should use element-count");
 
     // Case 3: Single zero dimension
     // input [1, 512, 1024] → target [1, 0, 1024]
-    let result = resolve_reshape_shape(&[1, 0, 1024], &[1, 512, 1024], "test");
+    let result = resolve_reshape_shape(&[1, 0, 1024], &[1, 512, 1024], "test", None);
     assert_eq!(result, vec![1, 512, 1024], "Single zero should resolve directly");
 
     // Case 4: No zeros (concrete shape)
-    let result = resolve_reshape_shape(&[1, 512, 16, 128], &[1, 512, 2048], "test");
+    let result = resolve_reshape_shape(&[1, 512, 16, 128], &[1, 512, 2048], "test", None);
     assert_eq!(result, vec![1, 512, 16, 128], "No zeros should pass through");
 }
 
@@ -2748,13 +2798,13 @@ fn test_resolve_reshape_shape_two_zeros_product_so_far() {
     // Positional resolution gives [1, 16, 2048] which is wrong (1*16*2048 ≠ 1*16*512*128).
     // Element-count: non_zero_product = 2048, remaining = 1048576/2048 = 512.
     // Two zeros at positions 0,1: first→1, last→512. Result: [1, 512, 2048]
-    let result = resolve_reshape_shape(&[0, 0, 2048], &[1, 16, 512, 128], "test");
+    let result = resolve_reshape_shape(&[0, 0, 2048], &[1, 16, 512, 128], "test", None);
     assert_eq!(result, vec![1, 512, 2048],
             "Two zeros should use product_so_far factorization: first zero=1, last=remaining/product_so_far");
 
     // Case 2: Two zeros [0, 0, 16, 128] from [1, 512, 2048]
     // Positional works: [1, 512, 16, 128], elements = 1*512*16*128 = 1048576 = 1*512*2048
-    let result = resolve_reshape_shape(&[0, 0, 16, 128], &[1, 512, 2048], "test");
+    let result = resolve_reshape_shape(&[0, 0, 16, 128], &[1, 512, 2048], "test", None);
     assert_eq!(
         result,
         vec![1, 512, 16, 128],
@@ -2763,14 +2813,25 @@ fn test_resolve_reshape_shape_two_zeros_product_so_far() {
 
     // Case 3: Two zeros with larger remaining product
     // [0, 0, 64] from [2, 8, 4, 4] = 256 elements
-    // Positional: wrong rank, fallback to element-count.
+    // M-033: With batch_size=2, first zero gets batch=2.
     // non_zero_product = 64, remaining = 4.
-    // first zero→1, last zero→4. Result: [1, 4, 64]
-    let result = resolve_reshape_shape(&[0, 0, 64], &[2, 8, 4, 4], "test");
+    // resolved after first zero: [2, 0, 64], product_so_far = 2*64 = 128
+    // remaining_zeros: just position 1, which is the last.
+    // 256 / 128 = 2. Result: [2, 2, 64]
+    let result = resolve_reshape_shape(&[0, 0, 64], &[2, 8, 4, 4], "test", Some(2));
+    assert_eq!(
+        result,
+        vec![2, 2, 64],
+        "M-033: Two zeros with batch_size=2 should resolve correctly"
+    );
+
+    // Case 3b: Same input without batch_size (legacy heuristic)
+    // Without batch_size, first zero→1, last→4. Result: [1, 4, 64]
+    let result = resolve_reshape_shape(&[0, 0, 64], &[2, 8, 4, 4], "test", None);
     assert_eq!(
         result,
         vec![1, 4, 64],
-        "Two zeros with even remaining should resolve via product_so_far"
+        "Two zeros without batch_size should fall back to legacy heuristic"
     );
 }
 
@@ -2782,7 +2843,7 @@ fn test_resolve_reshape_shape_three_plus_zeros() {
     // non_zero_product = 512, remaining = 2.
     // Positions 0,1,2 are zeros: first two → 1, last → 2.
     // Result: [1, 1, 2, 512]
-    let result = resolve_reshape_shape(&[0, 0, 0, 512], &[2, 8, 4, 4, 4], "test");
+    let result = resolve_reshape_shape(&[0, 0, 0, 512], &[2, 8, 4, 4, 4], "test", None);
     assert_eq!(
         result,
         vec![1, 1, 2, 512],
@@ -2794,7 +2855,7 @@ fn test_resolve_reshape_shape_three_plus_zeros() {
     // Positions 0,1,2,3 are zeros: first three → 1, last → 512.
     // product_so_far = 1*1*1 = 1, remaining % 1 == 0 → true.
     // Result: [1, 1, 1, 512, 128]
-    let result = resolve_reshape_shape(&[0, 0, 0, 0, 128], &[1, 512, 128], "test");
+    let result = resolve_reshape_shape(&[0, 0, 0, 0, 128], &[1, 512, 128], "test", None);
     assert_eq!(
         result,
         vec![1, 1, 1, 512, 128],
@@ -2809,7 +2870,7 @@ fn test_resolve_reshape_shape_single_zero() {
     // [1, 0, 1024] from [1, 512, 1024] = 524288 elements
     // non_zero_product = 1 * 1024 = 1024, remaining = 512
     // Single zero at position 1 → 512
-    let result = resolve_reshape_shape(&[1, 0, 1024], &[1, 512, 1024], "test");
+    let result = resolve_reshape_shape(&[1, 0, 1024], &[1, 512, 1024], "test", None);
     assert_eq!(result, vec![1, 512, 1024], "Single zero should resolve to remaining elements");
 }
 
@@ -2817,7 +2878,7 @@ fn test_resolve_reshape_shape_single_zero() {
 fn test_resolve_reshape_shape_zero_input() {
     // Zero-element input shape should return target as-is
 
-    let result = resolve_reshape_shape(&[0, 0, 16, 128], &[0, 0, 0], "test");
+    let result = resolve_reshape_shape(&[0, 0, 16, 128], &[0, 0, 0], "test", None);
     assert_eq!(
         result,
         vec![0, 0, 16, 128],
@@ -2830,7 +2891,7 @@ fn test_resolve_reshape_shape_incompatible_count() {
     // Element count doesn't divide evenly — return target as-is
 
     // 2*3 = 6 elements, target [0, 4] = 4 * ? — 6/4 = 1.5, not divisible
-    let result = resolve_reshape_shape(&[0, 4], &[2, 3], "test");
+    let result = resolve_reshape_shape(&[0, 4], &[2, 3], "test", None);
     assert_eq!(result, vec![0, 4], "Incompatible element count should return target unchanged");
 }
 

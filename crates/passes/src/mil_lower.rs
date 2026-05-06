@@ -584,10 +584,11 @@ impl MilLowerPass {
             // and must be respected in the MIR, ensuring the knowledge-informed
             // precision decision reaches the emitted mlpackage.
             //
-            // Special case: Identity nodes that are graph inputs with integer-like
-            // names (e.g., "input_ids", "attention_mask") should use Int32, since
-            // Core ML's gather op expects integer indices and these inputs represent
-            // token indices or masks, not floating-point data.
+            // M-016 fix: Identity nodes use explicit dtype_hint instead of
+            // name-based heuristics. When dtype_hint is set (e.g., Int32 for
+            // input_ids), it is used directly. When absent, Fp16 is the default
+            // with a log message. The SIR→AIR builder must set dtype_hint for
+            // non-Fp16 Identity nodes (e.g., input_ids → Int32).
             let mil_dtype = match &air_node.precision_override {
                 Some(dtype) => match dtype.as_str() {
                     "fp32" => MilDtype::Fp32,
@@ -604,28 +605,21 @@ impl MilLowerPass {
                     }
                 },
                 None => {
-                    // T-P5-09: Prefer explicit dtype_hint on Identity ops
-                    // over name-based heuristics. The dtype_hint is set by
-                    // the SIR→AIR builder and carries the intended dtype
-                    // without relying on naming conventions.
+                    // T-P5-09 / M-016: Use explicit dtype_hint on Identity ops.
+                    // The dtype_hint is set by the SIR→AIR builder and carries
+                    // the intended dtype without relying on naming conventions.
+                    // Name-based heuristics (ends_with("_ids"), contains("mask"))
+                    // have been removed — if no dtype_hint is set, default to Fp16.
                     if let AirOp::Identity { dtype_hint: Some(hint), .. } = &air_node.op {
                         hint.clone()
-                    } else if matches!(&air_node.op, AirOp::Identity { .. })
-                        && (air_node.name.ends_with("_ids")
-                            || air_node.name.contains("input_ids")
-                            || air_node.name.contains("mask"))
-                    {
-                        // T-P5-09: Legacy name-based fallback — still present
-                        // for backward compatibility with AIR graphs that don't
-                        // have dtype_hint set. Emits a warning so callers know
-                        // to update their SIR→AIR builder.
-                        log::warn!(
-                            "T-P5-09: Using name-based dtype heuristic for node '{}'. \
-                             This is fragile and should be replaced by setting dtype_hint \
-                             on the Identity op in the SIR→AIR builder.",
+                    } else if matches!(&air_node.op, AirOp::Identity { .. }) {
+                        log::info!(
+                            "M-016: no dtype_hint for Identity node '{}', defaulting to Fp16. \
+                             Set dtype_hint explicitly on the Identity op in the SIR→AIR builder \
+                             for correct dtype inference.",
                             air_node.name
                         );
-                        MilDtype::Int32
+                        MilDtype::Fp16
                     } else {
                         MilDtype::Fp16
                     }

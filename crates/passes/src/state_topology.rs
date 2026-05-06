@@ -1,10 +1,10 @@
-//! State Topology pass.
+//! State Topology Validator.
 //!
 //! Analyzes and optimizes the state read/write patterns in SIR,
 //! ensuring correct state ownership and access patterns.
 //!
 //! When the SIR contains `StateRead`/`StateWrite` ops (from KV-cache
-//! enabled tracing), this pass:
+//! enabled tracing), this validator:
 //! - Verifies that state read/write patterns are well-formed
 //! - Ensures every StateRead has a corresponding StateWrite
 //! - Validates that KV-cache state IDs follow the naming convention
@@ -13,7 +13,7 @@
 //!
 //! ## Strict Mode (T-109)
 //!
-//! When `strict` is true (the default), the pass enforces validation
+//! When `strict` is true (the default), the validator enforces validation
 //! by returning errors for invalid patterns:
 //! - ReadState without matching WriteState → `Err`
 //! - WriteState without matching ReadState → `warn!` only (valid for
@@ -25,41 +25,41 @@
 use ane_ir::sir::SirGraph;
 use anyhow::Result;
 
-/// State Topology pass implementation.
+/// State Topology validator implementation.
 ///
 /// T-109: Added `strict` mode to enforce validation by returning errors
 /// instead of silently logging warnings.
-pub struct StateTopologyPass {
+pub struct StateTopologyValidator {
     /// T-109: When true, validation failures return Err instead of just logging.
     /// Default: true.
     strict: bool,
 }
 
-impl Default for StateTopologyPass {
+impl Default for StateTopologyValidator {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl StateTopologyPass {
+impl StateTopologyValidator {
     pub fn new() -> Self {
         Self { strict: true }
     }
 
-    /// T-109: Create a pass with explicit strict mode.
+    /// T-109: Create a validator with explicit strict mode.
     pub fn with_strict(strict: bool) -> Self {
         Self { strict }
     }
 
-    /// T-109: Create a non-strict pass (backward-compatible with old behavior).
+    /// T-109: Create a non-strict validator (backward-compatible with old behavior).
     pub fn new_lenient() -> Self {
         Self { strict: false }
     }
 
-    /// Run the state topology pass.
+    /// Run the state topology validator.
     ///
     /// When stateful operations are present (KV-cache state reads/writes),
-    /// this pass validates their structure and naming. For stateless graphs
+    /// this validator validates their structure and naming. For stateless graphs
     /// (no `StateRead`/`StateWrite` ops), it is a no-op.
     ///
     /// ## Validation behavior (T-109)
@@ -137,6 +137,9 @@ impl StateTopologyPass {
     }
 }
 
+/// Backward-compatible type alias (M-024: renamed from StateTopologyPass).
+pub type StateTopologyPass = StateTopologyValidator;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,20 +171,20 @@ mod tests {
     }
 
     #[test]
-    fn test_state_topology_pass_new() {
-        let pass = StateTopologyPass::new();
-        assert!(pass.strict, "Default strict mode should be true");
+    fn test_state_topology_validator_new() {
+        let validator = StateTopologyValidator::new();
+        assert!(validator.strict, "Default strict mode should be true");
     }
 
     #[test]
-    fn test_state_topology_pass_default() {
-        let pass = StateTopologyPass::default();
-        assert!(pass.strict, "Default strict mode should be true");
+    fn test_state_topology_validator_default() {
+        let validator = StateTopologyValidator::default();
+        assert!(validator.strict, "Default strict mode should be true");
     }
 
     #[test]
     fn test_run_stateless_graph() {
-        // A graph with no StateRead/StateWrite ops — pass should be a no-op
+        // A graph with no StateRead/StateWrite ops — validator should be a no-op
         let nodes = vec![SirNode {
             id: SirNodeId("identity_0".to_string()),
             op: SirOp::Identity { input: SirNodeId("input_0".to_string()) },
@@ -192,8 +195,8 @@ mod tests {
         let graph = make_graph(nodes);
         let node_count = graph.nodes.len();
 
-        let pass = StateTopologyPass::new();
-        let result = pass.run(graph).unwrap();
+        let validator = StateTopologyValidator::new();
+        let result = validator.run(graph).unwrap();
         assert_eq!(result.nodes.len(), node_count);
     }
 
@@ -227,8 +230,8 @@ mod tests {
         let graph = make_graph(nodes);
 
         // Strict mode: should still be Ok (read has matching write)
-        let pass = StateTopologyPass::new();
-        let result = pass.run(graph);
+        let validator = StateTopologyValidator::new();
+        let result = validator.run(graph);
         assert!(result.is_ok());
     }
 
@@ -249,8 +252,8 @@ mod tests {
         let graph = make_graph(nodes);
 
         // T-109: In strict mode (default), read without write should return Err
-        let pass = StateTopologyPass::new();
-        let result = pass.run(graph);
+        let validator = StateTopologyValidator::new();
+        let result = validator.run(graph);
         assert!(result.is_err(), "Strict mode should return Err for read without write");
         let err_msg = result.unwrap_err().to_string();
         assert!(
@@ -287,8 +290,8 @@ mod tests {
         let graph = make_graph(nodes);
 
         // T-109: In non-strict mode, read without write should return Ok (just warns)
-        let pass = StateTopologyPass::new_lenient();
-        let result = pass.run(graph);
+        let validator = StateTopologyValidator::new_lenient();
+        let result = validator.run(graph);
         assert!(
             result.is_ok(),
             "Non-strict mode should return Ok for read without write (just warn)"
@@ -312,15 +315,15 @@ mod tests {
         let graph = make_graph(nodes);
 
         // Strict mode: write without read should still be Ok (just info log)
-        let pass = StateTopologyPass::new();
-        let result = pass.run(graph);
+        let validator = StateTopologyValidator::new();
+        let result = validator.run(graph);
         assert!(
             result.is_ok(),
             "Write without read should be Ok in strict mode (valid for initial state writes)"
         );
 
         // Non-strict mode: also Ok
-        let pass = StateTopologyPass::new_lenient();
+        let validator = StateTopologyValidator::new_lenient();
         let nodes2 = vec![SirNode {
             id: SirNodeId("state_write_0".to_string()),
             op: SirOp::StateWrite {
@@ -333,7 +336,7 @@ mod tests {
         target_annotation: SirTargetAnnotation::default(),
         }];
         let graph2 = make_graph(nodes2);
-        let result = pass.run(graph2);
+        let result = validator.run(graph2);
         assert!(
             result.is_ok(),
             "Write without read should be Ok in non-strict mode"
@@ -343,10 +346,10 @@ mod tests {
     /// T-109: Test with_strict constructor.
     #[test]
     fn test_with_strict_constructor() {
-        let strict_pass = StateTopologyPass::with_strict(true);
-        assert!(strict_pass.strict);
+        let strict_validator = StateTopologyValidator::with_strict(true);
+        assert!(strict_validator.strict);
 
-        let lenient_pass = StateTopologyPass::with_strict(false);
-        assert!(!lenient_pass.strict);
+        let lenient_validator = StateTopologyValidator::with_strict(false);
+        assert!(!lenient_validator.strict);
     }
 }

@@ -16,9 +16,21 @@
 //! was NOT placed on the NeuralEngine (ane_placed=False), the
 //! `LegalityStatus` is set to `LikelyFallback`. Compute plan evidence
 //! is deterministic for a given hardware+OS, so it carries high weight.
+//!
+//! ## M-011: Legality Gate
+//!
+//! By default, `RiskAnnotatePass` enforces a legality gate after
+//! annotation: if any node ends up with `LegalityStatus::Unknown`,
+//! the pass returns an error. This prevents compilation from proceeding
+//! when the legality of an operation cannot be determined, which would
+//! otherwise silently produce incorrect ANE placement decisions.
+//!
+//! To opt out of this gate (e.g., for development or debugging with
+//! incomplete knowledge stores), use `RiskAnnotatePass::new_allow_unknown()`.
 
 use crate::knowledge_query::{LegalityInfo, PassKnowledgeQuery};
 use ane_ir::air::{AirGraph, AirOp, LegalityStatus};
+use ane_ir::common::IrNodeId;
 use anyhow::Result;
 
 /// Derive `LegalityStatus` from the combined evidence of all knowledge
@@ -124,8 +136,53 @@ fn determine_legality_status(
     LegalityStatus::Unverified
 }
 
+/// Validate that no AIR node has `LegalityStatus::Unknown`.
+///
+/// M-011: This is the automatic legality gate. By default, compilation
+/// should fail if any node has Unknown legality — we cannot make sound
+/// placement decisions without knowing whether an op is legal on ANE.
+///
+/// Returns `Ok(())` if all nodes have a known legality status
+/// (Verified, Unverified, or LikelyFallback). Returns `Err` listing
+/// all nodes with Unknown legality.
+///
+/// # Errors
+///
+/// Returns an error listing the node IDs that have `LegalityStatus::Unknown`.
+pub fn validate_legality_status(graph: &AirGraph) -> Result<()> {
+    let unknown_nodes: Vec<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.legality_status == LegalityStatus::Unknown)
+        .map(|node| node.id.as_str())
+        .collect();
+
+    if unknown_nodes.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "Legality gate rejected {} node(s) with Unknown legality: {}. \
+             Populate the knowledge store or use allow_unknown_legality to proceed \
+             (not recommended for production).",
+            unknown_nodes.len(),
+            unknown_nodes.join(", ")
+        )
+    }
+}
+
 /// Risk Annotate pass implementation.
-pub struct RiskAnnotatePass;
+///
+/// M-011: The pass now includes an automatic legality gate. By default
+/// (`new()`), the gate rejects any node with `LegalityStatus::Unknown`
+/// after annotation. Use `new_allow_unknown()` to disable the gate
+/// for development/debugging.
+pub struct RiskAnnotatePass {
+    /// When false (default), the pass rejects graphs containing nodes
+    /// with `LegalityStatus::Unknown`. When true, Unknown nodes are
+    /// allowed through (for development/debugging with incomplete
+    /// knowledge stores).
+    allow_unknown_legality: bool,
+}
 
 impl Default for RiskAnnotatePass {
     fn default() -> Self {
@@ -134,8 +191,24 @@ impl Default for RiskAnnotatePass {
 }
 
 impl RiskAnnotatePass {
+    /// Create a new `RiskAnnotatePass` with the legality gate enabled.
+    ///
+    /// M-011: By default, the pass will reject any graph where a node
+    /// ends up with `LegalityStatus::Unknown` after annotation. This
+    /// prevents silent compilation of ops whose ANE legality cannot be
+    /// determined.
     pub fn new() -> Self {
-        Self
+        Self { allow_unknown_legality: false }
+    }
+
+    /// Create a `RiskAnnotatePass` that allows `LegalityStatus::Unknown`
+    /// nodes to pass through without error.
+    ///
+    /// Use this for development or debugging when the knowledge store
+    /// is incomplete and Unknown statuses are expected. Production
+    /// pipelines should use `new()` to enforce the legality gate.
+    pub fn new_allow_unknown() -> Self {
+        Self { allow_unknown_legality: true }
     }
 
     /// Run the risk annotation pass.
@@ -258,11 +331,21 @@ impl RiskAnnotatePass {
             })
             .collect();
 
-        Ok(AirGraph {
+        let annotated = AirGraph {
             nodes: annotated_nodes,
             inputs: input.inputs,
             outputs: input.outputs,
-        })
+        };
+
+        // M-011: Automatic legality gate. By default, reject any node
+        // with LegalityStatus::Unknown. This prevents compilation from
+        // proceeding when we cannot determine an op's ANE legality,
+        // which would otherwise silently produce incorrect placement.
+        if !self.allow_unknown_legality {
+            validate_legality_status(&annotated)?;
+        }
+
+        Ok(annotated)
     }
 }
 
@@ -294,7 +377,8 @@ mod tests {
     fn test_no_knowledge_sets_unknown() {
         // When ALL knowledge sources return None, legality_status should be
         // Unknown — we have genuinely insufficient information.
-        let pass = RiskAnnotatePass::new();
+        // M-011: Use new_allow_unknown() since the default gate rejects Unknown.
+        let pass = RiskAnnotatePass::new_allow_unknown();
         let graph = make_simple_graph(AirOp::MatMul {
             a: AirNodeId("a".to_string()),
             b: AirNodeId("b".to_string()),
@@ -508,7 +592,8 @@ mod tests {
         // When only default risk scores are applied (no actual risk
         // knowledge), no legality knowledge, and no compute plan,
         // the result should be Unknown.
-        let pass = RiskAnnotatePass::new();
+        // M-011: Use new_allow_unknown() since the default gate rejects Unknown.
+        let pass = RiskAnnotatePass::new_allow_unknown();
         let graph = make_simple_graph(AirOp::Add {
             x: AirNodeId("a".to_string()),
             y: AirNodeId("b".to_string()),
@@ -608,5 +693,177 @@ mod tests {
         };
         let node = AirNode::try_from(legacy).unwrap();
         assert_eq!(node.legality_status, LegalityStatus::Unverified);
+    }
+
+    // ─── M-011: Legality gate tests ──────────────────────────────
+
+    #[test]
+    fn test_gate_rejects_unknown_by_default() {
+        // M-011: By default (new()), the pass should reject graphs
+        // containing nodes with LegalityStatus::Unknown.
+        let pass = RiskAnnotatePass::new();
+        let graph = make_simple_graph(AirOp::MatMul {
+            a: AirNodeId("a".to_string()),
+            b: AirNodeId("b".to_string()),
+        });
+        let knowledge = NoKnowledge;
+        let result = pass.run(graph, &knowledge);
+        assert!(result.is_err(), "Default gate should reject Unknown nodes");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Legality gate rejected"),
+            "Error message should mention legality gate, got: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("test_node"),
+            "Error message should list the Unknown node ID, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_gate_allows_unknown_with_opt_in() {
+        // M-011: With new_allow_unknown(), the gate is bypassed and
+        // Unknown nodes pass through without error.
+        let pass = RiskAnnotatePass::new_allow_unknown();
+        let graph = make_simple_graph(AirOp::MatMul {
+            a: AirNodeId("a".to_string()),
+            b: AirNodeId("b".to_string()),
+        });
+        let knowledge = NoKnowledge;
+        let result = pass.run(graph, &knowledge);
+        assert!(
+            result.is_ok(),
+            "Allow-unknown mode should not reject Unknown nodes"
+        );
+    }
+
+    #[test]
+    fn test_gate_passes_when_no_unknown_nodes() {
+        // M-011: When all nodes have known legality (even LikelyFallback),
+        // the default gate should pass.
+        let pass = RiskAnnotatePass::new();
+        let graph = make_simple_graph(AirOp::MatMul {
+            a: AirNodeId("a".to_string()),
+            b: AirNodeId("b".to_string()),
+        });
+        let knowledge = MockKnowledge::new().with_risk(0.6, 0.2); // LikelyFallback
+        let result = pass.run(graph, &knowledge);
+        assert!(
+            result.is_ok(),
+            "Gate should pass when no nodes have Unknown legality"
+        );
+        assert_eq!(
+            result.unwrap().nodes[0].legality_status,
+            LegalityStatus::LikelyFallback
+        );
+    }
+
+    #[test]
+    fn test_validate_legality_status_ok_for_known() {
+        // M-011: validate_legality_status() returns Ok for graphs
+        // where all nodes have known legality.
+        let graph = AirGraph {
+            nodes: vec![
+                AirNode {
+                    id: AirNodeId("n1".into()),
+                    op: AirOp::MatMul { a: AirNodeId("a".into()), b: AirNodeId("b".into()) },
+                    name: "n1".into(),
+                    sir_source: None,
+                    precision_override: None,
+                    legality_status: LegalityStatus::Verified,
+                },
+                AirNode {
+                    id: AirNodeId("n2".into()),
+                    op: AirOp::Add { x: AirNodeId("a".into()), y: AirNodeId("b".into()) },
+                    name: "n2".into(),
+                    sir_source: None,
+                    precision_override: None,
+                    legality_status: LegalityStatus::Unverified,
+                },
+            ],
+            inputs: vec![],
+            outputs: vec![],
+        };
+        assert!(validate_legality_status(&graph).is_ok());
+    }
+
+    #[test]
+    fn test_validate_legality_status_err_for_unknown() {
+        // M-011: validate_legality_status() returns Err for graphs
+        // containing Unknown nodes.
+        let graph = AirGraph {
+            nodes: vec![
+                AirNode {
+                    id: AirNodeId("known".into()),
+                    op: AirOp::MatMul { a: AirNodeId("a".into()), b: AirNodeId("b".into()) },
+                    name: "known".into(),
+                    sir_source: None,
+                    precision_override: None,
+                    legality_status: LegalityStatus::Verified,
+                },
+                AirNode {
+                    id: AirNodeId("mystery".into()),
+                    op: AirOp::Add { x: AirNodeId("a".into()), y: AirNodeId("b".into()) },
+                    name: "mystery".into(),
+                    sir_source: None,
+                    precision_override: None,
+                    legality_status: LegalityStatus::Unknown,
+                },
+            ],
+            inputs: vec![],
+            outputs: vec![],
+        };
+        let result = validate_legality_status(&graph);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("mystery"),
+            "Error should list the Unknown node 'mystery', got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_gate_reports_multiple_unknown_nodes() {
+        // M-011: The gate should report all Unknown node IDs, not just
+        // the first one.
+        let pass = RiskAnnotatePass::new();
+        let graph = AirGraph {
+            nodes: vec![
+                AirNode {
+                    id: AirNodeId("node_a".into()),
+                    op: AirOp::MatMul { a: AirNodeId("a".into()), b: AirNodeId("b".into()) },
+                    name: "a".into(),
+                    sir_source: None,
+                    precision_override: None,
+                    legality_status: LegalityStatus::Unknown,
+                },
+                AirNode {
+                    id: AirNodeId("node_b".into()),
+                    op: AirOp::Add { x: AirNodeId("a".into()), y: AirNodeId("b".into()) },
+                    name: "b".into(),
+                    sir_source: None,
+                    precision_override: None,
+                    legality_status: LegalityStatus::Unknown,
+                },
+            ],
+            inputs: vec![],
+            outputs: vec![],
+        };
+        let result = validate_legality_status(&graph);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("2 node(s)"),
+            "Error should report 2 unknown nodes, got: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("node_a") && err_msg.contains("node_b"),
+            "Error should list both unknown node IDs, got: {}",
+            err_msg
+        );
     }
 }

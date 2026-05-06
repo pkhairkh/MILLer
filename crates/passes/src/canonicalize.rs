@@ -41,8 +41,7 @@ impl CanonicalizePass {
     /// - Standardize node naming conventions
     /// - Merge consecutive elementwise operations
     pub fn run(&self, input: SirGraph) -> Result<SirGraph> {
-        let graph = Self::eliminate_identities(input);
-        Ok(graph)
+        Self::eliminate_identities(input)
     }
 
     /// Eliminate pass-through Identity operations.
@@ -59,7 +58,7 @@ impl CanonicalizePass {
     ///
     /// Graph input placeholders (Identity with input="__placeholder__") are
     /// preserved because they define the graph's input signature.
-    fn eliminate_identities(graph: SirGraph) -> SirGraph {
+    fn eliminate_identities(graph: SirGraph) -> Result<SirGraph> {
         let graph_input_ids: std::collections::HashSet<&SirNodeId> = graph.inputs.iter().collect();
 
         let mut subst: HashMap<SirNodeId, SirNodeId> = HashMap::new();
@@ -81,11 +80,11 @@ impl CanonicalizePass {
             }
         }
 
-        // Transitively resolve substitution chains
-        let subst = Self::resolve_subst_chain(&subst);
+        // Transitively resolve substitution chains (M-025: hard error on cycles)
+        let subst = Self::resolve_subst_chain(&subst)?;
 
         if subst.is_empty() {
-            return graph;
+            return Ok(graph);
         }
 
         // Apply substitutions to all node operands and graph outputs.
@@ -102,14 +101,16 @@ impl CanonicalizePass {
         let outputs: Vec<SirNodeId> =
             graph.outputs.into_iter().map(|id| Self::resolve_id(&id, &subst)).collect();
 
-        SirGraph { nodes, inputs: graph.inputs, outputs }
+        Ok(SirGraph { nodes, inputs: graph.inputs, outputs })
     }
 
     /// Transitively resolve substitution chains.
     ///
     /// If A → B and B → C, this resolves A → C directly so that we
     /// don't need to apply substitutions iteratively.
-    fn resolve_subst_chain(subst: &HashMap<SirNodeId, SirNodeId>) -> HashMap<SirNodeId, SirNodeId> {
+    fn resolve_subst_chain(
+        subst: &HashMap<SirNodeId, SirNodeId>,
+    ) -> Result<HashMap<SirNodeId, SirNodeId>> {
         let mut resolved = HashMap::new();
         for (key, target) in subst {
             let mut final_target = target.clone();
@@ -118,23 +119,22 @@ impl CanonicalizePass {
                 final_target = next.clone();
                 steps += 1;
                 if steps > 100 {
-                    // T-126 (V-090): Log warning when cycle limit is hit.
-                    // This indicates a possible circular substitution chain
-                    // in the SIR graph. The resolved target may be incorrect,
-                    // potentially leading to wrong node references in the
-                    // canonicalized graph.
-                    log::warn!(
+                    // M-025: Circular substitution chain is a hard error.
+                    // Previously this logged a warning and returned the
+                    // partially-resolved target, which could silently produce
+                    // incorrect graph references. Now we return an error so
+                    // the caller knows the graph has a circular substitution.
+                    anyhow::bail!(
                         "CanonicalizePass: substitution chain resolution hit 100-step limit \
-                         for key {:?}. Possible circular substitution chain. The resolved \
-                         target {:?} may be incorrect.",
+                         for key {:?} → target {:?}. This indicates a circular substitution \
+                         chain in the SIR graph that must be fixed before canonicalization.",
                         key, final_target
                     );
-                    break;
                 }
             }
             resolved.insert(key.clone(), final_target);
         }
-        resolved
+        Ok(resolved)
     }
 
     /// Rewrite all SirNodeId references in a SirOp using the substitution map.
@@ -416,15 +416,15 @@ mod tests {
         }
     }
 
-    // T-126 (V-090): Circular substitution chain must not hang or panic.
-    // A→B→C→A creates a cycle. The resolve_subst_chain() method hits its
-    // 100-step limit and returns a result for each key rather than looping
-    // forever or panicking.
+    // M-025: Circular substitution chain must return a hard error.
+    // A→B→C→A creates a cycle. The resolve_subst_chain() method detects
+    // the cycle and returns an error rather than silently producing an
+    // incorrect result.
     #[test]
-    fn test_t126_circular_substitution_chain_no_panic() {
+    fn test_m025_circular_substitution_chain_returns_error() {
         // Build a circular chain of Identity nodes: a→b, b→c, c→a
         // This creates a cycle in the substitution map that resolve_subst_chain
-        // must handle gracefully by hitting its step limit.
+        // must detect and report as a hard error.
         let graph = SirGraph {
             nodes: vec![
                 make_node(
@@ -441,8 +441,14 @@ mod tests {
         };
 
         let pass = CanonicalizePass::new();
-        // This must not panic or hang — it should complete with some result
+        // M-025: Circular chains must return an error, not silently succeed
         let result = pass.run(graph);
-        assert!(result.is_ok(), "CanonicalizePass should not panic on circular substitution chains");
+        assert!(result.is_err(), "M-025: Circular substitution chain must return a hard error");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("circular substitution"),
+            "Error message should mention circular substitution, got: {}",
+            err_msg
+        );
     }
 }

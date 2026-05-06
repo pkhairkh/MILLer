@@ -72,6 +72,13 @@ pub struct PalettizeConfig {
     pub group_size: usize,
     /// Whether to use more conservative quantization for Q/K projections.
     pub conservative_qk: bool,
+    /// Whether to allow unknown (unclassified) projection types.
+    ///
+    /// When `false` (the default), an unknown projection type causes a hard
+    /// error — users must explicitly specify bit-widths for non-standard
+    /// architectures. When `true`, a warning is logged and `mlp_bits` is
+    /// used as a fallback, preserving backward-compatible behaviour.
+    pub allow_unknown_projections: bool,
 }
 
 impl Default for PalettizeConfig {
@@ -82,6 +89,7 @@ impl Default for PalettizeConfig {
             mask_kv_bits: 3,
             group_size: 128,
             conservative_qk: true,
+            allow_unknown_projections: false,
         }
     }
 }
@@ -174,15 +182,26 @@ pub fn run_palettize_weights_pass_with_arch(
                 } else if is_gate || is_up || is_down {
                     // Explicitly-identified MLP projections
                     config.mlp_bits
-                } else {
-                    // Unknown projection type — default to MLP bits.
-                    // Log a warning so users know a projection wasn't classified.
+                } else if config.allow_unknown_projections {
+                    // Unknown projection type — backward-compat: warn and use MLP bits.
                     log::warn!(
                         "Palettize: node '{}' doesn't match any known attention or MLP \
                          pattern for the configured architecture. Defaulting to mlp_bits={}.",
                         node.name, config.mlp_bits
                     );
                     config.mlp_bits
+                } else {
+                    // M-027: Unknown projection type is a hard error by default.
+                    // Users must explicitly set allow_unknown_projections=true or
+                    // provide architecture patterns that classify this projection.
+                    anyhow::bail!(
+                        "Palettize: node '{}' doesn't match any known attention or MLP \
+                         pattern for the configured architecture. Set \
+                         allow_unknown_projections=true on PalettizeConfig to use \
+                         mlp_bits as a fallback, or provide explicit patterns for \
+                         this architecture.",
+                        node.name
+                    );
                 };
 
                 // Validate and clamp bit-width to ANE-supported values
@@ -568,6 +587,7 @@ mod tests {
         config.conservative_qk = false;
         config.attention_bits = 6;
         config.mlp_bits = 4;
+        config.allow_unknown_projections = true; // c_fc is an unrecognized MLP name
 
         let result = run_palettize_weights_pass_with_arch(&mut graph, &config, &gpt2_arch).unwrap();
 

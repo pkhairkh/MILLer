@@ -401,3 +401,72 @@ fn test_precision_hazard_uses_op_pattern_field() {
         );
     }
 }
+
+// ─── M-013: Test that default knowledge/ directory seeds load at runtime ─
+
+/// M-013: Verify that seed loading works end-to-end with the default
+/// knowledge/ directory. This test simulates the CLI startup path:
+/// open a store, load seeds from the default knowledge/ directory,
+/// and verify that seed data is queryable. This is the test that
+/// catches the M-013 regression where seeds were validated in tests
+/// but never loaded at runtime.
+#[test]
+fn test_m013_default_knowledge_dir_seed_loading() {
+    let Some(dir) = knowledge_dir() else {
+        eprintln!("Skipping: no knowledge/ directory found");
+        return;
+    };
+
+    // Simulate the CLI startup path: create a store and load seeds
+    let tmp = tempfile::tempdir().unwrap();
+    let store_path = tmp.path().join("m013_test_store");
+
+    let mut store = KnowledgeStore::open(&store_path.to_string_lossy())
+        .expect("Failed to open knowledge store");
+
+    // Load seeds from the default knowledge/ directory
+    let loaded = store
+        .load_seeds_from_directory(&dir)
+        .expect("load_seeds_from_directory should not error");
+
+    // After the KnowledgeUnit schema migration, seed entries should load.
+    // Even if some entries are skipped due to schema mismatch, the call
+    // itself must succeed and return > 0 for the three M-013 seed files.
+    assert!(
+        loaded > 0,
+        "M-013: Expected at least one seed entry from default knowledge/, got 0. \
+         Seed files exist but none loaded — check KnowledgeUnit schema conformance."
+    );
+
+    // Verify the store has seed entries (not observations)
+    let (seeds, observations) = store.counts();
+    assert_eq!(
+        seeds, loaded,
+        "M-013: Store seed count should match loaded count"
+    );
+    assert_eq!(
+        observations, 0,
+        "M-013: No observations should exist in a freshly seeded store"
+    );
+
+    // Verify that the seed IDs are queryable — the key M-013 fix is that
+    // seeds are now functional at runtime, not just decorative.
+    let seed_ids = store.list_seed_ids();
+    assert!(
+        !seed_ids.is_empty(),
+        "M-013: Seed IDs should be queryable after loading"
+    );
+
+    // Verify at least one seed entry can be retrieved by ID
+    let first_id = &seed_ids[0];
+    let entry = store.get(first_id).expect("M-013: Seed entry should be retrievable by ID");
+    assert!(
+        entry.unit.id == *first_id,
+        "M-013: Retrieved entry ID should match requested ID"
+    );
+
+    eprintln!(
+        "M-013: Successfully loaded {} seed entries from default knowledge/ directory",
+        loaded
+    );
+}

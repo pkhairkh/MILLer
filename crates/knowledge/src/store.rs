@@ -17,6 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::confidence::apply_time_decay;
 use crate::util::{payload_ane_legal, payload_quality_impact, sanitize_id, scopes_overlap};
 
 /// Schema version for the knowledge store directory layout.
@@ -595,6 +596,60 @@ impl KnowledgeStore {
         self.store_index.entry_ids = self.index.keys().cloned().collect();
         self.write_store_index()
     }
+
+    /// Apply time-based confidence decay to all entries in the store.
+    /// M-029: Implements SPEC §553-554 linear decay (1% per 30 days).
+    ///
+    /// Returns the number of entries whose confidence actually changed.
+    pub fn apply_confidence_decay(&mut self, days_elapsed: f64) -> usize {
+        let mut count = 0;
+        for entry in self.index.values_mut() {
+            let old = entry.unit.confidence as f64;
+            let new = apply_time_decay(old, days_elapsed);
+            let new_f32 = new as f32;
+            if (new_f32 - entry.unit.confidence).abs() > f32::EPSILON {
+                count += 1;
+            }
+            Arc::make_mut(&mut entry.unit).confidence = new_f32;
+        }
+        count
+    }
+
+    /// Prune entries below the given confidence threshold.
+    /// M-030: Implements SPEC §531 knowledge pruning mechanism.
+    ///
+    /// Entries with confidence below `threshold` are removed.
+    /// Also cleans up secondary indexes for removed entries.
+    /// Returns the number of entries pruned.
+    pub fn prune_below_threshold(&mut self, threshold: f64) -> usize {
+        let before = self.index.len();
+        let threshold_f32 = threshold as f32;
+
+        // Collect IDs to remove for secondary index cleanup
+        let to_remove: Vec<String> = self
+            .index
+            .iter()
+            .filter(|(_, e)| e.unit.confidence < threshold_f32)
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        // Remove from secondary indexes
+        for id in &to_remove {
+            if let Some(entry) = self.index.get(id) {
+                if let Some(ids) = self.type_index.get_mut(&entry.unit.knowledge_type) {
+                    ids.retain(|x| x != id);
+                }
+                if let Some(ids) = self.source_index.get_mut(&entry.unit.evidence_source.to_string()) {
+                    ids.retain(|x| x != id);
+                }
+            }
+        }
+
+        // Remove from primary index
+        self.index.retain(|_, e| e.unit.confidence >= threshold_f32);
+
+        before - self.index.len()
+    }
 }
 
 // scopes_overlap is now provided by crate::util
@@ -974,5 +1029,131 @@ mod tests {
             matches!(entry_a.conflict_status, ConflictStatus::Resolved { .. }),
             "obs_a's resolved status should be preserved, not re-introduced"
         );
+    }
+
+    // ─── M-029: Confidence decay tests ──────────────────────────────
+
+    /// M-029: Apply confidence decay with 0 days → no change.
+    #[test]
+    fn test_apply_confidence_decay_no_time() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store_path = tmp.path().join("test_store");
+
+        let mut store = KnowledgeStore::open(&store_path.to_string_lossy()).unwrap();
+        let unit = make_unit("obs_1", KnowledgeType::LegalityRule, true, 0.8);
+        store.insert_observation(unit).unwrap();
+
+        let changed = store.apply_confidence_decay(0.0);
+        assert_eq!(changed, 0);
+        let entry = store.get("obs_1").unwrap();
+        assert!((entry.unit.confidence - 0.8).abs() < f32::EPSILON);
+    }
+
+    /// M-029: 30 days → 1% decay.
+    #[test]
+    fn test_apply_confidence_decay_30_days() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store_path = tmp.path().join("test_store");
+
+        let mut store = KnowledgeStore::open(&store_path.to_string_lossy()).unwrap();
+        let unit = make_unit("obs_1", KnowledgeType::LegalityRule, true, 0.8);
+        store.insert_observation(unit).unwrap();
+
+        let changed = store.apply_confidence_decay(30.0);
+        assert_eq!(changed, 1);
+        let entry = store.get("obs_1").unwrap();
+        // 0.8 * 0.99 = 0.792
+        assert!((entry.unit.confidence - 0.792).abs() < 1e-5);
+    }
+
+    /// M-029: 300 days → 10% decay.
+    #[test]
+    fn test_apply_confidence_decay_300_days() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store_path = tmp.path().join("test_store");
+
+        let mut store = KnowledgeStore::open(&store_path.to_string_lossy()).unwrap();
+        let unit = make_unit("obs_1", KnowledgeType::LegalityRule, true, 0.8);
+        store.insert_observation(unit).unwrap();
+
+        let changed = store.apply_confidence_decay(300.0);
+        assert_eq!(changed, 1);
+        let entry = store.get("obs_1").unwrap();
+        // 0.8 * 0.90 = 0.72
+        assert!((entry.unit.confidence - 0.72).abs() < 1e-5);
+    }
+
+    /// M-029: Very large days → confidence clamped at 0.0 (not negative).
+    #[test]
+    fn test_apply_confidence_decay_clamp_at_zero() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store_path = tmp.path().join("test_store");
+
+        let mut store = KnowledgeStore::open(&store_path.to_string_lossy()).unwrap();
+        let unit = make_unit("obs_1", KnowledgeType::LegalityRule, true, 0.5);
+        store.insert_observation(unit).unwrap();
+
+        let changed = store.apply_confidence_decay(100000.0);
+        assert_eq!(changed, 1);
+        let entry = store.get("obs_1").unwrap();
+        assert_eq!(entry.unit.confidence, 0.0);
+    }
+
+    // ─── M-030: Knowledge pruning tests ──────────────────────────────
+
+    /// M-030: Prune removes entries below threshold.
+    #[test]
+    fn test_prune_below_threshold_removes_low_confidence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store_path = tmp.path().join("test_store");
+
+        let mut store = KnowledgeStore::open(&store_path.to_string_lossy()).unwrap();
+
+        let unit_low = make_unit("obs_low", KnowledgeType::LegalityRule, true, 0.1);
+        store.insert_observation(unit_low).unwrap();
+
+        let unit_high = make_unit("obs_high", KnowledgeType::LegalityRule, true, 0.9);
+        store.insert_observation(unit_high).unwrap();
+
+        let pruned = store.prune_below_threshold(0.5);
+        assert_eq!(pruned, 1);
+        assert_eq!(store.list_ids().len(), 1);
+        assert!(store.get("obs_high").is_some());
+        assert!(store.get("obs_low").is_none());
+    }
+
+    /// M-030: Prune keeps entries at or above threshold.
+    #[test]
+    fn test_prune_below_threshold_keeps_high_confidence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store_path = tmp.path().join("test_store");
+
+        let mut store = KnowledgeStore::open(&store_path.to_string_lossy()).unwrap();
+
+        let unit_a = make_unit("obs_a", KnowledgeType::LegalityRule, true, 0.5);
+        store.insert_observation(unit_a).unwrap();
+
+        let unit_b = make_unit("obs_b", KnowledgeType::LegalityRule, true, 0.7);
+        store.insert_observation(unit_b).unwrap();
+
+        let pruned = store.prune_below_threshold(0.5);
+        assert_eq!(pruned, 0);
+        assert_eq!(store.list_ids().len(), 2);
+    }
+
+    /// M-030: Threshold 0.0 removes nothing.
+    #[test]
+    fn test_prune_below_threshold_zero_removes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store_path = tmp.path().join("test_store");
+
+        let mut store = KnowledgeStore::open(&store_path.to_string_lossy()).unwrap();
+
+        let unit = make_unit("obs_1", KnowledgeType::LegalityRule, true, 0.01);
+        store.insert_observation(unit).unwrap();
+
+        let pruned = store.prune_below_threshold(0.0);
+        assert_eq!(pruned, 0);
+        assert_eq!(store.list_ids().len(), 1);
     }
 }

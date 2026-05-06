@@ -3339,7 +3339,8 @@
         },
         "key_constraints": [
           "rank_le_5"
-        ]
+        ],
+        "practical_status": "cpu_only"
       }
     },
     {

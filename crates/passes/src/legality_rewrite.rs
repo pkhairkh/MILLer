@@ -1,7 +1,10 @@
-//! Legality Rewrite pass.
+//! ANE Legality Rewrite pass.
 //!
 //! Rewrites SIR operations into ANE-legal equivalents,
 //! consuming legality knowledge to produce an AIR graph.
+//! This pass is **ANE-specific**: it applies legality rewrites that are only
+//! meaningful when targeting the Apple Neural Engine. For CPU targets, the
+//! pass is a no-op (returns input unchanged).
 //!
 //! ## SIR→AIR Decomposition Coverage
 //!
@@ -367,10 +370,28 @@ pub struct DecodeWeights<'a> {
     pub mask_ref: Option<&'a str>,
 }
 
-/// ANE Legality Rewrite pass implementation.
-pub struct AneLegalityRewritePass {
-    // No configuration needed for the linear projection case
+/// Compilation target for legality rewrite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompilationTarget {
+    /// ANE (Apple Neural Engine) target
+    Ane,
+    /// CPU fallback target
+    Cpu,
 }
+
+/// ANE Legality Rewrite pass implementation.
+///
+/// This pass rewrites SIR operations into ANE-legal AIR equivalents.
+/// It is specific to the ANE target; when the target is `Cpu`, no
+/// ANE-specific legality rewrites are applied and the input is returned
+/// unchanged.
+pub struct AneLegalityRewritePass {
+    /// Compilation target — determines which legality rules to apply.
+    target: CompilationTarget,
+}
+
+/// Backward-compatible alias for [`AneLegalityRewritePass`].
+pub type LegalityRewritePass = AneLegalityRewritePass;
 
 impl Default for AneLegalityRewritePass {
     fn default() -> Self {
@@ -379,8 +400,14 @@ impl Default for AneLegalityRewritePass {
 }
 
 impl AneLegalityRewritePass {
+    /// Create a new pass targeting ANE (default).
     pub fn new() -> Self {
-        Self {}
+        Self { target: CompilationTarget::Ane }
+    }
+
+    /// Create a new pass with the specified compilation target.
+    pub fn with_target(target: CompilationTarget) -> Self {
+        Self { target }
     }
 
     /// Run the legality rewrite pass.
@@ -396,12 +423,20 @@ impl AneLegalityRewritePass {
     /// The `ctx` parameter carries task dimensions for truthful shape
     /// emission. When `None`, placeholder zero-filled shapes are used
     /// (backward-compatible with pre-Sprint-56 behavior).
+    ///
+    /// When the compilation target is `Cpu`, this method returns an
+    /// empty `AirGraph` — no ANE-specific legality rewrites are needed.
     pub fn run(
         &self,
         input: SirGraph,
         knowledge_query: &dyn PassKnowledgeQuery,
         ctx: Option<&DecompositionContext>,
     ) -> Result<AirGraph> {
+        // CPU target: no ANE-specific legality rewrites needed.
+        if self.target == CompilationTarget::Cpu {
+            return Ok(AirGraph { nodes: vec![], inputs: vec![], outputs: vec![] });
+        }
+
         let mut air_nodes = Vec::new();
         let mut sir_to_air = std::collections::HashMap::new();
 
