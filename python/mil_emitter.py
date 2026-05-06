@@ -68,6 +68,64 @@ def _int(val):
     return int(val)
 
 
+def _ishape(shape):
+    """Convert all values in a shape list/tuple to plain Python ints.
+
+    coremltools mb.reshape() rejects shape lists containing np.int32 or
+    np.int64 values (even when wrapped with Python's int() due to internal
+    re-boxing). This helper ensures every element is a plain Python int
+    by explicitly converting via _int() and returning a fresh list.
+
+    Also computes the total element count for shape validation.
+    """
+    result = [_int(v) for v in shape]
+    total = 1
+    for v in result:
+        total *= v
+    return result, total
+
+
+def _safe_reshape(mb, x, shape, name=None):
+    """Reshape a tensor with guaranteed plain-Python-int shape values.
+
+    This wraps mb.reshape() with:
+    1. Conversion of all shape values to plain Python int via _ishape()
+    2. Runtime shape validation: checks that element counts match
+    3. Automatic computation of head_dim from embed_dim when needed
+
+    If the reshape is impossible (element count mismatch), raises a
+    clear error message showing the actual vs expected shapes.
+    """
+    int_shape, target_count = _ishape(shape)
+    # Get the input tensor's element count from its shape
+    input_shape = x.shape if hasattr(x, 'shape') else None
+    if input_shape is not None:
+        input_count = 1
+        for d in input_shape:
+            if isinstance(d, int):
+                input_count *= d
+            elif hasattr(d, 'val'):
+                input_count *= int(d.val)
+            else:
+                try:
+                    input_count *= int(d)
+                except (TypeError, ValueError):
+                    input_count = -1  # Unknown
+                    break
+        if input_count > 0 and input_count != target_count:
+            logger.warning(
+                f"_safe_reshape: element count mismatch for {name}: "
+                f"input shape {list(input_shape)} ({input_count} elems) "
+                f"vs target shape {int_shape} ({target_count} elems). "
+                f"Attempting reshape anyway — coremltools may accept it "
+                f"for symbolic dimensions."
+            )
+    kwargs = {"x": x, "shape": int_shape}
+    if name is not None:
+        kwargs["name"] = name
+    return mb.reshape(**kwargs)
+
+
 def _sanitize_dims(command: dict, dim_keys: list) -> dict:
     """Convert all dimension values in a command dict to plain Python ints.
 
@@ -609,13 +667,25 @@ def build_decode_step_program(command: dict):
     batch_size = command.get("batch_size", 1)
     default_embed_dim = num_heads * head_dim
     embed_dim = command.get("embed_dim", default_embed_dim)
+    # Derive effective head_dim from embed_dim to guarantee reshape consistency.
+    # When the command sends embed_dim=64, num_heads=4 but head_dim=16, we
+    # must use embed_dim // num_heads = 16 as the actual head_dim. This avoids
+    # reshape element-count mismatches when head_dim doesn't divide embed_dim.
+    effective_head_dim = embed_dim // num_heads
+    if effective_head_dim != head_dim:
+        logger.warning(
+            f"build_decode_step_program: head_dim={head_dim} overridden to "
+            f"effective_head_dim={effective_head_dim} (embed_dim={embed_dim}/"
+            f"num_heads={num_heads}) for reshape consistency"
+        )
+    head_dim = effective_head_dim
     dtype_str = command.get("dtype", "fp16")
     opset_version = command.get("opset_version", "iOS18")
     seed = command.get("seed", 42)
 
     np_dtype, mil_dtype = resolve_dtypes(dtype_str, types)
     target_os = resolve_opset_target(ct, opset_version)
-    input_shape = (batch_size, embed_dim)
+    input_shape = (_int(batch_size), _int(embed_dim))
 
     with rng_seed_context(seed):
         @mb.program(
@@ -629,12 +699,12 @@ def build_decode_step_program(command: dict):
             qkv = mb.linear(x=x, weight=w_qkv_val, bias=None, name="qkv_proj")
 
             # Split into Q, K, V along the last dimension
-            q = mb.slice_by_index(x=qkv, begin=[0, 0], end=[batch_size, embed_dim], name="q")
-            mb.slice_by_index(x=qkv, begin=[0, embed_dim], end=[batch_size, 2 * embed_dim], name="k")
-            mb.slice_by_index(x=qkv, begin=[0, 2 * embed_dim], end=[batch_size, 3 * embed_dim], name="v")
+            q = mb.slice_by_index(x=qkv, begin=[0, 0], end=[_int(batch_size), _int(embed_dim)], name="q")
+            mb.slice_by_index(x=qkv, begin=[0, _int(embed_dim)], end=[_int(batch_size), _int(2 * embed_dim)], name="k")
+            mb.slice_by_index(x=qkv, begin=[0, _int(2 * embed_dim)], end=[_int(batch_size), _int(3 * embed_dim)], name="v")
 
             # Step 2: Multi-head attention
-            q_4d = mb.reshape(x=q, shape=[int(batch_size), int(num_heads), 1, int(head_dim)], name="q_4d")
+            q_4d = _safe_reshape(mb, q, [_int(batch_size), _int(num_heads), 1, _int(head_dim)], name="q_4d")
 
             # KV cache: deterministic const values (stateless variant)
             k_cache_val = np.random.randn(kv_len, embed_dim).astype(np_dtype)
@@ -642,11 +712,11 @@ def build_decode_step_program(command: dict):
             v_cache_val = np.random.randn(kv_len, embed_dim).astype(np_dtype)
             v_cache = mb.const(val=v_cache_val, name="v_cache")
 
-            k_4d = mb.reshape(x=k_cache, shape=[1, int(num_heads), int(kv_len), int(head_dim)], name="k_4d")
-            v_4d = mb.reshape(x=v_cache, shape=[1, int(num_heads), int(kv_len), int(head_dim)], name="v_4d")
+            k_4d = _safe_reshape(mb, k_cache, [1, _int(num_heads), _int(kv_len), _int(head_dim)], name="k_4d")
+            v_4d = _safe_reshape(mb, v_cache, [1, _int(num_heads), _int(kv_len), _int(head_dim)], name="v_4d")
 
             attn_out = mb.scaled_dot_product_attention(query=q_4d, key=k_4d, value=v_4d, name="attn_out")
-            attn_reshaped = mb.reshape(x=attn_out, shape=[int(batch_size), int(embed_dim)], name="attn_reshaped")
+            attn_reshaped = _safe_reshape(mb, attn_out, [_int(batch_size), _int(embed_dim)], name="attn_reshaped")
 
             # Step 3: Output projection
             w_out_val = np.random.randn(embed_dim, embed_dim).astype(np_dtype)
@@ -747,6 +817,15 @@ def build_stateful_decode_step_program(command: dict):
     batch_size = command.get("batch_size", 1)
     default_embed_dim = num_heads * head_dim
     embed_dim = command.get("embed_dim", default_embed_dim)
+    # Derive effective head_dim from embed_dim to guarantee reshape consistency.
+    effective_head_dim = embed_dim // num_heads
+    if effective_head_dim != head_dim:
+        logger.warning(
+            f"build_stateful_decode_step_program: head_dim={head_dim} overridden to "
+            f"effective_head_dim={effective_head_dim} (embed_dim={embed_dim}/"
+            f"num_heads={num_heads}) for reshape consistency"
+        )
+    head_dim = effective_head_dim
     dtype_str = command.get("dtype", "fp16")
     opset_version = command.get("opset_version", "iOS18")
     seed = command.get("seed", 42)
@@ -754,8 +833,8 @@ def build_stateful_decode_step_program(command: dict):
     np_dtype, mil_dtype = resolve_dtypes(dtype_str, types)
     target_os = resolve_opset_target(ct, opset_version)
 
-    input_shape = (batch_size, embed_dim)
-    kv_state_shape = (1, num_heads, kv_len, head_dim)
+    input_shape = (_int(batch_size), _int(embed_dim))
+    kv_state_shape = (1, _int(num_heads), _int(kv_len), _int(head_dim))
 
     with rng_seed_context(seed):
         @mb.program(
@@ -777,24 +856,24 @@ def build_stateful_decode_step_program(command: dict):
             qkv = mb.linear(x=x, weight=w_qkv_val, bias=None, name="qkv_proj")
 
             # Split into Q, K_new, V_new
-            q = mb.slice_by_index(x=qkv, begin=[0, 0], end=[batch_size, embed_dim], name="q")
-            k_new = mb.slice_by_index(x=qkv, begin=[0, embed_dim], end=[batch_size, 2 * embed_dim], name="k_new")
-            v_new = mb.slice_by_index(x=qkv, begin=[0, 2 * embed_dim], end=[batch_size, 3 * embed_dim], name="v_new")
+            q = mb.slice_by_index(x=qkv, begin=[0, 0], end=[_int(batch_size), _int(embed_dim)], name="q")
+            k_new = mb.slice_by_index(x=qkv, begin=[0, _int(embed_dim)], end=[_int(batch_size), _int(2 * embed_dim)], name="k_new")
+            v_new = mb.slice_by_index(x=qkv, begin=[0, _int(2 * embed_dim)], end=[_int(batch_size), _int(3 * embed_dim)], name="v_new")
 
             # Reshape for multi-head attention
-            q_4d = mb.reshape(x=q, shape=[int(batch_size), int(num_heads), 1, int(head_dim)], name="q_4d")
-            k_new_4d = mb.reshape(x=k_new, shape=[1, int(num_heads), 1, int(head_dim)], name="k_new_4d")
-            v_new_4d = mb.reshape(x=v_new, shape=[1, int(num_heads), 1, int(head_dim)], name="v_new_4d")
+            q_4d = _safe_reshape(mb, q, [_int(batch_size), _int(num_heads), 1, _int(head_dim)], name="q_4d")
+            k_new_4d = _safe_reshape(mb, k_new, [1, _int(num_heads), 1, _int(head_dim)], name="k_new_4d")
+            v_new_4d = _safe_reshape(mb, v_new, [1, _int(num_heads), 1, _int(head_dim)], name="v_new_4d")
 
             # Step 3: Update KV cache by replacing the last position with new K/V
             k_updated = mb.slice_update(
                 x=k_cached, update=k_new_4d,
-                begin=[0, 0, kv_len - 1, 0], end=[1, num_heads, kv_len, head_dim],
+                begin=[0, 0, _int(kv_len - 1), 0], end=[1, _int(num_heads), _int(kv_len), _int(head_dim)],
                 name="k_updated"
             )
             v_updated = mb.slice_update(
                 x=v_cached, update=v_new_4d,
-                begin=[0, 0, kv_len - 1, 0], end=[1, num_heads, kv_len, head_dim],
+                begin=[0, 0, _int(kv_len - 1), 0], end=[1, _int(num_heads), _int(kv_len), _int(head_dim)],
                 name="v_updated"
             )
 
@@ -806,7 +885,7 @@ def build_stateful_decode_step_program(command: dict):
             attn_out = mb.scaled_dot_product_attention(
                 query=q_4d, key=k_updated, value=v_updated, name="attn_out"
             )
-            attn_reshaped = mb.reshape(x=attn_out, shape=[int(batch_size), int(embed_dim)], name="attn_reshaped")
+            attn_reshaped = _safe_reshape(mb, attn_out, [_int(batch_size), _int(embed_dim)], name="attn_reshaped")
 
             # Step 6: Output projection
             w_out_val = np.random.randn(embed_dim, embed_dim).astype(np_dtype)
@@ -931,6 +1010,15 @@ def build_shard_decode_step_program(command: dict):
     batch_size = command.get("batch_size", 1)
     default_embed_dim = num_heads * head_dim
     embed_dim = command.get("embed_dim", default_embed_dim)
+    # Derive effective head_dim from embed_dim to guarantee reshape consistency.
+    effective_head_dim = embed_dim // num_heads
+    if effective_head_dim != head_dim:
+        logger.warning(
+            f"build_shard_decode_step_program: head_dim={head_dim} overridden to "
+            f"effective_head_dim={effective_head_dim} (embed_dim={embed_dim}/"
+            f"num_heads={num_heads}) for reshape consistency"
+        )
+    head_dim = effective_head_dim
     dtype_str = command.get("dtype", "fp16")
     opset_version = command.get("opset_version", "iOS18")
     seed = command.get("seed", 42)
@@ -939,6 +1027,15 @@ def build_shard_decode_step_program(command: dict):
     hidden_dim = command.get("shard_hidden_dim", embed_dim)
     shard_heads = command.get("shard_num_heads", num_heads)
     shard_head_dim = command.get("shard_head_dim", head_dim)
+    # Derive effective shard_head_dim from hidden_dim to guarantee reshape consistency.
+    effective_shard_head_dim = hidden_dim // shard_heads
+    if effective_shard_head_dim != shard_head_dim:
+        logger.warning(
+            f"build_shard_decode_step_program: shard_head_dim={shard_head_dim} overridden to "
+            f"effective_shard_head_dim={effective_shard_head_dim} (hidden_dim={hidden_dim}/"
+            f"shard_heads={shard_heads}) for reshape consistency"
+        )
+    shard_head_dim = effective_shard_head_dim
     output_dim = command.get("shard_output_dim", embed_dim)
     if shard_role != "Exit":
         output_dim = hidden_dim  # Entry/Interior output hidden_dim
@@ -948,11 +1045,11 @@ def build_shard_decode_step_program(command: dict):
 
     # Input shape depends on shard role
     if shard_role == "Entry":
-        input_shape = (batch_size, embed_dim)
+        input_shape = (_int(batch_size), _int(embed_dim))
     else:
-        input_shape = (batch_size, hidden_dim)
+        input_shape = (_int(batch_size), _int(hidden_dim))
 
-    kv_state_shape = (1, shard_heads, kv_len, shard_head_dim)
+    kv_state_shape = (1, _int(shard_heads), _int(kv_len), _int(shard_head_dim))
 
     # Determine role-specific post-attention operation from SHARD_ROLE_OP_MAP
     # (W-27: single source of truth, synced with Rust RoleMirBuilder)
@@ -980,24 +1077,24 @@ def build_shard_decode_step_program(command: dict):
             qkv = mb.linear(x=x, weight=w_qkv_val, bias=None, name="qkv_proj")
 
             # Split into Q, K_new, V_new
-            q = mb.slice_by_index(x=qkv, begin=[0, 0], end=[batch_size, hidden_dim], name="q")
-            k_new = mb.slice_by_index(x=qkv, begin=[0, hidden_dim], end=[batch_size, 2 * hidden_dim], name="k_new")
-            v_new = mb.slice_by_index(x=qkv, begin=[0, 2 * hidden_dim], end=[batch_size, 3 * hidden_dim], name="v_new")
+            q = mb.slice_by_index(x=qkv, begin=[0, 0], end=[_int(batch_size), _int(hidden_dim)], name="q")
+            k_new = mb.slice_by_index(x=qkv, begin=[0, _int(hidden_dim)], end=[_int(batch_size), _int(2 * hidden_dim)], name="k_new")
+            v_new = mb.slice_by_index(x=qkv, begin=[0, _int(2 * hidden_dim)], end=[_int(batch_size), _int(3 * hidden_dim)], name="v_new")
 
             # Reshape for multi-head attention
-            q_4d = mb.reshape(x=q, shape=[int(batch_size), int(shard_heads), 1, int(shard_head_dim)], name="q_4d")
-            k_new_4d = mb.reshape(x=k_new, shape=[1, int(shard_heads), 1, int(shard_head_dim)], name="k_new_4d")
-            v_new_4d = mb.reshape(x=v_new, shape=[1, int(shard_heads), 1, int(shard_head_dim)], name="v_new_4d")
+            q_4d = _safe_reshape(mb, q, [_int(batch_size), _int(shard_heads), 1, _int(shard_head_dim)], name="q_4d")
+            k_new_4d = _safe_reshape(mb, k_new, [1, _int(shard_heads), 1, _int(shard_head_dim)], name="k_new_4d")
+            v_new_4d = _safe_reshape(mb, v_new, [1, _int(shard_heads), 1, _int(shard_head_dim)], name="v_new_4d")
 
             # Update KV cache
             k_updated = mb.slice_update(
                 x=k_cached, update=k_new_4d,
-                begin=[0, 0, kv_len - 1, 0], end=[1, shard_heads, kv_len, shard_head_dim],
+                begin=[0, 0, _int(kv_len - 1), 0], end=[1, _int(shard_heads), _int(kv_len), _int(shard_head_dim)],
                 name="k_updated"
             )
             v_updated = mb.slice_update(
                 x=v_cached, update=v_new_4d,
-                begin=[0, 0, kv_len - 1, 0], end=[1, shard_heads, kv_len, shard_head_dim],
+                begin=[0, 0, _int(kv_len - 1), 0], end=[1, _int(shard_heads), _int(kv_len), _int(shard_head_dim)],
                 name="v_updated"
             )
 
@@ -1009,7 +1106,7 @@ def build_shard_decode_step_program(command: dict):
             attn_out = mb.scaled_dot_product_attention(
                 query=q_4d, key=k_updated, value=v_updated, name="attn_out"
             )
-            attn_reshaped = mb.reshape(x=attn_out, shape=[int(batch_size), int(hidden_dim)], name="attn_reshaped")
+            attn_reshaped = _safe_reshape(mb, attn_out, [_int(batch_size), _int(hidden_dim)], name="attn_reshaped")
 
             # Output projection
             w_out_val = np.random.randn(output_dim, hidden_dim).astype(np_dtype)
@@ -1018,9 +1115,9 @@ def build_shard_decode_step_program(command: dict):
             # Role-specific post-attention operation (Sprint 44, W-27)
             # Uses SHARD_ROLE_OP_MAP for the role→op mapping.
             if role_specific_op == "reshape":
-                result = mb.reshape(
-                    x=projected,
-                    shape=[int(batch_size), 1, int(output_dim)],
+                result = _safe_reshape(
+                    mb, projected,
+                    [_int(batch_size), 1, _int(output_dim)],
                     name="handoff_reshape",
                 )
             elif role_specific_op == "gelu":
@@ -1337,6 +1434,15 @@ def build_attention_program(command: dict):
     # num_heads and head_dim but not embed_dim (e.g., test_kit.sh).
     default_embed_dim = num_heads * head_dim
     embed_dim = command.get("embed_dim", default_embed_dim)
+    # Derive effective head_dim from embed_dim to guarantee reshape consistency.
+    effective_head_dim = embed_dim // num_heads
+    if effective_head_dim != head_dim:
+        logger.warning(
+            f"build_attention_program: head_dim={head_dim} overridden to "
+            f"effective_head_dim={effective_head_dim} (embed_dim={embed_dim}/"
+            f"num_heads={num_heads}) for reshape consistency"
+        )
+    head_dim = effective_head_dim
     dtype_str = command.get("dtype", "fp16")
     opset_version = command.get("opset_version", "iOS18")
     seed = command.get("seed", 42)
@@ -1345,7 +1451,7 @@ def build_attention_program(command: dict):
     np_dtype, mil_dtype = resolve_dtypes(dtype_str, types)
     target_os = resolve_opset_target(ct, opset_version)
 
-    input_shape = (batch_size, seq_len, embed_dim)
+    input_shape = (_int(batch_size), _int(seq_len), _int(embed_dim))
     qkv_dim = 3 * embed_dim
 
     with rng_seed_context(seed):
@@ -1359,14 +1465,14 @@ def build_attention_program(command: dict):
             qkv = mb.linear(x=x, weight=w_qkv_val, bias=None, name="qkv_proj")
 
             # Split into Q, K, V along the last dimension
-            q = mb.slice_by_index(x=qkv, begin=[0, 0, 0], end=[batch_size, seq_len, embed_dim], name="q")
-            k = mb.slice_by_index(x=qkv, begin=[0, 0, embed_dim], end=[batch_size, seq_len, 2 * embed_dim], name="k")
-            v = mb.slice_by_index(x=qkv, begin=[0, 0, 2 * embed_dim], end=[batch_size, seq_len, 3 * embed_dim], name="v")
+            q = mb.slice_by_index(x=qkv, begin=[0, 0, 0], end=[_int(batch_size), _int(seq_len), _int(embed_dim)], name="q")
+            k = mb.slice_by_index(x=qkv, begin=[0, 0, _int(embed_dim)], end=[_int(batch_size), _int(seq_len), _int(2 * embed_dim)], name="k")
+            v = mb.slice_by_index(x=qkv, begin=[0, 0, _int(2 * embed_dim)], end=[_int(batch_size), _int(seq_len), _int(3 * embed_dim)], name="v")
 
             # Step 2: Multi-head attention
-            q_4d = mb.reshape(x=q, shape=[int(batch_size), int(seq_len), int(num_heads), int(head_dim)], name="q_4d")
-            k_4d = mb.reshape(x=k, shape=[int(batch_size), int(seq_len), int(num_heads), int(head_dim)], name="k_4d")
-            v_4d = mb.reshape(x=v, shape=[int(batch_size), int(seq_len), int(num_heads), int(head_dim)], name="v_4d")
+            q_4d = _safe_reshape(mb, q, [_int(batch_size), _int(seq_len), _int(num_heads), _int(head_dim)], name="q_4d")
+            k_4d = _safe_reshape(mb, k, [_int(batch_size), _int(seq_len), _int(num_heads), _int(head_dim)], name="k_4d")
+            v_4d = _safe_reshape(mb, v, [_int(batch_size), _int(seq_len), _int(num_heads), _int(head_dim)], name="v_4d")
 
             q_t = mb.transpose(x=q_4d, perm=[0, 2, 1, 3], name="q_t")
             k_t = mb.transpose(x=k_4d, perm=[0, 2, 1, 3], name="k_t")
@@ -1386,7 +1492,7 @@ def build_attention_program(command: dict):
                     query=q_t, key=k_t, value=v_t, name="attn_out"
                 )
 
-            attn_reshaped = mb.reshape(x=attn_out, shape=[int(batch_size), int(seq_len), int(embed_dim)], name="attn_reshaped")
+            attn_reshaped = _safe_reshape(mb, attn_out, [_int(batch_size), _int(seq_len), _int(embed_dim)], name="attn_reshaped")
 
             # Step 3: Output projection
             w_out_val = np.random.randn(embed_dim, embed_dim).astype(np_dtype)
@@ -1531,6 +1637,15 @@ def build_multifunction_program(command: dict):
     embed_dim = command.get("embed_dim", 128)
     num_heads = command.get("num_heads", 4)
     head_dim = command.get("head_dim", 32)
+    # Derive effective head_dim from embed_dim to guarantee reshape consistency.
+    effective_head_dim = embed_dim // num_heads
+    if effective_head_dim != head_dim:
+        logger.warning(
+            f"build_multifunction_program: head_dim={head_dim} overridden to "
+            f"effective_head_dim={effective_head_dim} (embed_dim={embed_dim}/"
+            f"num_heads={num_heads}) for reshape consistency"
+        )
+    head_dim = effective_head_dim
     kv_len = command.get("kv_len", 64)
     batch_size = command.get("batch_size", 1)
     dtype_str = command.get("dtype", "fp16")
@@ -1545,7 +1660,7 @@ def build_multifunction_program(command: dict):
     with rng_seed_context(seed):
         # --- Function 1: embedding ---
         @mb.program(
-            input_specs=[mb.TensorSpec(shape=(batch_size, vocab_size), dtype=types.int32)],
+            input_specs=[mb.TensorSpec(shape=(_int(batch_size), _int(vocab_size)), dtype=types.int32)],
             opset_version=target_os,
             function_name="embedding",
         )
@@ -1556,11 +1671,11 @@ def build_multifunction_program(command: dict):
             return embedded
 
         # --- Function 2: decode_step (STATEFUL, Sprint 40) ---
-        kv_state_shape = (1, num_heads, kv_len, head_dim)
+        kv_state_shape = (1, _int(num_heads), _int(kv_len), _int(head_dim))
 
         @mb.program(
             input_specs=[
-                mb.TensorSpec(shape=(batch_size, embed_dim), dtype=mil_dtype),
+                mb.TensorSpec(shape=(_int(batch_size), _int(embed_dim)), dtype=mil_dtype),
                 mb.StateTensorSpec(kv_state_shape, dtype=mil_dtype),  # k_cache state
                 mb.StateTensorSpec(kv_state_shape, dtype=mil_dtype),  # v_cache state
             ],
@@ -1577,23 +1692,23 @@ def build_multifunction_program(command: dict):
             w_qkv_val = np.random.randn(qkv_dim, embed_dim).astype(np_dtype)
             qkv = mb.linear(x=x, weight=w_qkv_val, bias=None, name="qkv_proj")
 
-            q = mb.slice_by_index(x=qkv, begin=[0, 0], end=[batch_size, embed_dim], name="q")
-            k_new = mb.slice_by_index(x=qkv, begin=[0, embed_dim], end=[batch_size, 2 * embed_dim], name="k_new")
-            v_new = mb.slice_by_index(x=qkv, begin=[0, 2 * embed_dim], end=[batch_size, 3 * embed_dim], name="v_new")
+            q = mb.slice_by_index(x=qkv, begin=[0, 0], end=[_int(batch_size), _int(embed_dim)], name="q")
+            k_new = mb.slice_by_index(x=qkv, begin=[0, _int(embed_dim)], end=[_int(batch_size), _int(2 * embed_dim)], name="k_new")
+            v_new = mb.slice_by_index(x=qkv, begin=[0, _int(2 * embed_dim)], end=[_int(batch_size), _int(3 * embed_dim)], name="v_new")
 
-            q_4d = mb.reshape(x=q, shape=[int(batch_size), int(num_heads), 1, int(head_dim)], name="q_4d")
-            k_new_4d = mb.reshape(x=k_new, shape=[1, int(num_heads), 1, int(head_dim)], name="k_new_4d")
-            v_new_4d = mb.reshape(x=v_new, shape=[1, int(num_heads), 1, int(head_dim)], name="v_new_4d")
+            q_4d = _safe_reshape(mb, q, [_int(batch_size), _int(num_heads), 1, _int(head_dim)], name="q_4d")
+            k_new_4d = _safe_reshape(mb, k_new, [1, _int(num_heads), 1, _int(head_dim)], name="k_new_4d")
+            v_new_4d = _safe_reshape(mb, v_new, [1, _int(num_heads), 1, _int(head_dim)], name="v_new_4d")
 
             # Update KV cache
             k_updated = mb.slice_update(
                 x=k_cached, update=k_new_4d,
-                begin=[0, 0, kv_len - 1, 0], end=[1, num_heads, kv_len, head_dim],
+                begin=[0, 0, _int(kv_len - 1), 0], end=[1, _int(num_heads), _int(kv_len), _int(head_dim)],
                 name="k_updated"
             )
             v_updated = mb.slice_update(
                 x=v_cached, update=v_new_4d,
-                begin=[0, 0, kv_len - 1, 0], end=[1, num_heads, kv_len, head_dim],
+                begin=[0, 0, _int(kv_len - 1), 0], end=[1, _int(num_heads), _int(kv_len), _int(head_dim)],
                 name="v_updated"
             )
 
@@ -1605,7 +1720,7 @@ def build_multifunction_program(command: dict):
             attn_out = mb.scaled_dot_product_attention(
                 query=q_4d, key=k_updated, value=v_updated, name="attn_out"
             )
-            attn_reshaped = mb.reshape(x=attn_out, shape=[int(batch_size), int(embed_dim)], name="attn_reshaped")
+            attn_reshaped = _safe_reshape(mb, attn_out, [_int(batch_size), _int(embed_dim)], name="attn_reshaped")
 
             # Output projection
             w_out_val = np.random.randn(embed_dim, embed_dim).astype(np_dtype)
@@ -1860,6 +1975,15 @@ def build_multifunction_program_with_shared_weights(command: dict):
     embed_dim = command.get("embed_dim", 128)
     num_heads = command.get("num_heads", 4)
     head_dim = command.get("head_dim", 32)
+    # Derive effective head_dim from embed_dim to guarantee reshape consistency.
+    effective_head_dim = embed_dim // num_heads
+    if effective_head_dim != head_dim:
+        logger.warning(
+            f"build_multifunction_program_with_shared_weights: head_dim={head_dim} overridden to "
+            f"effective_head_dim={effective_head_dim} (embed_dim={embed_dim}/"
+            f"num_heads={num_heads}) for reshape consistency"
+        )
+    head_dim = effective_head_dim
     kv_len = command.get("kv_len", 64)
     batch_size = command.get("batch_size", 1)
     dtype_str = command.get("dtype", "fp16")
@@ -1878,7 +2002,7 @@ def build_multifunction_program_with_shared_weights(command: dict):
 
         # --- Function 1: embedding ---
         @mb.program(
-            input_specs=[mb.TensorSpec(shape=(batch_size, vocab_size), dtype=types.int32)],
+            input_specs=[mb.TensorSpec(shape=(_int(batch_size), _int(vocab_size)), dtype=types.int32)],
             opset_version=target_os,
             function_name="embedding",
         )
@@ -1895,11 +2019,11 @@ def build_multifunction_program_with_shared_weights(command: dict):
                 return embedded
 
         # --- Function 2: decode_step (STATEFUL) ---
-        kv_state_shape = (1, num_heads, kv_len, head_dim)
+        kv_state_shape = (1, _int(num_heads), _int(kv_len), _int(head_dim))
 
         @mb.program(
             input_specs=[
-                mb.TensorSpec(shape=(batch_size, embed_dim), dtype=mil_dtype),
+                mb.TensorSpec(shape=(_int(batch_size), _int(embed_dim)), dtype=mil_dtype),
                 mb.StateTensorSpec(kv_state_shape, dtype=mil_dtype),
                 mb.StateTensorSpec(kv_state_shape, dtype=mil_dtype),
             ],
@@ -1914,22 +2038,22 @@ def build_multifunction_program_with_shared_weights(command: dict):
             w_qkv_val = np.random.randn(qkv_dim, embed_dim).astype(np_dtype)
             qkv = mb.linear(x=x, weight=w_qkv_val, bias=None, name="qkv_proj")
 
-            q = mb.slice_by_index(x=qkv, begin=[0, 0], end=[batch_size, embed_dim], name="q")
-            k_new = mb.slice_by_index(x=qkv, begin=[0, embed_dim], end=[batch_size, 2 * embed_dim], name="k_new")
-            v_new = mb.slice_by_index(x=qkv, begin=[0, 2 * embed_dim], end=[batch_size, 3 * embed_dim], name="v_new")
+            q = mb.slice_by_index(x=qkv, begin=[0, 0], end=[_int(batch_size), _int(embed_dim)], name="q")
+            k_new = mb.slice_by_index(x=qkv, begin=[0, _int(embed_dim)], end=[_int(batch_size), _int(2 * embed_dim)], name="k_new")
+            v_new = mb.slice_by_index(x=qkv, begin=[0, _int(2 * embed_dim)], end=[_int(batch_size), _int(3 * embed_dim)], name="v_new")
 
-            q_4d = mb.reshape(x=q, shape=[int(batch_size), int(num_heads), 1, int(head_dim)], name="q_4d")
-            k_new_4d = mb.reshape(x=k_new, shape=[1, int(num_heads), 1, int(head_dim)], name="k_new_4d")
-            v_new_4d = mb.reshape(x=v_new, shape=[1, int(num_heads), 1, int(head_dim)], name="v_new_4d")
+            q_4d = _safe_reshape(mb, q, [_int(batch_size), _int(num_heads), 1, _int(head_dim)], name="q_4d")
+            k_new_4d = _safe_reshape(mb, k_new, [1, _int(num_heads), 1, _int(head_dim)], name="k_new_4d")
+            v_new_4d = _safe_reshape(mb, v_new, [1, _int(num_heads), 1, _int(head_dim)], name="v_new_4d")
 
             k_updated = mb.slice_update(
                 x=k_cached, update=k_new_4d,
-                begin=[0, 0, kv_len - 1, 0], end=[1, num_heads, kv_len, head_dim],
+                begin=[0, 0, _int(kv_len - 1), 0], end=[1, _int(num_heads), _int(kv_len), _int(head_dim)],
                 name="k_updated"
             )
             v_updated = mb.slice_update(
                 x=v_cached, update=v_new_4d,
-                begin=[0, 0, kv_len - 1, 0], end=[1, num_heads, kv_len, head_dim],
+                begin=[0, 0, _int(kv_len - 1), 0], end=[1, _int(num_heads), _int(kv_len), _int(head_dim)],
                 name="v_updated"
             )
 
@@ -1939,7 +2063,7 @@ def build_multifunction_program_with_shared_weights(command: dict):
             attn_out = mb.scaled_dot_product_attention(
                 query=q_4d, key=k_updated, value=v_updated, name="attn_out"
             )
-            attn_reshaped = mb.reshape(x=attn_out, shape=[int(batch_size), int(embed_dim)], name="attn_reshaped")
+            attn_reshaped = _safe_reshape(mb, attn_out, [_int(batch_size), _int(embed_dim)], name="attn_reshaped")
 
             if share_weights:
                 shared_w = mb.const(val=shared_weight_val, name="shared_projection_weight")

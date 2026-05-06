@@ -85,6 +85,22 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
             }
         }
 
+        // ─── Linear: x @ W^T + b, same shape logic as MatMul with transposed weight ───
+        // Linear is produced by the SIR→AIR lowering for linear projection ops.
+        // The weight is stored as (out_features, in_features) and transposed
+        // during emission, so the output shape is (*, out_features).
+        AirOp::Linear { input, weight, .. } => {
+            Ok(if let Some(input_shape) = node_shapes.get(input) {
+                // Weight filename encodes dimensions: try to infer from input shape.
+                // For Linear, output_shape = (*input_batch_dims, out_features).
+                // We can't determine out_features from the weight filename alone,
+                // so propagate the input shape as a fallback (the MIR emitter will
+                // resolve the actual output dimension from the weight tensor).
+                input_shape.clone()
+            } else {
+                vec![]
+            })
+        }
         // ─── MatMul: batched [*, M, K] × [*, K, N] → [*, M, N]; 1-D broadcast cases ───
         // Sprint 63: extended from 2-D only to arbitrary batched matmul.
         // Batch dims broadcast right-aligned; last two dims are the matrix dims.
@@ -169,7 +185,13 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         | AirOp::Greater { x, y }
         | AirOp::GreaterEqual { x, y }
         | AirOp::Less { x, y }
-        | AirOp::LessEqual { x, y } => {
+        | AirOp::LessEqual { x, y }
+        | AirOp::FloorDiv { x, y }
+        | AirOp::Mod { x, y }
+        | AirOp::Pow { x, y }
+        | AirOp::LogicalAnd { x, y }
+        | AirOp::LogicalOr { x, y }
+        | AirOp::LogicalXor { x, y } => {
             // Sprint 62→63: Compute the broadcast output shape for binary elementwise ops.
             // Core ML's type inference applies standard numpy-style broadcasting, so
             // the declared output shape must match the broadcast result. Previously we
@@ -252,6 +274,28 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         AirOp::ReduceSum { input, axes, keep_dims } => {
             Ok(reduce_shape(node_shapes.get(input).cloned().unwrap_or_default(), axes, *keep_dims))
         }
+        // ReduceMax/Min/Prod share the same shape logic as ReduceMean/ReduceSum.
+        // ReduceMax is produced by the float-safe RMSNorm decomposition for Qwen3.
+        AirOp::ReduceMax { input, axes, keep_dims }
+        | AirOp::ReduceMin { input, axes, keep_dims }
+        | AirOp::ReduceProd { input, axes, keep_dims }
+        | AirOp::ReduceSumSquare { input, axes, keep_dims }
+        | AirOp::ReduceL2Norm { input, axes, keep_dims }
+        | AirOp::ReduceL1Norm { input, axes, keep_dims }
+        | AirOp::ReduceLogSumExp { input, axes, keep_dims }
+        | AirOp::ReduceLogSum { input, axes, keep_dims } => {
+            Ok(reduce_shape(node_shapes.get(input).cloned().unwrap_or_default(), axes, *keep_dims))
+        }
+        AirOp::ReduceArgmax { input, axis, keep_dims }
+        | AirOp::ReduceArgmin { input, axis, keep_dims } => {
+            // Argmax/Argmin produce int32 output with the same shape logic as
+            // reduce: if keep_dims, the reduced axis becomes 1; otherwise removed.
+            Ok(reduce_shape(
+                node_shapes.get(input).cloned().unwrap_or_default(),
+                &[*axis],
+                *keep_dims,
+            ))
+        }
         AirOp::Rsqrt { input }
         | AirOp::Cos { input }
         | AirOp::Sin { input }
@@ -261,7 +305,13 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         | AirOp::Gelu { input, .. }
         | AirOp::Relu { input }
         | AirOp::SliceUpdate { input, .. }
-        | AirOp::LayerNorm { input, .. } => Ok(node_shapes.get(input).cloned().unwrap_or_default()),
+        | AirOp::LayerNorm { input, .. }
+        | AirOp::Relu6 { input }
+        | AirOp::Erf { input }
+        | AirOp::Atanh { input }
+        | AirOp::BatchNorm { input, .. }
+        | AirOp::InstanceNorm { input, .. }
+        | AirOp::L2Norm { input, .. } => Ok(node_shapes.get(input).cloned().unwrap_or_default()),
         AirOp::RealDiv { x, .. } => Ok(node_shapes.get(x).cloned().unwrap_or_default()),
         AirOp::Topk { input, k, axis } => Ok(if let Some(shape) = node_shapes.get(input) {
             let ax = if *axis >= 0 {
