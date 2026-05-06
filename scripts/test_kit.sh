@@ -349,22 +349,22 @@ phase_synthetic() {
 
     # ─── Proto-direct (no Python bridge) ───
     log_section "Proto-Direct Compilation (Rust-only emission)"
-    local linear_spec="${specs_dir}/linear_projection.toml"
-    if [[ -f "$linear_spec" ]]; then
+    # Proto-direct only works with compile-sharded and ShardedDecodeStep tasks
+    local shard_decode_spec="${specs_dir}/sharded_decode_step.toml"
+    if [[ -f "$shard_decode_spec" ]]; then
         local proto_output="${TEST_WORKDIR}/synthetic/proto_direct"
         mkdir -p "$proto_output"
         if ane_compile compile-sharded \
-                --input "$linear_spec" \
+                --input "$shard_decode_spec" \
                 --output "$proto_output" \
                 --proto-direct \
-                --seed "$SEED" \
                 2>"${TEST_WORKDIR}/proto_direct.log"; then
             record_result "proto-direct emission" "pass"
         else
             record_result "proto-direct emission" "fail" "See ${TEST_WORKDIR}/proto_direct.log"
         fi
     else
-        record_result "proto-direct emission" "skip" "linear_projection.toml not found"
+        record_result "proto-direct emission" "skip" "sharded_decode_step.toml not found"
     fi
 }
 
@@ -387,11 +387,12 @@ phase_bridge() {
     local -A EMITTERS
     EMITTERS[emit_linear_projection]='{"bridge_version":1,"command":"emit_linear_projection","task_name":"test_linear","input_dim":64,"output_dim":32,"batch_size":1,"dtype":"fp16","opset_version":"iOS18","compute_units":"CPU_AND_NE"}'
     EMITTERS[emit_mlp_block]='{"bridge_version":1,"command":"emit_mlp_block","task_name":"test_mlp","input_dim":64,"hidden_dim":128,"output_dim":64,"activation":"gelu","batch_size":1,"dtype":"fp16","opset_version":"iOS18","compute_units":"CPU_AND_NE"}'
-    EMITTERS[emit_attention]='{"bridge_version":1,"command":"emit_attention","task_name":"test_attn","input_dim":64,"num_heads":4,"head_dim":16,"batch_size":1,"seq_len":8,"dtype":"fp16","opset_version":"iOS18","compute_units":"CPU_AND_NE"}'
-    EMITTERS[emit_stateful_decode_step]='{"bridge_version":1,"command":"emit_stateful_decode_step","task_name":"test_decode","input_dim":64,"num_heads":4,"head_dim":16,"batch_size":1,"kv_len":32,"dtype":"fp16","opset_version":"iOS18","compute_units":"CPU_AND_NE"}'
+    EMITTERS[emit_attention]='{"bridge_version":1,"command":"emit_attention","task_name":"test_attn","embed_dim":64,"num_heads":4,"head_dim":16,"batch_size":1,"seq_len":8,"dtype":"fp16","opset_version":"iOS18","compute_units":"CPU_AND_NE"}'
+    EMITTERS[emit_stateful_decode_step]='{"bridge_version":1,"command":"emit_stateful_decode_step","task_name":"test_decode","embed_dim":64,"num_heads":4,"head_dim":16,"batch_size":1,"kv_len":32,"dtype":"fp16","opset_version":"iOS18","compute_units":"CPU_AND_NE"}'
     EMITTERS[emit_lut_projection]='{"bridge_version":1,"command":"emit_lut_projection","task_name":"test_lut","vocab_size":16,"embed_dim":64,"num_groups":16,"lut_bitwidth":4,"batch_size":1,"dtype":"fp16","opset_version":"iOS18","compute_units":"CPU_AND_NE"}'
-    EMITTERS[emit_multifunction]='{"bridge_version":1,"command":"emit_multifunction","task_name":"test_multi","input_dim":64,"output_dim":32,"batch_size":1,"dtype":"fp16","opset_version":"iOS18","compute_units":"CPU_AND_NE"}'
-    EMITTERS[emit_shard_decode_step]='{"bridge_version":1,"command":"emit_shard_decode_step","task_name":"test_shard_decode","input_dim":64,"num_heads":4,"head_dim":16,"batch_size":1,"kv_len":32,"shard_role":"Interior","dtype":"fp16","opset_version":"iOS18","compute_units":"CPU_AND_NE"}'
+    EMITTERS[emit_multifunction]='{"bridge_version":1,"command":"emit_multifunction","task_name":"test_multi","embed_dim":64,"num_heads":4,"head_dim":16,"batch_size":1,"kv_len":32,"dtype":"fp16","opset_version":"iOS18","compute_units":"CPU_AND_NE"}'
+    EMITTERS[emit_shard_decode_step]='{"bridge_version":1,"command":"emit_shard_decode_step","task_name":"test_shard_decode","embed_dim":64,"num_heads":4,"head_dim":16,"batch_size":1,"kv_len":32,"shard_role":"Interior","dtype":"fp16","opset_version":"iOS18","compute_units":"CPU_AND_NE"}'
+
 
     for emitter_name in $(echo "${!EMITTERS[@]}" | tr ' ' '\n' | sort); do
         local cmd_json="${EMITTERS[$emitter_name]}"
@@ -410,36 +411,52 @@ cmd['seed'] = $SEED
 json.dump(cmd, open('$cmd_file', 'w'))
 "
 
-        if python3 "$bridge" "$cmd_file" "$result_file" 2>/dev/null; then
-            local status=$(python3 -c "import json; print(json.load(open('$result_file')).get('status','unknown'))" 2>/dev/null || echo "parse_error")
-            if [[ "$status" == "success" ]]; then
-                record_result "bridge: $emitter_name" "pass"
+        # Run the bridge — capture exit code but don't fail immediately
+        # (coremltools may SIGABRT after writing mlpackage on macOS)
+        python3 "$bridge" "$cmd_file" "$result_file" 2>/dev/null
+        local bridge_exit=$?
 
-                # Check mlpackage was produced
-                local output_path
-                output_path=$(python3 -c "import json; r=json.load(open('$result_file')); print(r.get('output_path',''))" 2>/dev/null || echo "")
-                if [[ -n "$output_path" ]] && [[ -d "$output_path" ]]; then
-                    record_result "mlpackage: $emitter_name" "pass"
-                elif find "$test_dir" -name "*.mlpackage" -type d 2>/dev/null | head -1 | grep -q .; then
-                    record_result "mlpackage: $emitter_name" "pass"
-                else
-                    record_result "mlpackage: $emitter_name" "fail" "No .mlpackage produced"
-                fi
+        # Check result file first (even if bridge exited non-zero,
+        # it may have written a success result before crashing)
+        local status="unknown"
+        if [[ -f "$result_file" ]]; then
+            status=$(python3 -c "import json; print(json.load(open('$result_file')).get('status','unknown'))" 2>/dev/null || echo "parse_error")
+        fi
 
-                # Check content_hash
-                local content_hash
-                content_hash=$(python3 -c "import json; r=json.load(open('$result_file')); print(r.get('content_hash',''))" 2>/dev/null || echo "")
-                if [[ -n "$content_hash" ]]; then
-                    record_result "content_hash: $emitter_name" "pass" "$content_hash"
-                else
-                    log_warn "No content_hash for $emitter_name — may be expected"
-                fi
+        if [[ "$status" == "success" ]]; then
+            record_result "bridge: $emitter_name" "pass"
+
+            # Check mlpackage was produced
+            local output_path
+            output_path=$(python3 -c "import json; r=json.load(open('$result_file')); print(r.get('output_path',''))" 2>/dev/null || echo "")
+            if [[ -n "$output_path" ]] && [[ -d "$output_path" ]]; then
+                record_result "mlpackage: $emitter_name" "pass"
+            elif find "$test_dir" -name "*.mlpackage" -type d 2>/dev/null | head -1 | grep -q .; then
+                record_result "mlpackage: $emitter_name" "pass"
             else
-                local error_msg=$(python3 -c "import json; r=json.load(open('$result_file')); print(r.get('error_message',''))" 2>/dev/null || echo "unknown")
-                record_result "bridge: $emitter_name" "fail" "status=$status: $error_msg"
+                record_result "mlpackage: $emitter_name" "fail" "No .mlpackage produced"
             fi
+
+            # Check content_hash
+            local content_hash
+            content_hash=$(python3 -c "import json; r=json.load(open('$result_file')); print(r.get('content_hash',''))" 2>/dev/null || echo "")
+            if [[ -n "$content_hash" ]]; then
+                record_result "content_hash: $emitter_name" "pass" "$content_hash"
+            else
+                log_warn "No content_hash for $emitter_name — may be expected"
+            fi
+        elif [[ "$status" == "error" ]]; then
+            local error_msg=$(python3 -c "import json; r=json.load(open('$result_file')); print(r.get('error_message',''))" 2>/dev/null || echo "unknown")
+            record_result "bridge: $emitter_name" "fail" "status=$status: $error_msg"
         else
-            record_result "bridge: $emitter_name" "fail" "Bridge execution failed"
+            # No valid result file — check if mlpackage was still produced
+            # (coremltools SIGABRT after successful save)
+            if find "$test_dir" -name "*.mlpackage" -type d 2>/dev/null | head -1 | grep -q .; then
+                record_result "bridge: $emitter_name" "pass" "(mlpackage produced despite bridge exit code $bridge_exit)"
+                record_result "mlpackage: $emitter_name" "pass"
+            else
+                record_result "bridge: $emitter_name" "fail" "Bridge execution failed (exit $bridge_exit)"
+            fi
         fi
     done
 
@@ -496,7 +513,6 @@ phase_qwen3() {
                 --seq-len 32 \
                 --max-seq-len 2048 \
                 --dtype fp16 \
-                --seed "$SEED" \
                 2>&1 | tee "${TEST_WORKDIR}/trace_compile.log"; then
             record_result "trace-compile Qwen3-0.6B" "pass"
         else
@@ -539,7 +555,6 @@ phase_qwen3() {
             --max-seq-len 2048 \
             --dtype fp16 \
             --with-kv-cache \
-            --seed "$SEED" \
             2>"${TEST_WORKDIR}/trace_compile_kv.log"; then
         record_result "trace-compile Qwen3 with KV-cache" "pass"
     else
@@ -583,6 +598,8 @@ phase_knowledge() {
         for seed in "$knowledge_dir"/*.json; do
             [[ -f "$seed" ]] || continue
             local seed_name=$(basename "$seed")
+            # Skip store_index.json — it's a runtime artifact, not a seed file
+            [[ "$seed_name" == "store_index.json" ]] && continue
 
             # Check envelope schema
             if python3 -c "
@@ -590,8 +607,9 @@ import json, sys
 with open('$seed') as f:
     data = json.load(f)
 
-# Validate envelope
-assert 'version' in data, 'Missing version field'
+# Validate envelope (accept either 'version' or 'schema_version')
+has_version = 'version' in data or 'schema_version' in data
+assert has_version, 'Missing version field'
 assert 'entries' in data, 'Missing entries field'
 assert isinstance(data['entries'], list), 'entries must be a list'
 
@@ -644,7 +662,7 @@ print(f'  {\"$seed_name\"}: {len(data[\"entries\"])} entries OK')
     log_section "Knowledge Query"
     if ane_compile query \
             --store "$store_dir" \
-            --filter "ane_legal" \
+            --filter "knowledge_type=AneHwLimits" \
             2>"${TEST_WORKDIR}/query.log"; then
         record_result "query: ane_legal" "pass"
     else

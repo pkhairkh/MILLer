@@ -44,6 +44,9 @@ pub fn sir_from_linear_projection(spec: &SyntheticTaskSpec) -> Result<SirGraph, 
         TaskOp::Attention { embed_dim, batch_size, dtype, .. } => {
             (*embed_dim, *embed_dim, *batch_size, dtype.clone())
         }
+        TaskOp::MlpBlock { input_dim, output_dim, batch_size, dtype, .. } => {
+            (*input_dim, *output_dim, *batch_size, dtype.clone())
+        }
         // ShardedLinearPipeline is handled by the sharded path, not single-shard
         #[allow(unreachable_patterns)]
         _ => return Err("Expected single-shard task type for sir_from_linear_projection".into()),
@@ -120,6 +123,9 @@ pub fn lower_linear_projection_to_mir(
         }
         TaskOp::Attention { embed_dim, batch_size, dtype, .. } => {
             (*embed_dim, *embed_dim, *batch_size, dtype.clone())
+        }
+        TaskOp::MlpBlock { input_dim, output_dim, batch_size, dtype, .. } => {
+            (*input_dim, *output_dim, *batch_size, dtype.clone())
         }
         #[allow(unreachable_patterns)]
         _ => return Err("Expected single-shard task type for MIR lowering".into()),

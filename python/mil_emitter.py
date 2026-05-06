@@ -175,9 +175,17 @@ def save_mlpackage(mlmodel, mlpackage_path: str) -> dict:
         .mlmodelc for verification. The C++ compilation step can throw an
         uncaught exception ("coremldata.bin is not a valid .mlmodelc file"),
         causing SIGABRT. However, the .mlpackage files are written to disk
-        BEFORE the crash. We use os.fork() to isolate the save in a child
-        process; if the child gets SIGABRT but the .mlpackage exists on disk,
-        we treat it as a successful save.
+        BEFORE the crash.
+
+        We use subprocess (spawn) to isolate the save in a separate process.
+        This avoids the macOS fork-safety issues that occur with os.fork()
+        in multithreaded Python processes (PyTorch/coremltools create
+        background threads). The 'spawn' start method is safe on macOS
+        because it creates a completely fresh process without copying
+        thread state.
+
+        If the child process crashes (SIGABRT or non-zero exit) but the
+        .mlpackage exists on disk, we treat it as a successful save.
     """
     mlpackage_path = Path(mlpackage_path)
 
@@ -185,39 +193,87 @@ def save_mlpackage(mlmodel, mlpackage_path: str) -> dict:
         shutil.rmtree(mlpackage_path)
 
     import signal
+    import subprocess
+    import sys
+    import tempfile
 
-    pid = os.fork()
-    if pid == 0:
-        # Child process — do the save. If coremltools' post-save
-        # compilation crashes with SIGABRT, only this child dies.
+    # Write a small saver script to a temp file, then run it in a
+    # subprocess using the same Python interpreter.
+    saver_script = """
+import sys
+import json
+import warnings
+warnings.filterwarnings("ignore")
+
+# Suppress the PyTorch version warning from coremltools
+import logging
+logging.disable(logging.CRITICAL)
+
+mlpackage_path = sys.argv[1]
+model_data_path = sys.argv[2]
+
+# Load the serialized MLModel and save it
+import pickle
+with open(model_data_path, "rb") as f:
+    mlmodel = pickle.load(f)
+
+mlmodel.save(mlpackage_path)
+"""
+
+    # Serialize the mlmodel to a temp file so the subprocess can load it.
+    # Use pickle protocol 4 for broad compatibility.
+    import pickle
+    tmp_dir = Path(mlpackage_path).parent / ".save_tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    model_data_path = tmp_dir / "mlmodel.pkl"
+
+    try:
+        with open(model_data_path, "wb") as f:
+            pickle.dump(mlmodel, f, protocol=4)
+
+        # Run the saver script in a subprocess
+        result = subprocess.run(
+            [sys.executable, "-c", saver_script, str(mlpackage_path), str(model_data_path)],
+            capture_output=True,
+            timeout=120,
+        )
+
+        exit_code = result.returncode
+    except Exception as e:
+        # If subprocess itself fails, fall back to direct save
+        logger.warning(f"save_mlpackage: subprocess approach failed ({e}), trying direct save")
         try:
             mlmodel.save(str(mlpackage_path))
-            os._exit(0)
-        except BaseException:
-            os._exit(1)
-
-    # Parent — wait for child
-    _, status = os.waitpid(pid, 0)
-    child_signaled = os.WIFSIGNALED(status)
-    child_sig = os.WTERMSIG(status) if child_signaled else 0
-    child_exit = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
+            exit_code = 0
+        except Exception as save_err:
+            raise RuntimeError(f"save_mlpackage: both subprocess and direct save failed: {save_err}")
+    finally:
+        # Clean up temp files
+        try:
+            if model_data_path.exists():
+                model_data_path.unlink()
+            if tmp_dir.exists():
+                tmp_dir.rmdir()
+        except OSError:
+            pass
 
     if not mlpackage_path.exists():
-        if child_signaled and child_sig == signal.SIGABRT:
+        if exit_code < 0:
+            # Process was killed by signal (e.g., SIGABRT = -6)
             raise RuntimeError(
-                "save_mlpackage: coremltools SIGABRT during save and no "
-                ".mlpackage created. This is a known coremltools 9.0 issue "
+                f"save_mlpackage: process killed by signal {-exit_code}. "
+                "No .mlpackage created. This is a known coremltools 9.0 issue "
                 "on macOS with incompatible PyTorch versions."
             )
-        elif child_exit != 0:
-            raise RuntimeError(f"save_mlpackage: child exited with code {child_exit}")
+        elif exit_code != 0:
+            raise RuntimeError(f"save_mlpackage: child exited with code {exit_code}")
         else:
             raise RuntimeError("save_mlpackage: no output created for unknown reason")
 
-    # .mlpackage exists on disk — treat as success even if SIGABRT occurred
-    if child_signaled and child_sig == signal.SIGABRT:
+    # .mlpackage exists on disk — treat as success even if non-zero exit
+    if exit_code != 0:
         logger.warning(
-            "save_mlpackage: coremltools post-save compilation hit SIGABRT, "
+            f"save_mlpackage: child process exited with code {exit_code}, "
             "but .mlpackage was written successfully — proceeding"
         )
 
@@ -547,11 +603,12 @@ def build_decode_step_program(command: dict):
     ct, mb, types, np = _import_coremltools()
 
     task_name = command.get("task_name", "decode_step")
-    embed_dim = command.get("embed_dim", 128)
     num_heads = command.get("num_heads", 4)
     head_dim = command.get("head_dim", 32)
     kv_len = command.get("kv_len", 64)
     batch_size = command.get("batch_size", 1)
+    default_embed_dim = num_heads * head_dim
+    embed_dim = command.get("embed_dim", default_embed_dim)
     dtype_str = command.get("dtype", "fp16")
     opset_version = command.get("opset_version", "iOS18")
     seed = command.get("seed", 42)
@@ -684,11 +741,12 @@ def build_stateful_decode_step_program(command: dict):
     ct, mb, types, np = _import_coremltools()
 
     task_name = command.get("task_name", "stateful_decode_step")
-    embed_dim = command.get("embed_dim", 128)
     num_heads = command.get("num_heads", 4)
     head_dim = command.get("head_dim", 32)
     kv_len = command.get("kv_len", 64)
     batch_size = command.get("batch_size", 1)
+    default_embed_dim = num_heads * head_dim
+    embed_dim = command.get("embed_dim", default_embed_dim)
     dtype_str = command.get("dtype", "fp16")
     opset_version = command.get("opset_version", "iOS18")
     seed = command.get("seed", 42)
@@ -867,11 +925,12 @@ def build_shard_decode_step_program(command: dict):
         raise ValueError(f"shard_role must be Entry, Interior, or Exit, got '{shard_role}'")
 
     # Base dimensions
-    embed_dim = command.get("embed_dim", 128)
     num_heads = command.get("num_heads", 4)
     head_dim = command.get("head_dim", 32)
     kv_len = command.get("kv_len", 64)
     batch_size = command.get("batch_size", 1)
+    default_embed_dim = num_heads * head_dim
+    embed_dim = command.get("embed_dim", default_embed_dim)
     dtype_str = command.get("dtype", "fp16")
     opset_version = command.get("opset_version", "iOS18")
     seed = command.get("seed", 42)
@@ -1269,11 +1328,15 @@ def build_attention_program(command: dict):
     ct, mb, types, np = _import_coremltools()
 
     task_name = command.get("task_name", "attention")
-    embed_dim = command.get("embed_dim", 128)
     num_heads = command.get("num_heads", 4)
     head_dim = command.get("head_dim", 32)
     seq_len = command.get("seq_len", 32)
     batch_size = command.get("batch_size", 1)
+    # Derive embed_dim from num_heads * head_dim when not explicitly provided.
+    # This fixes reshape mismatches where the bridge command sends
+    # num_heads and head_dim but not embed_dim (e.g., test_kit.sh).
+    default_embed_dim = num_heads * head_dim
+    embed_dim = command.get("embed_dim", default_embed_dim)
     dtype_str = command.get("dtype", "fp16")
     opset_version = command.get("opset_version", "iOS18")
     seed = command.get("seed", 42)

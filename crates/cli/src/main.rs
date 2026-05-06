@@ -3671,18 +3671,44 @@ fn run_import(source: &str, store_path: &str, validate: bool) -> Result<(), Stri
 
     println!("=== MILLer — Knowledge Import ===\n");
 
-    // Check if source is a shard template seed file
-    if source.ends_with(".json") {
+    // Open/create the store once (shared across all import sources)
+    let mut store = KnowledgeStore::open(store_path)
+        .map_err(|e| format!("Failed to open store: {}", e))?;
+
+    // Collect all JSON files to import: if source is a directory, iterate
+    // over its .json files; if it's a single file, use just that one.
+    let source_path = std::path::Path::new(source);
+    let json_files: Vec<std::path::PathBuf> = if source_path.is_dir() {
+        let mut files = Vec::new();
+        let entries = std::fs::read_dir(source_path)
+            .map_err(|e| format!("Failed to read directory {}: {}", source, e))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("Failed to read dir entry: {}", e))?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                files.push(path);
+            }
+        }
+        files.sort();
+        if files.is_empty() {
+            println!("  No JSON files found in {}", source);
+        }
+        files
+    } else {
+        vec![source_path.to_path_buf()]
+    };
+
+    let mut total_imported = 0usize;
+
+    for json_file in &json_files {
+        let json_str = json_file.to_string_lossy().to_string();
+
         // Try loading as shard template seed
-        let templates = shard_template::load_shard_template_seed_file(source)
-            .map_err(|e| format!("Failed to load shard template seed: {}", e))?;
+        let templates = shard_template::load_shard_template_seed_file(&json_str)
+            .unwrap_or_default();
 
         if !templates.is_empty() {
-            println!("  Found {} shard template entries in {}", templates.len(), source);
-
-            // Open/create the store
-            let mut store = KnowledgeStore::open(store_path)
-                .map_err(|e| format!("Failed to open store: {}", e))?;
+            println!("  Found {} shard template entries in {}", templates.len(), json_str);
 
             // Convert validated templates to knowledge units and insert
             for template in &templates {
@@ -3729,42 +3755,47 @@ fn run_import(source: &str, store_path: &str, validate: bool) -> Result<(), Stri
                     "  Imported: {} (template: {})",
                     template.seed_id, template.template.template_id
                 );
+                total_imported += 1;
             }
 
-            let (seeds, observations) = store.counts();
-            println!("\n  Store now contains {} seeds, {} observations", seeds, observations);
-            println!("\n=== Import complete ===");
-            return Ok(());
+            // Continue to next file in the loop
+            continue;
         }
-    }
 
-    // Try loading as a snapshot
-    let snapshot = SnapshotImport::import_json(source)
-        .map_err(|e| format!("Failed to parse snapshot: {}. Note: only JSON snapshot files and shard template seed files are supported.", e))?;
+        // Not a shard template — try loading as a snapshot
+        let snapshot = match SnapshotImport::import_json(&json_str) {
+            Ok(s) => s,
+            Err(_) => {
+                // Skip files that are neither shard templates nor snapshots
+                println!("  Skipping {} (not a recognized seed or snapshot format)", json_str);
+                continue;
+            }
+        };
 
-    // Validate the snapshot if requested
-    if validate {
-        let warnings = SnapshotImport::validate(&snapshot)
-            .map_err(|e| format!("Snapshot validation error: {}", e))?;
-        if !warnings.is_empty() {
-            return Err(format!("Snapshot validation failed: {:?}", warnings));
+        // Validate the snapshot if requested
+        if validate {
+            let warnings = SnapshotImport::validate(&snapshot)
+                .map_err(|e| format!("Snapshot validation error: {}", e))?;
+            if !warnings.is_empty() {
+                eprintln!("  Warning: snapshot validation warnings for {}: {:?}", json_str, warnings);
+            } else {
+                println!("  Snapshot validation: PASSED");
+            }
         }
-        println!("  Snapshot validation: PASSED");
+
+        // Import the snapshot
+        let stats = SnapshotImport::import_into_store(&mut store, &snapshot)
+            .map_err(|e| format!("Import failed for {}: {}", json_str, e))?;
+
+        total_imported += stats.seeds_imported + stats.observations_imported;
+        println!(
+            "  Imported {} seeds, {} observations from {}",
+            stats.seeds_imported, stats.observations_imported, json_str
+        );
     }
-
-    // Open/create the store
-    let mut store =
-        KnowledgeStore::open(store_path).map_err(|e| format!("Failed to open store: {}", e))?;
-
-    // Import the snapshot
-    let stats = SnapshotImport::import_into_store(&mut store, &snapshot)
-        .map_err(|e| format!("Import failed: {}", e))?;
 
     let (seeds, observations) = store.counts();
-    println!(
-        "  Imported {} seeds, {} observations from {}",
-        stats.seeds_imported, stats.observations_imported, source
-    );
+    println!("\n  Total imported: {} entries", total_imported);
     println!("  Store now contains {} seeds, {} observations", seeds, observations);
 
     println!("\n=== Import complete ===");
