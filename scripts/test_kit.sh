@@ -297,7 +297,19 @@ phase_synthetic() {
 import tomllib
 with open('$spec', 'rb') as f:
     d = tomllib.load(f)
-print(d.get('task', {}).get('family', d.get('task', {}).get('type', 'unknown')))
+# Try [task] section first (older format), then look inside nested
+# sections like [synthetic.xxx] for the 'family' key
+family = d.get('task', {}).get('family', None)
+if family is None:
+    for section_key, section_val in d.items():
+        if isinstance(section_val, dict):
+            for sub_key, sub_val in section_val.items():
+                if isinstance(sub_val, dict) and 'family' in sub_val:
+                    family = sub_val['family']
+                    break
+        if family is not None:
+            break
+print(family or 'unknown')
 " 2>/dev/null || echo "unknown")
         local compile_cmd="compile"
         if [[ "$spec_family" == "ShardedDecodeStep" || "$spec_family" == "ShardedLinearPipeline" ]]; then

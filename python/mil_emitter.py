@@ -228,19 +228,18 @@ def save_mlpackage(mlmodel, mlpackage_path: str) -> dict:
     Returns:
         Dict with content_hash, package_files, output_path.
 
-    SIGABRT workaround (macOS + coremltools 9.0):
+    SIGABRT workaround (macOS + coremltools 9.x + Torch 2.11):
         On macOS, mlmodel.save() internally compiles the .mlpackage to
         .mlmodelc for verification. The C++ compilation step can throw an
         uncaught exception ("coremldata.bin is not a valid .mlmodelc file"),
         causing SIGABRT. However, the .mlpackage files are written to disk
         BEFORE the crash.
 
-        We use subprocess (spawn) to isolate the save in a separate process.
-        This avoids the macOS fork-safety issues that occur with os.fork()
-        in multithreaded Python processes (PyTorch/coremltools create
-        background threads). The 'spawn' start method is safe on macOS
-        because it creates a completely fresh process without copying
-        thread state.
+        We use a subprocess to isolate the save. Instead of pickling the
+        MLModel (which fails with Torch 2.11 lambdas like
+        "make_float.<locals>.double"), we serialize the protobuf spec to
+        a temp file using mlmodel.get_spec().SerializeToString() and
+        reconstruct in the subprocess via ct.models.MLModel(spec).
 
         If the child process crashes (SIGABRT or non-zero exit) but the
         .mlpackage exists on disk, we treat it as a successful save.
@@ -250,16 +249,14 @@ def save_mlpackage(mlmodel, mlpackage_path: str) -> dict:
     if mlpackage_path.exists():
         shutil.rmtree(mlpackage_path)
 
-    import signal
     import subprocess
     import sys
-    import tempfile
 
-    # Write a small saver script to a temp file, then run it in a
-    # subprocess using the same Python interpreter.
+    # Write a saver script that loads the spec from a protobuf file,
+    # reconstructs the MLModel, and saves it. This avoids pickle
+    # serialization issues with Torch 2.11 lambdas.
     saver_script = """
 import sys
-import json
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -268,37 +265,38 @@ import logging
 logging.disable(logging.CRITICAL)
 
 mlpackage_path = sys.argv[1]
-model_data_path = sys.argv[2]
+spec_path = sys.argv[2]
 
-# Load the serialized MLModel and save it
-import pickle
-with open(model_data_path, "rb") as f:
-    mlmodel = pickle.load(f)
+# Load the protobuf spec and reconstruct the MLModel
+import coremltools as ct
+spec = ct.models.utils.load_spec(spec_path)
+mlmodel = ct.models.MLModel(spec)
 
 mlmodel.save(mlpackage_path)
 """
 
-    # Serialize the mlmodel to a temp file so the subprocess can load it.
-    # Use pickle protocol 4 for broad compatibility.
-    import pickle
+    # Serialize the MLModel's protobuf spec to a temp file.
+    # This avoids pickle issues with Torch 2.11 lambda closures.
     tmp_dir = Path(mlpackage_path).parent / ".save_tmp"
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    model_data_path = tmp_dir / "mlmodel.pkl"
+    spec_path = tmp_dir / "model_spec.pb"
 
     try:
-        with open(model_data_path, "wb") as f:
-            pickle.dump(mlmodel, f, protocol=4)
+        # Write protobuf spec to temp file
+        spec_bytes = mlmodel.get_spec().SerializeToString()
+        with open(spec_path, "wb") as f:
+            f.write(spec_bytes)
 
         # Run the saver script in a subprocess
         result = subprocess.run(
-            [sys.executable, "-c", saver_script, str(mlpackage_path), str(model_data_path)],
+            [sys.executable, "-c", saver_script, str(mlpackage_path), str(spec_path)],
             capture_output=True,
             timeout=120,
         )
 
         exit_code = result.returncode
     except Exception as e:
-        # If subprocess itself fails, fall back to direct save
+        # If subprocess itself fails, try direct save as last resort
         logger.warning(f"save_mlpackage: subprocess approach failed ({e}), trying direct save")
         try:
             mlmodel.save(str(mlpackage_path))
@@ -308,9 +306,9 @@ mlmodel.save(mlpackage_path)
     finally:
         # Clean up temp files
         try:
-            if model_data_path.exists():
-                model_data_path.unlink()
-            if tmp_dir.exists():
+            if spec_path.exists():
+                spec_path.unlink()
+            if tmp_dir.exists() and not any(tmp_dir.iterdir()):
                 tmp_dir.rmdir()
         except OSError:
             pass
@@ -320,7 +318,7 @@ mlmodel.save(mlpackage_path)
             # Process was killed by signal (e.g., SIGABRT = -6)
             raise RuntimeError(
                 f"save_mlpackage: process killed by signal {-exit_code}. "
-                "No .mlpackage created. This is a known coremltools 9.0 issue "
+                "No .mlpackage created. This is a known coremltools 9.x issue "
                 "on macOS with incompatible PyTorch versions."
             )
         elif exit_code != 0:

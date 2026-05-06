@@ -3622,6 +3622,10 @@ fn parse_query_filter(expr: &str) -> Result<ane_knowledge::query::KnowledgeQuery
                         "DeviceFingerprint" => KnowledgeType::DeviceFingerprint,
                         "StateTopologyOutcome" => KnowledgeType::StateTopologyOutcome,
                         "SyntheticTransferAnnotation" => KnowledgeType::SyntheticTransferAnnotation,
+                        "CpuOnlyOps" => KnowledgeType::CpuOnlyOps,
+                        "AneHwLimits" => KnowledgeType::AneHwLimits,
+                        "PalettizationConstraints" => KnowledgeType::PalettizationConstraints,
+                        "AneOpFamilyMatrix" => KnowledgeType::AneOpFamilyMatrix,
                         other => return Err(format!("Unknown knowledge type: {}", other)),
                     };
                     query = query.with_type(kt);
@@ -3762,12 +3766,49 @@ fn run_import(source: &str, store_path: &str, validate: bool) -> Result<(), Stri
             continue;
         }
 
-        // Not a shard template — try loading as a snapshot
+        // Not a shard template — try loading as a generic seed file (entries array)
+        // Seed files like ane_hw_limits_seed.json, legality_seed.json, etc. have
+        // a top-level "entries" array with KnowledgeUnit objects. We delegate to
+        // the store's load_seeds_from_directory() which handles this format.
+        {
+            let seed_json_str = std::fs::read_to_string(json_file.as_path())
+                .unwrap_or_default();
+            let seed_val: serde_json::Value = serde_json::from_str(&seed_json_str)
+                .unwrap_or_default();
+            if seed_val.get("entries").and_then(|e| e.as_array()).is_some() {
+                // This file has the seed "entries" format. Create a temp dir
+                // with just this file and use load_seeds_from_directory.
+                let temp_dir = std::env::temp_dir().join("miller_import_seed");
+                let _ = std::fs::create_dir_all(&temp_dir);
+                let file_name = json_file.file_name().unwrap_or_default();
+                let temp_file = temp_dir.join(file_name);
+                // Copy the seed file to the temp dir
+                if std::fs::copy(json_file, &temp_file).is_ok() {
+                    match store.load_seeds_from_directory(&temp_dir.to_string_lossy()) {
+                        Ok(count) if count > 0 => {
+                            println!("  Imported {} seed entries from {}", count, json_str);
+                            total_imported += count;
+                        }
+                        Ok(_) => {
+                            // File had entries array but none were new/importable
+                        }
+                        Err(e) => {
+                            eprintln!("  Warning: error loading seed file {}: {}", json_str, e);
+                        }
+                    }
+                    // Clean up temp file
+                    let _ = std::fs::remove_file(&temp_file);
+                }
+                continue;
+            }
+        }
+
+        // Not a seed file either — try loading as a snapshot
         let snapshot = match SnapshotImport::import_json(&json_str) {
             Ok(s) => s,
             Err(_) => {
-                // Skip files that are neither shard templates nor snapshots
-                println!("  Skipping {} (not a recognized seed or snapshot format)", json_str);
+                // Skip files that are none of: shard template, seed, or snapshot
+                println!("  Skipping {} (not a recognized seed, shard-template, or snapshot format)", json_str);
                 continue;
             }
         };

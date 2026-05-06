@@ -473,6 +473,14 @@ pub mod mir_compat {
             values: Vec<String>,
             axis: i64,
         },
+        /// Stack: concatenates tensors along a new axis dimension.
+        /// Semantically equivalent to: unsqueeze each input at `axis`, then concat along `axis`.
+        /// Core ML MIL program op type: "stack".
+        Stack {
+            name: String,
+            values: Vec<String>,
+            axis: i64,
+        },
         Softmax {
             name: String,
             x: String,
@@ -1114,6 +1122,7 @@ pub mod mir_compat {
                 SliceByIndex,
                 SliceUpdate,
                 Concat,
+                Stack,
                 Softmax,
                 Gelu,
                 ScaledDotProductAttention,
@@ -1248,6 +1257,7 @@ pub mod mir_compat {
                 MirOpCompat::SliceByIndex { x, .. } => vec![x.clone()],
                 MirOpCompat::SliceUpdate { x, update, .. } => vec![x.clone(), update.clone()],
                 MirOpCompat::Concat { values, .. } => values.clone(),
+                MirOpCompat::Stack { values, .. } => values.clone(),
                 MirOpCompat::ScaledDotProductAttention {
                     query,
                     key,
@@ -1444,6 +1454,9 @@ pub mod mir_compat {
                 }
                 MirOpCompat::Concat { name, values, axis } => {
                     MirOpCompat::Concat { name, values: values.into_iter().map(&f).collect(), axis }
+                }
+                MirOpCompat::Stack { name, values, axis } => {
+                    MirOpCompat::Stack { name, values: values.into_iter().map(&f).collect(), axis }
                 }
                 MirOpCompat::Softmax { name, x, axis } => {
                     MirOpCompat::Softmax { name, x: f(x), axis }
@@ -1846,6 +1859,9 @@ pub mod mir_compat {
                 }
                 MirOpCompat::Concat { name: _, values, axis } => {
                     MirOpCompat::Concat { name: new_name, values, axis }
+                }
+                MirOpCompat::Stack { name: _, values, axis } => {
+                    MirOpCompat::Stack { name: new_name, values, axis }
                 }
                 MirOpCompat::Softmax { name: _, x, axis } => {
                     MirOpCompat::Softmax { name: new_name, x, axis }
@@ -2737,7 +2753,11 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
                     constant_value,
                 }
             }
-            MirOp::MILStack { name, .. } => unsupported("stack", &name, &op_json),
+            MirOp::MILStack { name, values, axis } => mir_compat::MirOpCompat::Stack {
+                name,
+                values: values.into_iter().map(|v| nid(v)).collect(),
+                axis: *axis as i64,
+            },
             MirOp::MILTile { name, x, reps } => mir_compat::MirOpCompat::Tile {
                 name,
                 x: nid(x),
@@ -3329,6 +3349,13 @@ pub fn mir_op_to_proto_op(
         mir_compat::MirOpCompat::Concat { name, values, axis } => (
             name.clone(),
             proto::mil_operation::Operation::ConcatOp(proto::MilConcatOp {
+                values: values.iter().map(|v| proto::OperandRef { name: v.clone() }).collect(),
+                axis: *axis,
+            }),
+        ),
+        mir_compat::MirOpCompat::Stack { name, values, axis } => (
+            name.clone(),
+            proto::mil_operation::Operation::StackOp(proto::MilStackOp {
                 values: values.iter().map(|v| proto::OperandRef { name: v.clone() }).collect(),
                 axis: *axis,
             }),
@@ -4881,6 +4908,39 @@ fn mir_op_to_apple_ops(
 
             vec![apple_proto::mil_spec::Operation {
                 r#type: "concat".to_string(),
+                inputs,
+                outputs: vec![make_apple_named_value_type(
+                    name,
+                    apple_proto::mil_spec::DataType::Float16 as i32,
+                    &lookup_shape_u64(name, node_shapes),
+                )],
+                blocks: vec![],
+                attributes,
+            }]
+        }
+        mir_compat::MirOpCompat::Stack { name, values, axis } => {
+            let mut inputs = HashMap::new();
+            let mut stack_args = apple_proto::mil_spec::Argument { arguments: vec![] };
+            for v in values {
+                stack_args.arguments.push(apple_proto::mil_spec::argument::Binding {
+                    binding: Some(apple_proto::mil_spec::argument::binding::Binding::Name(
+                        v.clone(),
+                    )),
+                });
+            }
+            inputs.insert("values".to_string(), stack_args);
+
+            // axis as immediate value
+            inputs.insert(
+                "axis".to_string(),
+                make_value_arg(make_immediate_int32_value(vec![*axis as i32], &[])),
+            );
+
+            let mut attributes = HashMap::new();
+            add_name_attribute(&mut attributes, name);
+
+            vec![apple_proto::mil_spec::Operation {
+                r#type: "stack".to_string(),
                 inputs,
                 outputs: vec![make_apple_named_value_type(
                     name,

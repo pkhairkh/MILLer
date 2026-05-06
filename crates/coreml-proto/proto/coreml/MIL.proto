@@ -42,6 +42,7 @@ message MilOperation {
         MilTransposeOp transpose_op = 31;
         MilSplitOp split_op = 32;
         MilConcatOp concat_op = 33;
+        MilStackOp stack_op = 37;  // Stack: concat along a new axis dimension
         MilSliceByIndexOp slice_by_index_op = 34;
         MilSliceUpdateOp slice_update_op = 35;
         MilGatherOp gather_op = 36;
@@ -176,6 +177,11 @@ message MilSplitOp {
 }
 
 message MilConcatOp {
+    repeated OperandRef values = 1;
+    int64 axis = 2;
+}
+
+message MilStackOp {
     repeated OperandRef values = 1;
     int64 axis = 2;
 }
