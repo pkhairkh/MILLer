@@ -227,6 +227,22 @@ impl RiskAnnotatePass {
             .nodes
             .into_iter()
             .map(|mut node| {
+                // Structural/non-compute ops are always legal on ANE — they
+                // perform no computation and cannot fail placement. Short-circuit
+                // them to Verified to avoid spurious Unknown legality from the
+                // knowledge store. This prevents the legality gate from rejecting
+                // pass-through nodes like graph outputs (Identity ops).
+                if matches!(
+                    &node.op,
+                    AirOp::Identity { .. }
+                        | AirOp::Const { .. }
+                        | AirOp::Fill { .. }
+                        | AirOp::Range1d { .. }
+                ) {
+                    node.legality_status = LegalityStatus::Verified;
+                    return node;
+                }
+
                 // Derive op pattern from the AIR node's operation type
                 let op_pattern = match &node.op {
                     AirOp::MatMul { .. } => "mb.matmul",

@@ -362,6 +362,8 @@ try:
     import coremltools as ct
     from coremltools.models import MLModel
     from coremltools.models.compute_plan import MLComputePlan
+    from coremltools.converters.mil import Builder as mb
+    from coremltools.converters.mil.mil import types
 except ImportError:
     print(json.dumps({"error": "coremltools not available"}))
     sys.exit(1)
@@ -376,16 +378,23 @@ def _make_model(prog_builder_fn, input_shape=(1, 64), input_name="x",
                 output_name="y", dtype=np.float16, compute_units="CPU_AND_NE"):
     """Generic model builder: takes a function that builds a MIL program
     and returns a converted MLModel."""
-    from coremltools import ml_program
-    @ml_program(scope="op_test_" + str(id(prog_builder_fn)))
+    # Resolve numpy dtype → MIL dtype
+    if dtype == np.float32:
+        mil_dtype = types.fp32
+    else:
+        mil_dtype = types.fp16
+
+    @mb.program(
+        input_specs=[mb.TensorSpec(shape=input_shape, dtype=mil_dtype)],
+        opset_version=ct.target.iOS16,
+    )
     def prog(x):
         return prog_builder_fn(x)
 
     model = ct.convert(
         prog,
-        inputs=[ct.TensorType(shape=input_shape, name=input_name, dtype=dtype)],
-        outputs=[ct.TensorType(name=output_name)],
         convert_to="mlprogram",
+        minimum_deployment_target=ct.target.iOS16,
         compute_units=getattr(ct.ComputeUnit, compute_units, ct.ComputeUnit.CPU_AND_NE),
     )
     return model
@@ -427,92 +436,92 @@ OP_TESTS = []
 
 # Elementwise unary
 for op_name, builder in [
-    ("relu", lambda x: ct.relu(x)),
-    ("sigmoid", lambda x: ct.sigmoid(x)),
-    ("tanh", lambda x: ct.tanh(x)),
-    ("abs", lambda x: ct.abs(x)),
-    ("neg", lambda x: ct.neg(x)),
-    ("exp", lambda x: ct.exp(x)),
-    ("ceil", lambda x: ct.ceil(x)),
-    ("floor", lambda x: ct.floor(x)),
-    ("sqrt", lambda x: ct.sqrt(x)),
-    ("rsqrt", lambda x: ct.rsqrt(x)),
-    ("log", lambda x: ct.log(x)),
-    ("sin", lambda x: ct.sin(x)),
-    ("cos", lambda x: ct.cos(x)),
-    ("gelu", lambda x: ct.gelu(x)),
-    ("silu", lambda x: ct.silu(x)),
-    ("softplus", lambda x: ct.softplus(x)),
-    ("elu", lambda x: ct.elu(x, alpha=1.0)),
-    ("leaky_relu", lambda x: ct.leaky_relu(x, alpha=0.01)),
-    ("clip", lambda x: ct.clip(x, min_val=0.0, max_val=6.0)),
-    ("sign", lambda x: ct.sign(x)),
-    ("round", lambda x: ct.round(x)),
+    ("relu", lambda x: mb.relu(x=x)),
+    ("sigmoid", lambda x: mb.sigmoid(x=x)),
+    ("tanh", lambda x: mb.tanh(x=x)),
+    ("abs", lambda x: mb.abs(x=x)),
+    ("neg", lambda x: mb.neg(x=x)),
+    ("exp", lambda x: mb.exp(x=x)),
+    ("ceil", lambda x: mb.ceil(x=x)),
+    ("floor", lambda x: mb.floor(x=x)),
+    ("sqrt", lambda x: mb.sqrt(x=x)),
+    ("rsqrt", lambda x: mb.rsqrt(x=x)),
+    ("log", lambda x: mb.log(x=x)),
+    ("sin", lambda x: mb.sin(x=x)),
+    ("cos", lambda x: mb.cos(x=x)),
+    ("gelu", lambda x: mb.gelu(x=x)),
+    ("silu", lambda x: mb.silu(x=x)),
+    ("softplus", lambda x: mb.softplus(x=x)),
+    ("elu", lambda x: mb.elu(x=x, alpha=1.0)),
+    ("leaky_relu", lambda x: mb.leaky_relu(x=x, alpha=0.01)),
+    ("clip", lambda x: mb.clip(x=x, alpha=0.0, beta=6.0)),
+    ("sign", lambda x: mb.sign(x=x)),
+    ("round", lambda x: mb.round(x=x)),
 ]:
     OP_TESTS.append((op_name, builder))
 
 # Elementwise binary
 for op_name, builder in [
-    ("add", lambda x: x + x),
-    ("mul", lambda x: x * x),
-    ("sub", lambda x: x - x),
-    ("real_div", lambda x: x / (x + 0.001)),
-    ("maximum", lambda x: ct.maximum(x, x)),
-    ("minimum", lambda x: ct.minimum(x, x)),
-    ("pow", lambda x: ct.pow(x, ct.const(2.0))),
-    ("equal", lambda x: ct.equal(x, ct.const(0.0))),
-    ("not_equal", lambda x: ct.not_equal(x, ct.const(0.0))),
-    ("greater", lambda x: ct.greater(x, ct.const(0.0))),
-    ("less", lambda x: ct.less(x, ct.const(1.0))),
-    ("logical_and", lambda x: ct.logical_and(x > 0, x < 1)),
-    ("logical_or", lambda x: ct.logical_or(x > 0, x < -1)),
-    ("logical_not", lambda x: ct.logical_not(x > 0)),
+    ("add", lambda x: mb.add(x=x, y=x)),
+    ("mul", lambda x: mb.mul(x=x, y=x)),
+    ("sub", lambda x: mb.sub(x=x, y=x)),
+    ("real_div", lambda x: mb.real_div(x=x, y=mb.add(x=x, y=mb.const(val=0.001)))),
+    ("maximum", lambda x: mb.maximum(x=x, y=x)),
+    ("minimum", lambda x: mb.minimum(x=x, y=x)),
+    ("pow", lambda x: mb.pow(x=x, y=mb.const(val=2.0))),
+    ("equal", lambda x: mb.equal(x=x, y=mb.const(val=0.0))),
+    ("not_equal", lambda x: mb.not_equal(x=x, y=mb.const(val=0.0))),
+    ("greater", lambda x: mb.greater(x=x, y=mb.const(val=0.0))),
+    ("less", lambda x: mb.less(x=x, y=mb.const(val=1.0))),
+    ("logical_and", lambda x: mb.logical_and(x=mb.greater(x=x, y=mb.const(val=0.0)), y=mb.less(x=x, y=mb.const(val=1.0)))),
+    ("logical_or", lambda x: mb.logical_or(x=mb.greater(x=x, y=mb.const(val=0.0)), y=mb.less(x=x, y=mb.const(val=-1.0)))),
+    ("logical_not", lambda x: mb.logical_not(x=mb.greater(x=x, y=mb.const(val=0.0)))),
 ]:
     OP_TESTS.append((op_name, builder))
 
 # Reduction ops
 for op_name, builder in [
-    ("reduce_sum", lambda x: ct.reduce_sum(x, axes=[-1], keep_dims=True)),
-    ("reduce_mean", lambda x: ct.reduce_mean(x, axes=[-1], keep_dims=True)),
-    ("reduce_max", lambda x: ct.reduce_max(x, axes=[-1], keep_dims=True)),
-    ("reduce_min", lambda x: ct.reduce_min(x, axes=[-1], keep_dims=True)),
-    ("reduce_prod", lambda x: ct.reduce_prod(x, axes=[-1], keep_dims=True)),
-    ("reduce_argmax", lambda x: ct.reduce_argmax(x, axis=-1, keep_dims=True)),
-    ("reduce_argmin", lambda x: ct.reduce_argmin(x, axis=-1, keep_dims=True)),
+    ("reduce_sum", lambda x: mb.reduce_sum(x=x, axes=[-1], keep_dims=True)),
+    ("reduce_mean", lambda x: mb.reduce_mean(x=x, axes=[-1], keep_dims=True)),
+    ("reduce_max", lambda x: mb.reduce_max(x=x, axes=[-1], keep_dims=True)),
+    ("reduce_min", lambda x: mb.reduce_min(x=x, axes=[-1], keep_dims=True)),
+    ("reduce_prod", lambda x: mb.reduce_prod(x=x, axes=[-1], keep_dims=True)),
+    ("reduce_argmax", lambda x: mb.reduce_argmax(x=x, axis=-1, keep_dims=True)),
+    ("reduce_argmin", lambda x: mb.reduce_argmin(x=x, axis=-1, keep_dims=True)),
 ]:
     OP_TESTS.append((op_name, builder))
 
 # Tensor transform
 for op_name, builder in [
-    ("reshape", lambda x: ct.reshape(x, shape=[1, 8, 8])),
-    ("transpose", lambda x: ct.transpose(x, perm=[0, 2, 1])),
-    ("concat", lambda x: ct.concat([x, x], axis=-1)),
-    ("split", lambda x: ct.split(x, num_splits=2, axis=-1)[0]),
-    ("squeeze", lambda x: ct.squeeze(x, axes=[0])),
-    ("expand_dims", lambda x: ct.expand_dims(x, axis=1)),
-    ("flatten2d", lambda x: ct.flatten2d(x)),
-    ("pad", lambda x: ct.pad(x, padding=[(0,0), (2,2)])),
-    ("reverse", lambda x: ct.reverse(x, axes=[-1])),
-    ("cumsum", lambda x: ct.cumsum(x, axis=-1)),
-    ("cast", lambda x: ct.cast(x, dtype="int32")),
+    ("reshape", lambda x: mb.reshape(x=x, shape=[1, 8, 8])),
+    ("transpose", lambda x: mb.transpose(x=x, perm=[0, 2, 1])),
+    ("concat", lambda x: mb.concat(values=[x, x], axis=-1)),
+    ("split", lambda x: mb.split(x=x, num_splits=2, axis=-1)[0]),
+    ("squeeze", lambda x: mb.squeeze(x=x, axes=[0])),
+    ("expand_dims", lambda x: mb.expand_dims(x=x, axis=1)),
+    ("flatten2d", lambda x: mb.flatten2d(x=x)),
+    ("pad", lambda x: mb.pad(x=x, pad=[(0,0), (2,2)])),
+    ("reverse", lambda x: mb.reverse(x=x, axes=[-1])),
+    ("cumsum", lambda x: mb.cumsum(x=x, axis=-1)),
+    ("cast", lambda x: mb.cast(x=x, dtype="int32")),
 ]:
     OP_TESTS.append((op_name, builder))
 
 # Normalization
 for op_name, builder in [
-    ("layer_norm", lambda x: ct.layer_norm(x, weight=ct.const(np.ones(64, dtype=np.float16)),
-                                            bias=ct.const(np.zeros(64, dtype=np.float16)),
+    ("layer_norm", lambda x: mb.layer_norm(x=x, gamma=np.ones(64, dtype=np.float16),
+                                            beta=np.zeros(64, dtype=np.float16),
                                             epsilon=1e-5)),
-    ("batch_norm", lambda x: ct.batch_norm(x, mean=ct.const(np.zeros(64, dtype=np.float16)),
-                                             variance=ct.const(np.ones(64, dtype=np.float16)),
-                                             gamma=ct.const(np.ones(64, dtype=np.float16)),
-                                             beta=ct.const(np.zeros(64, dtype=np.float16)),
+    ("batch_norm", lambda x: mb.batch_norm(x=x, mean=np.zeros(64, dtype=np.float16),
+                                             variance=np.ones(64, dtype=np.float16),
+                                             gamma=np.ones(64, dtype=np.float16),
+                                             beta=np.zeros(64, dtype=np.float16),
                                              epsilon=1e-5)),
-    ("instance_norm", lambda x: ct.instance_norm(x, gamma=ct.const(np.ones(64, dtype=np.float16)),
-                                                   beta=ct.const(np.zeros(64, dtype=np.float16)),
+    ("instance_norm", lambda x: mb.instance_norm(x=x, gamma=np.ones(64, dtype=np.float16),
+                                                   beta=np.zeros(64, dtype=np.float16),
                                                    epsilon=1e-5)),
-    ("l2_norm", lambda x: ct.l2_norm(x, epsilon=1e-6)),
-    ("softmax", lambda x: ct.softmax(x, axis=-1)),
+    ("l2_norm", lambda x: mb.l2_norm(x=x, epsilon=1e-6)),
+    ("softmax", lambda x: mb.softmax(x=x, axis=-1)),
 ]:
     OP_TESTS.append((op_name, builder))
 

@@ -19,7 +19,7 @@ Fixes:
 # --- Lazy coremltools import (W-19, W-26) ---
 
 _ct = None
-COMPUTE_MAP = None
+COMPUTE_MAP = {}
 
 
 def _ensure_coremltools():
@@ -37,7 +37,7 @@ def _ensure_coremltools():
     Raises:
         ImportError: If coremltools is not installed.
     """
-    global _ct, COMPUTE_MAP
+    global _ct
     if _ct is None:
         try:
             import coremltools
@@ -46,12 +46,17 @@ def _ensure_coremltools():
                 f"coremltools is required but not installed: {e}"
             ) from e
         _ct = coremltools
-        COMPUTE_MAP = {
+        # Use in-place .update() instead of rebinding — modules that
+        # imported COMPUTE_MAP via `from common import COMPUTE_MAP`
+        # hold a reference to the original dict object. Rebinding
+        # (COMPUTE_MAP = {...}) would leave those imports pointing
+        # at the old None, causing 'NoneType' object has no attribute 'get'.
+        COMPUTE_MAP.update({
             "CPU_AND_NE": _ct.ComputeUnit.CPU_AND_NE,
             "CPU_AND_GPU": _ct.ComputeUnit.CPU_AND_GPU,
             "CPU_ONLY": _ct.ComputeUnit.CPU_ONLY,
             "ALL": _ct.ComputeUnit.ALL,
-        }
+        })
     return _ct
 
 

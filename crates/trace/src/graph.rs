@@ -776,7 +776,7 @@ mod tests {
     fn test_trace_metadata_serialization() {
         let meta = TraceMetadata {
             timestamp: "2025-06-15T12:00:00Z".to_string(),
-            trace_duration_secs: 3.14,
+            trace_duration_secs: 3.1415,
             num_nodes: 42,
             num_parameters: 1_000_000,
             parameter_bytes: 2_000_000,
@@ -786,7 +786,7 @@ mod tests {
         let json = serde_json::to_string(&meta).unwrap();
         let deserialized: TraceMetadata = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.timestamp, "2025-06-15T12:00:00Z");
-        assert!((deserialized.trace_duration_secs - 3.14).abs() < f64::EPSILON);
+        assert!((deserialized.trace_duration_secs - 3.1415).abs() < f64::EPSILON);
         assert_eq!(deserialized.num_nodes, 42);
         assert_eq!(deserialized.warnings, vec!["test warning"]);
     }
