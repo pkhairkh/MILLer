@@ -235,11 +235,11 @@ def save_mlpackage(mlmodel, mlpackage_path: str) -> dict:
         causing SIGABRT. However, the .mlpackage files are written to disk
         BEFORE the crash.
 
-        We use a subprocess to isolate the save. Instead of pickling the
-        MLModel (which fails with Torch 2.11 lambdas like
-        "make_float.<locals>.double"), we serialize the protobuf spec to
-        a temp file using mlmodel.get_spec().SerializeToString() and
-        reconstruct in the subprocess via ct.models.MLModel(spec).
+        We use a subprocess to isolate the save. The MLModel is pickled
+        to a temp file and restored in the child process. Pickle works
+        correctly here because MILLer builds models using the coremltools
+        MIL Builder API (mb.program, mb.linear, etc.), not PyTorch tensors,
+        so there are no Torch lambda closures in the MLModel objects.
 
         If the child process crashes (SIGABRT or non-zero exit) but the
         .mlpackage exists on disk, we treat it as a successful save.
@@ -252,44 +252,41 @@ def save_mlpackage(mlmodel, mlpackage_path: str) -> dict:
     import subprocess
     import sys
 
-    # Write a saver script that loads the spec from a protobuf file,
-    # reconstructs the MLModel, and saves it. This avoids pickle
-    # serialization issues with Torch 2.11 lambdas.
+    # Write a saver script that unpickles the MLModel and saves it.
+    # Pickle is safe here because MILLer uses the MIL Builder API, not
+    # PyTorch tensors, so there are no Torch lambda closures.
     saver_script = """
 import sys
 import warnings
 warnings.filterwarnings("ignore")
 
-# Suppress the PyTorch version warning from coremltools
 import logging
 logging.disable(logging.CRITICAL)
 
 mlpackage_path = sys.argv[1]
-spec_path = sys.argv[2]
+model_data_path = sys.argv[2]
 
-# Load the protobuf spec and reconstruct the MLModel
-import coremltools as ct
-spec = ct.models.utils.load_spec(spec_path)
-mlmodel = ct.models.MLModel(spec)
+import pickle
+with open(model_data_path, "rb") as f:
+    mlmodel = pickle.load(f)
 
 mlmodel.save(mlpackage_path)
 """
 
-    # Serialize the MLModel's protobuf spec to a temp file.
-    # This avoids pickle issues with Torch 2.11 lambda closures.
+    # Pickle the MLModel to a temp file for the subprocess to load.
     tmp_dir = Path(mlpackage_path).parent / ".save_tmp"
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    spec_path = tmp_dir / "model_spec.pb"
+    model_data_path = tmp_dir / "model_data.pkl"
 
     try:
-        # Write protobuf spec to temp file
-        spec_bytes = mlmodel.get_spec().SerializeToString()
-        with open(spec_path, "wb") as f:
-            f.write(spec_bytes)
+        # Pickle the MLModel to a temp file
+        import pickle
+        with open(model_data_path, "wb") as f:
+            pickle.dump(mlmodel, f, protocol=4)
 
         # Run the saver script in a subprocess
         result = subprocess.run(
-            [sys.executable, "-c", saver_script, str(mlpackage_path), str(spec_path)],
+            [sys.executable, "-c", saver_script, str(mlpackage_path), str(model_data_path)],
             capture_output=True,
             timeout=120,
         )
@@ -306,8 +303,8 @@ mlmodel.save(mlpackage_path)
     finally:
         # Clean up temp files
         try:
-            if spec_path.exists():
-                spec_path.unlink()
+            if model_data_path.exists():
+                model_data_path.unlink()
             if tmp_dir.exists() and not any(tmp_dir.iterdir()):
                 tmp_dir.rmdir()
         except OSError:
