@@ -233,9 +233,7 @@ impl SafetensorsWeightResolver {
                     );
                     (raw_data.to_vec(), MilDtypeCompat::Int32)
                 }
-                safetensors::Dtype::U8 => {
-                    (raw_data.to_vec(), MilDtypeCompat::UInt8)
-                }
+                safetensors::Dtype::U8 => (raw_data.to_vec(), MilDtypeCompat::UInt8),
                 other => {
                     // For other dtypes (BOOL, etc.), pass through as-is
                     // and fall back to Fp16 dtype tag with a warning.
@@ -243,7 +241,8 @@ impl SafetensorsWeightResolver {
                         "safetensors tensor '{}' has unsupported dtype {:?} — \
                          falling back to Fp16. The emitted model may have incorrect \
                          type information for this weight.",
-                        name, other
+                        name,
+                        other
                     );
                     (raw_data.to_vec(), MilDtypeCompat::Fp16)
                 }
@@ -396,7 +395,11 @@ impl SafetensorsWeightResolver {
 
         let shard_data = entry.data.get(start_byte..end_byte)?.to_vec();
         // T-P1-04: Shard inherits dtype from the base weight tensor
-        Some(WeightData { data: shard_data, shape: vec![shard_rows, hidden_size], dtype: entry.dtype })
+        Some(WeightData {
+            data: shard_data,
+            shape: vec![shard_rows, hidden_size],
+            dtype: entry.dtype,
+        })
     }
 }
 
@@ -574,7 +577,7 @@ fn discover_hf_safetensors(model_id: &str) -> Vec<String> {
         }
     }
 
-        log::debug!("No .safetensors files found in any snapshot of {}", model_id);
+    log::debug!("No .safetensors files found in any snapshot of {}", model_id);
     Vec::new()
 }
 
@@ -848,7 +851,11 @@ mod tests {
         let mut resolver = SafetensorsWeightResolver::empty();
         resolver.tensors.insert(
             "lm_head.weight".to_string(),
-            TensorEntry { data: fake_data, shape: vec![vocab_size, hidden_size], dtype: MilDtypeCompat::Fp16 },
+            TensorEntry {
+                data: fake_data,
+                shape: vec![vocab_size, hidden_size],
+                dtype: MilDtypeCompat::Fp16,
+            },
         );
 
         // T-73: Shard size is now derived from vocab_size / TARGET_SHARD_COUNT.
@@ -889,7 +896,11 @@ mod tests {
         let mut resolver = SafetensorsWeightResolver::empty();
         resolver.tensors.insert(
             "lm_head.weight".to_string(),
-            TensorEntry { data: fake_data, shape: vec![vocab_size, hidden_size], dtype: MilDtypeCompat::Fp32 },
+            TensorEntry {
+                data: fake_data,
+                shape: vec![vocab_size, hidden_size],
+                dtype: MilDtypeCompat::Fp32,
+            },
         );
 
         // Shard size = 16000 / 8 = 2000
@@ -922,7 +933,11 @@ mod tests {
         let mut resolver = SafetensorsWeightResolver::empty();
         resolver.tensors.insert(
             "lm_head.weight".to_string(),
-            TensorEntry { data: fake_data, shape: vec![vocab_size, hidden_size], dtype: MilDtypeCompat::Fp16 },
+            TensorEntry {
+                data: fake_data,
+                shape: vec![vocab_size, hidden_size],
+                dtype: MilDtypeCompat::Fp16,
+            },
         );
 
         let shard_size = vocab_size / 8; // 18992
@@ -981,7 +996,9 @@ mod tests {
                 assert!(
                     rel_error < 0.001,
                     "F32→FP16 value not preserved: {} → {} (rel_error={:.6})",
-                    f32_val, f32_from_fp16, rel_error
+                    f32_val,
+                    f32_from_fp16,
+                    rel_error
                 );
             } else {
                 assert_eq!(f32_from_fp16, 0.0, "Zero should be preserved");
@@ -992,12 +1009,7 @@ mod tests {
     #[test]
     fn test_f32_to_fp16_special_values() {
         // Test NaN, Inf, -Inf, -0.0 preservation through F32→FP16
-        let f32_values: Vec<f32> = vec![
-            f32::NAN,
-            f32::INFINITY,
-            f32::NEG_INFINITY,
-            -0.0f32,
-        ];
+        let f32_values: Vec<f32> = vec![f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.0f32];
 
         let mut f32_bytes = Vec::new();
         for &val in &f32_values {
@@ -1012,14 +1024,21 @@ mod tests {
 
         // +Inf
         let inf_fp16 = half::f16::from_bits(u16::from_le_bytes([fp16_bytes[2], fp16_bytes[3]]));
-        assert!(inf_fp16.is_infinite() && inf_fp16.is_sign_positive(), "F32 +Inf should produce FP16 +Inf");
+        assert!(
+            inf_fp16.is_infinite() && inf_fp16.is_sign_positive(),
+            "F32 +Inf should produce FP16 +Inf"
+        );
 
         // -Inf
         let neg_inf_fp16 = half::f16::from_bits(u16::from_le_bytes([fp16_bytes[4], fp16_bytes[5]]));
-        assert!(neg_inf_fp16.is_infinite() && neg_inf_fp16.is_sign_negative(), "F32 -Inf should produce FP16 -Inf");
+        assert!(
+            neg_inf_fp16.is_infinite() && neg_inf_fp16.is_sign_negative(),
+            "F32 -Inf should produce FP16 -Inf"
+        );
 
         // -0.0
-        let neg_zero_fp16 = half::f16::from_bits(u16::from_le_bytes([fp16_bytes[6], fp16_bytes[7]]));
+        let neg_zero_fp16 =
+            half::f16::from_bits(u16::from_le_bytes([fp16_bytes[6], fp16_bytes[7]]));
         assert!(neg_zero_fp16.is_sign_negative(), "F32 -0 should produce FP16 -0");
     }
 

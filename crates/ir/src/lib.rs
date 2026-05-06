@@ -37,8 +37,8 @@ pub mod linear_slice;
 pub mod mir;
 pub mod multi_ane;
 pub mod payload;
-pub mod placement_dialect;
 pub mod pir;
+pub mod placement_dialect;
 pub mod prof_ir;
 pub mod serialize;
 pub mod shape_ops;
@@ -49,9 +49,9 @@ pub mod task_spec;
 pub mod toproto;
 
 // Re-export key types for convenience.
-pub use common::VerifyError;
-pub use air::LegalityStatus;
 pub use air::LegacyAirNodeFields;
+pub use air::LegalityStatus;
+pub use common::VerifyError;
 
 #[cfg(test)]
 mod mir_engine_test;

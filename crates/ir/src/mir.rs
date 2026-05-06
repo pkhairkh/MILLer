@@ -1560,7 +1560,10 @@ impl MirOp {
     /// use [`Self::default_engine_for_revision`] instead.
     ///
     /// Source: ane-constraints-docs/03-placement-and-compiler/fusion-boundaries-and-resource-allocation.md
-    #[deprecated(since = "0.6.0", note = "use default_engine_for_revision() for revision-aware engine assignment")]
+    #[deprecated(
+        since = "0.6.0",
+        note = "use default_engine_for_revision() for revision-aware engine assignment"
+    )]
     pub fn default_engine(&self) -> Option<super::ane_engine::AneEngine> {
         self.default_engine_for_revision(None)
     }
@@ -2474,7 +2477,10 @@ impl MirGraph {
         self.verify_with_shape_check(true)
     }
 
-    fn verify_with_shape_check(&self, check_shapes: bool) -> Result<(), super::common::VerifyError> {
+    fn verify_with_shape_check(
+        &self,
+        check_shapes: bool,
+    ) -> Result<(), super::common::VerifyError> {
         use super::common::VerifyError;
         use std::collections::HashSet;
 
@@ -2514,16 +2520,12 @@ impl MirGraph {
             // range1d, fill — these have their shape encoded differently or
             // produce 0-rank/scalar tensors).
             if check_shapes && node.shape.is_empty() && !Self::is_shape_exception(&node.op) {
-                return Err(VerifyError::EmptyShape {
-                    node_id: node_id.to_string(),
-                });
+                return Err(VerifyError::EmptyShape { node_id: node_id.to_string() });
             }
 
             // Validate node references inside ops
             let ref_err = Self::validate_op_refs(&node.op, node_id, &seen_ids);
-            if let Err(e) = ref_err {
-                return Err(e);
-            }
+            ref_err?
         }
 
         Ok(())
@@ -2538,10 +2540,10 @@ impl MirGraph {
         matches!(
             op,
             MirOp::MILConst { .. }
-            | MirOp::MILStateWrite { .. }
-            | MirOp::MILCoremlUpdateState { .. }
-            | MirOp::MILRange1d { .. }
-            | MirOp::MILFill { .. }
+                | MirOp::MILStateWrite { .. }
+                | MirOp::MILCoremlUpdateState { .. }
+                | MirOp::MILRange1d { .. }
+                | MirOp::MILFill { .. }
         )
     }
 
@@ -2711,7 +2713,9 @@ impl MirOp {
             MirOp::MILNonMaximumSuppression { boxes, scores, .. } => vec![boxes, scores],
             MirOp::MILScaledDotProductAttention { query, key, value, attention_mask, .. } => {
                 let mut refs = vec![query, key, value];
-                if let Some(m) = attention_mask { refs.push(m); }
+                if let Some(m) = attention_mask {
+                    refs.push(m);
+                }
                 refs
             }
             MirOp::MILQuantize { x, .. } => vec![x],
@@ -2805,15 +2809,25 @@ mod tests {
         assert_eq!(transpose.default_engine(), Some(AneEngine::TransposeEngine));
 
         // CPU-only ops
-        let const_op = MirOp::MILConst { name: "c".into(), value_path: "v".into(), dtype: super::MilDtype::Fp16 };
+        let const_op = MirOp::MILConst {
+            name: "c".into(),
+            value_path: "v".into(),
+            dtype: super::MilDtype::Fp16,
+        };
         assert_eq!(const_op.default_engine(), None);
 
         // ReduceArgmax returns PE when revision is None (backward compat)
-        let argmax = MirOp::MILReduceArgmax { name: "am".into(), x: nid("x"), axis: 1, keep_dims: false };
+        let argmax =
+            MirOp::MILReduceArgmax { name: "am".into(), x: nid("x"), axis: 1, keep_dims: false };
         assert_eq!(argmax.default_engine(), Some(AneEngine::PE));
 
         // ReduceL2Norm returns PE when revision is None
-        let l2 = MirOp::MILReduceL2Norm { name: "l2".into(), x: nid("x"), axes: vec![1], keep_dims: false };
+        let l2 = MirOp::MILReduceL2Norm {
+            name: "l2".into(),
+            x: nid("x"),
+            axes: vec![1],
+            keep_dims: false,
+        };
         assert_eq!(l2.default_engine(), Some(AneEngine::PE));
 
         // MILSquare returns PE when revision is None
@@ -2835,7 +2849,8 @@ mod tests {
     /// Test that ReduceArgmax returns None on A18 (V19 — no LSE_7 converter).
     #[test]
     fn test_reduce_argmax_none_on_a18() {
-        let argmax = MirOp::MILReduceArgmax { name: "am".into(), x: nid("x"), axis: 1, keep_dims: false };
+        let argmax =
+            MirOp::MILReduceArgmax { name: "am".into(), x: nid("x"), axis: 1, keep_dims: false };
 
         // A18 revisions: V19, V20, V26
         assert_eq!(argmax.default_engine_for_revision(Some(AneRevision::V19)), None);
@@ -2852,7 +2867,8 @@ mod tests {
     /// Test that ReduceArgmin returns None on A18 (V19 — no LSE_7 converter).
     #[test]
     fn test_reduce_argmin_none_on_a18() {
-        let argmin = MirOp::MILReduceArgmin { name: "amin".into(), x: nid("x"), axis: 1, keep_dims: false };
+        let argmin =
+            MirOp::MILReduceArgmin { name: "amin".into(), x: nid("x"), axis: 1, keep_dims: false };
 
         // A18 revisions
         assert_eq!(argmin.default_engine_for_revision(Some(AneRevision::V19)), None);
@@ -2868,7 +2884,12 @@ mod tests {
     /// (uses_a14minus_converters — no reduce_l2_norm converter).
     #[test]
     fn test_reduce_l2norm_none_on_a11legacy_a12() {
-        let l2 = MirOp::MILReduceL2Norm { name: "l2".into(), x: nid("x"), axes: vec![1], keep_dims: false };
+        let l2 = MirOp::MILReduceL2Norm {
+            name: "l2".into(),
+            x: nid("x"),
+            axes: vec![1],
+            keep_dims: false,
+        };
 
         // A11Legacy (V4) and A12 (V5) — uses_a14minus_converters
         assert_eq!(l2.default_engine_for_revision(Some(AneRevision::V4)), None);
@@ -2897,7 +2918,8 @@ mod tests {
         // A14+ should return PE (A14Plus converters have square)
         assert_eq!(square.default_engine_for_revision(Some(AneRevision::V7)), Some(AneEngine::PE)); // A14
         assert_eq!(square.default_engine_for_revision(Some(AneRevision::V8)), Some(AneEngine::PE)); // A15
-        assert_eq!(square.default_engine_for_revision(Some(AneRevision::V19)), Some(AneEngine::PE)); // A18
+        assert_eq!(square.default_engine_for_revision(Some(AneRevision::V19)), Some(AneEngine::PE));
+        // A18
     }
 
     /// Test that MILConv returns Some(NE) for all revisions.
@@ -2954,11 +2976,11 @@ mod tests {
         };
 
         // Pre-A16 families: no reliable SDPA converter → None
-        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V4)), None);  // A11Legacy
-        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V5)), None);  // A12
-        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V6)), None);  // A13
-        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V7)), None);  // A14
-        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V8)), None);  // A15
+        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V4)), None); // A11Legacy
+        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V5)), None); // A12
+        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V6)), None); // A13
+        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V7)), None); // A14
+        assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V8)), None); // A15
 
         // A16+ families: reliable SDPA converter → NE
         assert_eq!(sdpa.default_engine_for_revision(Some(AneRevision::V10)), Some(AneEngine::NE)); // A16
@@ -3062,18 +3084,10 @@ mod tests {
     /// coreml-proto, but the MIR struct must carry the flag correctly.
     #[test]
     fn test_t131_matmul_transpose_y_flag() {
-        let mm_true = MirOp::MILMatMul {
-            name: "mm_t".into(),
-            x: nid("a"),
-            y: nid("b"),
-            transpose_y: true,
-        };
-        let mm_false = MirOp::MILMatMul {
-            name: "mm_f".into(),
-            x: nid("a"),
-            y: nid("b"),
-            transpose_y: false,
-        };
+        let mm_true =
+            MirOp::MILMatMul { name: "mm_t".into(), x: nid("a"), y: nid("b"), transpose_y: true };
+        let mm_false =
+            MirOp::MILMatMul { name: "mm_f".into(), x: nid("a"), y: nid("b"), transpose_y: false };
 
         if let MirOp::MILMatMul { transpose_y, .. } = &mm_true {
             assert!(*transpose_y, "transpose_y should be true");

@@ -500,12 +500,12 @@ impl ShardPlanPass {
                     inputs: vec![TensorSpec {
                         name: "input_ids".into(),
                         shape: vec![shapes.batch, shapes.seq], // T-110: derived from graph
-                        dtype: primary_dtype.clone().into(), // T-114: derived from graph
+                        dtype: primary_dtype.clone(),          // T-114: derived from graph
                     }],
                     outputs: vec![TensorSpec {
                         name: "logits".into(),
                         shape: vec![shapes.batch, shapes.embed], // T-110: derived from graph
-                        dtype: primary_dtype.clone().into(), // T-114: derived from graph
+                        dtype: primary_dtype.clone(),            // T-114: derived from graph
                     }],
                     stateful: false,
                 }],
@@ -533,7 +533,7 @@ impl ShardPlanPass {
                 kv_state_decls.push(StateDeclaration {
                     state_id: state_id.clone(),
                     shape,
-                    dtype: primary_dtype.clone().into(), // T-114: derived from graph
+                    dtype: primary_dtype.clone(), // T-114: derived from graph
                     owner_package: decoder_name.clone(),
                 });
             }
@@ -551,12 +551,12 @@ impl ShardPlanPass {
                     inputs: vec![TensorSpec {
                         name: "hidden_states".into(),
                         shape: vec![shapes.batch, shapes.embed], // T-110: derived from graph
-                        dtype: primary_dtype.clone().into(), // T-114: derived from graph
+                        dtype: primary_dtype.clone(),            // T-114: derived from graph
                     }],
                     outputs: vec![TensorSpec {
                         name: "logits".into(),
                         shape: vec![shapes.batch, shapes.vocab], // T-110: derived from graph
-                        dtype: primary_dtype.clone().into(), // T-114: derived from graph
+                        dtype: primary_dtype.clone(),            // T-114: derived from graph
                     }],
                     stateful: is_stateful,
                 }],
@@ -585,7 +585,7 @@ impl ShardPlanPass {
                     inputs: vec![TensorSpec {
                         name: "logits".into(),
                         shape: vec![shapes.batch, shapes.vocab], // T-110: derived from graph
-                        dtype: primary_dtype.clone().into(), // T-114: derived from graph
+                        dtype: primary_dtype.clone(),            // T-114: derived from graph
                     }],
                     outputs: vec![TensorSpec {
                         name: "next_token".into(),
@@ -617,7 +617,7 @@ impl ShardPlanPass {
                     to_package: dec.name.clone(),
                     tensor_name: "hidden_states".into(),
                     shape: vec![shapes.batch, shapes.embed], // T-110: derived from graph
-                    dtype: primary_dtype.clone().into(), // T-114: derived from graph
+                    dtype: primary_dtype.clone(),            // T-114: derived from graph
                     handoff_kind: HandoffKind::TensorPassThrough,
                     execution_order: order,
                     source_output_name: "logits".into(),
@@ -637,7 +637,7 @@ impl ShardPlanPass {
                     to_package: "sampler".to_string(),
                     tensor_name: "logits".into(),
                     shape: vec![shapes.batch, shapes.vocab], // T-110: derived from graph
-                    dtype: primary_dtype.clone().into(), // T-114: derived from graph
+                    dtype: primary_dtype.clone(),            // T-114: derived from graph
                     handoff_kind: HandoffKind::TensorPassThrough,
                     execution_order: order,
                     source_output_name: "logits".into(),
@@ -662,7 +662,7 @@ impl ShardPlanPass {
                         to_package: dec.name.clone(), // self-referential: same shard reads its own state
                         tensor_name: state_id.clone(),
                         shape,
-                        dtype: primary_dtype.clone().into(), // T-114: derived from graph
+                        dtype: primary_dtype.clone(), // T-114: derived from graph
                         handoff_kind: HandoffKind::StateWriteRead,
                         execution_order: order,
                         source_output_name: format!("{}_update", state_id),
@@ -1840,10 +1840,16 @@ mod tests {
         };
         let kv_cache_shapes = std::collections::HashMap::new();
         let result = ShardPlanPass::derive_primary_shapes(&graph, &kv_cache_shapes);
-        assert!(result.is_err(), "M-006: derive_primary_shapes must return Err when no shape info is found");
+        assert!(
+            result.is_err(),
+            "M-006: derive_primary_shapes must return Err when no shape info is found"
+        );
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("M-006"), "Error message must reference M-006");
-        assert!(err_msg.contains("No shape information"), "Error message must describe the problem");
+        assert!(
+            err_msg.contains("No shape information"),
+            "Error message must describe the problem"
+        );
     }
 
     /// T-110: Verify that derive_primary_shapes extracts shapes from KV cache
@@ -1956,7 +1962,6 @@ mod tests {
                         state_id: "kv_cache_k".into(),
                         offset: 0,
                         shape: vec![2, 16, 64, 48], // [2, 16_heads, 64_seq, 48_head_dim]
-                        
                     },
                     name: "kv_read".into(),
                     metadata: SirMetadata {
@@ -2027,10 +2032,7 @@ mod tests {
         );
 
         // Decoder package should have derived shapes
-        let dec_pkg = pir
-            .packages
-            .iter()
-            .find(|p| matches!(p.role, PackageRole::DecoderShard(_)));
+        let dec_pkg = pir.packages.iter().find(|p| matches!(p.role, PackageRole::DecoderShard(_)));
         assert!(dec_pkg.is_some(), "Should have Decoder package");
         let dec_func = &dec_pkg.unwrap().functions[0];
         assert_eq!(
@@ -2040,10 +2042,9 @@ mod tests {
         );
 
         // Handoff shapes should be derived
-        let io_to_dec_handoff = pir
-            .handoffs
-            .iter()
-            .find(|h| h.from_package == "io_model" && h.handoff_kind == HandoffKind::TensorPassThrough);
+        let io_to_dec_handoff = pir.handoffs.iter().find(|h| {
+            h.from_package == "io_model" && h.handoff_kind == HandoffKind::TensorPassThrough
+        });
         assert!(io_to_dec_handoff.is_some(), "Should have IO→Decoder handoff");
         assert_eq!(
             io_to_dec_handoff.unwrap().shape,

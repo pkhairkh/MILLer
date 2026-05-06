@@ -1,11 +1,10 @@
 """Profiler - Runs Core ML models and captures timing/metrics."""
 
-import numpy as np
 import time
-from typing import Dict, Any, List, Optional
-import json
+from typing import Any, Dict
 
-from common import _ensure_coremltools, COMPUTE_MAP
+import numpy as np
+from common import COMPUTE_MAP, _ensure_coremltools
 
 
 def generate_inputs(
@@ -53,7 +52,7 @@ def profile_model(
     stateful: bool = False,
 ) -> Dict[str, Any]:
     """Profile a Core ML model and capture timing metrics.
-    
+
     Args:
         mlpackage_path: Path to the .mlpackage directory.
         inputs: Dict of input name -> numpy array.
@@ -61,33 +60,33 @@ def profile_model(
         warmup_iterations: Number of warmup predict() calls.
         measured_iterations: Number of measured predict() calls.
         stateful: Whether the model uses stateful prediction.
-    
+
     Returns:
         Dict with latency statistics and output snapshots.
     """
     ct = _ensure_coremltools()
     compute_unit = COMPUTE_MAP.get(compute_units, ct.ComputeUnit.CPU_AND_NE)
-    
+
     model = ct.models.MLModel(
         mlpackage_path,
         compute_units=compute_unit,
     )
-    
+
     state = None
     if stateful:
         state = model.make_state()
-    
+
     # Warmup
     for _ in range(warmup_iterations):
         if stateful:
             model.predict(inputs, state=state)
         else:
             model.predict(inputs)
-    
+
     # Measured runs
     latencies = []
     outputs_list = []
-    
+
     for _ in range(measured_iterations):
         start = time.perf_counter_ns()
         if stateful:
@@ -95,13 +94,13 @@ def profile_model(
         else:
             result = model.predict(inputs)
         end = time.perf_counter_ns()
-        
+
         latencies.append(end - start)
         outputs_list.append(result)
-    
+
     latencies_sorted = sorted(latencies)
     n = len(latencies_sorted)
-    
+
     return {
         "latency": {
             "median_ns": latencies_sorted[n // 2],

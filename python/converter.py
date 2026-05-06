@@ -16,9 +16,9 @@ Multifunction support (Sprint 39):
     naturally; the converter ensures default_function_name is set correctly.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, Optional
 
-from common import _ensure_coremltools, COMPUTE_MAP
+from common import _ensure_coremltools
 
 
 def convert_milprogram(
@@ -31,7 +31,7 @@ def convert_milprogram(
     pass_pipeline: Optional[Any] = None,
 ) -> Any:
     """Convert a MIL program to an MLModel mlprogram.
-    
+
     Args:
         program: The MIL Program object.
         opset_version: Target opset (e.g., "iOS18").
@@ -46,7 +46,7 @@ def convert_milprogram(
             need the stateful-aware pipeline (which removes
             canonicalize_inplace_pattern) should pass the result of
             make_stateful_pass_pipeline() here.
-    
+
     Returns:
         An MLModel object.
     """
@@ -60,23 +60,23 @@ def convert_milprogram(
         "FLOAT16": ct.precision.FLOAT16,
         "FLOAT32": ct.precision.FLOAT32,
     }
-    
+
     kwargs = {
         "convert_to": "mlprogram",
         "minimum_deployment_target": target_map.get(opset_version, ct.target.iOS18),
         "compute_precision": precision_map.get(compute_precision, ct.precision.FLOAT16),
         "debug": True,
     }
-    
+
     if pass_pipeline is not None:
         kwargs["pass_pipeline"] = pass_pipeline
-    
+
     if inputs is not None:
         kwargs["inputs"] = inputs
-    
+
     if optimization_hints:
         kwargs["optimization_hints"] = optimization_hints
-    
+
     mlmodel = ct.convert(program, **kwargs)
     return mlmodel
 

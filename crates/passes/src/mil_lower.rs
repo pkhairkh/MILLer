@@ -109,7 +109,10 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
                                 "MatMul inner dims mismatch: lhs_cols={} != rhs_rows={} \
                                  for shapes {:?} × {:?}. This will produce incorrect results \
                                  or be rejected by ANE at runtime.",
-                                lhs_cols, rhs_rows, a_shape, b_shape
+                                lhs_cols,
+                                rhs_rows,
+                                a_shape,
+                                b_shape
                             );
                         }
                         out.push(lhs_rows);
@@ -404,8 +407,7 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         | AirOp::Cosh { input }
         | AirOp::Sinh { input }
         | AirOp::Exp2 { input }
-        | AirOp::LogicalNot { input }
-        => Ok(node_shapes.get(input).cloned().unwrap_or_default()),
+        | AirOp::LogicalNot { input } => Ok(node_shapes.get(input).cloned().unwrap_or_default()),
         // ─── Const: look up shape from value_path in node_shapes ───
         // Const nodes for static tables have value_paths like "static_tables/rope_tables/cos_tab"
         // which are seeded into node_shapes from weight_shapes during lowering.
@@ -452,7 +454,9 @@ fn infer_shape(op: &AirOp, node_shapes: &HashMap<AirNodeId, Vec<usize>>) -> Resu
         // T-P5-04: Unknown ops no longer silently return empty shapes.
         // Returning an empty shape can silently produce incorrect metadata
         // that propagates through the entire graph. Fail explicitly instead.
-        _ => Err(anyhow::anyhow!("Shape inference failed for op: unknown variant or insufficient information")),
+        _ => Err(anyhow::anyhow!(
+            "Shape inference failed for op: unknown variant or insufficient information"
+        )),
     }
 }
 
@@ -2574,7 +2578,7 @@ impl MilLowerPass {
                 shape: shape.clone(),
                 compute_unit_hint: Some(compute_hint.clone()),
                 air_source: Some(air_node.id.clone()),
-            target_annotation: Default::default(),
+                target_annotation: Default::default(),
             });
             node_shapes.insert(air_node.id.clone(), shape);
         }
@@ -2692,7 +2696,7 @@ impl MilLowerPass {
                             shape: vec![1, 1, 1, hd],
                             compute_unit_hint: sdpa_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         };
                         new_nodes.push(q_gather_node);
                         extra_shapes.push((AirNodeId(q_head_id.0.clone()), vec![1, 1, 1, hd]));
@@ -2715,7 +2719,7 @@ impl MilLowerPass {
                                 shape: vec![1, 1, seq_len, hd],
                                 compute_unit_hint: sdpa_compute.clone(),
                                 air_source: None,
-                            target_annotation: Default::default(),
+                                target_annotation: Default::default(),
                             };
                             new_nodes.push(k_gather_node);
                             extra_shapes
@@ -2737,7 +2741,7 @@ impl MilLowerPass {
                                 shape: vec![1, 1, seq_len, hd],
                                 compute_unit_hint: sdpa_compute.clone(),
                                 air_source: None,
-                            target_annotation: Default::default(),
+                                target_annotation: Default::default(),
                             };
                             new_nodes.push(v_gather_node);
                             extra_shapes
@@ -2758,7 +2762,7 @@ impl MilLowerPass {
                             shape: vec![1, 1, 1, seq_len],
                             compute_unit_hint: sdpa_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         };
                         new_nodes.push(logits_node);
                         extra_shapes.push((AirNodeId(logits_id.0.clone()), vec![1, 1, 1, seq_len]));
@@ -2778,7 +2782,7 @@ impl MilLowerPass {
                             shape: vec![1],
                             compute_unit_hint: sdpa_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         };
                         new_nodes.push(scale_const_node);
                         extra_shapes.push((AirNodeId(scale_const_id.0.clone()), vec![1]));
@@ -2794,7 +2798,7 @@ impl MilLowerPass {
                             shape: vec![1, 1, 1, seq_len],
                             compute_unit_hint: sdpa_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         };
                         new_nodes.push(scaled_node);
                         extra_shapes.push((AirNodeId(scaled_id.0.clone()), vec![1, 1, 1, seq_len]));
@@ -2813,7 +2817,7 @@ impl MilLowerPass {
                                 shape: vec![1, 1, 1, seq_len],
                                 compute_unit_hint: sdpa_compute.clone(),
                                 air_source: None,
-                            target_annotation: Default::default(),
+                                target_annotation: Default::default(),
                             };
                             new_nodes.push(masked_node);
                             extra_shapes
@@ -2836,7 +2840,7 @@ impl MilLowerPass {
                             shape: vec![1, 1, 1, seq_len],
                             compute_unit_hint: sdpa_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         };
                         new_nodes.push(weights_node);
                         extra_shapes
@@ -2856,7 +2860,7 @@ impl MilLowerPass {
                             shape: vec![1, 1, 1, hd],
                             compute_unit_hint: sdpa_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         };
                         new_nodes.push(ctx_node);
                         extra_shapes.push((AirNodeId(ctx_id.0.clone()), vec![1, 1, 1, hd]));
@@ -2881,7 +2885,7 @@ impl MilLowerPass {
                         shape: vec![1, hq, 1, 1, hd],
                         compute_unit_hint: sdpa_compute.clone(),
                         air_source: sdpa_air.clone(),
-                    target_annotation: Default::default(),
+                        target_annotation: Default::default(),
                     };
                     new_nodes.push(stack_node);
                     extra_shapes.push((AirNodeId(stack_id.0.clone()), vec![1, hq, 1, 1, hd]));
@@ -2898,7 +2902,7 @@ impl MilLowerPass {
                         shape: vec![1, hq, 1, hd],
                         compute_unit_hint: sdpa_compute.clone(),
                         air_source: sdpa_air.clone(),
-                    target_annotation: Default::default(),
+                        target_annotation: Default::default(),
                     };
                     new_nodes.push(reshape_node);
                     extra_shapes.push((AirNodeId(reshape_id.0.clone()), vec![1, hq, 1, hd]));
@@ -2908,12 +2912,15 @@ impl MilLowerPass {
                     // Create an identity node mapping reshape → sdpa_id
                     let identity_node = MirNode {
                         id: sdpa_id.clone(),
-                        op: MirOp::MILIdentity { name: format!("{}_identity", name), x: reshape_id },
+                        op: MirOp::MILIdentity {
+                            name: format!("{}_identity", name),
+                            x: reshape_id,
+                        },
                         dtype: sdpa_dtype.clone(),
                         shape: node.shape.clone(),
                         compute_unit_hint: sdpa_compute.clone(),
                         air_source: None,
-                    target_annotation: Default::default(),
+                        target_annotation: Default::default(),
                     };
                     new_nodes.push(identity_node);
 
@@ -3181,7 +3188,7 @@ impl MilLowerPass {
                     shape: reshape_shape.clone(),
                     compute_unit_hint: lm_compute_hint.clone(),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 };
 
                 // Step 2: matmul(x=[1,D], y=weight[V,D], transpose_y=True) → [1,V]
@@ -3201,7 +3208,7 @@ impl MilLowerPass {
                     shape: matmul_output_shape.clone(),
                     compute_unit_hint: lm_compute_hint.clone(),
                     air_source: lm_air_source.clone(),
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 };
 
                 // Replace the original lm_head node with reshape + matmul
@@ -3245,7 +3252,7 @@ impl MilLowerPass {
                     shape: matmul_output_shape.clone(), // [1, V]
                     compute_unit_hint: lm_compute_hint.clone(),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 };
 
                 // Insert the cast node after the matmul.
@@ -3475,7 +3482,7 @@ impl MilLowerPass {
                             shape: input_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         });
                         ln_extra_shapes.push((AirNodeId(abs_id.0.clone()), input_shape.clone()));
 
@@ -3499,7 +3506,7 @@ impl MilLowerPass {
                             shape: rmax_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         });
                         ln_extra_shapes.push((AirNodeId(rmax_id.0.clone()), rmax_shape.clone()));
 
@@ -3517,7 +3524,7 @@ impl MilLowerPass {
                             shape: rmax_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         });
                         ln_extra_shapes.push((AirNodeId(clip_id.0.clone()), rmax_shape.clone()));
 
@@ -3534,7 +3541,7 @@ impl MilLowerPass {
                             shape: input_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         });
                         ln_extra_shapes.push((AirNodeId(norm_id.0.clone()), input_shape.clone()));
 
@@ -3551,7 +3558,7 @@ impl MilLowerPass {
                             shape: input_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         });
                         ln_extra_shapes.push((AirNodeId(sq_id.0.clone()), input_shape.clone()));
 
@@ -3575,7 +3582,7 @@ impl MilLowerPass {
                             shape: mean_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         });
                         ln_extra_shapes.push((AirNodeId(mean_id.0.clone()), mean_shape.clone()));
 
@@ -3609,7 +3616,7 @@ impl MilLowerPass {
                             shape: mean_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         });
                         ln_extra_shapes
                             .push((AirNodeId(eps_const_id.0.clone()), mean_shape.clone()));
@@ -3631,7 +3638,7 @@ impl MilLowerPass {
                             shape: mean_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         });
                         ln_extra_shapes.push((AirNodeId(add_eps_id.0.clone()), mean_shape.clone()));
 
@@ -3647,7 +3654,7 @@ impl MilLowerPass {
                             shape: mean_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         });
                         ln_extra_shapes.push((AirNodeId(rsqrt_id.0.clone()), mean_shape.clone()));
 
@@ -3664,7 +3671,7 @@ impl MilLowerPass {
                             shape: input_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         });
                         ln_extra_shapes.push((AirNodeId(normed_id.0.clone()), input_shape.clone()));
 
@@ -3681,7 +3688,7 @@ impl MilLowerPass {
                             shape: input_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         };
                         new_nodes.push(gamma_const_node);
                         ln_extra_shapes.push((AirNodeId(gamma_id.0.clone()), input_shape.clone()));
@@ -3698,7 +3705,7 @@ impl MilLowerPass {
                             shape: input_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         });
                         ln_extra_shapes.push((AirNodeId(result_id.0.clone()), input_shape.clone()));
 
@@ -3716,7 +3723,7 @@ impl MilLowerPass {
                                 shape: input_shape.clone(),
                                 compute_unit_hint: ln_compute.clone(),
                                 air_source: None,
-                            target_annotation: Default::default(),
+                                target_annotation: Default::default(),
                             });
                             ln_extra_shapes
                                 .push((AirNodeId(beta_id.0.clone()), input_shape.clone()));
@@ -3733,7 +3740,7 @@ impl MilLowerPass {
                                 shape: input_shape.clone(),
                                 compute_unit_hint: ln_compute.clone(),
                                 air_source: None,
-                            target_annotation: Default::default(),
+                                target_annotation: Default::default(),
                             });
                             ln_extra_shapes
                                 .push((AirNodeId(biased_id.0.clone()), input_shape.clone()));
@@ -3753,7 +3760,7 @@ impl MilLowerPass {
                             shape: input_shape.clone(),
                             compute_unit_hint: ln_compute.clone(),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         });
 
                         ln_replacements.push((idx, new_nodes));
@@ -4068,7 +4075,14 @@ impl MilLowerPass {
 pub fn verify_post_lowering(graph: &MirGraph) -> Result<(), Vec<VerifyError>> {
     let mut errors = Vec::new();
     for node in &graph.nodes {
-        if node.shape.is_empty() && !matches!(node.op, MirOp::MILConst { .. } | MirOp::MILStateWrite { .. } | MirOp::MILCoremlUpdateState { .. }) {
+        if node.shape.is_empty()
+            && !matches!(
+                node.op,
+                MirOp::MILConst { .. }
+                    | MirOp::MILStateWrite { .. }
+                    | MirOp::MILCoremlUpdateState { .. }
+            )
+        {
             errors.push(VerifyError::EmptyShape {
                 node_id: node.id.0.clone(),
                 op_name: node.op.mil_op_name().to_string(),
@@ -4081,7 +4095,11 @@ pub fn verify_post_lowering(graph: &MirGraph) -> Result<(), Vec<VerifyError>> {
             });
         }
     }
-    if errors.is_empty() { Ok(()) } else { Err(errors) }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -5269,8 +5287,13 @@ mod tests {
         // Validate using T-116 attribute shape validation
         assert!(
             crate::op_constraints::validate_anec_attribute_shapes(
-                "conv", &[], &strides, &pad_amounts, &dilations,
-            ).is_ok(),
+                "conv",
+                &[],
+                &strides,
+                &pad_amounts,
+                &dilations,
+            )
+            .is_ok(),
             "Conv1x1 attribute shapes must be valid per ANEC schema"
         );
     }
@@ -5310,8 +5333,11 @@ mod tests {
             axis: 1,
         };
         let decision = validate_placement(&concat_channel, &[], AneFamily::A16, false);
-        assert_eq!(decision, PlacementDecision::AneAllowed,
-            "Concat along channel axis should be ANE-allowed");
+        assert_eq!(
+            decision,
+            PlacementDecision::AneAllowed,
+            "Concat along channel axis should be ANE-allowed"
+        );
 
         // Concat along non-channel axis should be rejected
         let concat_non_channel = MirOp::MILConcat {
@@ -5354,8 +5380,11 @@ mod tests {
             AirOp::Identity { dtype_hint: Some(hint), .. } => hint.clone(),
             _ => ane_ir::common::MilDtype::Fp16,
         };
-        assert_eq!(dtype, ane_ir::common::MilDtype::Int32,
-            "dtype_hint should override name-based heuristic");
+        assert_eq!(
+            dtype,
+            ane_ir::common::MilDtype::Int32,
+            "dtype_hint should override name-based heuristic"
+        );
     }
 
     #[test]
@@ -5391,14 +5420,15 @@ mod tests {
     fn test_state_write_fixed_returns_empty_shape() {
         // T-P5-04: StateWriteFixed has no output tensor — returns empty shape.
         // This is correct behavior for a side-effecting op.
-        let op = AirOp::StateWriteFixed {
-            state_id: "state_0".into(),
-            value: AirNodeId("val".into()),
-        };
+        let op =
+            AirOp::StateWriteFixed { state_id: "state_0".into(), value: AirNodeId("val".into()) };
         let node_shapes = HashMap::new();
         let result = infer_shape(&op, &node_shapes);
         assert!(result.is_ok(), "StateWriteFixed should return Ok");
-        assert_eq!(result.unwrap(), Vec::<usize>::new(),
-            "StateWriteFixed should return empty shape (no output tensor)");
+        assert_eq!(
+            result.unwrap(),
+            Vec::<usize>::new(),
+            "StateWriteFixed should return empty shape (no output tensor)"
+        );
     }
 }

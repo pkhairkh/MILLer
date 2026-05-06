@@ -838,7 +838,9 @@ impl CompilationPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
+    use crate::sir::{
+        SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin,
+    };
 
     fn make_simple_graph() -> SirGraph {
         SirGraph {

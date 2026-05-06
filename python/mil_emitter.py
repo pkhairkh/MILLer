@@ -42,16 +42,16 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-import numpy as np
+from typing import Optional
 
-from common import _error_result, COMPUTE_MAP, _ensure_coremltools
+import numpy as np
+from common import COMPUTE_MAP, _ensure_coremltools, _error_result
 from program_builder import (
-    resolve_opset_target,
-    resolve_dtypes,
-    rng_seed_context,
     SHARD_ROLE_OP_MAP,
     emit_program,
+    resolve_dtypes,
+    resolve_opset_target,
+    rng_seed_context,
 )
 from verify import pre_emit_verification
 
@@ -180,7 +180,7 @@ def compute_plan_info(mlpackage_path: str, compute_units_str: str = "CPU_AND_NE"
 
     try:
         from coremltools.models.compute_plan import MLComputePlan
-        plan = MLComputePlan.load_from_path(str(mlpackage_path), compute_unit)
+        MLComputePlan.load_from_path(str(mlpackage_path), compute_unit)
         return {"available": True}
     except Exception as e:
         return {"available": False, "reason": str(e)}
@@ -499,8 +499,8 @@ def build_decode_step_program(command: dict):
 
             # Split into Q, K, V along the last dimension
             q = mb.slice_by_index(x=qkv, begin=[0, 0], end=[batch_size, embed_dim], name="q")
-            k = mb.slice_by_index(x=qkv, begin=[0, embed_dim], end=[batch_size, 2 * embed_dim], name="k")
-            v = mb.slice_by_index(x=qkv, begin=[0, 2 * embed_dim], end=[batch_size, 3 * embed_dim], name="v")
+            mb.slice_by_index(x=qkv, begin=[0, embed_dim], end=[batch_size, 2 * embed_dim], name="k")
+            mb.slice_by_index(x=qkv, begin=[0, 2 * embed_dim], end=[batch_size, 3 * embed_dim], name="v")
 
             # Step 2: Multi-head attention
             q_4d = mb.reshape(x=q, shape=[int(batch_size), int(num_heads), 1, int(head_dim)], name="q_4d")

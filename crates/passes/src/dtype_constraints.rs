@@ -76,7 +76,11 @@ impl std::fmt::Display for DtypeConstraintError {
                 write!(f, "Float8 constraint violation: {}", message)
             }
             Self::CrossTypeViolation { input_dtype, output_dtype, message } => {
-                write!(f, "Cross-type violation: input={}, output={} — {}", input_dtype, output_dtype, message)
+                write!(
+                    f,
+                    "Cross-type violation: input={}, output={} — {}",
+                    input_dtype, output_dtype, message
+                )
             }
             Self::AsymmetricQuantViolation { message } => {
                 write!(f, "Asymmetric quantization violation: {}", message)
@@ -229,13 +233,11 @@ pub fn validate_uint4_interleave(interleave: usize) -> Result<(), DtypeConstrain
 /// # Arguments
 /// * `op_name` - The MIL op name (e.g., "topk", "reduce_argmax")
 /// * `is_output` - True if UInt16 is the output dtype of this op
-pub fn validate_uint16_constraints(op_name: &str, is_output: bool) -> Result<(), DtypeConstraintError> {
-    const UINT16_ALLOWED_OPS: &[&str] = &[
-        "topk",
-        "sort",
-        "reduce_argmax",
-        "reduce_argmin",
-    ];
+pub fn validate_uint16_constraints(
+    op_name: &str,
+    is_output: bool,
+) -> Result<(), DtypeConstraintError> {
+    const UINT16_ALLOWED_OPS: &[&str] = &["topk", "sort", "reduce_argmax", "reduce_argmin"];
 
     if is_output && UINT16_ALLOWED_OPS.contains(&op_name) {
         Ok(())
@@ -273,7 +275,10 @@ pub fn validate_uint16_constraints(op_name: &str, is_output: bool) -> Result<(),
 /// # Arguments
 /// * `op_name` - The MIL op name (e.g., "select", "where", "conv")
 /// * `is_output` - True if Bool is the output dtype of this op
-pub fn validate_bool_constraints(op_name: &str, is_output: bool) -> Result<(), DtypeConstraintError> {
+pub fn validate_bool_constraints(
+    op_name: &str,
+    is_output: bool,
+) -> Result<(), DtypeConstraintError> {
     const BOOL_MASK_INPUT_OPS: &[&str] = &["select", "where"];
 
     if is_output {
@@ -322,10 +327,7 @@ pub fn validate_quantization_constraints(
     // Quantize output must be int8, uint8, or e4m3.
     // T-97 (I-72/V-051/V-111): E5M2 is universally rejected by ANEC
     // ("E4M3 or E5M2 format not supported"). Removed from valid outputs.
-    if !matches!(
-        quant_output_dtype,
-        MilDtype::Int8 | MilDtype::UInt8 | MilDtype::E4M3
-    ) {
+    if !matches!(quant_output_dtype, MilDtype::Int8 | MilDtype::UInt8 | MilDtype::E4M3) {
         return Err(DtypeConstraintError::QuantFormatViolation {
             message: format!(
                 "Quantize output must be int8, uint8, or e4m3, got {:?}. \
@@ -879,7 +881,10 @@ mod tests {
     #[test]
     fn test_fp32_compute_supported_on_a13_plus() {
         // T-97 (I-99/V-126): FP32 compute is supported on A13+
-        assert!(!is_fp32_compute_supported(&AneFamily::A11Legacy), "FP32 compute NOT supported on A11");
+        assert!(
+            !is_fp32_compute_supported(&AneFamily::A11Legacy),
+            "FP32 compute NOT supported on A11"
+        );
         assert!(!is_fp32_compute_supported(&AneFamily::A12), "FP32 compute NOT supported on A12");
         assert!(is_fp32_compute_supported(&AneFamily::A13), "FP32 compute supported on A13");
         assert!(is_fp32_compute_supported(&AneFamily::A14), "FP32 compute supported on A14");
@@ -915,7 +920,8 @@ mod tests {
         let msg = format!("{}", result.unwrap_err());
         assert!(
             msg.contains("cross-type") || msg.contains("FP16") || msg.contains("FP32"),
-            "Error should mention cross-type violation: {}", msg
+            "Error should mention cross-type violation: {}",
+            msg
         );
     }
 
@@ -952,7 +958,8 @@ mod tests {
         let msg = format!("{}", err);
         assert!(
             msg.contains("Asym quantization") || msg.contains("asymmetric"),
-            "Error should mention asymmetric quantization: {}", msg
+            "Error should mention asymmetric quantization: {}",
+            msg
         );
     }
 
@@ -963,7 +970,8 @@ mod tests {
         let msg = format!("{}", err);
         assert!(
             msg.contains("E5M2") || msg.contains("V-051"),
-            "Error should mention E5M2 or violation ID: {}", msg
+            "Error should mention E5M2 or violation ID: {}",
+            msg
         );
     }
 
@@ -986,7 +994,8 @@ mod tests {
         let msg = format!("{}", err.unwrap_err());
         assert!(
             msg.contains("UInt16") && msg.contains("TopK/Sort"),
-            "Error should mention UInt16 constraint: {}", msg
+            "Error should mention UInt16 constraint: {}",
+            msg
         );
     }
 
@@ -1016,7 +1025,8 @@ mod tests {
         let msg = format!("{}", err.unwrap_err());
         assert!(
             msg.contains("Bool") && msg.contains("Select/Where"),
-            "Error should mention Bool constraint: {}", msg
+            "Error should mention Bool constraint: {}",
+            msg
         );
     }
 
@@ -1028,7 +1038,8 @@ mod tests {
         let msg = format!("{}", err.unwrap_err());
         assert!(
             msg.contains("Bool") && msg.contains("Select/Where"),
-            "Error should mention Bool Select/Where constraint: {}", msg
+            "Error should mention Bool Select/Where constraint: {}",
+            msg
         );
     }
 
@@ -1042,7 +1053,8 @@ mod tests {
         let msg = format!("{}", result.unwrap_err());
         assert!(
             msg.contains("interleave factor 8") && msg.contains("V-034"),
-            "Error should mention interleave=8 and V-034: {}", msg
+            "Error should mention interleave=8 and V-034: {}",
+            msg
         );
     }
 
@@ -1054,7 +1066,8 @@ mod tests {
         let msg = format!("{}", result.unwrap_err());
         assert!(
             msg.contains("interleave factor 8") && msg.contains("V-034"),
-            "Error should mention interleave=8 and V-034: {}", msg
+            "Error should mention interleave=8 and V-034: {}",
+            msg
         );
     }
 
@@ -1084,7 +1097,8 @@ mod tests {
         let msg = format!("{}", result.unwrap_err());
         assert!(
             msg.contains("interleave factor 8"),
-            "Error should mention interleave factor 8: {}", msg
+            "Error should mention interleave factor 8: {}",
+            msg
         );
     }
 
@@ -1096,7 +1110,8 @@ mod tests {
         let msg = format!("{}", result.unwrap_err());
         assert!(
             msg.contains("interleave factor 8"),
-            "Error should mention interleave factor 8: {}", msg
+            "Error should mention interleave factor 8: {}",
+            msg
         );
     }
 

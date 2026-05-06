@@ -919,7 +919,6 @@ pub enum AirOp {
     Classify {
         input: AirNodeId,
     },
-
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1078,16 +1077,12 @@ impl AirGraph {
 
             // Strict mode: reject Unknown legality
             if strict && node.legality_status == LegalityStatus::Unknown {
-                return Err(VerifyError::UnknownLegality {
-                    node_id: node_id.to_string(),
-                });
+                return Err(VerifyError::UnknownLegality { node_id: node_id.to_string() });
             }
 
             // Validate node references inside ops
             let ref_err = Self::validate_op_refs(&node.op, node_id, &seen_ids);
-            if let Err(e) = ref_err {
-                return Err(e);
-            }
+            ref_err?
         }
 
         Ok(())
@@ -1255,12 +1250,16 @@ impl AirOp {
             AirOp::GatherAlongAxis { input, indices, .. } => vec![input, indices],
             AirOp::GatherNd { input, indices } => vec![input, indices],
             AirOp::Scatter { input, indices, updates, .. } => vec![input, indices, updates],
-            AirOp::ScatterAlongAxis { input, indices, updates, .. } => vec![input, indices, updates],
+            AirOp::ScatterAlongAxis { input, indices, updates, .. } => {
+                vec![input, indices, updates]
+            }
             AirOp::ScatterNd { input, indices, updates } => vec![input, indices, updates],
             AirOp::NonMaximumSuppression { boxes, scores, .. } => vec![boxes, scores],
             AirOp::ScaledDotProductAttention { query, key, value, attention_mask, .. } => {
                 let mut refs = vec![query, key, value];
-                if let Some(m) = attention_mask { refs.push(m); }
+                if let Some(m) = attention_mask {
+                    refs.push(m);
+                }
                 refs
             }
             AirOp::Quantize { input, .. } => vec![input],

@@ -1007,10 +1007,7 @@ mod tests {
             .with_deployment_target("iOS17");
 
         // opset_version should remain the default "iOS18"
-        assert_eq!(
-            spec.opset_version, "iOS18",
-            "opset_version should remain iOS18 by default"
-        );
+        assert_eq!(spec.opset_version, "iOS18", "opset_version should remain iOS18 by default");
         // minimum_deployment_target should be overridden to "iOS17"
         assert_eq!(
             spec.minimum_deployment_target, "iOS17",
@@ -1019,10 +1016,7 @@ mod tests {
 
         // Verify the PIR graph also gets the independent values
         let pir = spec.to_pir_graph();
-        assert_eq!(
-            pir.opset_version, "iOS18",
-            "PIR opset_version should be iOS18"
-        );
+        assert_eq!(pir.opset_version, "iOS18", "PIR opset_version should be iOS18");
         assert_eq!(
             pir.minimum_deployment_target, "iOS17",
             "PIR minimum_deployment_target should be iOS17"
@@ -1033,12 +1027,10 @@ mod tests {
     /// and minimum_deployment_target when no override is provided.
     #[test]
     fn test_t115_defaults_both_ios18() {
-        let spec = ShardPipelineSpec::three_shard_linear("test_t115_default", 64, 48, 32, 1, "fp16");
+        let spec =
+            ShardPipelineSpec::three_shard_linear("test_t115_default", 64, 48, 32, 1, "fp16");
 
-        assert_eq!(
-            spec.opset_version, "iOS18",
-            "Default opset_version should be iOS18"
-        );
+        assert_eq!(spec.opset_version, "iOS18", "Default opset_version should be iOS18");
         assert_eq!(
             spec.minimum_deployment_target, "iOS18",
             "Default minimum_deployment_target should be iOS18"
@@ -1046,7 +1038,13 @@ mod tests {
 
         // Also verify decode-step constructor
         let decode_spec = ShardPipelineSpec::three_shard_decode_step(
-            "test_t115_decode_default", 128, 4, 32, 64, 1, "fp16",
+            "test_t115_decode_default",
+            128,
+            4,
+            32,
+            64,
+            1,
+            "fp16",
         );
         assert_eq!(
             decode_spec.opset_version, "iOS18",

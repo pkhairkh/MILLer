@@ -4,7 +4,7 @@ Uses coremltools.optimize.coreml palettization APIs.
 Compatible with coremltools 9.0 (op_name_configs, CompressionGranularity).
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List
 
 from common import _ensure_coremltools
 
@@ -16,10 +16,10 @@ _palettize_weights = None
 
 def _ensure_palettize_deps():
     """Ensure coremltools and palettization dependencies are loaded.
-    
+
     Uses common._ensure_coremltools() for the core coremltools import,
     then lazily imports the optimization sub-modules on first use.
-    
+
     Raises:
         ImportError: If coremltools (or its optimize sub-module) is not installed.
     """
@@ -27,8 +27,8 @@ def _ensure_palettize_deps():
     if _OptimizationConfig is None:
         _ensure_coremltools()  # raises ImportError if coremltools missing
         from coremltools.optimize.coreml import (
-            OptimizationConfig,
             OpPalettizerConfig,
+            OptimizationConfig,
             palettize_weights,
         )
         _OptimizationConfig = OptimizationConfig

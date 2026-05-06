@@ -247,8 +247,6 @@ pub struct ModelArchConfig {
     pub architecture: ModelArchitecture,
 }
 
-
-
 impl ModelArchConfig {
     /// Qwen3-0.6B configuration factory.
     ///
@@ -460,7 +458,8 @@ mod tests {
 
     #[test]
     fn test_effective_kv_heads() {
-        let config = ModelArchConfig { kv_heads: 8, num_heads: 16, ..ModelArchConfig::qwen3_0_6b() };
+        let config =
+            ModelArchConfig { kv_heads: 8, num_heads: 16, ..ModelArchConfig::qwen3_0_6b() };
         assert_eq!(config.effective_kv_heads(), 8);
 
         let config_no_kv =
@@ -492,7 +491,8 @@ mod tests {
         let e = VerifyError::InvalidDtype { node_id: "n3".into(), dtype: "BadType".into() };
         assert_eq!(format!("{}", e), "Node 'n3' has invalid dtype: 'BadType'");
 
-        let e = VerifyError::UnresolvedReference { node_id: "n4".into(), reference: "missing".into() };
+        let e =
+            VerifyError::UnresolvedReference { node_id: "n4".into(), reference: "missing".into() };
         assert_eq!(format!("{}", e), "Node 'n4' references non-existent node: 'missing'");
 
         let e = VerifyError::EmptyShape { node_id: "n5".into() };
@@ -548,37 +548,20 @@ pub trait IrNodeId:
 #[derive(Debug, Clone, PartialEq)]
 pub enum VerifyError {
     /// Two or more nodes share the same ID.
-    DuplicateNodeId {
-        node_id: String,
-    },
+    DuplicateNodeId { node_id: String },
     /// A required field on a node is empty or missing.
-    MissingField {
-        node_id: String,
-        field: String,
-    },
+    MissingField { node_id: String, field: String },
     /// A dtype value is not a valid `MilDtype`.
-    InvalidDtype {
-        node_id: String,
-        dtype: String,
-    },
+    InvalidDtype { node_id: String, dtype: String },
     /// A node reference (edge) points to a node that does not exist in the graph.
-    UnresolvedReference {
-        node_id: String,
-        reference: String,
-    },
+    UnresolvedReference { node_id: String, reference: String },
     /// A MIR node has an empty shape and is not a dynamic-shaped node.
-    EmptyShape {
-        node_id: String,
-    },
+    EmptyShape { node_id: String },
     /// An AIR node has `LegalityStatus::Unknown` in strict mode.
-    UnknownLegality {
-        node_id: String,
-    },
+    UnknownLegality { node_id: String },
     /// A graph-level invariant was violated (e.g., inputs/outputs
     /// reference nodes not in the graph). The message describes the issue.
-    GraphInvariant {
-        message: String,
-    },
+    GraphInvariant { message: String },
 }
 
 impl VerifyError {

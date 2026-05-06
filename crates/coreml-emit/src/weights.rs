@@ -122,24 +122,30 @@ fn coreml_dtype_to_blob_dtype(dtype: &CoreMlDataType) -> Result<u32> {
         // per element). Silently mapping to Float32 loses the upper 4 bytes
         // and produces data corruption. Reject with clear error.
         CoreMlDataType::Float64 => {
-            bail!("Float64 dtype has no MILBlob blob representation. \
-                   ANE does not support FP64 weights. Use FP16 or FP32 instead.")
+            bail!(
+                "Float64 dtype has no MILBlob blob representation. \
+                   ANE does not support FP64 weights. Use FP16 or FP32 instead."
+            )
         }
         // T-103 (I-78/V-027): Bool tensors are 1-bit values, not 4-byte
         // floats. Mapping to Float32 produces 32x data inflation and
         // incorrect interpretation. Reject with clear error.
         CoreMlDataType::Bool => {
-            bail!("Bool dtype has no MILBlob blob representation. \
+            bail!(
+                "Bool dtype has no MILBlob blob representation. \
                    ANE weight format does not support Bool tensors. \
-                   Use UInt8 (0/1) as an alternative.")
+                   Use UInt8 (0/1) as an alternative."
+            )
         }
         // T-103 (I-78/V-027): Unknown dtype means the dtype could not be
         // determined. Writing Unknown data as Float32 produces meaningless
         // weight values. Reject with clear error.
         CoreMlDataType::Unknown => {
-            bail!("Unknown dtype has no MILBlob blob representation. \
+            bail!(
+                "Unknown dtype has no MILBlob blob representation. \
                    Cannot write weight data with unrecognized dtype. \
-                   Ensure all weight dtypes are explicitly specified.")
+                   Ensure all weight dtypes are explicitly specified."
+            )
         }
     }
 }
@@ -422,12 +428,7 @@ impl WeightBinBuilder {
             // T-103: coreml_dtype_to_blob_dtype now returns Result —
             // reject unsupported dtypes (Bool, Float64, Unknown) early.
             let blob_dtype = coreml_dtype_to_blob_dtype(&entry.dtype)?;
-            write_blob_metadata(
-                &mut buf,
-                blob_dtype,
-                entry.size,
-                data_offset,
-            );
+            write_blob_metadata(&mut buf, blob_dtype, entry.size, data_offset);
 
             // Write raw weight data
             buf.extend_from_slice(&entry.data);
@@ -719,10 +720,18 @@ mod tests {
         assert!(bool_err.to_string().contains("Bool"), "Error should mention Bool: {}", bool_err);
 
         let f64_err = coreml_dtype_to_blob_dtype(&CoreMlDataType::Float64).unwrap_err();
-        assert!(f64_err.to_string().contains("Float64"), "Error should mention Float64: {}", f64_err);
+        assert!(
+            f64_err.to_string().contains("Float64"),
+            "Error should mention Float64: {}",
+            f64_err
+        );
 
         let unknown_err = coreml_dtype_to_blob_dtype(&CoreMlDataType::Unknown).unwrap_err();
-        assert!(unknown_err.to_string().contains("Unknown"), "Error should mention Unknown: {}", unknown_err);
+        assert!(
+            unknown_err.to_string().contains("Unknown"),
+            "Error should mention Unknown: {}",
+            unknown_err
+        );
     }
 
     #[test]

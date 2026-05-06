@@ -38,20 +38,17 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from trace_model import (
+    _build_input_specs,
     _detect_norm_type,
     _detect_rope,
     _resolve_effective_config,
-    extract_model_config,
     build_fallback_graph,
     discover_model_features,
-    map_module_call,
+    extract_model_config,
     map_function_call,
     map_method_call,
-    _is_rms_norm_module,
-    _inspect_module_type,
-    _build_input_specs,
+    map_module_call,
 )
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TIER 1: FAST UNIT TESTS — No model download required
@@ -1083,7 +1080,6 @@ def _trace_model_from_hub(model_id, model_class_hint="auto", seq_len=16):
 # Local copies of _load_model and _create_dummy_inputs that don't call error_exit
 def _load_model_local(model_id, model_config, torch_dtype, model_class_hint="auto"):
     """Load model locally without sys.exit on failure."""
-    import torch
     from transformers import AutoModelForCausalLM, AutoModelForSeq2SeqLM
 
     if model_class_hint == "causal_lm":
@@ -1188,8 +1184,8 @@ class TestTraceLlama32_1B:
     def test_load_model_resolves_causal_lm(self):
         """Llama-3.2-1B should resolve to AutoModelForCausalLM."""
         import torch
-        from transformers import AutoConfig
         from trace_model import _load_model
+        from transformers import AutoConfig
 
         model_config = AutoConfig.from_pretrained(self.MODEL_ID)
         model, model_class = _load_model(
@@ -1273,8 +1269,8 @@ class TestTraceQwen3_0_6B:
     def test_load_model_resolves_causal_lm(self):
         """Qwen3-0.6B should resolve to AutoModelForCausalLM."""
         import torch
-        from transformers import AutoConfig
         from trace_model import _load_model
+        from transformers import AutoConfig
 
         model_config = AutoConfig.from_pretrained(self.MODEL_ID)
         model, model_class = _load_model(
@@ -1403,8 +1399,8 @@ class TestTraceDolphin15:
     def test_load_model_resolves_seq2seq(self):
         """Dolphin-1.5 should resolve to AutoModelForSeq2SeqLM."""
         import torch
-        from transformers import AutoConfig
         from trace_model import _load_model
+        from transformers import AutoConfig
 
         model_config = AutoConfig.from_pretrained(self.MODEL_ID)
         model, model_class = _load_model(
@@ -1501,8 +1497,8 @@ class TestTraceQwen3ASR_0_6B:
     def test_load_model_detects_multimodal_decoder(self):
         """Qwen3-ASR should resolve to decoder_only via text_config detection."""
         import torch
-        from transformers import AutoConfig
         from trace_model import _load_model
+        from transformers import AutoConfig
 
         model_config = AutoConfig.from_pretrained(self.MODEL_ID)
         model, model_class = _load_model(

@@ -1,5 +1,6 @@
 """Tests for T-D-02 (M-032): MIR specification compliance verification."""
-from verify import pre_emit_verification, verify_mir_spec_compliance, MirSpecViolation
+from verify import MirSpecViolation, pre_emit_verification, verify_mir_spec_compliance
+
 
 def test_no_issues_for_valid_ops():
     ops = [

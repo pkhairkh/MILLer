@@ -35,7 +35,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 
 def main():
@@ -49,7 +49,7 @@ def main():
     input_shapes = config.get("input_shapes", [{"batch_size": 1, "seq_len": 32}])
     decompose = config.get("decompose", True)
     with_kv_cache = config.get("with_kv_cache", True)
-    max_seq_len = config.get("max_seq_len", 2048)
+    config.get("max_seq_len", 2048)
     dtype_str = config.get("dtype", "fp16")
     fx_options = config.get("fx_options", {})
     model_class_hint = config.get("model_class", "auto")
@@ -224,7 +224,6 @@ def trace_model_fx(
             if submodule is not None:
                 for pname, _ in submodule.named_parameters():
                     # pname is relative to submodule, e.g., "weight" or "bias"
-                    hf_name = f"{module_path}.{pname}"
                     # Map both the synthetic SIR name ("weight_{node_id}") and
                     # the canonical HF name to the same parameter.
                     weight_name_map[fx_node.name] = {
@@ -385,7 +384,7 @@ def trace_model_fx(
         sys.stderr.write(f"  Found {len(safetensors_files)} safetensors file(s) in {model_cache_dir}\n")
     else:
         sys.stderr.write("  WARNING: No safetensors files found — weights will be zero-filled\n")
-        sys.stderr.write(f"  Tried: huggingface_hub snapshot_download, scan_cache_dir, local dir, manual HF cache walk\n")
+        sys.stderr.write("  Tried: huggingface_hub snapshot_download, scan_cache_dir, local dir, manual HF cache walk\n")
         sys.stderr.write(f"  Model ID: {model_id}\n")
 
     graph = {
@@ -419,21 +418,21 @@ def trace_model_fx(
 
 def discover_model_features(model, model_config) -> Dict[str, Any]:
     """Discover model features by inspecting actual module types and config fields.
-    
+
     FULLY DYNAMIC — walks the model's module tree to detect what types
     are actually present, then cross-references with config field presence.
     No model_type string matching is ever performed.
-    
+
     This produces a `discovered_features` dictionary that the Rust side
     can use for additional validation without needing any heuristics.
-    
+
     Detection methods (in order of reliability):
     1. Module type inspection: isinstance checks on actual nn.Module objects
     2. Config field presence: rms_norm_eps, rope_theta, etc.
     3. Structural detection: weight-without-bias patterns for RMSNorm
     """
     import torch
-    
+
     features = {
         "norm_types_encountered": [],      # ["RMSNorm", "LayerNorm", ...]
         "has_rope_module": False,          # Rotary embedding module found
@@ -444,14 +443,14 @@ def discover_model_features(model, model_config) -> Dict[str, Any]:
         "has_qk_norm": False,             # Qwen3-style Q/K normalization after projections
         "detection_methods": {},           # How each feature was detected
     }
-    
+
     norm_type_set = set()
     attn_type_set = set()
     mlp_type_set = set()
-    
+
     for name, module in model.named_modules():
         class_name = type(module).__name__
-        
+
         # ─── Norm detection by actual type ────────────────────────
         # Check for RMSNorm variants (LlamaRMSNorm, Qwen2RMSNorm, etc.)
         if 'rms' in class_name.lower():
@@ -470,12 +469,12 @@ def discover_model_features(model, model_config) -> Dict[str, Any]:
             else:
                 norm_type_set.add("LayerNorm")
                 features["detection_methods"]["norm_type"] = "structural_detection"
-        
+
         # ─── RoPE detection by module type ────────────────────────
         if 'rotary' in class_name.lower() or 'rope' in class_name.lower():
             features["has_rope_module"] = True
             features["detection_methods"]["rope"] = "module_type_inspection"
-        
+
         # ─── Attention type detection ─────────────────────────────
         if 'attention' in class_name.lower() or 'attn' in class_name.lower():
             # Don't add leaf modules (like attention scores), only blocks
@@ -487,47 +486,47 @@ def discover_model_features(model, model_config) -> Dict[str, Any]:
                 if hasattr(module, 'q_norm') and hasattr(module, 'k_norm'):
                     features["has_qk_norm"] = True
                     features["detection_methods"]["qk_norm"] = "module_type_inspection"
-        
+
         # ─── MLP type detection ───────────────────────────────────
         if 'mlp' in class_name.lower() or 'feed_forward' in class_name.lower():
             if any(child for child in module.children()):
                 mlp_type_set.add(class_name)
-        
+
         # ─── Linear count ─────────────────────────────────────────
         if isinstance(module, torch.nn.Linear):
             features["linear_count"] += 1
-        
+
         # ─── Embedding count ──────────────────────────────────────
         if isinstance(module, torch.nn.Embedding):
             features["embedding_count"] += 1
-    
+
     features["norm_types_encountered"] = sorted(norm_type_set)
     features["attention_module_types"] = sorted(attn_type_set)
     features["mlp_module_types"] = sorted(mlp_type_set)
-    
+
     # ─── Cross-reference with config-driven detection ─────────────
     cfg = _resolve_effective_config(model_config)
-    
+
     # If norm not detected by module inspection, check config
     if not norm_type_set:
         config_norm = _detect_norm_type(cfg)
         if config_norm != "unknown":
             features["norm_types_encountered"] = [config_norm]
             features["detection_methods"]["norm_type"] = "config_field_presence"
-    
+
     # If RoPE not detected by module inspection, check config
     if not features["has_rope_module"]:
         if _detect_rope(cfg):
             features["has_rope_module"] = True
             if "rope" not in features["detection_methods"]:
                 features["detection_methods"]["rope"] = "config_field_presence"
-    
+
     # ─── GQA detection (purely structural) ────────────────────────
     num_heads = getattr(cfg, "num_attention_heads", 0)
     num_kv_heads = getattr(cfg, "num_key_value_heads", num_heads)
     features["uses_gqa"] = num_kv_heads < num_heads
     features["detection_methods"]["gqa"] = "config_field_comparison"
-    
+
     return features
 
 
@@ -579,12 +578,12 @@ def map_fx_node_to_traced_op(fx_node, model_config, decompose: bool, model=None)
 
 def _inspect_module_type(model, target: str) -> Optional[str]:
     """Inspect the actual nn.Module type at a given module path.
-    
+
     Returns the class name (e.g., 'LlamaRMSNorm', 'LayerNorm', 'Linear')
     or None if the module cannot be found. This is the fully dynamic
     approach: instead of pattern-matching on module path strings, we
     check what the module actually IS at runtime.
-    
+
     This works for any HuggingFace model, including future architectures,
     because we never match on model_type strings — only on the actual
     Python class hierarchy.
@@ -598,31 +597,31 @@ def _inspect_module_type(model, target: str) -> Optional[str]:
 
 def _is_rms_norm_module(model, target: str) -> bool:
     """Check if the module at the given path is an RMSNorm variant.
-    
+
     Fully dynamic: checks the actual class hierarchy, not the name.
     RMSNorm modules are detected by checking if they:
     1. Have a class name containing 'RMS' or 'Rms' (e.g., LlamaRMSNorm, Qwen2RMSNorm)
     2. OR have weight but no bias (structural signature of RMSNorm)
-    
+
     This handles any future RMSNorm implementation without code changes.
     """
     try:
         submodule = model.get_submodule(target)
         class_name = type(submodule).__name__.lower()
-        
+
         # Direct RMSNorm class name match (any variant)
         if 'rms' in class_name:
             return True
-        
+
         # Structural detection: RMSNorm has weight but no bias;
         # LayerNorm has both weight and bias
         has_weight = hasattr(submodule, 'weight')
         has_bias = hasattr(submodule, 'bias') and submodule.bias is not None
-        
+
         # RMSNorm: weight, no bias
         if has_weight and not has_bias:
             return True
-            
+
         return False
     except (AttributeError, RuntimeError):
         return False
@@ -630,21 +629,21 @@ def _is_rms_norm_module(model, target: str) -> bool:
 
 def map_module_call(fx_node, model_config, decompose: bool, model=None) -> Dict[str, Any]:
     """Map a call_module node to a TracedOp.
-    
+
     Uses actual module type inspection when the model is available,
     falling back to structural config detection otherwise. This is
     fully dynamic — no model_type string matching is ever performed.
-    
+
     Detection priority:
     1. Actual isinstance() check on the nn.Module object
     2. Config field presence (rms_norm_eps, rope_theta, etc.)
     3. Conventional naming patterns as last-resort fallback
     """
     target = str(fx_node.target)
-    
+
     # ─── Attempt actual module type inspection ───────────────────
     module_type = _inspect_module_type(model, target) if model is not None else None
-    
+
     # ─── Linear layers ───────────────────────────────────────────
     # Detect by actual type OR by conventional projection naming.
     is_linear = False
@@ -655,9 +654,9 @@ def map_module_call(fx_node, model_config, decompose: bool, model=None) -> Dict[
             is_linear = isinstance(submodule, torch.nn.Linear)
         except (AttributeError, RuntimeError):
             pass
-    
+
     if is_linear or "linear" in target.lower() or any(
-        proj in target for proj in ["q_proj", "k_proj", "v_proj", "o_proj", 
+        proj in target for proj in ["q_proj", "k_proj", "v_proj", "o_proj",
                                      "gate_proj", "up_proj", "down_proj"]
     ):
         return {
@@ -680,7 +679,7 @@ def map_module_call(fx_node, model_config, decompose: bool, model=None) -> Dict[
             is_embedding = isinstance(submodule, torch.nn.Embedding)
         except (AttributeError, RuntimeError):
             pass
-    
+
     if is_embedding or "embed" in target.lower() or "wte" in target.lower():
         cfg = _resolve_effective_config(model_config)
         return {
@@ -694,10 +693,10 @@ def map_module_call(fx_node, model_config, decompose: bool, model=None) -> Dict[
     # FULLY DYNAMIC: inspect actual module type first, then fall back
     # to config-driven detection. Never matches on model_type strings.
     is_norm_path = "norm" in target.lower() or "ln" in target.lower()
-    
+
     if is_norm_path:
         cfg = _resolve_effective_config(model_config)
-        
+
         # Primary: inspect actual module type from the model
         if model is not None and _is_rms_norm_module(model, target):
             return {
@@ -707,7 +706,7 @@ def map_module_call(fx_node, model_config, decompose: bool, model=None) -> Dict[
                 "_module_type": module_type,
                 "_detection_method": "module_type_inspection",
             }
-        
+
         # Secondary: config-driven detection (rms_norm_eps field present)
         if decompose:
             norm_type = _detect_norm_type(cfg)
@@ -719,7 +718,7 @@ def map_module_call(fx_node, model_config, decompose: bool, model=None) -> Dict[
                     "_module_type": module_type,
                     "_detection_method": "config_field_presence",
                 }
-        
+
         # LayerNorm fallback (actual nn.LayerNorm or detected via config)
         return {
             "type": "LayerNorm",
@@ -765,7 +764,7 @@ def map_module_call(fx_node, model_config, decompose: bool, model=None) -> Dict[
 
 def map_function_call(fx_node, model_config, decompose: bool) -> Dict[str, Any]:
     """Map a call_function node to a TracedOp.
-    
+
     Also detects torch.nn.functional.rms_norm and similar dynamic ops.
     """
     target = str(fx_node.target)
@@ -851,14 +850,14 @@ def map_method_call(fx_node) -> Dict[str, Any]:
 
 def _resolve_effective_config(model_config) -> object:
     """Resolve the effective text-model config from a potentially nested AutoConfig.
-    
+
     Many modern HuggingFace models (e.g., Qwen3.5, Llava, Qwen2-VL) are multimodal
     and store the text decoder config in a sub-object like `text_config`. The standard
     LLM fields (hidden_size, num_attention_heads, etc.) live there, not at the top level.
-    
+
     This function walks the config structure to find the sub-config that actually
     contains the text decoder parameters, without relying on model_type heuristics.
-    
+
     Resolution order:
     1. If the config has `hidden_size` directly → it's already the effective config
     2. If the config has a `text_config` sub-object with `hidden_size` → use that
@@ -868,26 +867,26 @@ def _resolve_effective_config(model_config) -> object:
     # Fast path: config already has the standard fields
     if hasattr(model_config, "hidden_size") and getattr(model_config, "hidden_size", None) is not None:
         return model_config
-    
+
     # Walk known sub-config names that HuggingFace transformers uses
     # for multimodal / encoder-decoder architectures
     sub_config_names = ["text_config", "decoder", "language_model", "text_model"]
-    
+
     for name in sub_config_names:
         sub = getattr(model_config, name, None)
         if sub is not None and hasattr(sub, "hidden_size") and getattr(sub, "hidden_size", None) is not None:
             return sub
-    
+
     # Nothing found — return original and let defaults kick in
     return model_config
 
 
 def _detect_rope(config) -> bool:
     """Detect whether a model uses RoPE (Rotary Position Embeddings).
-    
+
     Fully dynamic: checks for the actual config fields that indicate RoPE,
     never matches on model_type strings.
-    
+
     RoPE is indicated by any of:
     - rope_theta (most LLMs: Llama, Qwen, Mistral, etc.)
     - rope_scaling (models with extended context)
@@ -899,7 +898,7 @@ def _detect_rope(config) -> bool:
     explicit = getattr(config, "uses_rope", None)
     if explicit is not None:
         return bool(explicit)
-    
+
     # Direct config field indicators
     if hasattr(config, "rope_theta"):
         return True
@@ -907,107 +906,107 @@ def _detect_rope(config) -> bool:
         return True
     if hasattr(config, "rotary_emb_base"):
         return True
-    
+
     # Nested rope_parameters dict (Qwen3, Qwen3.5)
     rope_params = getattr(config, "rope_parameters", None)
     if rope_params is not None and isinstance(rope_params, dict):
         if "rope_theta" in rope_params or "rope_type" in rope_params:
             return True
-    
+
     # Explicit position_embedding_type declaration
     pos_emb_type = getattr(config, "position_embedding_type", None)
     if pos_emb_type is not None and "rope" in str(pos_emb_type).lower():
         return True
-    
+
     # No RoPE indicators found
     return False
 
 
 def _detect_norm_type(config) -> str:
     """Detect the normalization type used by a model.
-    
+
     Fully dynamic: checks for the actual config fields that indicate
     norm type, never matches on model_type strings.
-    
+
     Returns: "rms_norm", "layer_norm", or "unknown"
-    
+
     RMSNorm is indicated by:
     - rms_norm_eps field present (the epsilon for RMS normalization)
-    
+
     LayerNorm is indicated by:
     - layer_norm_eps field present WITHOUT rms_norm_eps
     """
     has_rms_eps = hasattr(config, "rms_norm_eps")
     has_ln_eps = hasattr(config, "layer_norm_eps")
-    
+
     if has_rms_eps:
         return "rms_norm"
     if has_ln_eps:
         return "layer_norm"
-    
+
     return "unknown"
 
 
 def extract_model_config(model_config) -> Dict[str, Any]:
     """Extract model configuration into the TracedGraph format.
-    
+
     FULLY DYNAMIC — no model_type heuristics, no hardcoded model lists.
-    
+
     This function derives all decomposition hints from the model's AutoConfig
     fields alone. It works for any HuggingFace model, including future
     architectures, without requiring code changes.
-    
+
     The approach:
     1. Resolve the effective text config (handles multimodal nesting)
     2. Detect norm type from config fields (rms_norm_eps vs layer_norm_eps)
     3. Detect RoPE from config fields (rope_theta, rope_parameters, etc.)
     4. Detect GQA from config fields (num_key_value_heads < num_attention_heads)
     5. Extract all other fields directly from the config
-    
+
     If a model's config doesn't expose certain fields, reasonable defaults
     are used. No model_type string matching is ever performed.
     """
     # Step 1: Resolve the effective config for text decoder
     cfg = _resolve_effective_config(model_config)
-    
+
     # Step 2: Extract standard fields directly from the resolved config
     hidden_size = getattr(cfg, "hidden_size", 768)
     num_heads = getattr(cfg, "num_attention_heads", 12)
     num_kv_heads = getattr(cfg, "num_key_value_heads", num_heads)
     model_type = getattr(model_config, "model_type", "unknown")  # Top-level model_type for logging only
-    
+
     # Step 3: Detect normalization type from config fields
     norm_type = _detect_norm_type(cfg)
     uses_rms_norm = (norm_type == "rms_norm")
-    
+
     # If norm type is unknown, default to RMSNorm for modern LLMs
     # (most post-2023 architectures use RMSNorm). This is a safe default
     # because the legality rewrite pass will handle the decomposition.
     if norm_type == "unknown":
         uses_rms_norm = True  # Safe default — legality rewrite will adjust
-    
+
     # Step 4: Detect RoPE from config fields
     uses_rope = _detect_rope(cfg)
-    
+
     # Step 5: GQA — purely structural, no heuristics needed
     uses_gqa = num_kv_heads < num_heads
-    
+
     # Step 6: Activation function
     hidden_act = getattr(cfg, "hidden_act", None)
     if hidden_act is None:
         hidden_act = getattr(cfg, "activation_function", "gelu")
-    
+
     # Step 7: Epsilon value — pick the one that matches the detected norm type
     if uses_rms_norm:
         layer_norm_epsilon = getattr(cfg, "rms_norm_eps", 1e-6)
     else:
         layer_norm_epsilon = getattr(cfg, "layer_norm_eps", 1e-5)
-    
+
     # Step 8: Head dimension — use explicit config value if available.
     # Some models (e.g., Qwen3) set head_dim explicitly in config (128)
     # while hidden_size/num_attention_heads would give a different value (64).
     head_dim = getattr(cfg, "head_dim", None) or (hidden_size // num_heads)
-    
+
     return {
         "hidden_size": hidden_size,
         "num_attention_heads": num_heads,
@@ -1029,7 +1028,6 @@ def extract_model_config(model_config) -> Dict[str, Any]:
 def extract_shape(fx_node) -> Dict[str, Any]:
     """Extract the output shape from a torch.fx node."""
     try:
-        import torch
         if hasattr(fx_node, 'meta') and 'tensor_meta' in fx_node.meta:
             meta = fx_node.meta['tensor_meta']
             if hasattr(meta, 'shape'):
@@ -1074,7 +1072,6 @@ def _load_model(model_id, model_config, torch_dtype, model_class_hint="auto"):
         Tuple of (model, model_class_string)
         model_class_string is one of: "causal_lm", "seq2seq_lm", "decoder_only"
     """
-    import torch
     from transformers import AutoModelForCausalLM, AutoModelForSeq2SeqLM
 
     architectures = getattr(model_config, "architectures", []) or []
@@ -1089,7 +1086,7 @@ def _load_model(model_id, model_config, torch_dtype, model_class_hint="auto"):
 
         # "*ForCausalLM" — always decoder-only causal LM
         if arch_lower.endswith("forcausallm"):
-            sys.stderr.write(f"  → AutoModelForCausalLM (architecture declares CausalLM)\n")
+            sys.stderr.write("  → AutoModelForCausalLM (architecture declares CausalLM)\n")
             try:
                 model = AutoModelForCausalLM.from_pretrained(
                     model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
@@ -1100,7 +1097,7 @@ def _load_model(model_id, model_config, torch_dtype, model_class_hint="auto"):
 
         # "*ForSeq2SeqLM" — always encoder-decoder seq2seq
         if arch_lower.endswith("forseq2seqlm"):
-            sys.stderr.write(f"  → AutoModelForSeq2SeqLM (architecture declares Seq2SeqLM)\n")
+            sys.stderr.write("  → AutoModelForSeq2SeqLM (architecture declares Seq2SeqLM)\n")
             try:
                 model = AutoModelForSeq2SeqLM.from_pretrained(
                     model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
@@ -1111,7 +1108,7 @@ def _load_model(model_id, model_config, torch_dtype, model_class_hint="auto"):
 
         # "VisionEncoderDecoder*" — always encoder-decoder
         if arch_lower.startswith("visionencoderdecoder"):
-            sys.stderr.write(f"  → AutoModelForSeq2SeqLM (VisionEncoderDecoder)\n")
+            sys.stderr.write("  → AutoModelForSeq2SeqLM (VisionEncoderDecoder)\n")
             try:
                 model = AutoModelForSeq2SeqLM.from_pretrained(
                     model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
@@ -1126,7 +1123,7 @@ def _load_model(model_id, model_config, torch_dtype, model_class_hint="auto"):
         # - else → try CausalLM (some models just use this name loosely)
         if arch_lower.endswith("forconditionalgeneration"):
             if is_encoder_decoder:
-                sys.stderr.write(f"  → AutoModelForSeq2SeqLM (ConditionalGeneration + is_encoder_decoder)\n")
+                sys.stderr.write("  → AutoModelForSeq2SeqLM (ConditionalGeneration + is_encoder_decoder)\n")
                 try:
                     model = AutoModelForSeq2SeqLM.from_pretrained(
                         model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
@@ -1138,10 +1135,10 @@ def _load_model(model_id, model_config, torch_dtype, model_class_hint="auto"):
                 # Multimodal with a causal LM text decoder (Qwen3.5, Qwen3-ASR, etc.)
                 text_cfg = _find_text_config(model_config)
                 if text_cfg is not None:
-                    sys.stderr.write(f"  → decoder_only (ConditionalGeneration + text_config, not encoder-decoder)\n")
+                    sys.stderr.write("  → decoder_only (ConditionalGeneration + text_config, not encoder-decoder)\n")
                     return _load_decoder_from_multimodal(model_id, model_config, torch_dtype)
                 else:
-                    sys.stderr.write(f"  → AutoModelForCausalLM (ConditionalGeneration, no is_encoder_decoder, no text_config)\n")
+                    sys.stderr.write("  → AutoModelForCausalLM (ConditionalGeneration, no is_encoder_decoder, no text_config)\n")
                     try:
                         model = AutoModelForCausalLM.from_pretrained(
                             model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
@@ -1153,7 +1150,7 @@ def _load_model(model_id, model_config, torch_dtype, model_class_hint="auto"):
     # ─── 2. Config-level signals ──────────────────────────────────
     # is_encoder_decoder=True without architecture match → Seq2SeqLM
     if is_encoder_decoder:
-        sys.stderr.write(f"  → AutoModelForSeq2SeqLM (is_encoder_decoder=True, no architecture match)\n")
+        sys.stderr.write("  → AutoModelForSeq2SeqLM (is_encoder_decoder=True, no architecture match)\n")
         try:
             model = AutoModelForSeq2SeqLM.from_pretrained(
                 model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
@@ -1165,7 +1162,7 @@ def _load_model(model_id, model_config, torch_dtype, model_class_hint="auto"):
     # ─── 3. Multimodal with text_config ───────────────────────────
     text_cfg = _find_text_config(model_config)
     if text_cfg is not None:
-        sys.stderr.write(f"  → decoder_only (text_config found, extracting decoder)\n")
+        sys.stderr.write("  → decoder_only (text_config found, extracting decoder)\n")
         return _load_decoder_from_multimodal(model_id, model_config, torch_dtype)
 
     # ─── 4. Fallback: try CausalLM, then Seq2SeqLM ───────────────
@@ -1173,7 +1170,7 @@ def _load_model(model_id, model_config, torch_dtype, model_class_hint="auto"):
         model = AutoModelForCausalLM.from_pretrained(
             model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
         )
-        sys.stderr.write(f"  → AutoModelForCausalLM (fallback, most common for ANE)\n")
+        sys.stderr.write("  → AutoModelForCausalLM (fallback, most common for ANE)\n")
         return model, "causal_lm"
     except Exception as e:
         sys.stderr.write(f"  AutoModelForCausalLM failed: {e}\n")
@@ -1182,7 +1179,7 @@ def _load_model(model_id, model_config, torch_dtype, model_class_hint="auto"):
         model = AutoModelForSeq2SeqLM.from_pretrained(
             model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
         )
-        sys.stderr.write(f"  → AutoModelForSeq2SeqLM (last resort)\n")
+        sys.stderr.write("  → AutoModelForSeq2SeqLM (last resort)\n")
         return model, "seq2seq_lm"
     except Exception as e:
         sys.stderr.write(f"  AutoModelForSeq2SeqLM also failed: {e}\n")
@@ -1242,7 +1239,6 @@ def _load_decoder_from_multimodal(model_id, model_config, torch_dtype):
     Returns:
         Tuple of (model, "decoder_only")
     """
-    import torch
     from transformers import AutoModelForCausalLM
 
     text_config = _find_text_config(model_config)
@@ -1257,7 +1253,7 @@ def _load_decoder_from_multimodal(model_id, model_config, torch_dtype):
             model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True,
             trust_remote_code=True,
         )
-        sys.stderr.write(f"  Loaded decoder via AutoModelForCausalLM\n")
+        sys.stderr.write("  Loaded decoder via AutoModelForCausalLM\n")
         return model, "decoder_only"
     except Exception as e:
         sys.stderr.write(f"  AutoModelForCausalLM direct failed: {e}\n")
@@ -1273,7 +1269,7 @@ def _load_decoder_from_multimodal(model_id, model_config, torch_dtype):
         # Extract the decoder sub-module
         decoder = getattr(model, "decoder", None)
         if decoder is not None and hasattr(decoder, "forward"):
-            sys.stderr.write(f"  Extracted decoder from VisionEncoderDecoderModel\n")
+            sys.stderr.write("  Extracted decoder from VisionEncoderDecoderModel\n")
             return decoder, "decoder_only"
     except Exception as e:
         sys.stderr.write(f"  VisionEncoderDecoderModel failed: {e}\n")
@@ -1442,7 +1438,6 @@ def build_fallback_graph(model_config, model_id: str, decompose: bool, model_cla
     parameter_bytes = 0
 
     if model is not None:
-        import torch as _torch
         for name, param in model.named_parameters():
             weights[name] = {
                 "shape": list(param.shape),

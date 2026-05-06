@@ -4,9 +4,9 @@
 use ane_ir::ane_hw_limits::AneHwLimits;
 use ane_ir::ane_target::AneFamily;
 use ane_ir::common::MilDtype;
-use ane_ir::mir::MirOp;
 #[cfg(test)]
 use ane_ir::mir::MirNodeId;
+use ane_ir::mir::MirOp;
 
 #[allow(unused_imports)]
 use anyhow::{bail, Result};
@@ -80,10 +80,7 @@ pub fn validate_conv_constraints(
         return Err(OpConstraintViolation {
             op_name: "conv".into(),
             constraint: "kernel_depth_power_of_2".into(),
-            message: format!(
-                "Kernel depth {} must be a power of 2 for ANE 3D conv",
-                kernel_d
-            ),
+            message: format!("Kernel depth {} must be a power of 2 for ANE 3D conv", kernel_d),
         });
     }
 
@@ -141,7 +138,10 @@ pub fn validate_conv_constraints(
         }
     }
     // Grouped conv + large kernel = hard reject
-    if groups > 1 && (kernel_w > limits.large_kernel_mode_threshold || kernel_h > limits.large_kernel_mode_threshold) {
+    if groups > 1
+        && (kernel_w > limits.large_kernel_mode_threshold
+            || kernel_h > limits.large_kernel_mode_threshold)
+    {
         return Err(OpConstraintViolation {
             op_name: "conv".into(),
             constraint: "grouped_conv_large_kernel".into(),
@@ -149,7 +149,10 @@ pub fn validate_conv_constraints(
         });
     }
     // Dilated conv + large kernel = hard reject
-    if is_dilated && (kernel_w > limits.large_kernel_mode_threshold || kernel_h > limits.large_kernel_mode_threshold) {
+    if is_dilated
+        && (kernel_w > limits.large_kernel_mode_threshold
+            || kernel_h > limits.large_kernel_mode_threshold)
+    {
         return Err(OpConstraintViolation {
             op_name: "conv".into(),
             constraint: "dilated_conv_large_kernel".into(),
@@ -161,12 +164,10 @@ pub fn validate_conv_constraints(
     // When kernel W or H exceeds the threshold, ANEC enters "large
     // kernel mode" with additional constraints. Binary forensic
     // evidence confirms 12+ additional constraints.
-    if kernel_w > limits.large_kernel_mode_threshold || kernel_h > limits.large_kernel_mode_threshold {
-        if let Err(e) = validate_large_kernel_constraints(
-            kernel_w, kernel_h, kernel_d, groups, is_dilated, stride,
-        ) {
-            return Err(e);
-        }
+    if kernel_w > limits.large_kernel_mode_threshold
+        || kernel_h > limits.large_kernel_mode_threshold
+    {
+        validate_large_kernel_constraints(kernel_w, kernel_h, kernel_d, groups, is_dilated, stride)?
     }
 
     Ok(())
@@ -196,7 +197,7 @@ fn validate_large_kernel_constraints(
     stride: &[u64],
 ) -> Result<(), OpConstraintViolation> {
     // 1. Kernel W/H must be multiple of 8
-    if kernel_w % 8 != 0 {
+    if !kernel_w.is_multiple_of(8) {
         return Err(OpConstraintViolation {
             op_name: "conv".into(),
             constraint: "large_kernel_wh_multiple_of_8".into(),
@@ -206,7 +207,7 @@ fn validate_large_kernel_constraints(
             ),
         });
     }
-    if kernel_h % 8 != 0 {
+    if !kernel_h.is_multiple_of(8) {
         return Err(OpConstraintViolation {
             op_name: "conv".into(),
             constraint: "large_kernel_wh_multiple_of_8".into(),
@@ -299,10 +300,7 @@ pub fn validate_stencil_constraints(
         return Err(OpConstraintViolation {
             op_name: "stencil".into(),
             constraint: "reduction_must_be_sum".into(),
-            message: format!(
-                "Stencil reduction mode must be 'sum', got '{}'",
-                reduction_mode
-            ),
+            message: format!("Stencil reduction mode must be 'sum', got '{}'", reduction_mode),
         });
     }
     // 3. Dilated stencil rejected
@@ -319,10 +317,7 @@ pub fn validate_stencil_constraints(
             return Err(OpConstraintViolation {
                 op_name: "stencil".into(),
                 constraint: "no_strided_stencil".into(),
-                message: format!(
-                    "Strided stencil is not supported on ANE (stride[{}]={})",
-                    i, s
-                ),
+                message: format!("Strided stencil is not supported on ANE (stride[{}]={})", i, s),
             });
         }
     }
@@ -360,14 +355,13 @@ pub fn validate_deconv_constraints(
         return Err(OpConstraintViolation {
             op_name: "deconv".into(),
             constraint: "sox_must_be_2".into(),
-            message: format!(
-                "Deconv with SOx != 2 is not supported, got SOx={}",
-                sox
-            ),
+            message: format!("Deconv with SOx != 2 is not supported, got SOx={}", sox),
         });
     }
     // 3. No large kernel
-    if kernel_w > limits.large_kernel_mode_threshold || kernel_h > limits.large_kernel_mode_threshold {
+    if kernel_w > limits.large_kernel_mode_threshold
+        || kernel_h > limits.large_kernel_mode_threshold
+    {
         return Err(OpConstraintViolation {
             op_name: "deconv".into(),
             constraint: "no_large_kernel".into(),
@@ -979,12 +973,14 @@ pub fn validate_anec_attribute_shapes(
                 );
             }
             let spatial_dims = strides.len();
-            if spatial_dims < 2 || spatial_dims > 3 {
+            if !(2..=3).contains(&spatial_dims) {
                 bail!(
                     "Op kind '{}' violates constraint 'stride_shape': \
                      strides has {} elements, but ANEC expects 2 (2D) or 3 (3D) for convolution. \
                      Got strides={:?}",
-                    op_kind, spatial_dims, strides
+                    op_kind,
+                    spatial_dims,
+                    strides
                 );
             }
 
@@ -1017,8 +1013,12 @@ pub fn validate_anec_attribute_shapes(
                     "Op kind '{}' violates constraint 'stride_pad_consistency': \
                      strides has {} elements but pad_amounts has {} (expected {}). \
                      strides={:?}, pad_amounts={:?}",
-                    op_kind, strides.len(), pad_amounts.len(), 2 * strides.len(),
-                    strides, pad_amounts
+                    op_kind,
+                    strides.len(),
+                    pad_amounts.len(),
+                    2 * strides.len(),
+                    strides,
+                    pad_amounts
                 );
             }
         }
@@ -1032,12 +1032,14 @@ pub fn validate_anec_attribute_shapes(
                 );
             }
             let spatial_dims = kernel_sizes.len();
-            if spatial_dims < 2 || spatial_dims > 3 {
+            if !(2..=3).contains(&spatial_dims) {
                 bail!(
                     "Op kind '{}' violates constraint 'kernel_size_shape': \
                      kernel_sizes has {} elements, but ANEC expects 2 (2D) or 3 (3D) for pooling. \
                      Got kernel_sizes={:?}",
-                    op_kind, spatial_dims, kernel_sizes
+                    op_kind,
+                    spatial_dims,
+                    kernel_sizes
                 );
             }
 
@@ -1102,7 +1104,8 @@ pub fn validate_cross_constraint_combinations(
                 return Err(OpConstraintViolation {
                     op_name: "conv".into(),
                     constraint: "no_palettize_with_large_stride".into(),
-                    message: "Palettized weight with large kernel stride is not supported on ANE".into(),
+                    message: "Palettized weight with large kernel stride is not supported on ANE"
+                        .into(),
                 });
             }
             // Depthwise conv (groups > 1): Shuffle + per-channel_palettize
@@ -1110,12 +1113,13 @@ pub fn validate_cross_constraint_combinations(
                 return Err(OpConstraintViolation {
                     op_name: "depthwise_conv".into(),
                     constraint: "no_per_channel_palettize_with_shuffle".into(),
-                    message: "Shuffle with per-channel palettization is not supported on ANE".into(),
+                    message: "Shuffle with per-channel palettization is not supported on ANE"
+                        .into(),
                 });
             }
             Ok(())
         }
-        _ => Ok(())
+        _ => Ok(()),
     }
 }
 
@@ -1125,28 +1129,40 @@ pub fn validate_architecture_gated_constraints(
     family: AneFamily,
 ) -> Result<(), OpConstraintViolation> {
     match op {
-        MirOp::MILSoftmax { .. } if matches!(family, AneFamily::A11Legacy | AneFamily::A12 | AneFamily::A13) => {
+        MirOp::MILSoftmax { .. }
+            if matches!(family, AneFamily::A11Legacy | AneFamily::A12 | AneFamily::A13) =>
+        {
             Err(OpConstraintViolation {
                 op_name: "softmax".into(),
                 constraint: "architecture_gate".into(),
-                message: format!("Softmax is not reliably supported on {:?} (requires A14+)", family),
+                message: format!(
+                    "Softmax is not reliably supported on {:?} (requires A14+)",
+                    family
+                ),
             })
         }
-        MirOp::MILLocalResponseNorm { .. } if matches!(family, AneFamily::A11Legacy | AneFamily::A12 | AneFamily::A13) => {
+        MirOp::MILLocalResponseNorm { .. }
+            if matches!(family, AneFamily::A11Legacy | AneFamily::A12 | AneFamily::A13) =>
+        {
             Err(OpConstraintViolation {
                 op_name: "local_response_norm".into(),
                 constraint: "architecture_gate".into(),
                 message: format!("LRN is not supported on {:?} (requires A14+)", family),
             })
         }
-        MirOp::MILInstanceNorm { .. } if matches!(family, AneFamily::A11Legacy | AneFamily::A12 | AneFamily::A13) => {
+        MirOp::MILInstanceNorm { .. }
+            if matches!(family, AneFamily::A11Legacy | AneFamily::A12 | AneFamily::A13) =>
+        {
             Err(OpConstraintViolation {
                 op_name: "instance_norm".into(),
                 constraint: "architecture_gate".into(),
-                message: format!("InstanceNorm is not reliably supported on {:?} (requires A14+)", family),
+                message: format!(
+                    "InstanceNorm is not reliably supported on {:?} (requires A14+)",
+                    family
+                ),
             })
         }
-        _ => Ok(())
+        _ => Ok(()),
     }
 }
 
@@ -1222,7 +1238,7 @@ pub fn validate_reduction_constraints(
     //    is not directly supported. The ANE reduction engine operates
     //    on channel and spatial dimensions. For rank < 4, axis 0 is
     //    not a batch axis and is acceptable.
-    if input_rank >= 4 && axes.iter().any(|&a| a == 0) {
+    if input_rank >= 4 && axes.contains(&0) {
         return Err(OpConstraintViolation {
             op_name: op_name.into(),
             constraint: "no_batch_axis_reduction".into(),
@@ -1238,14 +1254,13 @@ pub fn validate_reduction_constraints(
     //    for correct ANE tensor format alignment. When the channel
     //    dimension is removed, the tensor format becomes ambiguous and
     //    the ANEC may miscompile it.
-    if input_rank >= 4 && axes.iter().any(|&a| a == 1) && !keep_dims {
+    if input_rank >= 4 && axes.contains(&1) && !keep_dims {
         return Err(OpConstraintViolation {
             op_name: op_name.into(),
             constraint: "channel_reduction_keep_dims".into(),
-            message: format!(
-                "Reduction on channel axis (axis 1) with keep_dims=false \
+            message: "Reduction on channel axis (axis 1) with keep_dims=false \
                  is not supported on ANE (tensor format becomes ambiguous)"
-            ),
+                .to_string(),
         });
     }
 
@@ -1270,7 +1285,7 @@ pub fn validate_layernorm_constraints(
     is_quantized_output: bool,
 ) -> Result<(), OpConstraintViolation> {
     // 1. Channels must be divisible by num_groups
-    if num_groups > 0 && channels % num_groups != 0 {
+    if num_groups > 0 && !channels.is_multiple_of(num_groups) {
         return Err(OpConstraintViolation {
             op_name: "layernorm".into(),
             constraint: "channels_divisible_by_groups".into(),
@@ -1390,10 +1405,7 @@ pub fn validate_transpose_constraints(
         return Err(OpConstraintViolation {
             op_name: "transpose".into(),
             constraint: "min_rank_2".into(),
-            message: format!(
-                "Transpose input must have rank >= 2, got rank {}",
-                rank
-            ),
+            message: format!("Transpose input must have rank >= 2, got rank {}", rank),
         });
     }
 
@@ -1417,10 +1429,7 @@ pub fn validate_transpose_constraints(
                 return Err(OpConstraintViolation {
                     op_name: "transpose_nc".into(),
                     constraint: "nc_channel_must_be_1".into(),
-                    message: format!(
-                        "TransposeNC: input channel must be 1, got {}",
-                        channels
-                    ),
+                    message: format!("TransposeNC: input channel must be 1, got {}", channels),
                 });
             }
         }
@@ -1467,12 +1476,8 @@ pub fn validate_cast_constraints(
     _family: AneFamily,
 ) -> Result<(), OpConstraintViolation> {
     // Valid ANE dtypes for input/output
-    let valid_input_dtypes = [
-        MilDtype::Fp16, MilDtype::Fp32, MilDtype::Int8, MilDtype::UInt8,
-    ];
-    let valid_output_dtypes = [
-        MilDtype::Fp16, MilDtype::Fp32, MilDtype::Int8, MilDtype::UInt8,
-    ];
+    let valid_input_dtypes = [MilDtype::Fp16, MilDtype::Fp32, MilDtype::Int8, MilDtype::UInt8];
+    let valid_output_dtypes = [MilDtype::Fp16, MilDtype::Fp32, MilDtype::Int8, MilDtype::UInt8];
 
     if !valid_input_dtypes.contains(&input_dtype) {
         return Err(OpConstraintViolation {
@@ -1536,10 +1541,7 @@ pub fn validate_constexpr_dequantize_constraints(
         return Err(OpConstraintViolation {
             op_name: "constexpr_affine_dequantize".into(),
             constraint: "dequant_output_must_be_fp16".into(),
-            message: format!(
-                "Dequant layer must have fp16 output format, got '{}'",
-                output_format
-            ),
+            message: format!("Dequant layer must have fp16 output format, got '{}'", output_format),
         });
     }
 
@@ -2196,121 +2198,59 @@ mod tests {
     #[test]
     fn test_vector_palettize_at_cout_ok() {
         // Vector palettization at Cout is the only supported dimension
-        assert!(validate_vector_palettization_constraints(
-            true,
-            Some("Cout"),
-            false,
-            16
-        )
-        .is_ok());
+        assert!(validate_vector_palettization_constraints(true, Some("Cout"), false, 16).is_ok());
     }
 
     #[test]
     fn test_vector_palettize_at_non_cout_rejected() {
         // Vector palettization at non-Cout dimension is rejected
-        let result = validate_vector_palettization_constraints(
-            true,
-            Some("Cin"),
-            false,
-            16,
-        );
+        let result = validate_vector_palettization_constraints(true, Some("Cin"), false, 16);
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().constraint,
-            "vector_palettize_at_cout_only"
-        );
+        assert_eq!(result.unwrap_err().constraint, "vector_palettize_at_cout_only");
     }
 
     #[test]
     fn test_vector_palettize_none_dimension_rejected() {
         // Vector palettization with None dimension is rejected — dimension must be specified
-        let result = validate_vector_palettization_constraints(
-            true,
-            None,
-            false,
-            16,
-        );
+        let result = validate_vector_palettization_constraints(true, None, false, 16);
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().constraint,
-            "vector_palettize_dimension_required"
-        );
+        assert_eq!(result.unwrap_err().constraint, "vector_palettize_dimension_required");
     }
 
     #[test]
     fn test_scalar_palettize_dimension_always_ok() {
         // Scalar palettization (is_vector_palettized=false) always passes dimension check
-        assert!(validate_vector_palettization_constraints(
-            false,
-            Some("Cin"),
-            false,
-            16
-        )
-        .is_ok());
+        assert!(validate_vector_palettization_constraints(false, Some("Cin"), false, 16).is_ok());
         // Even None dimension is fine for scalar palettization
-        assert!(validate_vector_palettization_constraints(
-            false,
-            None,
-            false,
-            16
-        )
-        .is_ok());
+        assert!(validate_vector_palettization_constraints(false, None, false, 16).is_ok());
     }
 
     #[test]
     fn test_vector_palettize_zero_point_rejected() {
         // Zero point is not supported for vector palettized kernel
-        let result = validate_vector_palettization_constraints(
-            true,
-            Some("Cout"),
-            true,
-            16,
-        );
+        let result = validate_vector_palettization_constraints(true, Some("Cout"), true, 16);
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().constraint,
-            "no_zero_point_for_vector_palettize"
-        );
+        assert_eq!(result.unwrap_err().constraint, "no_zero_point_for_vector_palettize");
     }
 
     #[test]
     fn test_scalar_palettize_zero_point_ok() {
         // Zero point is fine for scalar palettized ops
-        assert!(validate_vector_palettization_constraints(
-            false,
-            Some("Cout"),
-            true,
-            256
-        )
-        .is_ok());
+        assert!(validate_vector_palettization_constraints(false, Some("Cout"), true, 256).is_ok());
     }
 
     #[test]
     fn test_vector_palettize_palette_size_256_rejected() {
         // Palette size 256 (8-bit full LUT) is not supported for vector palettized ops
-        let result = validate_vector_palettization_constraints(
-            true,
-            Some("Cout"),
-            false,
-            256,
-        );
+        let result = validate_vector_palettization_constraints(true, Some("Cout"), false, 256);
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().constraint,
-            "no_palette_size_256_for_vector_palettize"
-        );
+        assert_eq!(result.unwrap_err().constraint, "no_palette_size_256_for_vector_palettize");
     }
 
     #[test]
     fn test_vector_palettize_palette_size_16_ok() {
         // Palette size 16 (4-bit) is fine for vector palettized ops
-        assert!(validate_vector_palettization_constraints(
-            true,
-            Some("Cout"),
-            false,
-            16
-        )
-        .is_ok());
+        assert!(validate_vector_palettization_constraints(true, Some("Cout"), false, 16).is_ok());
     }
 
     // ─── T-116: ANEC Attribute Shape Validation Tests ──────────────────
@@ -2320,10 +2260,10 @@ mod tests {
         // T-116: 2D conv with correct attribute shapes (strides=2, pad_amounts=4, dilations=2)
         let result = validate_anec_attribute_shapes(
             "conv",
-            &[],         // kernel_sizes (not used for conv)
-            &[1, 1],     // strides: 2 elements for 2D
+            &[],           // kernel_sizes (not used for conv)
+            &[1, 1],       // strides: 2 elements for 2D
             &[0, 0, 0, 0], // pad_amounts: 4 elements for 2D
-            &[1, 1],     // dilations: 2 elements for 2D
+            &[1, 1],       // dilations: 2 elements for 2D
         );
         assert!(result.is_ok(), "Valid 2D conv attribute shapes should pass");
     }
@@ -2334,9 +2274,9 @@ mod tests {
         let result = validate_anec_attribute_shapes(
             "conv",
             &[],
-            &[1, 1, 1],     // strides: 3 elements for 3D
+            &[1, 1, 1],          // strides: 3 elements for 3D
             &[0, 0, 0, 0, 0, 0], // pad_amounts: 6 elements for 3D
-            &[1, 1, 1],     // dilations: 3 elements for 3D
+            &[1, 1, 1],          // dilations: 3 elements for 3D
         );
         assert!(result.is_ok(), "Valid 3D conv attribute shapes should pass");
     }
@@ -2347,7 +2287,7 @@ mod tests {
         let result = validate_anec_attribute_shapes(
             "conv",
             &[],
-            &[1],         // strides: 1 element — wrong for 2D/3D conv
+            &[1], // strides: 1 element — wrong for 2D/3D conv
             &[0, 0, 0, 0],
             &[1, 1],
         );
@@ -2362,7 +2302,7 @@ mod tests {
             "conv",
             &[],
             &[1, 1],
-            &[0, 0],      // pad_amounts: 2 elements — wrong (need 4 for 2D)
+            &[0, 0], // pad_amounts: 2 elements — wrong (need 4 for 2D)
             &[1, 1],
         );
         assert!(result.is_err());
@@ -2377,7 +2317,7 @@ mod tests {
             &[],
             &[1, 1],
             &[0, 0, 0, 0],
-            &[1],          // dilations: 1 element — wrong for 2D conv
+            &[1], // dilations: 1 element — wrong for 2D conv
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("dilation_shape"));
@@ -2401,7 +2341,7 @@ mod tests {
         // T-116: Pool with wrong kernel_sizes vector length
         let result = validate_anec_attribute_shapes(
             "avg_pool",
-            &[3],          // kernel_sizes: 1 element — wrong for 2D pool
+            &[3], // kernel_sizes: 1 element — wrong for 2D pool
             &[1, 1],
             &[0, 0, 0, 0],
             &[],
@@ -2417,16 +2357,17 @@ mod tests {
         let result = validate_anec_attribute_shapes(
             "conv",
             &[],
-            &[1, 1],          // 2D strides
+            &[1, 1],             // 2D strides
             &[0, 0, 0, 0, 0, 0], // 6 pad elements — wrong for 2D (expects 4)
-            &[1, 1],          // 2D dilations
+            &[1, 1],             // 2D dilations
         );
         assert!(result.is_err());
         // The pad_shape check catches this before stride_pad_consistency
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("pad_shape") || err_msg.contains("stride_pad_consistency"),
-            "Error should mention pad shape or stride-pad consistency: {}", err_msg
+            "Error should mention pad shape or stride-pad consistency: {}",
+            err_msg
         );
     }
 
@@ -2449,7 +2390,7 @@ mod tests {
         let result = validate_anec_attribute_shapes(
             "conv",
             &[],
-            &[],            // Empty strides
+            &[], // Empty strides
             &[0, 0, 0, 0],
             &[1, 1],
         );
@@ -2553,11 +2494,7 @@ mod tests {
     // T-P3-10: Tests for validate_architecture_gated_constraints
     #[test]
     fn test_architecture_gated_softmax_a11_rejected() {
-        let softmax = MirOp::MILSoftmax {
-            name: "sm".into(),
-            x: MirNodeId("x".into()),
-            axis: -1,
-        };
+        let softmax = MirOp::MILSoftmax { name: "sm".into(), x: MirNodeId("x".into()), axis: -1 };
         let result = validate_architecture_gated_constraints(&softmax, AneFamily::A11Legacy);
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -2566,11 +2503,7 @@ mod tests {
 
     #[test]
     fn test_architecture_gated_softmax_a14_ok() {
-        let softmax = MirOp::MILSoftmax {
-            name: "sm".into(),
-            x: MirNodeId("x".into()),
-            axis: -1,
-        };
+        let softmax = MirOp::MILSoftmax { name: "sm".into(), x: MirNodeId("x".into()), axis: -1 };
         let result = validate_architecture_gated_constraints(&softmax, AneFamily::A14);
         assert!(result.is_ok());
     }
@@ -2639,21 +2572,19 @@ mod tests {
     #[test]
     fn test_reduction_spatial_axis_ok() {
         // Reduction on spatial axes (2,3) is fine
-        assert!(validate_reduction_constraints(
-            "reduce_sum", &[2, 3], true, 4, AneFamily::A14
-        ).is_ok());
+        assert!(
+            validate_reduction_constraints("reduce_sum", &[2, 3], true, 4, AneFamily::A14).is_ok()
+        );
         // keep_dims=false is fine for spatial axes
-        assert!(validate_reduction_constraints(
-            "reduce_sum", &[2, 3], false, 4, AneFamily::A14
-        ).is_ok());
+        assert!(
+            validate_reduction_constraints("reduce_sum", &[2, 3], false, 4, AneFamily::A14).is_ok()
+        );
     }
 
     #[test]
     fn test_reduction_batch_axis_rejected() {
         // Reduction on batch axis (0) with rank >= 4 is rejected
-        let result = validate_reduction_constraints(
-            "reduce_sum", &[0], false, 4, AneFamily::A14
-        );
+        let result = validate_reduction_constraints("reduce_sum", &[0], false, 4, AneFamily::A14);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "no_batch_axis_reduction");
     }
@@ -2661,17 +2592,15 @@ mod tests {
     #[test]
     fn test_reduction_batch_axis_low_rank_ok() {
         // Axis 0 on rank-3 tensor is NOT batch — it's OK
-        assert!(validate_reduction_constraints(
-            "reduce_sum", &[0], false, 3, AneFamily::A14
-        ).is_ok());
+        assert!(
+            validate_reduction_constraints("reduce_sum", &[0], false, 3, AneFamily::A14).is_ok()
+        );
     }
 
     #[test]
     fn test_reduction_channel_no_keep_dims_rejected() {
         // Channel axis reduction with keep_dims=false is rejected
-        let result = validate_reduction_constraints(
-            "reduce_mean", &[1], false, 4, AneFamily::A14
-        );
+        let result = validate_reduction_constraints("reduce_mean", &[1], false, 4, AneFamily::A14);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "channel_reduction_keep_dims");
     }
@@ -2679,17 +2608,16 @@ mod tests {
     #[test]
     fn test_reduction_channel_with_keep_dims_ok() {
         // Channel axis reduction with keep_dims=true is fine
-        assert!(validate_reduction_constraints(
-            "reduce_mean", &[1], true, 4, AneFamily::A14
-        ).is_ok());
+        assert!(
+            validate_reduction_constraints("reduce_mean", &[1], true, 4, AneFamily::A14).is_ok()
+        );
     }
 
     #[test]
     fn test_reduction_log_sum_pre_a14_rejected() {
         // ReduceLogSum on pre-A14 is rejected
-        let result = validate_reduction_constraints(
-            "reduce_log_sum", &[2], false, 4, AneFamily::A12
-        );
+        let result =
+            validate_reduction_constraints("reduce_log_sum", &[2], false, 4, AneFamily::A12);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "log_reduction_requires_a14");
     }
@@ -2698,16 +2626,20 @@ mod tests {
     fn test_reduction_log_sum_exp_a14_ok() {
         // ReduceLogSumExp on A14+ is fine
         assert!(validate_reduction_constraints(
-            "reduce_log_sum_exp", &[2], false, 4, AneFamily::A14
-        ).is_ok());
+            "reduce_log_sum_exp",
+            &[2],
+            false,
+            4,
+            AneFamily::A14
+        )
+        .is_ok());
     }
 
     #[test]
     fn test_reduction_global_prod_pre_a14_rejected() {
         // Global product reduction on pre-A14 is rejected
-        let result = validate_reduction_constraints(
-            "reduce_prod", &[0, 1, 2, 3], false, 4, AneFamily::A13
-        );
+        let result =
+            validate_reduction_constraints("reduce_prod", &[0, 1, 2, 3], false, 4, AneFamily::A13);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "global_prod_requires_a14");
     }
@@ -2715,9 +2647,8 @@ mod tests {
     #[test]
     fn test_reduction_partial_prod_pre_a14_ok() {
         // Partial product reduction on pre-A14 is fine
-        assert!(validate_reduction_constraints(
-            "reduce_prod", &[2, 3], false, 4, AneFamily::A13
-        ).is_ok());
+        assert!(validate_reduction_constraints("reduce_prod", &[2, 3], false, 4, AneFamily::A13)
+            .is_ok());
     }
 
     // ─── T-P6-03: LayerNorm constraint tests ────────────────────────
@@ -2749,23 +2680,30 @@ mod tests {
     fn test_broadcast_compatible_shapes_ok() {
         // [1, 64, 128, 128] + [1, 64, 128, 128] → OK
         assert!(validate_elementwise_broadcast_constraints(
-            "add", &[vec![1, 64, 128, 128], vec![1, 64, 128, 128]]
-        ).is_ok());
+            "add",
+            &[vec![1, 64, 128, 128], vec![1, 64, 128, 128]]
+        )
+        .is_ok());
         // [1, 64, 128, 128] + [1, 1, 128, 128] → OK (broadcast)
         assert!(validate_elementwise_broadcast_constraints(
-            "add", &[vec![1, 64, 128, 128], vec![1, 1, 128, 128]]
-        ).is_ok());
+            "add",
+            &[vec![1, 64, 128, 128], vec![1, 1, 128, 128]]
+        )
+        .is_ok());
         // [1, 64, 128, 128] + [1, 64, 1, 1] → OK (broadcast)
         assert!(validate_elementwise_broadcast_constraints(
-            "add", &[vec![1, 64, 128, 128], vec![1, 64, 1, 1]]
-        ).is_ok());
+            "add",
+            &[vec![1, 64, 128, 128], vec![1, 64, 1, 1]]
+        )
+        .is_ok());
     }
 
     #[test]
     fn test_broadcast_incompatible_shapes_rejected() {
         // [1, 64, 128, 128] + [1, 32, 128, 128] → rejected (32 != 64 and 32 != 1)
         let result = validate_elementwise_broadcast_constraints(
-            "add", &[vec![1, 64, 128, 128], vec![1, 32, 128, 128]]
+            "add",
+            &[vec![1, 64, 128, 128], vec![1, 32, 128, 128]],
         );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "broadcast_dimension_mismatch");
@@ -2774,9 +2712,9 @@ mod tests {
     #[test]
     fn test_broadcast_single_input_ok() {
         // Unary ops have no broadcast issues
-        assert!(validate_elementwise_broadcast_constraints(
-            "relu", &[vec![1, 64, 128, 128]]
-        ).is_ok());
+        assert!(
+            validate_elementwise_broadcast_constraints("relu", &[vec![1, 64, 128, 128]]).is_ok()
+        );
     }
 
     // ─── T-P6-03: Transpose constraint tests ────────────────────────
@@ -2784,25 +2722,19 @@ mod tests {
     #[test]
     fn test_transpose_valid_perm_ok() {
         // Standard NHWC→NCHW perm is fine
-        assert!(validate_transpose_constraints(
-            &[1, 64, 128, 128], &[0, 3, 1, 2]
-        ).is_ok());
+        assert!(validate_transpose_constraints(&[1, 64, 128, 128], &[0, 3, 1, 2]).is_ok());
     }
 
     #[test]
     fn test_transpose_nc_with_c1_ok() {
         // NC transpose with channels=1 is OK
-        assert!(validate_transpose_constraints(
-            &[1, 1, 128, 128], &[1, 0, 2, 3]
-        ).is_ok());
+        assert!(validate_transpose_constraints(&[1, 1, 128, 128], &[1, 0, 2, 3]).is_ok());
     }
 
     #[test]
     fn test_transpose_nc_with_c_gt_1_rejected() {
         // NC transpose with channels > 1 is rejected
-        let result = validate_transpose_constraints(
-            &[1, 64, 128, 128], &[1, 0, 2, 3]
-        );
+        let result = validate_transpose_constraints(&[1, 64, 128, 128], &[1, 0, 2, 3]);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "nc_channel_must_be_1");
     }
@@ -2818,32 +2750,24 @@ mod tests {
 
     #[test]
     fn test_cast_fp16_to_fp32_ok() {
-        assert!(validate_cast_constraints(
-            MilDtype::Fp16, MilDtype::Fp32, AneFamily::A14
-        ).is_ok());
+        assert!(validate_cast_constraints(MilDtype::Fp16, MilDtype::Fp32, AneFamily::A14).is_ok());
     }
 
     #[test]
     fn test_cast_int8_to_fp16_ok() {
-        assert!(validate_cast_constraints(
-            MilDtype::Int8, MilDtype::Fp16, AneFamily::A14
-        ).is_ok());
+        assert!(validate_cast_constraints(MilDtype::Int8, MilDtype::Fp16, AneFamily::A14).is_ok());
     }
 
     #[test]
     fn test_cast_from_int32_rejected() {
-        let result = validate_cast_constraints(
-            MilDtype::Int32, MilDtype::Fp16, AneFamily::A14
-        );
+        let result = validate_cast_constraints(MilDtype::Int32, MilDtype::Fp16, AneFamily::A14);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "invalid_input_dtype");
     }
 
     #[test]
     fn test_cast_to_int32_rejected() {
-        let result = validate_cast_constraints(
-            MilDtype::Fp16, MilDtype::Int32, AneFamily::A14
-        );
+        let result = validate_cast_constraints(MilDtype::Fp16, MilDtype::Int32, AneFamily::A14);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "invalid_output_dtype");
     }
@@ -2852,48 +2776,36 @@ mod tests {
 
     #[test]
     fn test_dequantize_int8_to_fp16_ok() {
-        assert!(validate_constexpr_dequantize_constraints(
-            "int8", "fp16", -1, false
-        ).is_ok());
+        assert!(validate_constexpr_dequantize_constraints("int8", "fp16", -1, false).is_ok());
     }
 
     #[test]
     fn test_dequantize_uint8_to_fp16_ok() {
-        assert!(validate_constexpr_dequantize_constraints(
-            "uint8", "fp16", -1, false
-        ).is_ok());
+        assert!(validate_constexpr_dequantize_constraints("uint8", "fp16", -1, false).is_ok());
     }
 
     #[test]
     fn test_dequantize_int4_per_tensor_ok() {
-        assert!(validate_constexpr_dequantize_constraints(
-            "int4", "fp16", -1, true
-        ).is_ok());
+        assert!(validate_constexpr_dequantize_constraints("int4", "fp16", -1, true).is_ok());
     }
 
     #[test]
     fn test_dequantize_int4_per_cout_rejected() {
-        let result = validate_constexpr_dequantize_constraints(
-            "int4", "fp16", 1, true
-        );
+        let result = validate_constexpr_dequantize_constraints("int4", "fp16", 1, true);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "no_int4_per_cout_dequant");
     }
 
     #[test]
     fn test_dequantize_non_fp16_output_rejected() {
-        let result = validate_constexpr_dequantize_constraints(
-            "int8", "fp32", -1, false
-        );
+        let result = validate_constexpr_dequantize_constraints("int8", "fp32", -1, false);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "dequant_output_must_be_fp16");
     }
 
     #[test]
     fn test_dequantize_invalid_input_format_rejected() {
-        let result = validate_constexpr_dequantize_constraints(
-            "fp32", "fp16", -1, false
-        );
+        let result = validate_constexpr_dequantize_constraints("fp32", "fp16", -1, false);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().constraint, "dequant_input_format");
     }

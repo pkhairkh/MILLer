@@ -356,8 +356,8 @@ def fallback_file_structure(mlpackage_path: str) -> Dict[str, Any]:
           - weight_file_count: int
           - estimated_weight_bytes: int
     """
-    from pathlib import Path
     import os
+    from pathlib import Path
 
     pkg_path = Path(mlpackage_path)
     if not pkg_path.exists() or not pkg_path.is_dir():

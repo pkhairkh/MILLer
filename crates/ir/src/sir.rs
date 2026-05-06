@@ -1128,22 +1128,15 @@ impl SirGraph {
 
             // Validate dtypes inside ops
             let dtype_err = Self::validate_op_dtypes(&node.op, node_id);
-            if let Err(e) = dtype_err {
-                return Err(e);
-            }
+            dtype_err?;
 
             // Validate node references inside ops
             let ref_err = Self::validate_op_refs(&node.op, node_id, &seen_ids);
-            if let Err(e) = ref_err {
-                return Err(e);
-            }
+            ref_err?;
 
             // Validate palette_bits if present (T-P5-08: moved to target_annotation)
             if let Err(msg) = node.target_annotation.validate_palette_bits() {
-                return Err(VerifyError::InvalidDtype {
-                    node_id: node_id.to_string(),
-                    dtype: msg,
-                });
+                return Err(VerifyError::InvalidDtype { node_id: node_id.to_string(), dtype: msg });
             }
         }
 
@@ -1185,15 +1178,21 @@ impl SirOp {
             SirOp::LinearProjection { input, .. } => vec![input],
             SirOp::AttentionBlock { q, k, v, mask, rope, .. } => {
                 let mut refs = vec![q, k, v];
-                if let Some(m) = mask { refs.push(m); }
-                if let Some(r) = rope { refs.push(r); }
+                if let Some(m) = mask {
+                    refs.push(m);
+                }
+                if let Some(r) = rope {
+                    refs.push(r);
+                }
                 refs
             }
             SirOp::RMSNorm { input, .. } => vec![input],
             SirOp::RoPETransform { input, .. } => vec![input],
             SirOp::DecodeStep { token, position, .. } => {
                 let mut refs = vec![token];
-                if let Some(p) = position { refs.push(p); }
+                if let Some(p) = position {
+                    refs.push(p);
+                }
                 refs
             }
             SirOp::Sampler { logits, .. } => vec![logits],
@@ -1334,12 +1333,16 @@ impl SirOp {
             SirOp::GatherAlongAxis { input, indices, .. } => vec![input, indices],
             SirOp::GatherNd { input, indices } => vec![input, indices],
             SirOp::Scatter { input, indices, updates, .. } => vec![input, indices, updates],
-            SirOp::ScatterAlongAxis { input, indices, updates, .. } => vec![input, indices, updates],
+            SirOp::ScatterAlongAxis { input, indices, updates, .. } => {
+                vec![input, indices, updates]
+            }
             SirOp::ScatterNd { input, indices, updates } => vec![input, indices, updates],
             SirOp::NonMaximumSuppression { boxes, scores, .. } => vec![boxes, scores],
             SirOp::ScaledDotProductAttention { query, key, value, attention_mask, .. } => {
                 let mut refs = vec![query, key, value];
-                if let Some(m) = attention_mask { refs.push(m); }
+                if let Some(m) = attention_mask {
+                    refs.push(m);
+                }
                 refs
             }
             SirOp::Quantize { input, .. } => vec![input],
@@ -1524,10 +1527,7 @@ mod tests {
     fn make_simple_graph() -> SirGraph {
         let const_node = SirNode {
             id: sid("const1"),
-            op: SirOp::Const {
-                value_path: "weights/embed.bin".into(),
-                dtype: MilDtype::Fp16,
-            },
+            op: SirOp::Const { value_path: "weights/embed.bin".into(), dtype: MilDtype::Fp16 },
             name: "const1".into(),
             metadata: SirMetadata {
                 task_origin: TaskOrigin::Synthetic,
@@ -1539,10 +1539,7 @@ mod tests {
         };
         let add_node = SirNode {
             id: sid("add1"),
-            op: SirOp::Add {
-                x: sid("const1"),
-                y: sid("const1"),
-            },
+            op: SirOp::Add { x: sid("const1"), y: sid("const1") },
             name: "add1".into(),
             metadata: SirMetadata {
                 task_origin: TaskOrigin::Synthetic,
@@ -1581,7 +1578,10 @@ mod tests {
             target_annotation: SirTargetAnnotation::default(),
         });
         let err = g.verify().unwrap_err();
-        assert_eq!(err, super::super::common::VerifyError::DuplicateNodeId { node_id: "add1".into() });
+        assert_eq!(
+            err,
+            super::super::common::VerifyError::DuplicateNodeId { node_id: "add1".into() }
+        );
     }
 
     #[test]
@@ -1589,25 +1589,28 @@ mod tests {
         let mut g = make_simple_graph();
         g.nodes[0].name = String::new();
         let err = g.verify().unwrap_err();
-        assert_eq!(err, super::super::common::VerifyError::MissingField {
-            node_id: "const1".into(),
-            field: "name".into(),
-        });
+        assert_eq!(
+            err,
+            super::super::common::VerifyError::MissingField {
+                node_id: "const1".into(),
+                field: "name".into(),
+            }
+        );
     }
 
     #[test]
     fn test_sir_verify_unresolved_ref() {
         let mut g = make_simple_graph();
         // Change the add to reference a non-existent node
-        g.nodes[1].op = SirOp::Add {
-            x: sid("nonexistent"),
-            y: sid("const1"),
-        };
+        g.nodes[1].op = SirOp::Add { x: sid("nonexistent"), y: sid("const1") };
         let err = g.verify().unwrap_err();
-        assert_eq!(err, super::super::common::VerifyError::UnresolvedReference {
-            node_id: "add1".into(),
-            reference: "nonexistent".into(),
-        });
+        assert_eq!(
+            err,
+            super::super::common::VerifyError::UnresolvedReference {
+                node_id: "add1".into(),
+                reference: "nonexistent".into(),
+            }
+        );
     }
 
     #[test]

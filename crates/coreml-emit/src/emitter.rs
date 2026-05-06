@@ -120,7 +120,9 @@ impl ProtoEmitter {
     ///
     /// Use `ValidationPolicy::warn_only()` for development/testing where
     /// small test tensors don't meet the 49KB IOSurface minimum.
-    pub fn with_validation_policy(validation_policy: crate::mir_to_proto::ValidationPolicy) -> Self {
+    pub fn with_validation_policy(
+        validation_policy: crate::mir_to_proto::ValidationPolicy,
+    ) -> Self {
         Self {
             spec_version: SpecVersion::V10,
             compute_unit: CoreMlComputeUnit::CpuAndNe,

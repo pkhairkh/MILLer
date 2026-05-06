@@ -608,16 +608,16 @@ mod tests {
         let expected: Vec<(&str, AneFamily)> = vec![
             ("V4", AneFamily::A11Legacy),
             ("V5", AneFamily::A12),
-            ("V6", AneFamily::A13),   // V-001 fix: was "A14" in seed, must be "A13"
+            ("V6", AneFamily::A13), // V-001 fix: was "A14" in seed, must be "A13"
             ("V7", AneFamily::A14),
             ("V8", AneFamily::A15),
             ("V10", AneFamily::A16),
-            ("V11", AneFamily::A17),  // V-002 fix: was "A16" in seed, must be "A17"
-            ("V17", AneFamily::A14),  // M1 is A14-class
+            ("V11", AneFamily::A17), // V-002 fix: was "A16" in seed, must be "A17"
+            ("V17", AneFamily::A14), // M1 is A14-class
             ("V19", AneFamily::A18),
             ("V20", AneFamily::A18),
             ("V26", AneFamily::A18),
-            ("Vu1", AneFamily::A17),  // T-P6-04: uANE maps to A17 family
+            ("Vu1", AneFamily::A17), // T-P6-04: uANE maps to A17 family
         ];
 
         for (rev_str, expected_family) in &expected {
@@ -657,7 +657,9 @@ mod tests {
                 recovered,
                 Some(*family),
                 "Family {:?} round-trip failed: discriminant {} → {:?}",
-                family, disc, recovered
+                family,
+                disc,
+                recovered
             );
         }
     }
@@ -666,8 +668,11 @@ mod tests {
     fn test_minimum_family_values_sequential() {
         // T-117: Discriminant values must be 0–7, sequential, matching ANEC binary
         let values: Vec<u8> = ALL_FAMILIES.iter().map(|f| f.minimum_family_value()).collect();
-        assert_eq!(values, vec![0, 1, 2, 3, 4, 5, 6, 7],
-            "MinimumFamily discriminants must be sequential 0–7 matching ANEC binary");
+        assert_eq!(
+            values,
+            vec![0, 1, 2, 3, 4, 5, 6, 7],
+            "MinimumFamily discriminants must be sequential 0–7 matching ANEC binary"
+        );
     }
 
     #[test]

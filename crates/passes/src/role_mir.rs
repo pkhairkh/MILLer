@@ -135,18 +135,22 @@ impl RoleMirBuilder {
                     .output_specs
                     .first()
                     .map(|s| s.shape.iter().product::<usize>())
-                    .ok_or_else(|| anyhow::anyhow!(
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
                         "EntryLinear shard '{}' has no output_specs — cannot determine output_dim",
                         spec.shard_name
-                    ))?;
+                    )
+                    })?;
                 let input_dim = spec
                     .input_specs
                     .first()
                     .map(|s| s.shape.iter().product::<usize>())
-                    .ok_or_else(|| anyhow::anyhow!(
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
                         "EntryLinear shard '{}' has no input_specs — cannot determine input_dim",
                         spec.shard_name
-                    ))?;
+                    )
+                    })?;
 
                 nodes.push(MirNode {
                     id: weight_id.clone(),
@@ -159,7 +163,7 @@ impl RoleMirBuilder {
                     shape: vec![output_dim, input_dim],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 let linear_name = format!("{}_linear", spec.shard_name);
@@ -176,7 +180,7 @@ impl RoleMirBuilder {
                     shape: spec.output_specs.first().map(|s| s.shape.clone()).unwrap_or_default(),
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 // Entry-specific: add reshape if needed for handoff
@@ -195,7 +199,7 @@ impl RoleMirBuilder {
                             shape: target.clone(),
                             compute_unit_hint: Some(compute_hint.clone()),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         });
                         reshape_id
                     } else {
@@ -241,7 +245,7 @@ impl RoleMirBuilder {
                     shape: vec![hidden_dim, hidden_dim],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 let linear_name = format!("{}_linear", spec.shard_name);
@@ -258,7 +262,7 @@ impl RoleMirBuilder {
                     shape: spec.output_specs.first().map(|s| s.shape.clone()).unwrap_or_default(),
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 // Interior-specific: activation function (the key difference from Entry/Exit)
@@ -281,7 +285,7 @@ impl RoleMirBuilder {
                                 .unwrap_or_default(),
                             compute_unit_hint: Some(compute_hint.clone()),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         });
                         gelu_id
                     }
@@ -299,7 +303,7 @@ impl RoleMirBuilder {
                                 .unwrap_or_default(),
                             compute_unit_hint: Some(compute_hint.clone()),
                             air_source: None,
-                        target_annotation: Default::default(),
+                            target_annotation: Default::default(),
                         });
                         relu_id
                     }
@@ -350,7 +354,7 @@ impl RoleMirBuilder {
                     shape: vec![output_dim, input_dim],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 let linear_name = format!("{}_linear", spec.shard_name);
@@ -367,7 +371,7 @@ impl RoleMirBuilder {
                     shape: spec.output_specs.first().map(|s| s.shape.clone()).unwrap_or_default(),
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 // Exit-specific: LayerNorm (the key difference from Entry/Interior)
@@ -388,7 +392,7 @@ impl RoleMirBuilder {
                     shape: spec.output_specs.first().map(|s| s.shape.clone()).unwrap_or_default(),
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 Ok(MirGraph {
@@ -419,7 +423,7 @@ impl RoleMirBuilder {
                     shape: vec![qkv_dim, embed_dim],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 let linear_name = format!("{}_qkv_linear", spec.shard_name);
@@ -436,7 +440,7 @@ impl RoleMirBuilder {
                     shape: vec![1, qkv_dim],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 // Extract Q, K, V from QKV projection output using slice_by_index.
@@ -462,7 +466,7 @@ impl RoleMirBuilder {
                     shape: vec![1, embed_dim_val],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 let k_id = MirNodeId(format!("{}_k", spec.shard_name));
@@ -482,7 +486,7 @@ impl RoleMirBuilder {
                     shape: vec![1, embed_dim_val],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 let v_id = MirNodeId(format!("{}_v", spec.shard_name));
@@ -502,7 +506,7 @@ impl RoleMirBuilder {
                     shape: vec![1, embed_dim_val],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 Ok(MirGraph {
@@ -547,7 +551,7 @@ impl RoleMirBuilder {
                         shape: kv_cache_shape.clone(),
                         compute_unit_hint: Some(compute_hint.clone()),
                         air_source: None,
-                    target_annotation: Default::default(),
+                        target_annotation: Default::default(),
                     });
 
                     let read_v_name = format!("{}_read_v_cache", spec.shard_name);
@@ -564,7 +568,7 @@ impl RoleMirBuilder {
                         shape: kv_cache_shape.clone(),
                         compute_unit_hint: Some(compute_hint.clone()),
                         air_source: None,
-                    target_annotation: Default::default(),
+                        target_annotation: Default::default(),
                     });
                 }
 
@@ -585,7 +589,7 @@ impl RoleMirBuilder {
                     shape: spec.output_specs.first().map(|s| s.shape.clone()).unwrap_or_default(),
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 if *stateful {
@@ -603,7 +607,7 @@ impl RoleMirBuilder {
                         shape: vec![],
                         compute_unit_hint: Some(compute_hint.clone()),
                         air_source: None,
-                    target_annotation: Default::default(),
+                        target_annotation: Default::default(),
                     });
                 }
 
@@ -640,7 +644,7 @@ impl RoleMirBuilder {
                     shape: vec![embed_dim, embed_dim],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 let linear_name = format!("{}_out_linear", spec.shard_name);
@@ -657,7 +661,7 @@ impl RoleMirBuilder {
                     shape: spec.output_specs.first().map(|s| s.shape.clone()).unwrap_or_default(),
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 let output_id = if *with_norm {
@@ -682,7 +686,7 @@ impl RoleMirBuilder {
                             .unwrap_or_default(),
                         compute_unit_hint: Some(compute_hint.clone()),
                         air_source: None,
-                    target_annotation: Default::default(),
+                        target_annotation: Default::default(),
                     });
                     ln_id
                 } else {
@@ -734,7 +738,7 @@ impl RoleMirBuilder {
                         }),
                     compute_unit_hint: Some(compute_hint.clone()), // IO compute hint from spec
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 let gather_name = format!("{}_embed_gather", spec.shard_name);
@@ -753,7 +757,7 @@ impl RoleMirBuilder {
                     shape: spec.output_specs.first().map(|s| s.shape.clone()).unwrap_or_default(),
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 Ok(MirGraph {
@@ -778,7 +782,7 @@ impl RoleMirBuilder {
                     shape: vec![1, *k],
                     compute_unit_hint: Some(compute_hint.clone()), // Sampler compute hint from spec
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 let softmax_name = format!("{}_softmax", spec.shard_name);
@@ -791,7 +795,7 @@ impl RoleMirBuilder {
                     shape: vec![1, *k],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 Ok(MirGraph {
@@ -838,7 +842,7 @@ impl RoleMirBuilder {
                     shape: vec![output_dim, input_dim],
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 let linear_name = format!("{}_linear", spec.shard_name);
@@ -855,7 +859,7 @@ impl RoleMirBuilder {
                     shape: spec.output_specs.first().map(|s| s.shape.clone()).unwrap_or_default(),
                     compute_unit_hint: Some(compute_hint.clone()),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 });
 
                 Ok(MirGraph {
@@ -1291,10 +1295,7 @@ mod tests {
             input_specs: vec![],
             output_specs: vec![],
             compute_units: ComputeUnitHint::CPUAndNE,
-            op_profile: ShardOpProfile::EntryLinear {
-                needs_reshape: false,
-                reshape_target: None,
-            },
+            op_profile: ShardOpProfile::EntryLinear { needs_reshape: false, reshape_target: None },
         };
         let builder = RoleMirBuilder::with_arch_config(ModelArchConfig::qwen3_0_6b());
         let result = builder.build_mir(&spec);

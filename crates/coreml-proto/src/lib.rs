@@ -1476,9 +1476,25 @@ pub mod mir_compat {
                 MirOpCompat::ReduceSum { name, x, axes, keep_dims } => {
                     MirOpCompat::ReduceSum { name, x: f(x), axes, keep_dims }
                 }
-                MirOpCompat::Conv { name, x, weight, pad_type, groups, kernel_scale, kernel_zero_point, kernel_palettized_lut } => {
-                    MirOpCompat::Conv { name, x: f(x), weight: f(weight), pad_type, groups, kernel_scale, kernel_zero_point, kernel_palettized_lut }
-                }
+                MirOpCompat::Conv {
+                    name,
+                    x,
+                    weight,
+                    pad_type,
+                    groups,
+                    kernel_scale,
+                    kernel_zero_point,
+                    kernel_palettized_lut,
+                } => MirOpCompat::Conv {
+                    name,
+                    x: f(x),
+                    weight: f(weight),
+                    pad_type,
+                    groups,
+                    kernel_scale,
+                    kernel_zero_point,
+                    kernel_palettized_lut,
+                },
                 MirOpCompat::StateWrite { name, state_ref, value } => {
                     MirOpCompat::StateWrite { name, state_ref: f(state_ref), value: f(value) }
                 }
@@ -1759,13 +1775,7 @@ pub mod mir_compat {
                     groups,
                 },
                 MirOpCompat::AnecScaledElementwise { name, x, y, scale_a, scale_b } => {
-                    MirOpCompat::AnecScaledElementwise {
-                        name,
-                        x: f(x),
-                        y: f(y),
-                        scale_a,
-                        scale_b,
-                    }
+                    MirOpCompat::AnecScaledElementwise { name, x: f(x), y: f(y), scale_a, scale_b }
                 }
                 // T-P5-10: Remap input references in Unsupported ops
                 MirOpCompat::Unsupported { op_kind, name, params_json, inputs } => {
@@ -1873,9 +1883,25 @@ pub mod mir_compat {
                 MirOpCompat::ReduceSum { name: _, x, axes, keep_dims } => {
                     MirOpCompat::ReduceSum { name: new_name, x, axes, keep_dims }
                 }
-                MirOpCompat::Conv { name: _, x, weight, pad_type, groups, kernel_scale, kernel_zero_point, kernel_palettized_lut } => {
-                    MirOpCompat::Conv { name: new_name, x, weight, pad_type, groups, kernel_scale, kernel_zero_point, kernel_palettized_lut }
-                }
+                MirOpCompat::Conv {
+                    name: _,
+                    x,
+                    weight,
+                    pad_type,
+                    groups,
+                    kernel_scale,
+                    kernel_zero_point,
+                    kernel_palettized_lut,
+                } => MirOpCompat::Conv {
+                    name: new_name,
+                    x,
+                    weight,
+                    pad_type,
+                    groups,
+                    kernel_scale,
+                    kernel_zero_point,
+                    kernel_palettized_lut,
+                },
                 MirOpCompat::StateWrite { name: _, state_ref, value } => {
                     MirOpCompat::StateWrite { name: new_name, state_ref, value }
                 }
@@ -2919,8 +2945,12 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             // These are ANE-internal operations that do not map to MIL builder
             // calls. They are emitted as no-ops in proto emission because the
             // ANEC binary handles them internally during model compilation.
-            MirOp::AnecFusedConvActivate { name, .. } => unsupported("anec_fused_conv_activate", &name, &op_json),
-            MirOp::AnecFusedLinearActivate { name, .. } => unsupported("anec_fused_linear_activate", &name, &op_json),
+            MirOp::AnecFusedConvActivate { name, .. } => {
+                unsupported("anec_fused_conv_activate", &name, &op_json)
+            }
+            MirOp::AnecFusedLinearActivate { name, .. } => {
+                unsupported("anec_fused_linear_activate", &name, &op_json)
+            }
             // Future MirOp variants added via #[non_exhaustive]
             _ => unsupported("unknown_mir_op", "", &op_json),
         }
@@ -4484,10 +4514,7 @@ fn mir_op_to_apple_ops(
             // Emit const op for transpose_x (always false)
             let mut tx_const_attrs = HashMap::new();
             add_name_attribute(&mut tx_const_attrs, &transpose_x_name);
-            tx_const_attrs.insert(
-                "val".to_string(),
-                make_immediate_bool_value(false),
-            );
+            tx_const_attrs.insert("val".to_string(), make_immediate_bool_value(false));
             let tx_const_op = apple_proto::mil_spec::Operation {
                 r#type: "const".to_string(),
                 inputs: HashMap::new(),
@@ -4503,10 +4530,7 @@ fn mir_op_to_apple_ops(
             // Emit const op for transpose_y
             let mut ty_const_attrs = HashMap::new();
             add_name_attribute(&mut ty_const_attrs, &transpose_y_name);
-            ty_const_attrs.insert(
-                "val".to_string(),
-                make_immediate_bool_value(*transpose_y),
-            );
+            ty_const_attrs.insert("val".to_string(), make_immediate_bool_value(*transpose_y));
             let ty_const_op = apple_proto::mil_spec::Operation {
                 r#type: "const".to_string(),
                 inputs: HashMap::new(),
@@ -5113,7 +5137,16 @@ fn mir_op_to_apple_ops(
                 attributes,
             }]
         }
-        mir_compat::MirOpCompat::Conv { name, x, weight, pad_type, groups, kernel_scale, kernel_zero_point, kernel_palettized_lut } => {
+        mir_compat::MirOpCompat::Conv {
+            name,
+            x,
+            weight,
+            pad_type,
+            groups,
+            kernel_scale,
+            kernel_zero_point,
+            kernel_palettized_lut,
+        } => {
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("weight".to_string(), make_name_arg(weight));
@@ -5165,10 +5198,7 @@ fn mir_op_to_apple_ops(
                 let scale_const_name = format!("{name}_kernel_scale_0");
                 let mut scale_attrs = HashMap::new();
                 add_name_attribute(&mut scale_attrs, &scale_const_name);
-                scale_attrs.insert(
-                    "val".to_string(),
-                    make_immediate_float32_value(*scale),
-                );
+                scale_attrs.insert("val".to_string(), make_immediate_float32_value(*scale));
                 let scale_const_op = apple_proto::mil_spec::Operation {
                     r#type: "const".to_string(),
                     inputs: HashMap::new(),
@@ -5188,10 +5218,7 @@ fn mir_op_to_apple_ops(
                 let zp_const_name = format!("{name}_kernel_zero_point_0");
                 let mut zp_attrs = HashMap::new();
                 add_name_attribute(&mut zp_attrs, &zp_const_name);
-                zp_attrs.insert(
-                    "val".to_string(),
-                    make_immediate_int32_value(vec![*zp], &[]),
-                );
+                zp_attrs.insert("val".to_string(), make_immediate_int32_value(vec![*zp], &[]));
                 let zp_const_op = apple_proto::mil_spec::Operation {
                     r#type: "const".to_string(),
                     inputs: HashMap::new(),
@@ -5213,10 +5240,7 @@ fn mir_op_to_apple_ops(
                 add_name_attribute(&mut lut_attrs, &lut_const_name);
                 // The LUT references a weight entry by name — emit as a named const
                 // that resolves to the palettized LUT weight data.
-                lut_attrs.insert(
-                    "val".to_string(),
-                    make_immediate_string_value(lut_name.clone()),
-                );
+                lut_attrs.insert("val".to_string(), make_immediate_string_value(lut_name.clone()));
                 let lut_const_op = apple_proto::mil_spec::Operation {
                     r#type: "const".to_string(),
                     inputs: HashMap::new(),
@@ -6615,10 +6639,13 @@ fn mir_op_to_apple_ops(
             let stride_shape: Vec<u64> = vec![strides.len() as u64];
             let mut stride_attrs = HashMap::new();
             add_name_attribute(&mut stride_attrs, &stride_const_name);
-            stride_attrs.insert("val".to_string(), make_immediate_int32_value(
-                strides.iter().map(|&d| d as i32).collect(),
-                &stride_shape,
-            ));
+            stride_attrs.insert(
+                "val".to_string(),
+                make_immediate_int32_value(
+                    strides.iter().map(|&d| d as i32).collect(),
+                    &stride_shape,
+                ),
+            );
             ops.push(apple_proto::mil_spec::Operation {
                 r#type: "const".to_string(),
                 inputs: HashMap::new(),
@@ -6635,10 +6662,13 @@ fn mir_op_to_apple_ops(
             let pad_shape: Vec<u64> = vec![pad_amounts.len() as u64];
             let mut pad_attrs = HashMap::new();
             add_name_attribute(&mut pad_attrs, &pad_const_name);
-            pad_attrs.insert("val".to_string(), make_immediate_int32_value(
-                pad_amounts.iter().map(|&d| d as i32).collect(),
-                &pad_shape,
-            ));
+            pad_attrs.insert(
+                "val".to_string(),
+                make_immediate_int32_value(
+                    pad_amounts.iter().map(|&d| d as i32).collect(),
+                    &pad_shape,
+                ),
+            );
             ops.push(apple_proto::mil_spec::Operation {
                 r#type: "const".to_string(),
                 inputs: HashMap::new(),
@@ -6655,10 +6685,13 @@ fn mir_op_to_apple_ops(
             let dil_shape: Vec<u64> = vec![dilations.len() as u64];
             let mut dil_attrs = HashMap::new();
             add_name_attribute(&mut dil_attrs, &dil_const_name);
-            dil_attrs.insert("val".to_string(), make_immediate_int32_value(
-                dilations.iter().map(|&d| d as i32).collect(),
-                &dil_shape,
-            ));
+            dil_attrs.insert(
+                "val".to_string(),
+                make_immediate_int32_value(
+                    dilations.iter().map(|&d| d as i32).collect(),
+                    &dil_shape,
+                ),
+            );
             ops.push(apple_proto::mil_spec::Operation {
                 r#type: "const".to_string(),
                 inputs: HashMap::new(),
@@ -6674,7 +6707,8 @@ fn mir_op_to_apple_ops(
             let groups_const_name = format!("{name}_groups");
             let mut groups_attrs = HashMap::new();
             add_name_attribute(&mut groups_attrs, &groups_const_name);
-            groups_attrs.insert("val".to_string(), make_immediate_int32_value(vec![*groups as i32], &[]));
+            groups_attrs
+                .insert("val".to_string(), make_immediate_int32_value(vec![*groups as i32], &[]));
             ops.push(apple_proto::mil_spec::Operation {
                 r#type: "const".to_string(),
                 inputs: HashMap::new(),
@@ -6721,7 +6755,7 @@ fn mir_op_to_apple_ops(
                 "silu" => "silu",
                 "gelu" => "gelu",
                 "linear" => "identity", // linear activation = no-op
-                other => other, // fallback: use the activation name directly
+                other => other,         // fallback: use the activation name directly
             };
 
             let mut act_inputs = HashMap::new();
@@ -6747,13 +6781,7 @@ fn mir_op_to_apple_ops(
 
         // AnecScaledElementwise: decompose to mul(x, scale_a) + mul(y, scale_b).
         // Core ML proto doesn't have a native scaled elementwise op.
-        mir_compat::MirOpCompat::AnecScaledElementwise {
-            name,
-            x,
-            y,
-            scale_a,
-            scale_b,
-        } => {
+        mir_compat::MirOpCompat::AnecScaledElementwise { name, x, y, scale_a, scale_b } => {
             let mut ops: Vec<apple_proto::mil_spec::Operation> = Vec::new();
 
             // Emit const for scale_a

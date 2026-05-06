@@ -12,7 +12,7 @@ use ane_ir::mir::{MilDtype, MirGraph, MirOp};
 use ane_ir::pir::PirGraph;
 use ane_ir::sir::{SirGraph, SirOp};
 use ane_passes::knowledge_query::NoKnowledge;
-use ane_passes::legality_rewrite::{DecompositionContext, AneLegalityRewritePass};
+use ane_passes::legality_rewrite::{AneLegalityRewritePass, DecompositionContext};
 use ane_passes::mil_lower::MilLowerPass;
 use ane_passes::shard_plan::ShardPlan;
 use ane_trace::graph::TracedGraph;

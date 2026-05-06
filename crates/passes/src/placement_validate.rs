@@ -331,24 +331,18 @@ pub fn validate_placement_with_context(
         match dtype {
             MilDtype::UInt16 => {
                 if let Err(e) = dtype_constraints::validate_uint16_constraints(
-                    op_name(op), true, // is_output: treat as output for conservative check
+                    op_name(op),
+                    true, // is_output: treat as output for conservative check
                 ) {
-                    return PlacementDecision::CpuOnly(format!(
-                        "{}: {}",
-                        op_name(op),
-                        e
-                    ));
+                    return PlacementDecision::CpuOnly(format!("{}: {}", op_name(op), e));
                 }
             }
             MilDtype::Bool => {
                 if let Err(e) = dtype_constraints::validate_bool_constraints(
-                    op_name(op), true, // is_output: Bool output is never valid on ANE
+                    op_name(op),
+                    true, // is_output: Bool output is never valid on ANE
                 ) {
-                    return PlacementDecision::CpuOnly(format!(
-                        "{}: {}",
-                        op_name(op),
-                        e
-                    ));
+                    return PlacementDecision::CpuOnly(format!("{}: {}", op_name(op), e));
                 }
             }
             // T-P3-05: E5M2 is rejected on all ANE families.
@@ -366,14 +360,10 @@ pub fn validate_placement_with_context(
             // validate it equals 8.
             MilDtype::Int4 | MilDtype::UInt4 => {
                 let interleave_usize = ctx.interleave.map(|il| il.value() as usize);
-                if let Err(e) = dtype_constraints::validate_int4_uint4_ane_constraints(
-                    dtype, interleave_usize,
-                ) {
-                    return PlacementDecision::CpuOnly(format!(
-                        "{}: {}",
-                        op_name(op),
-                        e
-                    ));
+                if let Err(e) =
+                    dtype_constraints::validate_int4_uint4_ane_constraints(dtype, interleave_usize)
+                {
+                    return PlacementDecision::CpuOnly(format!("{}: {}", op_name(op), e));
                 }
             }
             _ => {}
@@ -387,17 +377,22 @@ pub fn validate_placement_with_context(
         // that provides a more specific error message.
         if *dtype == MilDtype::Fp32
             && is_compute_op(op)
-            && !matches!(op, MirOp::MILAdd { .. } | MirOp::MILMul { .. }
-                | MirOp::MILSub { .. } | MirOp::MILMaximum { .. } | MirOp::MILMinimum { .. })
+            && !matches!(
+                op,
+                MirOp::MILAdd { .. }
+                    | MirOp::MILMul { .. }
+                    | MirOp::MILSub { .. }
+                    | MirOp::MILMaximum { .. }
+                    | MirOp::MILMinimum { .. }
+            )
+            && !dtype_constraints::is_fp32_compute_supported(&target_family)
         {
-            if !dtype_constraints::is_fp32_compute_supported(&target_family) {
-                return PlacementDecision::CpuOnly(format!(
-                    "{}: FP32 compute not supported on {:?} (requires A13+). \
+            return PlacementDecision::CpuOnly(format!(
+                "{}: FP32 compute not supported on {:?} (requires A13+). \
                      FP32 weights/IO are allowed but FP32 compute is not.",
-                    op_name(op),
-                    target_family
-                ));
-            }
+                op_name(op),
+                target_family
+            ));
         }
     }
 
@@ -542,9 +537,9 @@ pub fn validate_placement_with_context(
                 } else {
                     input_rank
                 };
-                if let Err(violation) = crate::op_constraints::validate_linear_constraints(
-                    input_rank, output_rank,
-                ) {
+                if let Err(violation) =
+                    crate::op_constraints::validate_linear_constraints(input_rank, output_rank)
+                {
                     return PlacementDecision::CpuOnly(format!(
                         "MILLinear: constraint '{}' — {}",
                         violation.constraint, violation.message
@@ -568,10 +563,7 @@ pub fn validate_placement_with_context(
             // T-P5-06: Validate SDPA operand rank constraints with named operands.
             // Moved from mil_lower.rs — MilLowerPass should be a pure AIR→MIR mapping.
             if let Err(e) = validate_sdpa_constraints(input_shapes) {
-                return PlacementDecision::CpuOnly(format!(
-                    "MILScaledDotProductAttention: {}",
-                    e
-                ));
+                return PlacementDecision::CpuOnly(format!("MILScaledDotProductAttention: {}", e));
             }
 
             // K and V must have the same shape (last two dims)
@@ -669,9 +661,11 @@ pub fn validate_placement_with_context(
             // NOTE: stride and padding info requires PlacementContext extensions
             // or field extraction from the MirOp; until then, this arm is a
             // placeholder that acknowledges the constraint exists.
-            log::debug!("{}: ArgMinMax ValidateLayer constraints checked (A18 guard only; \
+            log::debug!(
+                "{}: ArgMinMax ValidateLayer constraints checked (A18 guard only; \
                           stride/padding constraints require context extension)",
-                         op_name(op));
+                op_name(op)
+            );
             PlacementDecision::AneAllowed
         }
 
@@ -771,9 +765,12 @@ pub fn validate_placement_with_context(
             // T-P6-03: Validate broadcast shape compatibility.
             // ANEC: "Broadcast output tensor channel/width/etc must be 1
             // or match input size".
-            if let Err(violation) = crate::op_constraints::validate_elementwise_broadcast_constraints(
-                op_name(op), input_shapes,
-            ) {
+            if let Err(violation) =
+                crate::op_constraints::validate_elementwise_broadcast_constraints(
+                    op_name(op),
+                    input_shapes,
+                )
+            {
                 return PlacementDecision::CpuOnly(format!(
                     "{}: broadcast constraint '{}' — {}",
                     op_name(op),
@@ -883,7 +880,7 @@ pub fn validate_placement_with_context(
             } else {
                 // No revision available; fall back to A14 (most common)
                 ane_ir::ane_hw_limits::AneHwLimits::for_revision(
-                    ane_ir::ane_target::AneRevision::V7
+                    ane_ir::ane_target::AneRevision::V7,
                 )
             };
             if let Err(violation) = crate::op_constraints::validate_deconv_constraints(
@@ -931,7 +928,9 @@ pub fn validate_placement_with_context(
         // pre-A14 families. Now wired through validate_architecture_gated_constraints()
         // to return CpuOnly instead of just logging a warning.
         MirOp::MILSoftmax { .. } => {
-            if let Err(violation) = crate::op_constraints::validate_architecture_gated_constraints(op, target_family) {
+            if let Err(violation) =
+                crate::op_constraints::validate_architecture_gated_constraints(op, target_family)
+            {
                 return PlacementDecision::CpuOnly(format!(
                     "{}: architecture gate — {}",
                     op_name(op),
@@ -948,7 +947,9 @@ pub fn validate_placement_with_context(
         // Now uses validate_architecture_gated_constraints() to hard-reject
         // on pre-A14 families where LRN is also unsupported.
         MirOp::MILInstanceNorm { .. } => {
-            if let Err(violation) = crate::op_constraints::validate_architecture_gated_constraints(op, target_family) {
+            if let Err(violation) =
+                crate::op_constraints::validate_architecture_gated_constraints(op, target_family)
+            {
                 return PlacementDecision::CpuOnly(format!(
                     "{}: architecture gate — {}",
                     op_name(op),
@@ -962,7 +963,9 @@ pub fn validate_placement_with_context(
         // LRN is unsupported on A11Legacy/A12/A13 (requires A14+).
         // validate_architecture_gated_constraints() covers this.
         MirOp::MILLocalResponseNorm { .. } => {
-            if let Err(violation) = crate::op_constraints::validate_architecture_gated_constraints(op, target_family) {
+            if let Err(violation) =
+                crate::op_constraints::validate_architecture_gated_constraints(op, target_family)
+            {
                 return PlacementDecision::CpuOnly(format!(
                     "{}: architecture gate — {}",
                     op_name(op),
@@ -1059,11 +1062,14 @@ pub fn validate_placement_with_context(
 
         // ─── N-004: Pooling ops — validate_pooling_constraints ────────
         MirOp::MILMaxPool { kernel_sizes, strides, .. } => {
-            let hw_limits = ctx.anef_revision
+            let hw_limits = ctx
+                .anef_revision
                 .map(ane_ir::ane_hw_limits::AneHwLimits::for_revision)
-                .unwrap_or_else(|| ane_ir::ane_hw_limits::AneHwLimits::for_revision(
-                    ane_ir::ane_target::AneRevision::V7,
-                ));
+                .unwrap_or_else(|| {
+                    ane_ir::ane_hw_limits::AneHwLimits::for_revision(
+                        ane_ir::ane_target::AneRevision::V7,
+                    )
+                });
             let max_kernel = kernel_sizes.iter().copied().max().unwrap_or(0) as u64;
             let max_stride = strides.iter().copied().max().unwrap_or(1) as u64;
             if let Err(violation) = crate::op_constraints::validate_pooling_constraints(
@@ -1071,18 +1077,23 @@ pub fn validate_placement_with_context(
             ) {
                 return PlacementDecision::CpuOnly(format!(
                     "{}: pooling constraint '{}' — {}",
-                    op_name(op), violation.constraint, violation.message
+                    op_name(op),
+                    violation.constraint,
+                    violation.message
                 ));
             }
             PlacementDecision::AneAllowed
         }
 
         MirOp::MILAvgPool { kernel_sizes, strides, .. } => {
-            let hw_limits = ctx.anef_revision
+            let hw_limits = ctx
+                .anef_revision
                 .map(ane_ir::ane_hw_limits::AneHwLimits::for_revision)
-                .unwrap_or_else(|| ane_ir::ane_hw_limits::AneHwLimits::for_revision(
-                    ane_ir::ane_target::AneRevision::V7,
-                ));
+                .unwrap_or_else(|| {
+                    ane_ir::ane_hw_limits::AneHwLimits::for_revision(
+                        ane_ir::ane_target::AneRevision::V7,
+                    )
+                });
             let max_kernel = kernel_sizes.iter().copied().max().unwrap_or(0) as u64;
             let max_stride = strides.iter().copied().max().unwrap_or(1) as u64;
             if let Err(violation) = crate::op_constraints::validate_pooling_constraints(
@@ -1090,18 +1101,23 @@ pub fn validate_placement_with_context(
             ) {
                 return PlacementDecision::CpuOnly(format!(
                     "{}: pooling constraint '{}' — {}",
-                    op_name(op), violation.constraint, violation.message
+                    op_name(op),
+                    violation.constraint,
+                    violation.message
                 ));
             }
             PlacementDecision::AneAllowed
         }
 
         MirOp::MILL2Pool { kernel_sizes, strides, .. } => {
-            let hw_limits = ctx.anef_revision
+            let hw_limits = ctx
+                .anef_revision
                 .map(ane_ir::ane_hw_limits::AneHwLimits::for_revision)
-                .unwrap_or_else(|| ane_ir::ane_hw_limits::AneHwLimits::for_revision(
-                    ane_ir::ane_target::AneRevision::V7,
-                ));
+                .unwrap_or_else(|| {
+                    ane_ir::ane_hw_limits::AneHwLimits::for_revision(
+                        ane_ir::ane_target::AneRevision::V7,
+                    )
+                });
             let max_kernel = kernel_sizes.iter().copied().max().unwrap_or(0) as u64;
             let max_stride = strides.iter().copied().max().unwrap_or(1) as u64;
             if let Err(violation) = crate::op_constraints::validate_pooling_constraints(
@@ -1109,7 +1125,9 @@ pub fn validate_placement_with_context(
             ) {
                 return PlacementDecision::CpuOnly(format!(
                     "{}: pooling constraint '{}' — {}",
-                    op_name(op), violation.constraint, violation.message
+                    op_name(op),
+                    violation.constraint,
+                    violation.message
                 ));
             }
             PlacementDecision::AneAllowed
@@ -1125,7 +1143,9 @@ pub fn validate_placement_with_context(
                 ) {
                     return PlacementDecision::CpuOnly(format!(
                         "{}: gather constraint '{}' — {}",
-                        op_name(op), violation.constraint, violation.message
+                        op_name(op),
+                        violation.constraint,
+                        violation.message
                     ));
                 }
             }
@@ -1136,13 +1156,14 @@ pub fn validate_placement_with_context(
         MirOp::MILConstexprAffineDequantize { axis, .. } => {
             if let Err(violation) = crate::op_constraints::validate_constexpr_dequantize_constraints(
                 "int8", // assume int8 input format as default
-                "fp16",  // dequant output must be fp16
-                *axis,
-                false,   // is_int4: assume false for affine dequant
+                "fp16", // dequant output must be fp16
+                *axis, false, // is_int4: assume false for affine dequant
             ) {
                 return PlacementDecision::CpuOnly(format!(
                     "{}: dequant constraint '{}' — {}",
-                    op_name(op), violation.constraint, violation.message
+                    op_name(op),
+                    violation.constraint,
+                    violation.message
                 ));
             }
             PlacementDecision::AneAllowed
@@ -1196,9 +1217,7 @@ pub fn validate_placement_with_context(
         | MirOp::MILSinh { .. }
         | MirOp::MILAtanh { .. }
         | MirOp::MILErf { .. }
-        | MirOp::MILLogicalNot { .. } => {
-            PlacementDecision::AneAllowed
-        }
+        | MirOp::MILLogicalNot { .. } => PlacementDecision::AneAllowed,
 
         // Binary elementwise / comparison ops (not broadcast-analyzed above)
         MirOp::MILRealDiv { .. }
@@ -1221,8 +1240,7 @@ pub fn validate_placement_with_context(
         }
 
         // Norm / pooling / attention beyond those with explicit constraints
-        MirOp::MILBatchNorm { .. }
-        | MirOp::MILL2Norm { .. } => {
+        MirOp::MILBatchNorm { .. } | MirOp::MILL2Norm { .. } => {
             log::warn!("N-004: No ValidateLayer-equivalent check for {}", op_name(op));
             PlacementDecision::AneAllowed
         }
@@ -1258,9 +1276,7 @@ pub fn validate_placement_with_context(
         | MirOp::MILPixelShuffle { .. }
         | MirOp::MILPixelUnshuffle { .. }
         | MirOp::MILBatchToSpace { .. }
-        | MirOp::MILSpaceToBatch { .. } => {
-            PlacementDecision::AneAllowed
-        }
+        | MirOp::MILSpaceToBatch { .. } => PlacementDecision::AneAllowed,
 
         // Slice / indexing / gather / scatter ops
         MirOp::MILReverse { .. }
@@ -1293,9 +1309,7 @@ pub fn validate_placement_with_context(
         | MirOp::MILConstexprLutToDense { .. }
         | MirOp::MILConstexprSparseToDense { .. }
         | MirOp::MILConstexprCast { .. }
-        | MirOp::MILConstexprLutToSparse { .. } => {
-            PlacementDecision::AneAllowed
-        }
+        | MirOp::MILConstexprLutToSparse { .. } => PlacementDecision::AneAllowed,
 
         // Einsum
         MirOp::MILEinsum { .. } => {
@@ -1366,9 +1380,7 @@ pub fn validate_placement_with_context(
         | MirOp::AnecInvert { .. }
         | MirOp::AnecUnflatten { .. }
         | MirOp::AnecChannelToSpace { .. }
-        | MirOp::AnecSpaceToChannel { .. } => {
-            PlacementDecision::AneAllowed
-        }
+        | MirOp::AnecSpaceToChannel { .. } => PlacementDecision::AneAllowed,
 
         // Catch-all for future variants added via #[non_exhaustive]
         op => {
@@ -1641,35 +1653,35 @@ fn is_compute_op(op: &MirOp) -> bool {
     matches!(
         op,
         MirOp::MILConv { .. }
-        | MirOp::MILConvTranspose { .. }
-        | MirOp::MILLinear { .. }
-        | MirOp::MILMatMul { .. }
-        | MirOp::MILAdd { .. }
-        | MirOp::MILMul { .. }
-        | MirOp::MILSub { .. }
-        | MirOp::MILRealDiv { .. }
-        | MirOp::MILMaximum { .. }
-        | MirOp::MILMinimum { .. }
-        | MirOp::MILReduceMean { .. }
-        | MirOp::MILReduceSum { .. }
-        | MirOp::MILReduceMax { .. }
-        | MirOp::MILReduceMin { .. }
-        | MirOp::MILSoftmax { .. }
-        | MirOp::MILLayerNorm { .. }
-        | MirOp::MILBatchNorm { .. }
-        | MirOp::MILInstanceNorm { .. }
-        | MirOp::MILScaledDotProductAttention { .. }
-        | MirOp::MILRelu { .. }
-        | MirOp::MILSigmoid { .. }
-        | MirOp::MILTanh { .. }
-        | MirOp::MILGelu { .. }
-        | MirOp::MILSilu { .. }
-        | MirOp::MILAbs { .. }
-        | MirOp::MILNeg { .. }
-        | MirOp::MILSqrt { .. }
-        | MirOp::MILRsqrt { .. }
-        | MirOp::MILExp { .. }
-        | MirOp::MILLog { .. }
+            | MirOp::MILConvTranspose { .. }
+            | MirOp::MILLinear { .. }
+            | MirOp::MILMatMul { .. }
+            | MirOp::MILAdd { .. }
+            | MirOp::MILMul { .. }
+            | MirOp::MILSub { .. }
+            | MirOp::MILRealDiv { .. }
+            | MirOp::MILMaximum { .. }
+            | MirOp::MILMinimum { .. }
+            | MirOp::MILReduceMean { .. }
+            | MirOp::MILReduceSum { .. }
+            | MirOp::MILReduceMax { .. }
+            | MirOp::MILReduceMin { .. }
+            | MirOp::MILSoftmax { .. }
+            | MirOp::MILLayerNorm { .. }
+            | MirOp::MILBatchNorm { .. }
+            | MirOp::MILInstanceNorm { .. }
+            | MirOp::MILScaledDotProductAttention { .. }
+            | MirOp::MILRelu { .. }
+            | MirOp::MILSigmoid { .. }
+            | MirOp::MILTanh { .. }
+            | MirOp::MILGelu { .. }
+            | MirOp::MILSilu { .. }
+            | MirOp::MILAbs { .. }
+            | MirOp::MILNeg { .. }
+            | MirOp::MILSqrt { .. }
+            | MirOp::MILRsqrt { .. }
+            | MirOp::MILExp { .. }
+            | MirOp::MILLog { .. }
     )
 }
 
@@ -1760,29 +1772,15 @@ pub struct FunctionSurfaceInfo {
 pub enum SurfaceConstraintViolation {
     /// An output tensor's total byte size is below the ANE's minimum
     /// IOSurface allocation threshold (~49 KB). (T-119, Orion #4)
-    UndersizedIOSurface {
-        name: String,
-        function: String,
-        actual_bytes: usize,
-        min_bytes: usize,
-    },
+    UndersizedIOSurface { name: String, function: String, actual_bytes: usize, min_bytes: usize },
 
     /// An output or input tensor in a multi-I/O function has a different
     /// byte size from other outputs/inputs. (T-95, Orion #2, #18)
-    NonUniformSurface {
-        name: String,
-        function: String,
-        actual_bytes: usize,
-        expected_bytes: usize,
-    },
+    NonUniformSurface { name: String, function: String, actual_bytes: usize, expected_bytes: usize },
 
     /// An output tensor does not follow the ANE's canonical [1,C,1,S] flat
     /// buffer layout convention. (T-95, Orion #20)
-    InvalidFlatBufferLayout {
-        name: String,
-        function: String,
-        shape: Vec<usize>,
-    },
+    InvalidFlatBufferLayout { name: String, function: String, shape: Vec<usize> },
 }
 
 impl std::fmt::Display for SurfaceConstraintViolation {
@@ -1925,15 +1923,17 @@ pub fn validate_surface_uniformity(
                      The ANE requires all output buffers in a function to have the same byte size. \
                      Non-uniform sizes cause 0x1d runtime error. \
                      First output size: {} bytes; non-uniform outputs: {:?}",
-                    func.name,
-                    first_size,
-                    non_uniform
+                    func.name, first_size, non_uniform
                 );
                 if policy.strict {
                     return Err(SurfaceConstraintViolation::NonUniformSurface {
                         name: non_uniform[0].to_string(),
                         function: func.name.clone(),
-                        actual_bytes: sizes.iter().find(|(_, n)| n == &non_uniform[0]).map(|(s, _)| *s).unwrap_or(0) as usize,
+                        actual_bytes: sizes
+                            .iter()
+                            .find(|(_, n)| n == &non_uniform[0])
+                            .map(|(s, _)| *s)
+                            .unwrap_or(0) as usize,
                         expected_bytes: first_size as usize,
                     });
                 } else {
@@ -1961,15 +1961,17 @@ pub fn validate_surface_uniformity(
                      The ANE requires all input buffers in a function to have the same byte size. \
                      Non-uniform sizes cause 0x1d runtime error. \
                      First input size: {} bytes; non-uniform inputs: {:?}",
-                    func.name,
-                    first_size,
-                    non_uniform
+                    func.name, first_size, non_uniform
                 );
                 if policy.strict {
                     return Err(SurfaceConstraintViolation::NonUniformSurface {
                         name: non_uniform[0].to_string(),
                         function: func.name.clone(),
-                        actual_bytes: sizes.iter().find(|(_, n)| n == &non_uniform[0]).map(|(s, _)| *s).unwrap_or(0) as usize,
+                        actual_bytes: sizes
+                            .iter()
+                            .find(|(_, n)| n == &non_uniform[0])
+                            .map(|(s, _)| *s)
+                            .unwrap_or(0) as usize,
                         expected_bytes: first_size as usize,
                     });
                 } else {
@@ -2012,9 +2014,7 @@ pub fn validate_flat_buffer_layout(
                          does not follow ANE flat buffer layout [1,C,1,S] (Orion #20). \
                          Dimensions [0] and [2] should be 1 for the canonical layout. \
                          Data may be silently misinterpreted by the ANE runtime.",
-                        output.name,
-                        func.name,
-                        output.shape
+                        output.name, func.name, output.shape
                     );
                     if policy.strict {
                         return Err(SurfaceConstraintViolation::InvalidFlatBufferLayout {
@@ -2277,7 +2277,8 @@ mod tests {
     fn test_sdpa_validation_with_mask_succeeds() {
         // Valid SDPA with mask should pass (via placement validation)
         let op = make_sdpa(true);
-        let shapes = vec![vec![1, 8, 4, 64], vec![1, 8, 4, 64], vec![1, 8, 4, 64], vec![1, 8, 4, 64]];
+        let shapes =
+            vec![vec![1, 8, 4, 64], vec![1, 8, 4, 64], vec![1, 8, 4, 64], vec![1, 8, 4, 64]];
         let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
         assert_eq!(decision, PlacementDecision::AneAllowed);
     }
@@ -3125,12 +3126,15 @@ mod tests {
         };
         let shapes: Vec<Vec<usize>> = vec![];
         let ctx = PlacementContext::empty();
-        let decision = validate_placement_with_context(
-            &op, &shapes, AneFamily::A11Legacy, false, &ctx,
-        );
+        let decision =
+            validate_placement_with_context(&op, &shapes, AneFamily::A11Legacy, false, &ctx);
         match decision {
             PlacementDecision::CpuOnly(msg) => {
-                assert!(msg.contains("architecture gate"), "Expected architecture gate message, got: {}", msg);
+                assert!(
+                    msg.contains("architecture gate"),
+                    "Expected architecture gate message, got: {}",
+                    msg
+                );
                 assert!(msg.contains("Softmax"), "Expected Softmax mention, got: {}", msg);
             }
             other => panic!("Expected CpuOnly for Softmax on A11Legacy, got {:?}", other),
@@ -3147,9 +3151,7 @@ mod tests {
         };
         let shapes: Vec<Vec<usize>> = vec![];
         let ctx = PlacementContext::empty();
-        let decision = validate_placement_with_context(
-            &op, &shapes, AneFamily::A16, false, &ctx,
-        );
+        let decision = validate_placement_with_context(&op, &shapes, AneFamily::A16, false, &ctx);
         assert_eq!(decision, PlacementDecision::AneAllowed);
     }
 
@@ -3167,12 +3169,15 @@ mod tests {
         };
         let shapes: Vec<Vec<usize>> = vec![];
         let ctx = PlacementContext::empty();
-        let decision = validate_placement_with_context(
-            &op, &shapes, AneFamily::A11Legacy, false, &ctx,
-        );
+        let decision =
+            validate_placement_with_context(&op, &shapes, AneFamily::A11Legacy, false, &ctx);
         match decision {
             PlacementDecision::CpuOnly(msg) => {
-                assert!(msg.contains("architecture gate"), "Expected architecture gate message, got: {}", msg);
+                assert!(
+                    msg.contains("architecture gate"),
+                    "Expected architecture gate message, got: {}",
+                    msg
+                );
             }
             other => panic!("Expected CpuOnly for InstanceNorm on A11Legacy, got {:?}", other),
         }
@@ -3190,9 +3195,7 @@ mod tests {
         };
         let shapes: Vec<Vec<usize>> = vec![];
         let ctx = PlacementContext::empty();
-        let decision = validate_placement_with_context(
-            &op, &shapes, AneFamily::A16, false, &ctx,
-        );
+        let decision = validate_placement_with_context(&op, &shapes, AneFamily::A16, false, &ctx);
         assert_eq!(decision, PlacementDecision::AneAllowed);
     }
 
@@ -3208,9 +3211,7 @@ mod tests {
         };
         let shapes: Vec<Vec<usize>> = vec![];
         let ctx = PlacementContext::empty();
-        let decision = validate_placement_with_context(
-            &op, &shapes, AneFamily::A16, false, &ctx,
-        );
+        let decision = validate_placement_with_context(&op, &shapes, AneFamily::A16, false, &ctx);
         assert_eq!(decision, PlacementDecision::AneAllowed);
     }
 
@@ -3224,9 +3225,7 @@ mod tests {
         };
         let shapes: Vec<Vec<usize>> = vec![];
         let ctx = PlacementContext::empty();
-        let decision = validate_placement_with_context(
-            &op, &shapes, AneFamily::A16, false, &ctx,
-        );
+        let decision = validate_placement_with_context(&op, &shapes, AneFamily::A16, false, &ctx);
         match decision {
             PlacementDecision::CpuOnly(msg) => {
                 assert!(msg.contains("axis 3"), "Error should mention axis 3");
@@ -3246,9 +3245,8 @@ mod tests {
         };
         let shapes: Vec<Vec<usize>> = vec![];
         let ctx = PlacementContext::empty();
-        let decision = validate_placement_with_context(
-            &op, &shapes, AneFamily::A11Legacy, false, &ctx,
-        );
+        let decision =
+            validate_placement_with_context(&op, &shapes, AneFamily::A11Legacy, false, &ctx);
         match decision {
             PlacementDecision::CpuOnly(msg) => {
                 assert!(msg.contains("axis 0"), "Error should mention axis 0");
@@ -3273,17 +3271,15 @@ mod tests {
             dilations: vec![2, 2], // dilation > 1
         };
         let shapes: Vec<Vec<usize>> = vec![];
-        let ctx = PlacementContext {
-            is_vector_palettized: true,
-            ..PlacementContext::empty()
-        };
-        let decision = validate_placement_with_context(
-            &op, &shapes, AneFamily::A16, false, &ctx,
-        );
+        let ctx = PlacementContext { is_vector_palettized: true, ..PlacementContext::empty() };
+        let decision = validate_placement_with_context(&op, &shapes, AneFamily::A16, false, &ctx);
         match decision {
             PlacementDecision::CpuOnly(msg) => {
-                assert!(msg.contains("no_dilation_with_vector_palettize"),
-                    "Expected dilation+palettize violation, got: {}", msg);
+                assert!(
+                    msg.contains("no_dilation_with_vector_palettize"),
+                    "Expected dilation+palettize violation, got: {}",
+                    msg
+                );
             }
             other => panic!("Expected CpuOnly, got {:?}", other),
         }
@@ -3304,9 +3300,7 @@ mod tests {
         };
         let shapes: Vec<Vec<usize>> = vec![];
         let ctx = PlacementContext::empty();
-        let decision = validate_placement_with_context(
-            &op, &shapes, AneFamily::A16, false, &ctx,
-        );
+        let decision = validate_placement_with_context(&op, &shapes, AneFamily::A16, false, &ctx);
         assert_eq!(decision, PlacementDecision::AneAllowed);
     }
 
@@ -3324,17 +3318,15 @@ mod tests {
             dilations: vec![1, 1],
         };
         let shapes: Vec<Vec<usize>> = vec![];
-        let ctx = PlacementContext {
-            has_per_channel_palettize: true,
-            ..PlacementContext::empty()
-        };
-        let decision = validate_placement_with_context(
-            &op, &shapes, AneFamily::A16, false, &ctx,
-        );
+        let ctx = PlacementContext { has_per_channel_palettize: true, ..PlacementContext::empty() };
+        let decision = validate_placement_with_context(&op, &shapes, AneFamily::A16, false, &ctx);
         match decision {
             PlacementDecision::CpuOnly(msg) => {
-                assert!(msg.contains("no_per_channel_palettize_with_shuffle"),
-                    "Expected shuffle+palettize violation, got: {}", msg);
+                assert!(
+                    msg.contains("no_per_channel_palettize_with_shuffle"),
+                    "Expected shuffle+palettize violation, got: {}",
+                    msg
+                );
             }
             other => panic!("Expected CpuOnly, got {:?}", other),
         }
@@ -3355,9 +3347,7 @@ mod tests {
             anef_revision: Some(ane_ir::ane_target::AneRevision::V7),
             ..PlacementContext::empty()
         };
-        let decision = validate_placement_with_context(
-            &op, &shapes, AneFamily::A14, false, &ctx,
-        );
+        let decision = validate_placement_with_context(&op, &shapes, AneFamily::A14, false, &ctx);
         assert_eq!(decision, PlacementDecision::AneAllowed);
     }
 
@@ -3374,13 +3364,14 @@ mod tests {
             anef_revision: Some(ane_ir::ane_target::AneRevision::V7),
             ..PlacementContext::empty()
         };
-        let decision = validate_placement_with_context(
-            &op, &shapes, AneFamily::A14, false, &ctx,
-        );
+        let decision = validate_placement_with_context(&op, &shapes, AneFamily::A14, false, &ctx);
         match decision {
             PlacementDecision::CpuOnly(msg) => {
-                assert!(msg.contains("transpose channels exceed"),
-                    "Expected transpose channel violation, got: {}", msg);
+                assert!(
+                    msg.contains("transpose channels exceed"),
+                    "Expected transpose channel violation, got: {}",
+                    msg
+                );
             }
             other => panic!("Expected CpuOnly, got {:?}", other),
         }
@@ -3396,9 +3387,7 @@ mod tests {
         };
         let shapes = vec![vec![1, 20000, 128, 128]]; // would exceed limit if checked
         let ctx = PlacementContext::empty(); // no revision
-        let decision = validate_placement_with_context(
-            &op, &shapes, AneFamily::A14, false, &ctx,
-        );
+        let decision = validate_placement_with_context(&op, &shapes, AneFamily::A14, false, &ctx);
         assert_eq!(decision, PlacementDecision::AneAllowed);
     }
 
@@ -3422,9 +3411,7 @@ mod tests {
             anef_revision: Some(ane_ir::ane_target::AneRevision::V7),
             ..PlacementContext::empty()
         };
-        let decision = validate_placement_with_context(
-            &op, &shapes, AneFamily::A14, false, &ctx,
-        );
+        let decision = validate_placement_with_context(&op, &shapes, AneFamily::A14, false, &ctx);
         assert_eq!(decision, PlacementDecision::AneAllowed);
     }
 
@@ -3446,13 +3433,14 @@ mod tests {
             anef_revision: Some(ane_ir::ane_target::AneRevision::V7),
             ..PlacementContext::empty()
         };
-        let decision = validate_placement_with_context(
-            &op, &shapes, AneFamily::A14, false, &ctx,
-        );
+        let decision = validate_placement_with_context(&op, &shapes, AneFamily::A14, false, &ctx);
         match decision {
             PlacementDecision::CpuOnly(msg) => {
-                assert!(msg.contains("conv channels"),
-                    "Expected conv channel violation, got: {}", msg);
+                assert!(
+                    msg.contains("conv channels"),
+                    "Expected conv channel violation, got: {}",
+                    msg
+                );
             }
             other => panic!("Expected CpuOnly, got {:?}", other),
         }
@@ -3491,14 +3479,22 @@ mod tests {
     #[test]
     fn test_n004_lrn_rejected_on_pre_a14() {
         let op = MirOp::MILLocalResponseNorm {
-            name: "lrn".into(), x: MirNodeId("x".into()),
-            size: 5, alpha: 1.0, beta: 0.75, k: 1.0,
+            name: "lrn".into(),
+            x: MirNodeId("x".into()),
+            size: 5,
+            alpha: 1.0,
+            beta: 0.75,
+            k: 1.0,
         };
         let shapes: Vec<Vec<usize>> = vec![];
         let decision = validate_placement(&op, &shapes, AneFamily::A12, false);
         match decision {
             PlacementDecision::CpuOnly(msg) => {
-                assert!(msg.contains("architecture gate"), "Expected architecture gate for LRN on A12, got: {}", msg);
+                assert!(
+                    msg.contains("architecture gate"),
+                    "Expected architecture gate for LRN on A12, got: {}",
+                    msg
+                );
             }
             other => panic!("Expected CpuOnly for LRN on A12, got {:?}", other),
         }
@@ -3507,8 +3503,12 @@ mod tests {
     #[test]
     fn test_n004_lrn_allowed_on_a14() {
         let op = MirOp::MILLocalResponseNorm {
-            name: "lrn".into(), x: MirNodeId("x".into()),
-            size: 5, alpha: 1.0, beta: 0.75, k: 1.0,
+            name: "lrn".into(),
+            x: MirNodeId("x".into()),
+            size: 5,
+            alpha: 1.0,
+            beta: 0.75,
+            k: 1.0,
         };
         let shapes: Vec<Vec<usize>> = vec![];
         let decision = validate_placement(&op, &shapes, AneFamily::A14, false);
@@ -3519,8 +3519,10 @@ mod tests {
     #[test]
     fn test_n004_maxpool_oversized_kernel_rejected() {
         let op = MirOp::MILMaxPool {
-            name: "mp".into(), x: MirNodeId("x".into()),
-            kernel_sizes: vec![99, 99], strides: vec![1, 1],
+            name: "mp".into(),
+            x: MirNodeId("x".into()),
+            kernel_sizes: vec![99, 99],
+            strides: vec![1, 1],
             pad_types: vec!["valid".into(), "valid".into()],
             pad_amounts: vec![0, 0, 0, 0],
         };
@@ -3528,7 +3530,11 @@ mod tests {
         let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
         match decision {
             PlacementDecision::CpuOnly(msg) => {
-                assert!(msg.contains("pooling constraint"), "Expected pooling constraint for oversized kernel, got: {}", msg);
+                assert!(
+                    msg.contains("pooling constraint"),
+                    "Expected pooling constraint for oversized kernel, got: {}",
+                    msg
+                );
             }
             other => panic!("Expected CpuOnly for oversized pooling kernel, got {:?}", other),
         }
@@ -3538,8 +3544,10 @@ mod tests {
     #[test]
     fn test_n004_avgpool_valid_kernel_allowed() {
         let op = MirOp::MILAvgPool {
-            name: "ap".into(), x: MirNodeId("x".into()),
-            kernel_sizes: vec![3, 3], strides: vec![2, 2],
+            name: "ap".into(),
+            x: MirNodeId("x".into()),
+            kernel_sizes: vec![3, 3],
+            strides: vec![2, 2],
             pad_types: vec!["valid".into(), "valid".into()],
             pad_amounts: vec![0, 0, 0, 0],
             count_include_padding: false,
@@ -3553,8 +3561,10 @@ mod tests {
     #[test]
     fn test_n004_l2pool_oversized_kernel_rejected() {
         let op = MirOp::MILL2Pool {
-            name: "lp".into(), x: MirNodeId("x".into()),
-            kernel_sizes: vec![99, 99], strides: vec![1, 1],
+            name: "lp".into(),
+            x: MirNodeId("x".into()),
+            kernel_sizes: vec![99, 99],
+            strides: vec![1, 1],
             pad_types: vec!["valid".into(), "valid".into()],
             pad_amounts: vec![0, 0, 0, 0],
         };
@@ -3562,7 +3572,11 @@ mod tests {
         let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
         match decision {
             PlacementDecision::CpuOnly(msg) => {
-                assert!(msg.contains("pooling constraint"), "Expected pooling constraint for oversized L2 kernel, got: {}", msg);
+                assert!(
+                    msg.contains("pooling constraint"),
+                    "Expected pooling constraint for oversized L2 kernel, got: {}",
+                    msg
+                );
             }
             other => panic!("Expected CpuOnly for oversized L2 pooling kernel, got {:?}", other),
         }
@@ -3572,14 +3586,20 @@ mod tests {
     #[test]
     fn test_n004_gather_batch_gt_1_rejected() {
         let op = MirOp::MILGather {
-            name: "ga".into(), x: MirNodeId("x".into()),
-            indices: MirNodeId("i".into()), axis: 0,
+            name: "ga".into(),
+            x: MirNodeId("x".into()),
+            indices: MirNodeId("i".into()),
+            axis: 0,
         };
         let shapes = vec![vec![2, 64]]; // batch=2
         let decision = validate_placement(&op, &shapes, AneFamily::A16, false);
         match decision {
             PlacementDecision::CpuOnly(msg) => {
-                assert!(msg.contains("gather constraint"), "Expected gather constraint for batch>1, got: {}", msg);
+                assert!(
+                    msg.contains("gather constraint"),
+                    "Expected gather constraint for batch>1, got: {}",
+                    msg
+                );
             }
             other => panic!("Expected CpuOnly for gather with batch>1, got {:?}", other),
         }
@@ -3589,8 +3609,10 @@ mod tests {
     #[test]
     fn test_n004_gather_batch_1_allowed() {
         let op = MirOp::MILGather {
-            name: "ga".into(), x: MirNodeId("x".into()),
-            indices: MirNodeId("i".into()), axis: 0,
+            name: "ga".into(),
+            x: MirNodeId("x".into()),
+            indices: MirNodeId("i".into()),
+            axis: 0,
         };
         let shapes = vec![vec![1, 64]]; // batch=1
         let decision = validate_placement(&op, &shapes, AneFamily::A16, false);

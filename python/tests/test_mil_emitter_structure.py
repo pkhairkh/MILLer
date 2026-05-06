@@ -9,11 +9,9 @@ All tests work WITHOUT macOS and WITHOUT coremltools by mocking
 the coremltools imports.
 """
 
-import sys
 from unittest import mock
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers: Create mock coremltools objects for testing
@@ -323,9 +321,9 @@ class TestImportCoremltools:
         Now it raises ImportError explicitly so callers don't silently proceed
         with None values.
         """
-        from common import _ensure_coremltools
         # Reset the cached coremltools so the ImportError path is triggered
         import common
+        from common import _ensure_coremltools
         old_ct = common._ct
         old_map = common.COMPUTE_MAP
         common._ct = None

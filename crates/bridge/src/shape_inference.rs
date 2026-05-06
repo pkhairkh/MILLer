@@ -40,39 +40,38 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub enum ShapeInferenceError {
     /// The input shape for a referenced node is not available.
-    MissingInputShape {
-        node_name: String,
-        input_id: String,
-    },
+    MissingInputShape { node_name: String, input_id: String },
     /// The op variant has no shape inference rule.
-    UnknownOp {
-        node_name: String,
-        op_name: String,
-    },
+    UnknownOp { node_name: String, op_name: String },
     /// Name-based heuristic was used (T-P5-09: should be replaced with explicit fields).
-    NameHeuristicUsed {
-        node_name: String,
-        heuristic: String,
-        inferred_shape: Vec<usize>,
-    },
+    NameHeuristicUsed { node_name: String, heuristic: String, inferred_shape: Vec<usize> },
     /// Shape could not be determined for any reason.
-    Indeterminate {
-        node_name: String,
-        reason: String,
-    },
+    Indeterminate { node_name: String, reason: String },
 }
 
 impl std::fmt::Display for ShapeInferenceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ShapeInferenceError::MissingInputShape { node_name, input_id } => {
-                write!(f, "Shape inference failed for '{}': input shape for '{}' is not available", node_name, input_id)
+                write!(
+                    f,
+                    "Shape inference failed for '{}': input shape for '{}' is not available",
+                    node_name, input_id
+                )
             }
             ShapeInferenceError::UnknownOp { node_name, op_name } => {
-                write!(f, "Shape inference failed for '{}': no inference rule for op '{}'", node_name, op_name)
+                write!(
+                    f,
+                    "Shape inference failed for '{}': no inference rule for op '{}'",
+                    node_name, op_name
+                )
             }
             ShapeInferenceError::NameHeuristicUsed { node_name, heuristic, inferred_shape } => {
-                write!(f, "Shape inference for '{}' used name heuristic '{}' (shape: {:?})", node_name, heuristic, inferred_shape)
+                write!(
+                    f,
+                    "Shape inference for '{}' used name heuristic '{}' (shape: {:?})",
+                    node_name, heuristic, inferred_shape
+                )
             }
             ShapeInferenceError::Indeterminate { node_name, reason } => {
                 write!(f, "Shape inference failed for '{}': {}", node_name, reason)
@@ -159,7 +158,8 @@ pub fn compat_input_shape_explicit(
              name.contains(\"input_ids\") to infer shape [1, {}]. This is fragile \
              and deprecated. Pass explicit_shape via compat_input_shape_explicit \
              instead. Node name: {:?}",
-             max_seq_len, name
+            max_seq_len,
+            name
         );
         vec![1, max_seq_len]
     } else {
@@ -238,7 +238,8 @@ pub fn compat_output_shape_explicit(
              name.contains(\"input_ids\") to infer shape [1, {}]. This is fragile \
              and deprecated. Pass explicit_shape via compat_output_shape_explicit \
              instead. Node name: {:?}",
-             max_seq_len, name
+            max_seq_len,
+            name
         );
         return vec![1, max_seq_len];
     }
@@ -730,10 +731,7 @@ pub fn compat_output_shape_explicit(
 ///
 /// **Deprecated (M-019):** Prefer [`compat_output_shape_explicit`] which accepts
 /// explicit shape hints instead of relying on name-based heuristics.
-#[deprecated(
-    since = "0.1.0",
-    note = "Use compat_output_shape_explicit instead."
-)]
+#[deprecated(since = "0.1.0", note = "Use compat_output_shape_explicit instead.")]
 pub fn compat_output_shape_fallible(
     name: &str,
     op: &MirOp,
@@ -751,7 +749,9 @@ pub fn compat_output_shape_fallible(
         let inferred = vec![1, max_seq_len];
         return Err(ShapeInferenceError::NameHeuristicUsed {
             node_name: name.to_string(),
-            heuristic: "name.contains(\"input_ids\") → [1, max_seq_len] (deprecated, use explicit_shape)".to_string(),
+            heuristic:
+                "name.contains(\"input_ids\") → [1, max_seq_len] (deprecated, use explicit_shape)"
+                    .to_string(),
             inferred_shape: inferred,
         });
     }
@@ -770,23 +770,37 @@ pub fn compat_output_shape_fallible(
         // so we cannot look up the weight shape at this layer. The fallible
         // version returns Indeterminate when input shape is missing.
         MirOp::MILLinear { x, .. } => {
-            node_shapes.get(&x.0).cloned().ok_or_else(|| {
-                ShapeInferenceError::Indeterminate {
-                    node_name: name.to_string(),
-                    reason: "MILLinear: output dim unknown without weight metadata \
+            node_shapes.get(&x.0).cloned().ok_or_else(|| ShapeInferenceError::Indeterminate {
+                node_name: name.to_string(),
+                reason: "MILLinear: output dim unknown without weight metadata \
                              (M-014: weight is a String name, not a MirNodeId)"
-                        .to_string(),
-                }
+                    .to_string(),
             })
         }
         // M-014: Conv — compute output shape from input + weight + conv params.
         // Weight is a MirNodeId, so we can look up its shape from node_shapes.
         MirOp::MILConv { x, weight, strides, pad_amounts, dilations, .. } => {
-            conv_output_shape_fallible(x, weight, strides, pad_amounts, dilations, node_shapes, name)
+            conv_output_shape_fallible(
+                x,
+                weight,
+                strides,
+                pad_amounts,
+                dilations,
+                node_shapes,
+                name,
+            )
         }
         // F-OPS-01: AnecFusedConvActivate — output shape = conv output shape
         MirOp::AnecFusedConvActivate { x, weight, strides, pad_amounts, dilations, .. } => {
-            conv_output_shape_fallible(x, weight, strides, pad_amounts, dilations, node_shapes, name)
+            conv_output_shape_fallible(
+                x,
+                weight,
+                strides,
+                pad_amounts,
+                dilations,
+                node_shapes,
+                name,
+            )
         }
         // F-OPS-01: AnecScaledElementwise — output shape = broadcast(x, y)
         MirOp::AnecScaledElementwise { x, y, .. } => {
@@ -818,12 +832,14 @@ pub fn compat_output_shape_fallible(
                     }
                     Ok(out)
                 }
-                (Some(_), None) | (None, Some(_)) => {
-                    Err(ShapeInferenceError::MissingInputShape {
-                        node_name: name.to_string(),
-                        input_id: if node_shapes.get(&x.0).is_none() { x.0.clone() } else { indices.0.clone() },
-                    })
-                }
+                (Some(_), None) | (None, Some(_)) => Err(ShapeInferenceError::MissingInputShape {
+                    node_name: name.to_string(),
+                    input_id: if node_shapes.get(&x.0).is_none() {
+                        x.0.clone()
+                    } else {
+                        indices.0.clone()
+                    },
+                }),
                 _ => Err(ShapeInferenceError::MissingInputShape {
                     node_name: name.to_string(),
                     input_id: x.0.clone(),
@@ -919,81 +935,75 @@ pub fn compat_output_shape_fallible(
                 }),
             }
         }
-        MirOp::MILMatMul { x, y, .. } => {
-            match (node_shapes.get(&x.0), node_shapes.get(&y.0)) {
-                (Some(x_shape), Some(y_shape)) => {
-                    let x_rank = x_shape.len();
-                    let y_rank = y_shape.len();
-                    if x_rank >= 2 && y_rank >= 2 {
-                        let lhs_rows = x_shape[x_rank - 2];
-                        let rhs_cols = y_shape[y_rank - 1];
-                        let batch_x = &x_shape[..x_rank - 2];
-                        let batch_y = &y_shape[..y_rank - 2];
-                        let batch = if batch_x.is_empty() && batch_y.is_empty() {
-                            vec![]
-                        } else {
-                            broadcast_shape_compat(batch_x, batch_y)
-                                .unwrap_or_else(|| batch_x.to_vec())
-                        };
-                        let mut out = batch;
-                        out.push(lhs_rows);
-                        out.push(rhs_cols);
-                        Ok(out)
+        MirOp::MILMatMul { x, y, .. } => match (node_shapes.get(&x.0), node_shapes.get(&y.0)) {
+            (Some(x_shape), Some(y_shape)) => {
+                let x_rank = x_shape.len();
+                let y_rank = y_shape.len();
+                if x_rank >= 2 && y_rank >= 2 {
+                    let lhs_rows = x_shape[x_rank - 2];
+                    let rhs_cols = y_shape[y_rank - 1];
+                    let batch_x = &x_shape[..x_rank - 2];
+                    let batch_y = &y_shape[..y_rank - 2];
+                    let batch = if batch_x.is_empty() && batch_y.is_empty() {
+                        vec![]
                     } else {
-                        Ok(x_shape.clone())
-                    }
+                        broadcast_shape_compat(batch_x, batch_y).unwrap_or_else(|| batch_x.to_vec())
+                    };
+                    let mut out = batch;
+                    out.push(lhs_rows);
+                    out.push(rhs_cols);
+                    Ok(out)
+                } else {
+                    Ok(x_shape.clone())
                 }
-                (Some(x_shape), None) => Ok(x_shape.clone()),
-                _ => Err(ShapeInferenceError::MissingInputShape {
-                    node_name: name.to_string(),
-                    input_id: x.0.clone(),
-                }),
             }
-        }
+            (Some(x_shape), None) => Ok(x_shape.clone()),
+            _ => Err(ShapeInferenceError::MissingInputShape {
+                node_name: name.to_string(),
+                input_id: x.0.clone(),
+            }),
+        },
         MirOp::MILReshape { shape, .. } => Ok(shape.to_vec()),
         MirOp::MILFill { shape, .. } => Ok(shape.to_vec()),
         MirOp::MILReadState { shape, .. } => Ok(shape.clone()),
-        MirOp::MILTranspose { x, perm, .. } => {
-            node_shapes.get(&x.0).map(|s| shape_ops::transpose_shape(s, perm)).ok_or_else(|| {
-                ShapeInferenceError::MissingInputShape {
-                    node_name: name.to_string(),
-                    input_id: x.0.clone(),
-                }
-            })
-        }
-        MirOp::MILTile { x, reps, .. } => {
-            node_shapes.get(&x.0).map(|s| shape_ops::tile_shape(s, reps)).ok_or_else(|| {
-                ShapeInferenceError::MissingInputShape {
-                    node_name: name.to_string(),
-                    input_id: x.0.clone(),
-                }
-            })
-        }
-        MirOp::MILExpandDims { x, axis, .. } => {
-            node_shapes.get(&x.0).map(|s| shape_ops::expand_dims_shape(s, axis)).ok_or_else(|| {
-                ShapeInferenceError::MissingInputShape {
-                    node_name: name.to_string(),
-                    input_id: x.0.clone(),
-                }
-            })
-        }
-        MirOp::MILSqueeze { x, axis, .. } => {
-            node_shapes.get(&x.0).map(|s| shape_ops::squeeze_shape(s, axis)).ok_or_else(|| {
-                ShapeInferenceError::MissingInputShape {
-                    node_name: name.to_string(),
-                    input_id: x.0.clone(),
-                }
-            })
-        }
-        MirOp::MILPad { x, pad_amounts, .. } => {
-            node_shapes.get(&x.0).map(|s| {
-                let pad: Vec<usize> = pad_amounts.iter().map(|&p| p as usize).collect();
-                shape_ops::pad_shape(s, &pad)
-            }).ok_or_else(|| ShapeInferenceError::MissingInputShape {
+        MirOp::MILTranspose { x, perm, .. } => node_shapes
+            .get(&x.0)
+            .map(|s| shape_ops::transpose_shape(s, perm))
+            .ok_or_else(|| ShapeInferenceError::MissingInputShape {
                 node_name: name.to_string(),
                 input_id: x.0.clone(),
+            }),
+        MirOp::MILTile { x, reps, .. } => node_shapes
+            .get(&x.0)
+            .map(|s| shape_ops::tile_shape(s, reps))
+            .ok_or_else(|| ShapeInferenceError::MissingInputShape {
+                node_name: name.to_string(),
+                input_id: x.0.clone(),
+            }),
+        MirOp::MILExpandDims { x, axis, .. } => node_shapes
+            .get(&x.0)
+            .map(|s| shape_ops::expand_dims_shape(s, axis))
+            .ok_or_else(|| ShapeInferenceError::MissingInputShape {
+                node_name: name.to_string(),
+                input_id: x.0.clone(),
+            }),
+        MirOp::MILSqueeze { x, axis, .. } => node_shapes
+            .get(&x.0)
+            .map(|s| shape_ops::squeeze_shape(s, axis))
+            .ok_or_else(|| ShapeInferenceError::MissingInputShape {
+                node_name: name.to_string(),
+                input_id: x.0.clone(),
+            }),
+        MirOp::MILPad { x, pad_amounts, .. } => node_shapes
+            .get(&x.0)
+            .map(|s| {
+                let pad: Vec<usize> = pad_amounts.iter().map(|&p| p as usize).collect();
+                shape_ops::pad_shape(s, &pad)
             })
-        }
+            .ok_or_else(|| ShapeInferenceError::MissingInputShape {
+                node_name: name.to_string(),
+                input_id: x.0.clone(),
+            }),
         // Reduce ops
         MirOp::MILReduceMax { x, axes, keep_dims, .. }
         | MirOp::MILReduceMin { x, axes, keep_dims, .. }
@@ -1038,11 +1048,9 @@ pub fn compat_output_shape_fallible(
             let shape_a = node_shapes.get(&x.0).cloned();
             let shape_b = node_shapes.get(&y.0).cloned();
             match (shape_a, shape_b, shape_c) {
-                (Some(a), Some(b), Some(c)) => {
-                    Ok(broadcast_shape_compat(&a, &b)
-                        .and_then(|ab| broadcast_shape_compat(&ab, &c))
-                        .unwrap_or_else(|| a.clone()))
-                }
+                (Some(a), Some(b), Some(c)) => Ok(broadcast_shape_compat(&a, &b)
+                    .and_then(|ab| broadcast_shape_compat(&ab, &c))
+                    .unwrap_or_else(|| a.clone())),
                 (Some(a), _, _) => Ok(a),
                 (_, _, Some(c)) => Ok(c),
                 (_, Some(b), _) => Ok(b),
@@ -1052,8 +1060,9 @@ pub fn compat_output_shape_fallible(
                 }),
             }
         }
-        MirOp::MILTopk { x, k, axis, .. } => {
-            node_shapes.get(&x.0).map(|input_shape| {
+        MirOp::MILTopk { x, k, axis, .. } => node_shapes
+            .get(&x.0)
+            .map(|input_shape| {
                 let mut out = input_shape.clone();
                 let rank = out.len() as isize;
                 let ax = if *axis >= 0 { *axis as usize } else { (rank + axis) as usize };
@@ -1061,70 +1070,76 @@ pub fn compat_output_shape_fallible(
                     out[ax] = *k;
                 }
                 out
-            }).ok_or_else(|| ShapeInferenceError::MissingInputShape {
+            })
+            .ok_or_else(|| ShapeInferenceError::MissingInputShape {
                 node_name: name.to_string(),
                 input_id: x.0.clone(),
-            })
-        }
-        MirOp::MILScaledDotProductAttention { query, .. } => {
-            node_shapes.get(&query.0).cloned().ok_or_else(|| ShapeInferenceError::MissingInputShape {
+            }),
+        MirOp::MILScaledDotProductAttention { query, .. } => node_shapes
+            .get(&query.0)
+            .cloned()
+            .ok_or_else(|| ShapeInferenceError::MissingInputShape {
                 node_name: name.to_string(),
                 input_id: query.0.clone(),
+            }),
+        MirOp::MILCoremlUpdateState { value, .. } | MirOp::MILStateWrite { value, .. } => {
+            node_shapes.get(&value.0).cloned().ok_or_else(|| {
+                ShapeInferenceError::MissingInputShape {
+                    node_name: name.to_string(),
+                    input_id: value.0.clone(),
+                }
             })
         }
-        MirOp::MILCoremlUpdateState { value, .. }
-        | MirOp::MILStateWrite { value, .. } => {
-            node_shapes.get(&value.0).cloned().ok_or_else(|| ShapeInferenceError::MissingInputShape {
-                node_name: name.to_string(),
-                input_id: value.0.clone(),
-            })
-        }
-        MirOp::MILSplit { x, axis, num_splits, .. } => {
-            node_shapes.get(&x.0).map(|input_shape| {
+        MirOp::MILSplit { x, axis, num_splits, .. } => node_shapes
+            .get(&x.0)
+            .map(|input_shape| {
                 let mut out = input_shape.clone();
                 if let Some(dim) = out.get_mut(*axis) {
                     *dim /= num_splits;
                 }
                 out
-            }).ok_or_else(|| ShapeInferenceError::MissingInputShape {
+            })
+            .ok_or_else(|| ShapeInferenceError::MissingInputShape {
                 node_name: name.to_string(),
                 input_id: x.0.clone(),
-            })
-        }
+            }),
         MirOp::MILSliceByIndex { x, begin, end, begin_mask, end_mask, squeeze_mask, .. } => {
-            node_shapes.get(&x.0).map(|input_shape| {
-                let sliced: Vec<usize> = (0..begin.len())
-                    .map(|i| {
-                        let b = if begin_mask.get(i).copied().unwrap_or(false) {
-                            0
-                        } else {
-                            begin[i].max(0) as usize
-                        };
-                        let e = if end_mask.get(i).copied().unwrap_or(false) {
-                            input_shape.get(i).copied().unwrap_or(0)
-                        } else if end[i] < 0 {
-                            let dim = input_shape.get(i).copied().unwrap_or(0) as i64;
-                            (dim + end[i]).max(0) as usize
-                        } else {
-                            end[i] as usize
-                        };
-                        e.saturating_sub(b)
-                    })
-                    .collect();
-                if !squeeze_mask.is_empty() {
-                    sliced
-                        .into_iter()
-                        .enumerate()
-                        .filter(|(i, _)| !squeeze_mask.get(*i).copied().unwrap_or(false))
-                        .map(|(_, d)| d)
-                        .collect()
-                } else {
-                    sliced
-                }
-            }).ok_or_else(|| ShapeInferenceError::MissingInputShape {
-                node_name: name.to_string(),
-                input_id: x.0.clone(),
-            })
+            node_shapes
+                .get(&x.0)
+                .map(|input_shape| {
+                    let sliced: Vec<usize> = (0..begin.len())
+                        .map(|i| {
+                            let b = if begin_mask.get(i).copied().unwrap_or(false) {
+                                0
+                            } else {
+                                begin[i].max(0) as usize
+                            };
+                            let e = if end_mask.get(i).copied().unwrap_or(false) {
+                                input_shape.get(i).copied().unwrap_or(0)
+                            } else if end[i] < 0 {
+                                let dim = input_shape.get(i).copied().unwrap_or(0) as i64;
+                                (dim + end[i]).max(0) as usize
+                            } else {
+                                end[i] as usize
+                            };
+                            e.saturating_sub(b)
+                        })
+                        .collect();
+                    if !squeeze_mask.is_empty() {
+                        sliced
+                            .into_iter()
+                            .enumerate()
+                            .filter(|(i, _)| !squeeze_mask.get(*i).copied().unwrap_or(false))
+                            .map(|(_, d)| d)
+                            .collect()
+                    } else {
+                        sliced
+                    }
+                })
+                .ok_or_else(|| ShapeInferenceError::MissingInputShape {
+                    node_name: name.to_string(),
+                    input_id: x.0.clone(),
+                })
         }
         MirOp::MILIdentity { x, .. } if x.0 == "__placeholder__" => {
             let inferred = vec![1, max_seq_len];
@@ -1161,7 +1176,10 @@ pub fn compat_output_shape_fallible(
             } else {
                 Err(ShapeInferenceError::Indeterminate {
                     node_name: name.to_string(),
-                    reason: format!("MILConst: shape for value_path '{}' not available in node_shapes", value_path),
+                    reason: format!(
+                        "MILConst: shape for value_path '{}' not available in node_shapes",
+                        value_path
+                    ),
                 })
             }
         }
@@ -1169,23 +1187,26 @@ pub fn compat_output_shape_fallible(
             if !output_shape.is_empty() {
                 Ok(output_shape.clone())
             } else {
-                node_shapes.get(&x.0).cloned().ok_or_else(|| ShapeInferenceError::MissingInputShape {
-                    node_name: name.to_string(),
-                    input_id: x.0.clone(),
+                node_shapes.get(&x.0).cloned().ok_or_else(|| {
+                    ShapeInferenceError::MissingInputShape {
+                        node_name: name.to_string(),
+                        input_id: x.0.clone(),
+                    }
                 })
             }
         }
-        MirOp::MILFlatten2d { x, axis, .. } => {
-            node_shapes.get(&x.0).map(|input_shape| {
+        MirOp::MILFlatten2d { x, axis, .. } => node_shapes
+            .get(&x.0)
+            .map(|input_shape| {
                 let product: usize = input_shape[*axis..].iter().product();
                 let mut out = input_shape[..*axis].to_vec();
                 out.push(product);
                 out
-            }).ok_or_else(|| ShapeInferenceError::MissingInputShape {
+            })
+            .ok_or_else(|| ShapeInferenceError::MissingInputShape {
                 node_name: name.to_string(),
                 input_id: x.0.clone(),
-            })
-        }
+            }),
         // Catch-all: explicit error for unsupported ops
         _ => Err(ShapeInferenceError::UnknownOp {
             node_name: name.to_string(),
@@ -1234,12 +1255,11 @@ fn conv_output_shape_fallible(
     node_shapes: &HashMap<String, Vec<usize>>,
     node_name: &str,
 ) -> Result<Vec<usize>, ShapeInferenceError> {
-    let input_shape = node_shapes.get(&x.0).cloned().ok_or_else(|| {
-        ShapeInferenceError::MissingInputShape {
+    let input_shape =
+        node_shapes.get(&x.0).cloned().ok_or_else(|| ShapeInferenceError::MissingInputShape {
             node_name: node_name.to_string(),
             input_id: x.0.clone(),
-        }
-    })?;
+        })?;
     let weight_shape = node_shapes.get(&weight.0).cloned().ok_or_else(|| {
         ShapeInferenceError::MissingInputShape {
             node_name: node_name.to_string(),
@@ -1251,11 +1271,8 @@ fn conv_output_shape_fallible(
     let c_out = weight_shape.first().copied().unwrap_or(0);
 
     // Determine spatial dimensions from input (skip batch and channel dims)
-    let spatial_dims: Vec<usize> = if input_shape.len() > 2 {
-        input_shape[2..].to_vec()
-    } else {
-        vec![]
-    };
+    let spatial_dims: Vec<usize> =
+        if input_shape.len() > 2 { input_shape[2..].to_vec() } else { vec![] };
 
     // Compute output spatial dimensions
     let n_spatial = strides.len().max(1);
@@ -1461,19 +1478,13 @@ mod tests {
     #[test]
     fn test_compat_input_shape_explicit_none_falls_back_to_heuristic() {
         // When explicit_shape is None, legacy heuristic still applies
-        assert_eq!(
-            compat_input_shape_explicit("input_ids", &[], 512, None),
-            vec![1, 512]
-        );
+        assert_eq!(compat_input_shape_explicit("input_ids", &[], 512, None), vec![1, 512]);
     }
 
     #[test]
     fn test_compat_input_shape_explicit_empty_treated_as_none() {
         // When explicit_shape is Some(&[]), treat as no hint
-        assert_eq!(
-            compat_input_shape_explicit("input_ids", &[], 512, Some(&[])),
-            vec![1, 512]
-        );
+        assert_eq!(compat_input_shape_explicit("input_ids", &[], 512, Some(&[])), vec![1, 512]);
     }
 
     #[test]
@@ -1544,7 +1555,14 @@ mod tests {
         let op = MirOp::MILRelu { name: "r".into(), x: nid("x") };
         let ns = shapes();
         assert_eq!(
-            compat_output_shape_explicit("input_ids_node", &op, &[2, 3], &ns, 32768, Some(&[1, 2048])),
+            compat_output_shape_explicit(
+                "input_ids_node",
+                &op,
+                &[2, 3],
+                &ns,
+                32768,
+                Some(&[1, 2048])
+            ),
             vec![2, 3]
         );
     }
@@ -3101,7 +3119,11 @@ mod tests {
     fn test_fallible_unknown_op_returns_error() {
         // MILConst with no matching shape in node_shapes returns Indeterminate
         // (not UnknownOp, since MILConst IS handled in the fallible function)
-        let op = MirOp::MILConst { name: "c".into(), value_path: "weights.bin".into(), dtype: MilDtype::Fp16 };
+        let op = MirOp::MILConst {
+            name: "c".into(),
+            value_path: "weights.bin".into(),
+            dtype: MilDtype::Fp16,
+        };
         let ns = shapes();
         let result = compat_output_shape_fallible("node", &op, &[], &ns, 512);
         assert!(result.is_err());
@@ -3116,7 +3138,8 @@ mod tests {
 
     #[test]
     fn test_fallible_reduce_with_shape_returns_ok() {
-        let op = MirOp::MILReduceMean { name: "rm".into(), x: nid("x"), axes: vec![2], keep_dims: true };
+        let op =
+            MirOp::MILReduceMean { name: "rm".into(), x: nid("x"), axes: vec![2], keep_dims: true };
         let ns = shapes_with(vec![("x", vec![1, 512, 1024])]);
         let result = compat_output_shape_fallible("node", &op, &[], &ns, 512);
         assert!(result.is_ok());
@@ -3125,7 +3148,12 @@ mod tests {
 
     #[test]
     fn test_fallible_reduce_missing_input_returns_error() {
-        let op = MirOp::MILReduceMean { name: "rm".into(), x: nid("unknown"), axes: vec![2], keep_dims: true };
+        let op = MirOp::MILReduceMean {
+            name: "rm".into(),
+            x: nid("unknown"),
+            axes: vec![2],
+            keep_dims: true,
+        };
         let ns = shapes();
         let result = compat_output_shape_fallible("node", &op, &[], &ns, 512);
         assert!(result.is_err());

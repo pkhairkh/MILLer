@@ -595,29 +595,29 @@ mod unified_check {
         // default_engine() but are in CPU_ONLY_OPS because they lack
         // MirOpCompat emission code. They will be moved to None as part
         // of T-66 (Add Remaining MirOpCompat Variants).
-        "tile",           // MILTile → Some(PE), no ANEC converter (N-009)
-        "max_pool",       // MILMaxPool → Some(NE), lacks MirOpCompat
-        "avg_pool",       // MILAvgPool → Some(NE), lacks MirOpCompat
-        "l2_pool",        // MILL2Pool → Some(NE), lacks MirOpCompat
-        "resize",         // MILResize → Some(NE), lacks MirOpCompat
-        "resize_nearest_neighbor", // MILResizeNearestNeighbor → Some(NE), lacks MirOpCompat
-        "resize_bilinear",         // MILResizeBilinear → Some(NE), lacks MirOpCompat
+        "tile",                      // MILTile → Some(PE), no ANEC converter (N-009)
+        "max_pool",                  // MILMaxPool → Some(NE), lacks MirOpCompat
+        "avg_pool",                  // MILAvgPool → Some(NE), lacks MirOpCompat
+        "l2_pool",                   // MILL2Pool → Some(NE), lacks MirOpCompat
+        "resize",                    // MILResize → Some(NE), lacks MirOpCompat
+        "resize_nearest_neighbor",   // MILResizeNearestNeighbor → Some(NE), lacks MirOpCompat
+        "resize_bilinear",           // MILResizeBilinear → Some(NE), lacks MirOpCompat
         "upsample_nearest_neighbor", // MILUpsampleNearestNeighbor → Some(NE), lacks MirOpCompat
-        "upsample_bilinear",       // MILUpsampleBilinear → Some(NE), lacks MirOpCompat
-        "crop_resize",    // MILCropResize → Some(NE), lacks MirOpCompat
-        "affine",         // MILAffine → Some(NE), lacks MirOpCompat
-        "resample",       // MILResample → Some(NE), lacks MirOpCompat
-        "depth_to_space", // MILDepthToSpace → Some(NE), lacks MirOpCompat
-        "space_to_depth", // MILSpaceToDepth → Some(NE), lacks MirOpCompat
-        "pixel_shuffle",  // MILPixelShuffle → Some(NE), lacks MirOpCompat
-        "pixel_unshuffle", // MILPixelUnshuffle → Some(NE), lacks MirOpCompat
-        "batch_to_space", // MILBatchToSpace → Some(NE), lacks MirOpCompat
-        "space_to_batch", // MILSpaceToBatch → Some(NE), lacks MirOpCompat
-        "batch_norm",     // MILBatchNorm → Some(NE), lacks MirOpCompat
-        "instance_norm",  // MILInstanceNorm → Some(NE), lacks MirOpCompat
-        "l2_norm",        // MILL2Norm → Some(NE), lacks MirOpCompat
-        "quantize",       // MILQuantize → Some(NE), lacks MirOpCompat
-        "dequantize",     // MILDequantize → Some(NE), lacks MirOpCompat
+        "upsample_bilinear",         // MILUpsampleBilinear → Some(NE), lacks MirOpCompat
+        "crop_resize",               // MILCropResize → Some(NE), lacks MirOpCompat
+        "affine",                    // MILAffine → Some(NE), lacks MirOpCompat
+        "resample",                  // MILResample → Some(NE), lacks MirOpCompat
+        "depth_to_space",            // MILDepthToSpace → Some(NE), lacks MirOpCompat
+        "space_to_depth",            // MILSpaceToDepth → Some(NE), lacks MirOpCompat
+        "pixel_shuffle",             // MILPixelShuffle → Some(NE), lacks MirOpCompat
+        "pixel_unshuffle",           // MILPixelUnshuffle → Some(NE), lacks MirOpCompat
+        "batch_to_space",            // MILBatchToSpace → Some(NE), lacks MirOpCompat
+        "space_to_batch",            // MILSpaceToBatch → Some(NE), lacks MirOpCompat
+        "batch_norm",                // MILBatchNorm → Some(NE), lacks MirOpCompat
+        "instance_norm",             // MILInstanceNorm → Some(NE), lacks MirOpCompat
+        "l2_norm",                   // MILL2Norm → Some(NE), lacks MirOpCompat
+        "quantize",                  // MILQuantize → Some(NE), lacks MirOpCompat
+        "dequantize",                // MILDequantize → Some(NE), lacks MirOpCompat
     ];
 
     /// T-P2-12: Verify that each entry in ALLOWED_DIVERGENCES is present
@@ -657,15 +657,28 @@ mod unified_check {
         // shouldn't be in the divergence list (it's correctly CPU-only).
         let ops_with_known_engines: &[&str] = &[
             "tile",
-            "max_pool", "avg_pool", "l2_pool", "resize",
-            "resize_nearest_neighbor", "resize_bilinear",
-            "upsample_nearest_neighbor", "upsample_bilinear",
-            "crop_resize", "affine", "resample",
-            "depth_to_space", "space_to_depth",
-            "pixel_shuffle", "pixel_unshuffle",
-            "batch_to_space", "space_to_batch",
-            "batch_norm", "instance_norm", "l2_norm",
-            "quantize", "dequantize",
+            "max_pool",
+            "avg_pool",
+            "l2_pool",
+            "resize",
+            "resize_nearest_neighbor",
+            "resize_bilinear",
+            "upsample_nearest_neighbor",
+            "upsample_bilinear",
+            "crop_resize",
+            "affine",
+            "resample",
+            "depth_to_space",
+            "space_to_depth",
+            "pixel_shuffle",
+            "pixel_unshuffle",
+            "batch_to_space",
+            "space_to_batch",
+            "batch_norm",
+            "instance_norm",
+            "l2_norm",
+            "quantize",
+            "dequantize",
         ];
         // Every ALLOWED_DIVERGENCES entry must be documented as having an engine
         for &name in ALLOWED_DIVERGENCES {
@@ -756,10 +769,8 @@ mod tests {
     /// catalog is complete.
     #[test]
     fn test_cpu_only_detailed_covers_all_ops() {
-        let detailed_names: HashSet<&str> = CPU_ONLY_OPS_DETAILED
-            .iter()
-            .map(|op| op.mil_name)
-            .collect();
+        let detailed_names: HashSet<&str> =
+            CPU_ONLY_OPS_DETAILED.iter().map(|op| op.mil_name).collect();
 
         for &op_name in CPU_ONLY_OPS.iter() {
             assert!(
@@ -1209,13 +1220,12 @@ mod tests {
 
         // Resolve knowledge/ directory relative to the crate.
         let candidates = [
-            "../../knowledge",           // crate-relative (crates/passes/)
-            "../../../knowledge",        // deeper nesting fallback
-            "knowledge",                 // workspace-root run
+            "../../knowledge",    // crate-relative (crates/passes/)
+            "../../../knowledge", // deeper nesting fallback
+            "knowledge",          // workspace-root run
         ];
-        let knowledge_dir = candidates
-            .iter()
-            .find(|d| Path::new(d).join("cpu_only_ops_seed.json").exists());
+        let knowledge_dir =
+            candidates.iter().find(|d| Path::new(d).join("cpu_only_ops_seed.json").exists());
 
         let Some(knowledge_dir) = knowledge_dir else {
             eprintln!(
@@ -1284,14 +1294,9 @@ mod tests {
         use std::fs;
         use std::path::Path;
 
-        let candidates = [
-            "../../knowledge",
-            "../../../knowledge",
-            "knowledge",
-        ];
-        let knowledge_dir = candidates
-            .iter()
-            .find(|d| Path::new(d).join("ane_op_family_matrix.json").exists());
+        let candidates = ["../../knowledge", "../../../knowledge", "knowledge"];
+        let knowledge_dir =
+            candidates.iter().find(|d| Path::new(d).join("ane_op_family_matrix.json").exists());
 
         let Some(knowledge_dir) = knowledge_dir else {
             eprintln!(
@@ -1321,10 +1326,8 @@ mod tests {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             if CPU_ONLY_OPS.contains(mil_name) {
-                let has_practical = entry
-                    .get("payload")
-                    .and_then(|p| p.get("practical_status"))
-                    .is_some();
+                let has_practical =
+                    entry.get("payload").and_then(|p| p.get("practical_status")).is_some();
                 if !has_practical {
                     missing.push(mil_name.to_string());
                 }

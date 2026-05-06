@@ -26,10 +26,7 @@ use crate::mir::MirOp;
 /// T-P5-07: This function is the canonical entry point for engine placement.
 /// Prefer this over `MirOp::base_engine()` or `MirOp::default_engine()`,
 /// which are deprecated.
-pub fn engine_for_op(
-    op: &MirOp,
-    revision: Option<AneRevision>,
-) -> Option<AneEngine> {
+pub fn engine_for_op(op: &MirOp, revision: Option<AneRevision>) -> Option<AneEngine> {
     #[allow(deprecated)] // T-P5-07: Still delegates to base_engine() during migration
     let base = op.base_engine();
 
@@ -119,13 +116,18 @@ mod tests {
 
     #[test]
     fn test_engine_for_op_const_is_cpu_only() {
-        let op = MirOp::MILConst { name: "c".into(), value_path: "w.bin".into(), dtype: crate::common::MilDtype::Fp16 };
+        let op = MirOp::MILConst {
+            name: "c".into(),
+            value_path: "w.bin".into(),
+            dtype: crate::common::MilDtype::Fp16,
+        };
         assert_eq!(engine_for_op(&op, None), None);
     }
 
     #[test]
     fn test_engine_for_op_argmax_on_a18_is_none() {
-        let op = MirOp::MILReduceArgmax { name: "am".into(), x: nid("x"), axis: 1, keep_dims: false };
+        let op =
+            MirOp::MILReduceArgmax { name: "am".into(), x: nid("x"), axis: 1, keep_dims: false };
         // A18 does NOT support ArgMinMax (no LSE_7 converter)
         assert_eq!(engine_for_op(&op, Some(AneRevision::V19)), None);
         // A17 DOES support ArgMinMax
@@ -169,13 +171,18 @@ mod tests {
         let relu = MirOp::MILRelu { name: "r".into(), x: nid("x") };
         assert!(!is_cpu_only(&relu));
 
-        let const_op = MirOp::MILConst { name: "c".into(), value_path: "w.bin".into(), dtype: crate::common::MilDtype::Fp16 };
+        let const_op = MirOp::MILConst {
+            name: "c".into(),
+            value_path: "w.bin".into(),
+            dtype: crate::common::MilDtype::Fp16,
+        };
         assert!(is_cpu_only(&const_op));
     }
 
     #[test]
     fn test_is_cpu_only_for_revision() {
-        let argmax = MirOp::MILReduceArgmax { name: "am".into(), x: nid("x"), axis: 1, keep_dims: false };
+        let argmax =
+            MirOp::MILReduceArgmax { name: "am".into(), x: nid("x"), axis: 1, keep_dims: false };
         // ArgMax is CPU-only on A18, but ANE-legal on A17
         assert!(is_cpu_only_for_revision(&argmax, AneRevision::V19));
         assert!(!is_cpu_only_for_revision(&argmax, AneRevision::V11));

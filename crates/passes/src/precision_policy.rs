@@ -182,7 +182,9 @@ impl PrecisionPolicyPass {
             ane_ir::sir::SirOp::ScaledTanh { .. } => "Activation_ScaledTanh".to_string(),
             ane_ir::sir::SirOp::Elu { .. } => "Activation_Elu".to_string(),
             ane_ir::sir::SirOp::Softplus { .. } => "Activation_Softplus".to_string(),
-            ane_ir::sir::SirOp::SoftplusParametric { .. } => "Activation_SoftplusParametric".to_string(),
+            ane_ir::sir::SirOp::SoftplusParametric { .. } => {
+                "Activation_SoftplusParametric".to_string()
+            }
             ane_ir::sir::SirOp::Square { .. } => "Square".to_string(),
             ane_ir::sir::SirOp::Threshold { .. } => "Threshold".to_string(),
 
@@ -235,7 +237,9 @@ impl PrecisionPolicyPass {
             ane_ir::sir::SirOp::Resize { .. } => "Resize".to_string(),
             ane_ir::sir::SirOp::ResizeNearestNeighbor { .. } => "ResizeNearestNeighbor".to_string(),
             ane_ir::sir::SirOp::ResizeBilinear { .. } => "ResizeBilinear".to_string(),
-            ane_ir::sir::SirOp::UpsampleNearestNeighbor { .. } => "UpsampleNearestNeighbor".to_string(),
+            ane_ir::sir::SirOp::UpsampleNearestNeighbor { .. } => {
+                "UpsampleNearestNeighbor".to_string()
+            }
             ane_ir::sir::SirOp::UpsampleBilinear { .. } => "UpsampleBilinear".to_string(),
             ane_ir::sir::SirOp::CropResize { .. } => "CropResize".to_string(),
             ane_ir::sir::SirOp::Affine { .. } => "Affine".to_string(),
@@ -286,17 +290,25 @@ impl PrecisionPolicyPass {
             ane_ir::sir::SirOp::NonMaximumSuppression { .. } => "NonMaximumSuppression".to_string(),
 
             // ─── Attention ───────────────────────────────────────
-            ane_ir::sir::SirOp::ScaledDotProductAttention { .. } => "ScaledDotProductAttention".to_string(),
+            ane_ir::sir::SirOp::ScaledDotProductAttention { .. } => {
+                "ScaledDotProductAttention".to_string()
+            }
 
             // ─── Quantization ────────────────────────────────────
             ane_ir::sir::SirOp::Quantize { .. } => "Quantize".to_string(),
             ane_ir::sir::SirOp::Dequantize { .. } => "Dequantize".to_string(),
 
             // ─── Constexpr / Compression ─────────────────────────
-            ane_ir::sir::SirOp::ConstexprAffineDequantize { .. } => "Constexpr_AffineDequantize".to_string(),
-            ane_ir::sir::SirOp::ConstexprBlockwiseShiftScale { .. } => "Constexpr_BlockwiseShiftScale".to_string(),
+            ane_ir::sir::SirOp::ConstexprAffineDequantize { .. } => {
+                "Constexpr_AffineDequantize".to_string()
+            }
+            ane_ir::sir::SirOp::ConstexprBlockwiseShiftScale { .. } => {
+                "Constexpr_BlockwiseShiftScale".to_string()
+            }
             ane_ir::sir::SirOp::ConstexprLutToDense { .. } => "Constexpr_LutToDense".to_string(),
-            ane_ir::sir::SirOp::ConstexprSparseToDense { .. } => "Constexpr_SparseToDense".to_string(),
+            ane_ir::sir::SirOp::ConstexprSparseToDense { .. } => {
+                "Constexpr_SparseToDense".to_string()
+            }
             ane_ir::sir::SirOp::ConstexprCast { .. } => "Constexpr_Cast".to_string(),
             ane_ir::sir::SirOp::ConstexprLutToSparse { .. } => "Constexpr_LutToSparse".to_string(),
             ane_ir::sir::SirOp::ConstexprSparseBlockwiseShiftScale { .. } => {
@@ -434,7 +446,9 @@ mod tests {
     use crate::knowledge_query::{
         ComputePlanPlacementInfo, LegalityInfo, NoKnowledge, PrecisionHazardInfo, RiskInfo,
     };
-    use ane_ir::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
+    use ane_ir::sir::{
+        SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin,
+    };
 
     /// A mock knowledge query that reports a precision hazard for LinearProjection.
     struct MockPrecisionHazardKnowledge;
@@ -587,7 +601,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
-                target_annotation: SirTargetAnnotation::default(),
+                    target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("output".into()),
@@ -603,7 +617,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
-                target_annotation: SirTargetAnnotation::default(),
+                    target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![SirNodeId("input".into())],
@@ -766,7 +780,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
-            target_annotation: SirTargetAnnotation::default(),
+                target_annotation: SirTargetAnnotation::default(),
             }
         }
 
@@ -940,7 +954,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
-            target_annotation: SirTargetAnnotation::default(),
+                target_annotation: SirTargetAnnotation::default(),
             }
         }
 
@@ -948,24 +962,24 @@ mod tests {
         let mut specific_patterns: HashSet<String> = HashSet::new();
 
         // Composite
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::LinearProjection {
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::LinearProjection {
                 input: SirNodeId("i".into()),
                 weight: "w".into(),
                 bias: None,
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::AttentionBlock {
+            },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::AttentionBlock {
                 q: SirNodeId("q".into()),
                 k: SirNodeId("k".into()),
                 v: SirNodeId("v".into()),
                 mask: None,
                 rope: None,
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::DecodeStep {
+            },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::DecodeStep {
                 token: SirNodeId("t".into()),
                 state_map: vec![],
                 q_weight: None,
@@ -979,10 +993,10 @@ mod tests {
                 norm_epsilon: 1e-6,
                 qk_norm_type: "rms".into(),
                 mask_ref: None,
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Sampler {
+            },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Sampler {
                 logits: SirNodeId("l".into()),
                 temperature: 1.0,
                 top_p: 0.9,
@@ -990,94 +1004,73 @@ mod tests {
                 min_p: 0.0,
                 top_k: 50,
                 gumbel_noise: false,
-            })),
-        );
+            },
+        )));
 
         // Normalization
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::RMSNorm {
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::RMSNorm {
                 input: SirNodeId("x".into()),
                 weight: "w".into(),
                 epsilon: 1e-5,
                 axes: vec![2],
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::LayerNorm {
+            },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::LayerNorm {
                 input: SirNodeId("x".into()),
                 weight: "w".into(),
                 bias: None,
                 epsilon: 1e-5,
                 axes: vec![2],
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::BatchNorm {
+            },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::BatchNorm {
                 input: SirNodeId("x".into()),
                 mean: "m".into(),
                 variance: "v".into(),
                 gamma: None,
                 beta: None,
                 epsilon: 1e-5,
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::InstanceNorm {
+            },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::InstanceNorm {
                 input: SirNodeId("x".into()),
                 gamma: None,
                 beta: None,
                 epsilon: 1e-5,
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::L2Norm {
-                input: SirNodeId("x".into()),
-                epsilon: 1e-5,
-                axes: vec![1],
-            })),
-        );
+            },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::L2Norm { input: SirNodeId("x".into()), epsilon: 1e-5, axes: vec![1] },
+        )));
 
         // Positional Encoding
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::RoPETransform {
-                input: SirNodeId("x".into()),
-                tables: "t".into(),
-            })),
-        );
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::RoPETransform { input: SirNodeId("x".into()), tables: "t".into() },
+        )));
 
         // State
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::StateRead {
-                state_id: "s".into(),
-                offset: 0,
-                shape: vec![1],
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::StateWrite {
-                state_id: "s".into(),
-                offset: 0,
-                value: SirNodeId("v".into()),
-            })),
-        );
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::StateRead { state_id: "s".into(), offset: 0, shape: vec![1] },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::StateWrite { state_id: "s".into(), offset: 0, value: SirNodeId("v".into()) },
+        )));
 
         // Linear/FC
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::MatMul {
-                a: SirNodeId("a".into()),
-                b: SirNodeId("b".into()),
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Einsum {
-                inputs: vec![SirNodeId("a".into())],
-                equation: "ij->j".into(),
-            })),
-        );
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::MatMul { a: SirNodeId("a".into()), b: SirNodeId("b".into()) },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Einsum { inputs: vec![SirNodeId("a".into())], equation: "ij->j".into() },
+        )));
 
         // Convolution
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Conv {
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Conv {
                 input: SirNodeId("x".into()),
                 weight: SirNodeId("w".into()),
                 pad_type: "valid".into(),
@@ -1085,10 +1078,10 @@ mod tests {
                 strides: vec![1],
                 pad_amounts: vec![0],
                 dilations: vec![1],
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::ConvTranspose {
+            },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::ConvTranspose {
                 input: SirNodeId("x".into()),
                 weight: SirNodeId("w".into()),
                 pad_type: "valid".into(),
@@ -1097,144 +1090,86 @@ mod tests {
                 pad_amounts: vec![0],
                 dilations: vec![1],
                 output_shape: vec![1],
-            })),
-        );
+            },
+        )));
 
         // Elementwise Binary
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Add {
-                x: SirNodeId("a".into()),
-                y: SirNodeId("b".into()),
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Mul {
-                x: SirNodeId("a".into()),
-                y: SirNodeId("b".into()),
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::RealDiv {
-                x: SirNodeId("a".into()),
-                y: SirNodeId("b".into()),
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Pow {
-                x: SirNodeId("a".into()),
-                y: SirNodeId("b".into()),
-            })),
-        );
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Add { x: SirNodeId("a".into()), y: SirNodeId("b".into()) },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Mul { x: SirNodeId("a".into()), y: SirNodeId("b".into()) },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::RealDiv { x: SirNodeId("a".into()), y: SirNodeId("b".into()) },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Pow { x: SirNodeId("a".into()), y: SirNodeId("b".into()) },
+        )));
 
         // Comparison
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Equal {
-                x: SirNodeId("a".into()),
-                y: SirNodeId("b".into()),
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Greater {
-                x: SirNodeId("a".into()),
-                y: SirNodeId("b".into()),
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::LessEqual {
-                x: SirNodeId("a".into()),
-                y: SirNodeId("b".into()),
-            })),
-        );
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Equal { x: SirNodeId("a".into()), y: SirNodeId("b".into()) },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Greater { x: SirNodeId("a".into()), y: SirNodeId("b".into()) },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::LessEqual { x: SirNodeId("a".into()), y: SirNodeId("b".into()) },
+        )));
 
         // Logical
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::LogicalAnd {
-                x: SirNodeId("a".into()),
-                y: SirNodeId("b".into()),
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::LogicalNot {
-                input: SirNodeId("x".into()),
-            })),
-        );
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::LogicalAnd { x: SirNodeId("a".into()), y: SirNodeId("b".into()) },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::LogicalNot { input: SirNodeId("x".into()) },
+        )));
 
         // Activation
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::LeakyRelu {
-                input: SirNodeId("x".into()),
-                alpha: 0.01,
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Elu {
-                input: SirNodeId("x".into()),
-                alpha: 1.0,
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Softplus {
-                input: SirNodeId("x".into()),
-            })),
-        );
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::LeakyRelu { input: SirNodeId("x".into()), alpha: 0.01 },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Elu { input: SirNodeId("x".into()), alpha: 1.0 },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Softplus { input: SirNodeId("x".into()) },
+        )));
 
         // Reduction
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::ReduceProd {
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::ReduceProd { input: SirNodeId("x".into()), axes: vec![1], keep_dims: false },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::ReduceL2Norm { input: SirNodeId("x".into()), axes: vec![1], keep_dims: false },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::ReduceArgmax { input: SirNodeId("x".into()), axis: 1, keep_dims: false },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::ReduceLogSumExp {
                 input: SirNodeId("x".into()),
                 axes: vec![1],
                 keep_dims: false,
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::ReduceL2Norm {
-                input: SirNodeId("x".into()),
-                axes: vec![1],
-                keep_dims: false,
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::ReduceArgmax {
-                input: SirNodeId("x".into()),
-                axis: 1,
-                keep_dims: false,
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::ReduceLogSumExp {
-                input: SirNodeId("x".into()),
-                axes: vec![1],
-                keep_dims: false,
-            })),
-        );
+            },
+        )));
 
         // Tensor Transform
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::ExpandDims {
-                input: SirNodeId("x".into()),
-                axis: vec![1],
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Squeeze {
-                input: SirNodeId("x".into()),
-                axis: vec![1],
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Stack {
-                values: vec![SirNodeId("a".into())],
-                axis: 0,
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Tile {
-                input: SirNodeId("x".into()),
-                reps: vec![1],
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::SliceByIndex {
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::ExpandDims { input: SirNodeId("x".into()), axis: vec![1] },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Squeeze { input: SirNodeId("x".into()), axis: vec![1] },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Stack { values: vec![SirNodeId("a".into())], axis: 0 },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Tile { input: SirNodeId("x".into()), reps: vec![1] },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::SliceByIndex {
                 input: SirNodeId("x".into()),
                 begin: vec![0],
                 end: vec![1],
@@ -1242,39 +1177,32 @@ mod tests {
                 begin_mask: vec![false],
                 end_mask: vec![false],
                 squeeze_mask: vec![false],
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Flatten2d {
-                input: SirNodeId("x".into()),
-                axis: 1,
-            })),
-        );
+            },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Flatten2d { input: SirNodeId("x".into()), axis: 1 },
+        )));
 
         // Trigonometric
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Cos {
-                input: SirNodeId("x".into()),
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Sin {
-                input: SirNodeId("x".into()),
-            })),
-        );
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Cos { input: SirNodeId("x".into()) },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Sin { input: SirNodeId("x".into()) },
+        )));
 
         // Scatter/Gather
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::ScatterNd {
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::ScatterNd {
                 input: SirNodeId("x".into()),
                 indices: SirNodeId("i".into()),
                 updates: SirNodeId("u".into()),
-            })),
-        );
+            },
+        )));
 
         // Recurrent
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Lstm {
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Lstm {
                 input: SirNodeId("x".into()),
                 initial_h: SirNodeId("h".into()),
                 initial_c: SirNodeId("c".into()),
@@ -1282,78 +1210,73 @@ mod tests {
                 weight_hh: "whh".into(),
                 bias: None,
                 output_sequence: false,
-            })),
-        );
+            },
+        )));
 
         // Control Flow
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Cond {
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Cond {
                 pred: SirNodeId("p".into()),
                 true_graph: "t".into(),
                 false_graph: "f".into(),
-            })),
-        );
+            },
+        )));
 
         // Random
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::RandomNormal {
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::RandomNormal {
                 shape: vec![1],
                 mean: 0.0,
                 stddev: 1.0,
                 seed: None,
                 dtype: ane_ir::mir::MilDtype::Fp16,
-            })),
-        );
+            },
+        )));
 
         // Quantization
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Quantize {
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Quantize {
                 input: SirNodeId("x".into()),
                 scale: 1.0,
                 zero_point: 0,
                 axis: -1,
                 output_dtype: ane_ir::mir::MilDtype::Int8,
-            })),
-        );
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::Dequantize {
+            },
+        )));
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::Dequantize {
                 input: SirNodeId("x".into()),
                 scale: 1.0,
                 zero_point: 0,
                 axis: -1,
                 output_dtype: ane_ir::mir::MilDtype::Fp16,
-            })),
-        );
+            },
+        )));
 
         // Constexpr
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(SirOp::ConstexprAffineDequantize {
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::ConstexprAffineDequantize {
                 quantized_data: "q".into(),
                 scale: 1.0,
                 zero_point: 0,
                 axis: -1,
-            })),
-        );
+            },
+        )));
 
         // Attention
-        specific_patterns.insert(
-            PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
-                SirOp::ScaledDotProductAttention {
-                    query: SirNodeId("q".into()),
-                    key: SirNodeId("k".into()),
-                    value: SirNodeId("v".into()),
-                    attention_mask: None,
-                    scale: None,
-                },
-            )),
-        );
+        specific_patterns.insert(PrecisionPolicyPass::op_pattern_for_node(&node_for_op(
+            SirOp::ScaledDotProductAttention {
+                query: SirNodeId("q".into()),
+                key: SirNodeId("k".into()),
+                value: SirNodeId("v".into()),
+                attention_mask: None,
+                scale: None,
+            },
+        )));
 
         // None of the patterns should be bare "Other"
         for pattern in &specific_patterns {
-            assert_ne!(
-                pattern, "Other",
-                "No op pattern should be bare 'Other'"
-            );
+            assert_ne!(pattern, "Other", "No op pattern should be bare 'Other'");
         }
 
         // Must have at least 30 distinct specific patterns
@@ -1383,7 +1306,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
-            target_annotation: SirTargetAnnotation::default(),
+                target_annotation: SirTargetAnnotation::default(),
             }
         }
 
@@ -1414,7 +1337,11 @@ mod tests {
             SirOp::ScaledTanh { input: SirNodeId("x".into()), alpha: 1.0, beta: 1.0 },
             SirOp::Elu { input: SirNodeId("x".into()), alpha: 1.0 },
             SirOp::Softplus { input: SirNodeId("x".into()) },
-            SirOp::SoftplusParametric { input: SirNodeId("x".into()), alpha: "a".into(), beta: "b".into() },
+            SirOp::SoftplusParametric {
+                input: SirNodeId("x".into()),
+                alpha: "a".into(),
+                beta: "b".into(),
+            },
             // Math
             SirOp::Square { input: SirNodeId("x".into()) },
             SirOp::Threshold { input: SirNodeId("x".into()), alpha: 0.0 },
@@ -1436,85 +1363,291 @@ mod tests {
             SirOp::Sinh { input: SirNodeId("x".into()) },
             SirOp::Atanh { input: SirNodeId("x".into()) },
             // Conditional
-            SirOp::Select { condition: SirNodeId("c".into()), x: SirNodeId("a".into()), y: SirNodeId("b".into()) },
-            SirOp::Where { condition: SirNodeId("c".into()), x: SirNodeId("a".into()), y: SirNodeId("b".into()) },
+            SirOp::Select {
+                condition: SirNodeId("c".into()),
+                x: SirNodeId("a".into()),
+                y: SirNodeId("b".into()),
+            },
+            SirOp::Where {
+                condition: SirNodeId("c".into()),
+                x: SirNodeId("a".into()),
+                y: SirNodeId("b".into()),
+            },
             // Reduction
             SirOp::ReduceProd { input: SirNodeId("x".into()), axes: vec![1], keep_dims: false },
-            SirOp::ReduceSumSquare { input: SirNodeId("x".into()), axes: vec![1], keep_dims: false },
+            SirOp::ReduceSumSquare {
+                input: SirNodeId("x".into()),
+                axes: vec![1],
+                keep_dims: false,
+            },
             SirOp::ReduceL2Norm { input: SirNodeId("x".into()), axes: vec![1], keep_dims: false },
             SirOp::ReduceL1Norm { input: SirNodeId("x".into()), axes: vec![1], keep_dims: false },
-            SirOp::ReduceLogSumExp { input: SirNodeId("x".into()), axes: vec![1], keep_dims: false },
+            SirOp::ReduceLogSumExp {
+                input: SirNodeId("x".into()),
+                axes: vec![1],
+                keep_dims: false,
+            },
             SirOp::ReduceLogSum { input: SirNodeId("x".into()), axes: vec![1], keep_dims: false },
             SirOp::ReduceArgmax { input: SirNodeId("x".into()), axis: 1, keep_dims: false },
             SirOp::ReduceArgmin { input: SirNodeId("x".into()), axis: 1, keep_dims: false },
             // Resize
-            SirOp::Resize { input: SirNodeId("x".into()), target_size: vec![1], mode: "linear".into(), sampling_mode: "default".into(), nearest_rounding_mode: "round".into() },
-            SirOp::ResizeNearestNeighbor { input: SirNodeId("x".into()), target_height: 1, target_width: 1 },
-            SirOp::ResizeBilinear { input: SirNodeId("x".into()), target_height: 1, target_width: 1, align_corners: false },
+            SirOp::Resize {
+                input: SirNodeId("x".into()),
+                target_size: vec![1],
+                mode: "linear".into(),
+                sampling_mode: "default".into(),
+                nearest_rounding_mode: "round".into(),
+            },
+            SirOp::ResizeNearestNeighbor {
+                input: SirNodeId("x".into()),
+                target_height: 1,
+                target_width: 1,
+            },
+            SirOp::ResizeBilinear {
+                input: SirNodeId("x".into()),
+                target_height: 1,
+                target_width: 1,
+                align_corners: false,
+            },
             SirOp::UpsampleNearestNeighbor { input: SirNodeId("x".into()), scale: vec![2] },
-            SirOp::UpsampleBilinear { input: SirNodeId("x".into()), scale: vec![2], align_corners: false, half_pixel_centers: false },
-            SirOp::CropResize { input: SirNodeId("x".into()), boxes: SirNodeId("b".into()), box_indices: SirNodeId("i".into()), crop_height: 1, crop_width: 1 },
-            SirOp::Affine { input: SirNodeId("x".into()), transform: SirNodeId("t".into()), output_height: 1, output_width: 1, sampling_mode: "bilinear".into(), pad_value: 0.0 },
-            SirOp::Resample { input: SirNodeId("x".into()), coordinates: SirNodeId("c".into()), sampling_mode: "bilinear".into(), pad_value: 0.0 },
+            SirOp::UpsampleBilinear {
+                input: SirNodeId("x".into()),
+                scale: vec![2],
+                align_corners: false,
+                half_pixel_centers: false,
+            },
+            SirOp::CropResize {
+                input: SirNodeId("x".into()),
+                boxes: SirNodeId("b".into()),
+                box_indices: SirNodeId("i".into()),
+                crop_height: 1,
+                crop_width: 1,
+            },
+            SirOp::Affine {
+                input: SirNodeId("x".into()),
+                transform: SirNodeId("t".into()),
+                output_height: 1,
+                output_width: 1,
+                sampling_mode: "bilinear".into(),
+                pad_value: 0.0,
+            },
+            SirOp::Resample {
+                input: SirNodeId("x".into()),
+                coordinates: SirNodeId("c".into()),
+                sampling_mode: "bilinear".into(),
+                pad_value: 0.0,
+            },
             // Tensor Transform
             SirOp::ReshapeLike { input: SirNodeId("x".into()), ref_tensor: SirNodeId("r".into()) },
             SirOp::ExpandDims { input: SirNodeId("x".into()), axis: vec![1] },
             SirOp::Squeeze { input: SirNodeId("x".into()), axis: vec![1] },
             SirOp::Flatten2d { input: SirNodeId("x".into()), axis: 1 },
             SirOp::Reverse { input: SirNodeId("x".into()), axes: vec![1] },
-            SirOp::ReverseSequence { input: SirNodeId("x".into()), lengths: SirNodeId("l".into()), batch_axis: 0, seq_axis: 1 },
-            SirOp::SliceByIndex { input: SirNodeId("x".into()), begin: vec![0], end: vec![1], stride: vec![1], begin_mask: vec![false], end_mask: vec![false], squeeze_mask: vec![false] },
+            SirOp::ReverseSequence {
+                input: SirNodeId("x".into()),
+                lengths: SirNodeId("l".into()),
+                batch_axis: 0,
+                seq_axis: 1,
+            },
+            SirOp::SliceByIndex {
+                input: SirNodeId("x".into()),
+                begin: vec![0],
+                end: vec![1],
+                stride: vec![1],
+                begin_mask: vec![false],
+                end_mask: vec![false],
+                squeeze_mask: vec![false],
+            },
             SirOp::SliceBySize { input: SirNodeId("x".into()), begin: vec![0], size: vec![1] },
-            SirOp::SlidingWindows { input: SirNodeId("x".into()), axis: 1, window_size: 3, stride: 1 },
+            SirOp::SlidingWindows {
+                input: SirNodeId("x".into()),
+                axis: 1,
+                window_size: 3,
+                stride: 1,
+            },
             SirOp::DepthToSpace { input: SirNodeId("x".into()), block_size: 2 },
             SirOp::SpaceToDepth { input: SirNodeId("x".into()), block_size: 2 },
             SirOp::PixelShuffle { input: SirNodeId("x".into()), upscale_factor: 2 },
             SirOp::PixelUnshuffle { input: SirNodeId("x".into()), downscale_factor: 2 },
-            SirOp::BatchToSpace { input: SirNodeId("x".into()), block_shape: vec![2], crops: vec![(0, 0)] },
-            SirOp::SpaceToBatch { input: SirNodeId("x".into()), block_shape: vec![2], paddings: vec![(0, 0)] },
+            SirOp::BatchToSpace {
+                input: SirNodeId("x".into()),
+                block_shape: vec![2],
+                crops: vec![(0, 0)],
+            },
+            SirOp::SpaceToBatch {
+                input: SirNodeId("x".into()),
+                block_shape: vec![2],
+                paddings: vec![(0, 0)],
+            },
             SirOp::Stack { values: vec![SirNodeId("a".into())], axis: 0 },
             SirOp::Tile { input: SirNodeId("x".into()), reps: vec![1] },
-            SirOp::Cumsum { input: SirNodeId("x".into()), axis: 0, exclusive: false, reverse: false },
-            SirOp::FillLike { ref_tensor: SirNodeId("r".into()), value: 0.0, dtype: ane_ir::mir::MilDtype::Fp16 },
-            SirOp::OneHot { indices: SirNodeId("i".into()), one_hot_vector_size: 10, on_value: 1.0, off_value: 0.0, axis: 0, dtype: ane_ir::mir::MilDtype::Fp16 },
+            SirOp::Cumsum {
+                input: SirNodeId("x".into()),
+                axis: 0,
+                exclusive: false,
+                reverse: false,
+            },
+            SirOp::FillLike {
+                ref_tensor: SirNodeId("r".into()),
+                value: 0.0,
+                dtype: ane_ir::mir::MilDtype::Fp16,
+            },
+            SirOp::OneHot {
+                indices: SirNodeId("i".into()),
+                one_hot_vector_size: 10,
+                on_value: 1.0,
+                off_value: 0.0,
+                axis: 0,
+                dtype: ane_ir::mir::MilDtype::Fp16,
+            },
             SirOp::NonZero { input: SirNodeId("x".into()) },
             SirOp::Argsort { input: SirNodeId("x".into()), axis: 0, ascending: true },
             SirOp::BandPart { input: SirNodeId("x".into()), num_lower: -1, num_upper: 0 },
             SirOp::Range1d { start: 0.0, end: 10.0, step: 1.0 },
             SirOp::Shape { input: SirNodeId("x".into()) },
-            SirOp::Crop { input: SirNodeId("x".into()), crop_height: 1, crop_width: 1, offset_height: 0, offset_width: 0 },
+            SirOp::Crop {
+                input: SirNodeId("x".into()),
+                crop_height: 1,
+                crop_width: 1,
+                offset_height: 0,
+                offset_width: 0,
+            },
             SirOp::Mod { x: SirNodeId("a".into()), y: SirNodeId("b".into()) },
             // Scatter/Gather
-            SirOp::GatherAlongAxis { input: SirNodeId("x".into()), indices: SirNodeId("i".into()), axis: 0 },
-            SirOp::ScatterAlongAxis { input: SirNodeId("x".into()), indices: SirNodeId("i".into()), updates: SirNodeId("u".into()), axis: 0 },
-            SirOp::ScatterNd { input: SirNodeId("x".into()), indices: SirNodeId("i".into()), updates: SirNodeId("u".into()) },
-            SirOp::NonMaximumSuppression { boxes: SirNodeId("b".into()), scores: SirNodeId("s".into()), iou_threshold: 0.5, score_threshold: 0.1, max_detections: 100 },
+            SirOp::GatherAlongAxis {
+                input: SirNodeId("x".into()),
+                indices: SirNodeId("i".into()),
+                axis: 0,
+            },
+            SirOp::ScatterAlongAxis {
+                input: SirNodeId("x".into()),
+                indices: SirNodeId("i".into()),
+                updates: SirNodeId("u".into()),
+                axis: 0,
+            },
+            SirOp::ScatterNd {
+                input: SirNodeId("x".into()),
+                indices: SirNodeId("i".into()),
+                updates: SirNodeId("u".into()),
+            },
+            SirOp::NonMaximumSuppression {
+                boxes: SirNodeId("b".into()),
+                scores: SirNodeId("s".into()),
+                iou_threshold: 0.5,
+                score_threshold: 0.1,
+                max_detections: 100,
+            },
             // Constexpr
-            SirOp::ConstexprAffineDequantize { quantized_data: "q".into(), scale: 1.0, zero_point: 0, axis: -1 },
-            SirOp::ConstexprBlockwiseShiftScale { data: "d".into(), scale: "s".into(), offset: "o".into(), block_size: vec![128] },
+            SirOp::ConstexprAffineDequantize {
+                quantized_data: "q".into(),
+                scale: 1.0,
+                zero_point: 0,
+                axis: -1,
+            },
+            SirOp::ConstexprBlockwiseShiftScale {
+                data: "d".into(),
+                scale: "s".into(),
+                offset: "o".into(),
+                block_size: vec![128],
+            },
             SirOp::ConstexprLutToDense { indices: "i".into(), lut: "l".into(), num_bits: 4 },
-            SirOp::ConstexprSparseToDense { nonzero_data: "n".into(), shape: vec![1], default_value: 0.0 },
+            SirOp::ConstexprSparseToDense {
+                nonzero_data: "n".into(),
+                shape: vec![1],
+                default_value: 0.0,
+            },
             SirOp::ConstexprCast { data: "d".into(), dtype: ane_ir::mir::MilDtype::Fp16 },
             SirOp::ConstexprLutToSparse { data: "d".into(), num_bits: 4 },
-            SirOp::ConstexprSparseBlockwiseShiftScale { data: "d".into(), scale: "s".into(), offset: "o".into(), block_size: vec![128], block_axis: 0 },
+            SirOp::ConstexprSparseBlockwiseShiftScale {
+                data: "d".into(),
+                scale: "s".into(),
+                offset: "o".into(),
+                block_size: vec![128],
+                block_axis: 0,
+            },
             // Recurrent
-            SirOp::Rnn { input: SirNodeId("x".into()), initial_h: SirNodeId("h".into()), weight_ih: "wih".into(), weight_hh: "whh".into(), bias: None, mode: "relu".into(), output_sequence: false },
-            SirOp::Gru { input: SirNodeId("x".into()), initial_h: SirNodeId("h".into()), weight_ih: "wih".into(), weight_hh: "whh".into(), bias: None, reset_after: true, output_sequence: false },
-            SirOp::Lstm { input: SirNodeId("x".into()), initial_h: SirNodeId("h".into()), initial_c: SirNodeId("c".into()), weight_ih: "wih".into(), weight_hh: "whh".into(), bias: None, output_sequence: false },
+            SirOp::Rnn {
+                input: SirNodeId("x".into()),
+                initial_h: SirNodeId("h".into()),
+                weight_ih: "wih".into(),
+                weight_hh: "whh".into(),
+                bias: None,
+                mode: "relu".into(),
+                output_sequence: false,
+            },
+            SirOp::Gru {
+                input: SirNodeId("x".into()),
+                initial_h: SirNodeId("h".into()),
+                weight_ih: "wih".into(),
+                weight_hh: "whh".into(),
+                bias: None,
+                reset_after: true,
+                output_sequence: false,
+            },
+            SirOp::Lstm {
+                input: SirNodeId("x".into()),
+                initial_h: SirNodeId("h".into()),
+                initial_c: SirNodeId("c".into()),
+                weight_ih: "wih".into(),
+                weight_hh: "whh".into(),
+                bias: None,
+                output_sequence: false,
+            },
             // Control Flow
-            SirOp::Cond { pred: SirNodeId("p".into()), true_graph: "t".into(), false_graph: "f".into() },
-            SirOp::WhileLoop { condition: "c".into(), body: "b".into(), loop_vars: vec![SirNodeId("v".into())] },
-            SirOp::MakeList { elems: vec![SirNodeId("e".into())], dtype: ane_ir::mir::MilDtype::Fp16 },
+            SirOp::Cond {
+                pred: SirNodeId("p".into()),
+                true_graph: "t".into(),
+                false_graph: "f".into(),
+            },
+            SirOp::WhileLoop {
+                condition: "c".into(),
+                body: "b".into(),
+                loop_vars: vec![SirNodeId("v".into())],
+            },
+            SirOp::MakeList {
+                elems: vec![SirNodeId("e".into())],
+                dtype: ane_ir::mir::MilDtype::Fp16,
+            },
             SirOp::ListLength { ls: SirNodeId("l".into()) },
-            SirOp::ListWrite { ls: SirNodeId("l".into()), index: SirNodeId("i".into()), value: SirNodeId("v".into()) },
+            SirOp::ListWrite {
+                ls: SirNodeId("l".into()),
+                index: SirNodeId("i".into()),
+                value: SirNodeId("v".into()),
+            },
             SirOp::ListRead { ls: SirNodeId("l".into()), index: SirNodeId("i".into()) },
             SirOp::ListGather { ls: SirNodeId("l".into()), indices: SirNodeId("i".into()) },
-            SirOp::ListScatter { ls: SirNodeId("l".into()), indices: SirNodeId("i".into()), values: SirNodeId("v".into()) },
+            SirOp::ListScatter {
+                ls: SirNodeId("l".into()),
+                indices: SirNodeId("i".into()),
+                values: SirNodeId("v".into()),
+            },
             // Random
-            SirOp::RandomBernoulli { shape: vec![1], prob: 0.5, seed: None, dtype: ane_ir::mir::MilDtype::Fp16 },
-            SirOp::RandomNormal { shape: vec![1], mean: 0.0, stddev: 1.0, seed: None, dtype: ane_ir::mir::MilDtype::Fp16 },
-            SirOp::RandomUniform { shape: vec![1], low: 0.0, high: 1.0, seed: None, dtype: ane_ir::mir::MilDtype::Fp16 },
-            SirOp::RandomCategorical { logits: SirNodeId("l".into()), num_samples: 1, seed: None, dtype: ane_ir::mir::MilDtype::Int32 },
+            SirOp::RandomBernoulli {
+                shape: vec![1],
+                prob: 0.5,
+                seed: None,
+                dtype: ane_ir::mir::MilDtype::Fp16,
+            },
+            SirOp::RandomNormal {
+                shape: vec![1],
+                mean: 0.0,
+                stddev: 1.0,
+                seed: None,
+                dtype: ane_ir::mir::MilDtype::Fp16,
+            },
+            SirOp::RandomUniform {
+                shape: vec![1],
+                low: 0.0,
+                high: 1.0,
+                seed: None,
+                dtype: ane_ir::mir::MilDtype::Fp16,
+            },
+            SirOp::RandomCategorical {
+                logits: SirNodeId("l".into()),
+                num_samples: 1,
+                seed: None,
+                dtype: ane_ir::mir::MilDtype::Int32,
+            },
             // Topk/Classify
             SirOp::Topk { input: SirNodeId("x".into()), k: 5, axis: -1 },
             SirOp::Classify { input: SirNodeId("x".into()) },

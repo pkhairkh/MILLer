@@ -64,11 +64,7 @@ fn test_all_seed_files_are_valid_json() {
             .unwrap_or_else(|e| panic!("{} is not valid JSON: {}", filename, e));
 
         // Every seed file must have a "version" field at the top level
-        assert!(
-            parsed.get("version").is_some(),
-            "{}: missing top-level 'version' field",
-            filename
-        );
+        assert!(parsed.get("version").is_some(), "{}: missing top-level 'version' field", filename);
     }
 }
 
@@ -99,18 +95,10 @@ fn test_entries_pattern_files_have_valid_structure() {
         let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
 
         let entries = parsed.get("entries").and_then(|e| e.as_array());
-        assert!(
-            entries.is_some(),
-            "{}: missing top-level 'entries' array",
-            filename
-        );
+        assert!(entries.is_some(), "{}: missing top-level 'entries' array", filename);
 
         let entries = entries.unwrap();
-        assert!(
-            !entries.is_empty(),
-            "{}: 'entries' array is empty",
-            filename
-        );
+        assert!(!entries.is_empty(), "{}: 'entries' array is empty", filename);
 
         // Each entry must have 'id' and 'knowledge_type'
         for (i, entry) in entries.iter().enumerate() {
@@ -230,7 +218,11 @@ fn test_flat_format_files_have_valid_structure() {
                 i
             );
             let payload = entry.get("payload").and_then(|v| v.as_object());
-            assert!(payload.is_some(), "ane_op_family_matrix.json: entries[{}] missing 'payload'", i);
+            assert!(
+                payload.is_some(),
+                "ane_op_family_matrix.json: entries[{}] missing 'payload'",
+                i
+            );
             let payload = payload.unwrap();
             assert!(
                 payload.get("mil_name").and_then(|v| v.as_str()).is_some(),
@@ -253,7 +245,10 @@ fn test_flat_format_files_have_valid_structure() {
         let entries = parsed.get("entries").and_then(|e| e.as_array());
         assert!(entries.is_some(), "palettization_constraints_seed.json: missing 'entries' array");
         let entries = entries.unwrap();
-        assert!(!entries.is_empty(), "palettization_constraints_seed.json: 'entries' array is empty");
+        assert!(
+            !entries.is_empty(),
+            "palettization_constraints_seed.json: 'entries' array is empty"
+        );
         for (i, entry) in entries.iter().enumerate() {
             assert_eq!(
                 entry.get("knowledge_type").and_then(|v| v.as_str()),
@@ -274,8 +269,8 @@ fn test_shard_template_seeds_load_successfully() {
         return;
     };
 
-    let templates = load_shard_template_seeds(&dir)
-        .expect("load_shard_template_seeds should not error");
+    let templates =
+        load_shard_template_seeds(&dir).expect("load_shard_template_seeds should not error");
 
     // Should load at least the Qwen3 three-shard and decode-step templates
     assert!(
@@ -319,9 +314,8 @@ fn test_store_load_seeds_from_directory_no_error() {
     // load_seeds_from_directory should not error, even though
     // many seed entries don't yet match the KnowledgeUnit schema
     // and will be silently skipped.
-    let loaded = store
-        .load_seeds_from_directory(&dir)
-        .expect("load_seeds_from_directory should not error");
+    let loaded =
+        store.load_seeds_from_directory(&dir).expect("load_seeds_from_directory should not error");
 
     // After the seed file migration to KnowledgeUnit schema, all entries
     // should load successfully. loaded should be > 0.
@@ -353,11 +347,7 @@ fn test_expected_seed_files_present() {
 
     for filename in &expected_files {
         let path = Path::new(&dir).join(filename);
-        assert!(
-            path.exists(),
-            "Expected seed file '{}' not found in knowledge/",
-            filename
-        );
+        assert!(path.exists(), "Expected seed file '{}' not found in knowledge/", filename);
     }
 }
 
@@ -425,9 +415,8 @@ fn test_m013_default_knowledge_dir_seed_loading() {
         .expect("Failed to open knowledge store");
 
     // Load seeds from the default knowledge/ directory
-    let loaded = store
-        .load_seeds_from_directory(&dir)
-        .expect("load_seeds_from_directory should not error");
+    let loaded =
+        store.load_seeds_from_directory(&dir).expect("load_seeds_from_directory should not error");
 
     // After the KnowledgeUnit schema migration, seed entries should load.
     // Even if some entries are skipped due to schema mismatch, the call
@@ -440,30 +429,18 @@ fn test_m013_default_knowledge_dir_seed_loading() {
 
     // Verify the store has seed entries (not observations)
     let (seeds, observations) = store.counts();
-    assert_eq!(
-        seeds, loaded,
-        "M-013: Store seed count should match loaded count"
-    );
-    assert_eq!(
-        observations, 0,
-        "M-013: No observations should exist in a freshly seeded store"
-    );
+    assert_eq!(seeds, loaded, "M-013: Store seed count should match loaded count");
+    assert_eq!(observations, 0, "M-013: No observations should exist in a freshly seeded store");
 
     // Verify that the seed IDs are queryable — the key M-013 fix is that
     // seeds are now functional at runtime, not just decorative.
     let seed_ids = store.list_seed_ids();
-    assert!(
-        !seed_ids.is_empty(),
-        "M-013: Seed IDs should be queryable after loading"
-    );
+    assert!(!seed_ids.is_empty(), "M-013: Seed IDs should be queryable after loading");
 
     // Verify at least one seed entry can be retrieved by ID
     let first_id = &seed_ids[0];
     let entry = store.get(first_id).expect("M-013: Seed entry should be retrievable by ID");
-    assert!(
-        entry.unit.id == *first_id,
-        "M-013: Retrieved entry ID should match requested ID"
-    );
+    assert!(entry.unit.id == *first_id, "M-013: Retrieved entry ID should match requested ID");
 
     eprintln!(
         "M-013: Successfully loaded {} seed entries from default knowledge/ directory",

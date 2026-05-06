@@ -377,11 +377,7 @@ impl BridgeVerifier {
 
     /// Create a verifier with all checks enabled.
     pub fn strict() -> Self {
-        Self {
-            require_output_path: true,
-            require_package_files: true,
-            verify_disk_structure: true,
-        }
+        Self { require_output_path: true, require_package_files: true, verify_disk_structure: true }
     }
 
     /// Create a verifier with minimal checks.
@@ -424,9 +420,8 @@ impl BridgeVerifier {
         // --- content_hash format check ---
         if let Some(ref hash) = result.content_hash {
             if !hash.starts_with("sha256:") || hash.len() != 7 + 64 {
-                issues.push(BridgeVerificationIssue::ContentHashFormatInvalid {
-                    hash: hash.clone(),
-                });
+                issues
+                    .push(BridgeVerificationIssue::ContentHashFormatInvalid { hash: hash.clone() });
             }
         }
 
@@ -477,9 +472,7 @@ impl BridgeVerifier {
         let has_manifest_in_subdir = pkg_path
             .read_dir()
             .map(|entries| {
-                entries
-                    .filter_map(|e| e.ok())
-                    .any(|e| e.path().join("manifest.json").exists())
+                entries.filter_map(|e| e.ok()).any(|e| e.path().join("manifest.json").exists())
             })
             .unwrap_or(false);
 
@@ -493,13 +486,11 @@ impl BridgeVerifier {
         let has_model = pkg_path
             .read_dir()
             .map(|entries| {
-                entries
-                    .filter_map(|e| e.ok())
-                    .any(|e| {
-                        let name = e.file_name();
-                        let name = name.to_string_lossy();
-                        name.ends_with(".mlmodel")
-                    })
+                entries.filter_map(|e| e.ok()).any(|e| {
+                    let name = e.file_name();
+                    let name = name.to_string_lossy();
+                    name.ends_with(".mlmodel")
+                })
             })
             .unwrap_or(false);
 
@@ -530,10 +521,7 @@ mod tests {
             error_message: None,
             output_path: Some("/tmp/model.mlpackage".into()),
             coremltools_version: Some("9.0".into()),
-            content_hash: Some(format!(
-                "sha256:{}",
-                "a".repeat(64)
-            )),
+            content_hash: Some(format!("sha256:{}", "a".repeat(64))),
             package_files: vec![PackageFileEntry {
                 path: "model.mlmodel/weights/weight.bin".into(),
                 size_bytes: 1024,
@@ -647,7 +635,9 @@ mod tests {
         let result = success_result(); // has valid sha256:<64 hex chars>
         let verifier = BridgeVerifier::new();
         let issues = verifier.verify(&result);
-        assert!(!issues.iter().any(|i| matches!(i, BridgeVerificationIssue::ContentHashFormatInvalid { .. })));
+        assert!(!issues
+            .iter()
+            .any(|i| matches!(i, BridgeVerificationIssue::ContentHashFormatInvalid { .. })));
     }
 
     // ----- Function descriptor tests -----
@@ -715,7 +705,9 @@ mod tests {
         result.output_path = Some("/tmp/nonexistent_mlpackage_999.mlpackage".into());
         let verifier = BridgeVerifier::new(); // default: no disk checks
         let issues = verifier.verify(&result);
-        assert!(!issues.iter().any(|i| matches!(i, BridgeVerificationIssue::SuccessWithMissingDirectory { .. })));
+        assert!(!issues
+            .iter()
+            .any(|i| matches!(i, BridgeVerificationIssue::SuccessWithMissingDirectory { .. })));
     }
 
     // ----- Disk structure: valid mlpackage on disk -----
@@ -733,8 +725,14 @@ mod tests {
         result.output_path = Some(pkg_path.to_string_lossy().to_string());
         let verifier = BridgeVerifier::strict();
         let issues = verifier.verify(&result);
-        assert!(!issues.iter().any(|i| matches!(i, BridgeVerificationIssue::SuccessWithMissingDirectory { .. })));
-        assert!(!issues.iter().any(|i| matches!(i, BridgeVerificationIssue::SuccessWithMissingManifest { .. })));
-        assert!(!issues.iter().any(|i| matches!(i, BridgeVerificationIssue::SuccessWithMissingModelFile { .. })));
+        assert!(!issues
+            .iter()
+            .any(|i| matches!(i, BridgeVerificationIssue::SuccessWithMissingDirectory { .. })));
+        assert!(!issues
+            .iter()
+            .any(|i| matches!(i, BridgeVerificationIssue::SuccessWithMissingManifest { .. })));
+        assert!(!issues
+            .iter()
+            .any(|i| matches!(i, BridgeVerificationIssue::SuccessWithMissingModelFile { .. })));
     }
 }

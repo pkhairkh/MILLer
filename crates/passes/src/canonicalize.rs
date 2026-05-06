@@ -128,7 +128,8 @@ impl CanonicalizePass {
                         "CanonicalizePass: substitution chain resolution hit 100-step limit \
                          for key {:?} → target {:?}. This indicates a circular substitution \
                          chain in the SIR graph that must be fixed before canonicalization.",
-                        key, final_target
+                        key,
+                        final_target
                     );
                 }
             }
@@ -147,13 +148,11 @@ impl CanonicalizePass {
 
         match op {
             SirOp::Identity { input } => SirOp::Identity { input: r!(input) },
-            SirOp::LinearProjection { input, weight, bias } => {
-                SirOp::LinearProjection {
-                    input: r!(input),
-                    weight: weight.clone(),
-                    bias: bias.clone(),
-                }
-            }
+            SirOp::LinearProjection { input, weight, bias } => SirOp::LinearProjection {
+                input: r!(input),
+                weight: weight.clone(),
+                bias: bias.clone(),
+            },
             SirOp::RMSNorm { input, weight, epsilon, axes } => SirOp::RMSNorm {
                 input: r!(input),
                 weight: weight.clone(),
@@ -317,7 +316,9 @@ impl CanonicalizePass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ane_ir::sir::{QualityContract, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
+    use ane_ir::sir::{
+        QualityContract, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin,
+    };
 
     fn make_node(id: &str, op: SirOp) -> SirNode {
         SirNode {

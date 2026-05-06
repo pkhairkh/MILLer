@@ -89,7 +89,7 @@ pub fn run_static_tables_pass(graph: &mut SirGraph) -> StaticTablesResult {
                 },
                 name: format!("static_{}_{}", table_name, tables_ref),
                 metadata: metadata.clone(),
-            target_annotation: SirTargetAnnotation::default(),
+                target_annotation: SirTargetAnnotation::default(),
             };
             new_const_nodes.push(const_node);
             result.tables_inserted += 1;
@@ -126,7 +126,7 @@ mod tests {
                     quality_contract: None,
                     precision_override: None,
                 },
-            target_annotation: SirTargetAnnotation::default(),
+                target_annotation: SirTargetAnnotation::default(),
             }],
             inputs: vec![],
             outputs: vec![],
@@ -182,7 +182,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
-                target_annotation: SirTargetAnnotation::default(),
+                    target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("rope_k_0".to_string()),
@@ -197,7 +197,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
-                target_annotation: SirTargetAnnotation::default(),
+                    target_annotation: SirTargetAnnotation::default(),
                 },
                 SirNode {
                     id: SirNodeId("rope_q_1".to_string()),
@@ -212,7 +212,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
-                target_annotation: SirTargetAnnotation::default(),
+                    target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![],

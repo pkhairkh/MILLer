@@ -16,12 +16,10 @@ W-27 fix: SHARD_ROLE_OP_MAP is documented as derived from Rust source of truth.
 
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, Optional
 
 import numpy as np
-
-from common import _error_result, COMPUTE_MAP, _ensure_coremltools
-
+from common import _ensure_coremltools, _error_result
 
 # ---------------------------------------------------------------------------
 # Opset resolution (eliminates 9× opset_map duplication — C-13)
@@ -186,7 +184,7 @@ def emit_program(
         # Lazy import to avoid circular dependency at module load time.
         # mil_emitter imports program_builder, so program_builder cannot
         # import mil_emitter at the top level.
-        from mil_emitter import save_mlpackage, compute_plan_info
+        from mil_emitter import compute_plan_info, save_mlpackage
 
         task_name = command.get("task_name", default_task_name)
         output_dir = Path(output_path)

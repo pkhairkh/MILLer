@@ -29,9 +29,11 @@ pub enum BridgeError {
     /// This is a hard error when `allow_missing_weights` is false (the default).
     /// When `allow_missing_weights` is true, missing weights produce zero-filled
     /// placeholders with a warning instead.
-    #[error("Weight '{path}' not found in resolver. This produces a silently broken model \
+    #[error(
+        "Weight '{path}' not found in resolver. This produces a silently broken model \
              with zero-filled weights. Use --allow-missing-weights to opt into zero-fill \
-             (NOT recommended for production).")]
+             (NOT recommended for production)."
+    )]
     UnresolvedWeight {
         /// The weight path that was not found (e.g., "model.layers.0.self_attn.q_proj.weight").
         path: String,

@@ -487,9 +487,7 @@ fn main() {
 
     match cli.command {
         Commands::Compile { input, output, bridge, python, knowledge } => {
-            if let Err(e) =
-                run_compile(&input, &output, &bridge, &python, knowledge.as_deref())
-            {
+            if let Err(e) = run_compile(&input, &output, &bridge, &python, knowledge.as_deref()) {
                 eprintln!("Compile failed: {}", e);
                 std::process::exit(1);
             }
@@ -803,16 +801,14 @@ fn open_knowledge_store_with_seeds(
     } else {
         // Seed directory (no store_index.json): create a temp store and
         // load seeds from it.
-        let tmp_store_dir = std::env::temp_dir().join(format!("ane_{}_knowledge_store", temp_store_id));
+        let tmp_store_dir =
+            std::env::temp_dir().join(format!("ane_{}_knowledge_store", temp_store_id));
         let tmp_store_dir_str = tmp_store_dir.to_string_lossy().into_owned();
         match ane_knowledge::store::KnowledgeStore::open(&tmp_store_dir_str) {
             Ok(mut store) => match store.load_seeds_from_directory(&kdir) {
                 Ok(count) => {
                     if count > 0 {
-                        println!(
-                            "  Knowledge seeds: {} entries loaded from {}",
-                            count, kdir
-                        );
+                        println!("  Knowledge seeds: {} entries loaded from {}", count, kdir);
                         Some(store)
                     } else {
                         eprintln!("  Warning: no seed entries loaded from {}", kdir);
@@ -821,18 +817,12 @@ fn open_knowledge_store_with_seeds(
                 }
                 Err(e) => {
                     // Seed files are supplementary — log error but don't fail
-                    eprintln!(
-                        "  Warning: error loading knowledge seeds from {}: {}",
-                        kdir, e
-                    );
+                    eprintln!("  Warning: error loading knowledge seeds from {}: {}", kdir, e);
                     None
                 }
             },
             Err(e) => {
-                eprintln!(
-                    "  Warning: failed to create temporary knowledge store: {}",
-                    e
-                );
+                eprintln!("  Warning: failed to create temporary knowledge store: {}", e);
                 None
             }
         }
@@ -1092,7 +1082,7 @@ fn run_compile_full(
     use ane_ir::task_spec::load_synthetic_task;
     use ane_passes::canonicalize::CanonicalizePass;
     use ane_passes::knowledge_query::NoKnowledge;
-    use ane_passes::legality_rewrite::{DecompositionContext, AneLegalityRewritePass};
+    use ane_passes::legality_rewrite::{AneLegalityRewritePass, DecompositionContext};
     use ane_passes::mil_lower::MilLowerPass;
     use ane_passes::precision_policy::PrecisionPolicyPass;
     use ane_passes::risk_annotate::RiskAnnotatePass;
@@ -1950,7 +1940,7 @@ fn run_compile_full_sharded(
         // T-107: StaticizePass removed from pipeline — was a phantom no-op pass
         use ane_passes::canonicalize::CanonicalizePass;
         use ane_passes::knowledge_query::NoKnowledge;
-        use ane_passes::legality_rewrite::{DecompositionContext, AneLegalityRewritePass};
+        use ane_passes::legality_rewrite::{AneLegalityRewritePass, DecompositionContext};
         use ane_passes::precision_policy::PrecisionPolicyPass;
         use ane_passes::risk_annotate::RiskAnnotatePass;
         use ane_passes::static_tables::run_static_tables_pass;
@@ -2024,7 +2014,10 @@ fn run_compile_full_sharded(
             Some(store) => {
                 let query = StoreKnowledgeQuery::new(store);
                 legality.run(shard_sir.clone(), &query, shard_decomp_ctx.as_ref()).map_err(|e| {
-                    format!("AneLegalityRewritePass failed for shard {}: {}", shard_spec.shard_name, e)
+                    format!(
+                        "AneLegalityRewritePass failed for shard {}: {}",
+                        shard_spec.shard_name, e
+                    )
                 })?
             }
             None => {
@@ -2160,14 +2153,15 @@ fn run_compile_full_sharded(
             fs::create_dir_all(&shard_output)
                 .map_err(|e| format!("Failed to create shard output dir: {}", e))?;
 
-            let emit_result =
-                emit_role_shard_proto_direct(shard_spec, mlpackage_path.to_str().unwrap_or(""), &ane_ir::common::ModelArchitecture::Qwen3, 32768)
-                    .map_err(|e| {
-                        format!(
-                            "Proto-direct emission failed for shard {}: {}",
-                            shard_spec.shard_name, e
-                        )
-                    })?;
+            let emit_result = emit_role_shard_proto_direct(
+                shard_spec,
+                mlpackage_path.to_str().unwrap_or(""),
+                &ane_ir::common::ModelArchitecture::Qwen3,
+                32768,
+            )
+            .map_err(|e| {
+                format!("Proto-direct emission failed for shard {}: {}", shard_spec.shard_name, e)
+            })?;
 
             let validation = validate_proto_direct_package(mlpackage_path.to_str().unwrap_or(""))
                 .map_err(|e| {
@@ -2734,14 +2728,15 @@ fn run_compile_sharded(
             fs::create_dir_all(&shard_output)
                 .map_err(|e| format!("Failed to create shard output dir: {}", e))?;
 
-            let emit_result =
-                emit_role_shard_proto_direct(shard_spec, mlpackage_path.to_str().unwrap_or(""), &ane_ir::common::ModelArchitecture::Qwen3, 32768)
-                    .map_err(|e| {
-                        format!(
-                            "Proto-direct emission failed for shard {}: {}",
-                            shard_spec.shard_name, e
-                        )
-                    })?;
+            let emit_result = emit_role_shard_proto_direct(
+                shard_spec,
+                mlpackage_path.to_str().unwrap_or(""),
+                &ane_ir::common::ModelArchitecture::Qwen3,
+                32768,
+            )
+            .map_err(|e| {
+                format!("Proto-direct emission failed for shard {}: {}", shard_spec.shard_name, e)
+            })?;
 
             // Validate the emitted package
             let validation = validate_proto_direct_package(mlpackage_path.to_str().unwrap_or(""))
@@ -4028,7 +4023,7 @@ fn run_trace_compile(
         ChainedResolver, RopeTableConfig, StaticTableResolver,
     };
     use ane_passes::knowledge_query::NoKnowledge;
-    use ane_passes::legality_rewrite::{DecompositionContext, AneLegalityRewritePass};
+    use ane_passes::legality_rewrite::{AneLegalityRewritePass, DecompositionContext};
     use ane_passes::mil_lower::MilLowerPass;
     use ane_passes::shard_plan::ShardPlan;
     use ane_passes::static_tables::run_static_tables_pass;
@@ -4092,7 +4087,9 @@ fn run_trace_compile(
         None => {
             let arch_str = traced_graph.architecture.to_lowercase();
             match arch_str.as_str() {
-                "qwen2" | "qwen3" | "llama" | "llamaforcausallm" => ane_ir::common::ModelArchitecture::Qwen3,
+                "qwen2" | "qwen3" | "llama" | "llamaforcausallm" => {
+                    ane_ir::common::ModelArchitecture::Qwen3
+                }
                 _ => ane_ir::common::ModelArchitecture::Generic {
                     q_proj_pattern: ".self_attn.q_proj.weight".to_string(),
                     k_proj_pattern: ".self_attn.k_proj.weight".to_string(),
@@ -4105,7 +4102,9 @@ fn run_trace_compile(
             }
         }
     };
-    println!("  Architecture: {:?} (source: {})", resolved_architecture,
+    println!(
+        "  Architecture: {:?} (source: {})",
+        resolved_architecture,
         if architecture_override.is_some() { "CLI --architecture" } else { "auto-detected" }
     );
     println!(
@@ -4679,10 +4678,22 @@ fn run_trace_compile(
         // from the traced graph, instead of the deprecated allow_missing wrapper
         // that defaults to Qwen3.
         let model_arch = &resolved_architecture;
-        let embedding_compat = mir_graph_to_compat_with_arch(embedding_mir, &embedding_resolver, model_arch, actual_max_seq_len, true)
-            .map_err(|e| format!("Embedding MIR compat conversion failed: {}", e))?;
-        let decode_step_compat = mir_graph_to_compat_with_arch(decode_step_mir, &decode_resolver, model_arch, actual_max_seq_len, true)
-            .map_err(|e| format!("Decode-step MIR compat conversion failed: {}", e))?;
+        let embedding_compat = mir_graph_to_compat_with_arch(
+            embedding_mir,
+            &embedding_resolver,
+            model_arch,
+            actual_max_seq_len,
+            true,
+        )
+        .map_err(|e| format!("Embedding MIR compat conversion failed: {}", e))?;
+        let decode_step_compat = mir_graph_to_compat_with_arch(
+            decode_step_mir,
+            &decode_resolver,
+            model_arch,
+            actual_max_seq_len,
+            true,
+        )
+        .map_err(|e| format!("Decode-step MIR compat conversion failed: {}", e))?;
 
         // DIAGNOSTIC: Verify compat format preserves state ops
         // Check for ReadState/CoremlUpdateState by looking at the debug format
@@ -4859,7 +4870,8 @@ fn build_decode_step_sir(
     num_layers: usize,
 ) -> ane_ir::sir::SirGraph {
     use ane_ir::sir::{
-        QualityContract, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin,
+        QualityContract, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation,
+        TaskOrigin,
     };
 
     let mut sir_nodes: Vec<SirNode> = Vec::new();

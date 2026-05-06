@@ -807,7 +807,7 @@ mod tests {
                     shape: vec![64, 32],
                     compute_unit_hint: None,
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 },
                 MirNode {
                     id: MirNodeId("linear".into()),
@@ -821,7 +821,7 @@ mod tests {
                     shape: vec![1, 32],
                     compute_unit_hint: None,
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 },
             ],
             inputs: vec![MirNodeId("input".into())],

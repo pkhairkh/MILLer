@@ -43,7 +43,9 @@ use ane_ir::toproto::ToProto;
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 
-use crate::shape_inference::{compat_input_dtype, compat_input_shape_explicit, compat_output_shape_explicit};
+use crate::shape_inference::{
+    compat_input_dtype, compat_input_shape_explicit, compat_output_shape_explicit,
+};
 
 /// Resolver for weight data referenced by `MILConst.value_path`.
 ///
@@ -162,7 +164,6 @@ impl WeightResolver for EmptyWeightResolver {
 ///
 /// This function automatically materializes `MirOpCompat::Const` entries for
 /// every weight name referenced by ops like `MILLinear` and `MILLayerNorm`.
-
 
 /// Convert a MIR graph to compat representation with architecture-specific
 /// weight name patterns.
@@ -300,9 +301,9 @@ pub fn mir_graph_to_compat_with_arch(
                     );
                     (vec![0u8; 2], vec![1], MilDtypeCompat::Fp16)
                 } else {
-                    return Err(crate::BridgeError::UnresolvedWeight {
-                        path: weight_name.clone(),
-                    }.into());
+                    return Err(
+                        crate::BridgeError::UnresolvedWeight { path: weight_name.clone() }.into()
+                    );
                 }
             }
         };
@@ -433,8 +434,14 @@ pub fn mir_graph_to_compat_with_arch(
             continue;
         }
         // Fall back to the static compat_output_shape for this op
-        let shape =
-            compat_output_shape_explicit(&node.id.0, &node.op, &node.shape, &node_shapes, max_seq_len, None);
+        let shape = compat_output_shape_explicit(
+            &node.id.0,
+            &node.op,
+            &node.shape,
+            &node_shapes,
+            max_seq_len,
+            None,
+        );
         if !shape.is_empty() {
             node_shapes.insert(node.id.0.clone(), shape);
         }
@@ -449,10 +456,16 @@ pub fn mir_graph_to_compat_with_arch(
             match node_map.get(id.0.as_str()) {
                 Some(node) => Ok(TensorDescCompat {
                     name: node.id.0.clone(),
-                    shape: node_shapes
-                        .get(&node.id.0)
-                        .cloned()
-                        .unwrap_or_else(|| compat_output_shape_explicit(&node.id.0, &node.op, &node.shape, &node_shapes, max_seq_len, None)),
+                    shape: node_shapes.get(&node.id.0).cloned().unwrap_or_else(|| {
+                        compat_output_shape_explicit(
+                            &node.id.0,
+                            &node.op,
+                            &node.shape,
+                            &node_shapes,
+                            max_seq_len,
+                            None,
+                        )
+                    }),
                     dtype: mil_dtype_to_compat(&node.dtype),
                 }),
                 None => {
@@ -830,7 +843,12 @@ pub fn mir_op_to_compat_with_shapes(
 ///    - Compute the product of non-zero target dimensions
 ///    - Distribute the remaining elements among the zero dimensions
 ///    - If batch=1 is assumed for the first zero, compute the rest
-fn resolve_reshape_shape(target_shape: &[usize], input_shape: &[usize], _name: &str, batch_size: Option<usize>) -> Vec<i32> {
+fn resolve_reshape_shape(
+    target_shape: &[usize],
+    input_shape: &[usize],
+    _name: &str,
+    batch_size: Option<usize>,
+) -> Vec<i32> {
     let input_elements: usize = input_shape.iter().product();
     if input_elements == 0 {
         return target_shape.iter().map(|&d| d as i32).collect();
@@ -933,7 +951,9 @@ fn resolve_reshape_shape(target_shape: &[usize], input_shape: &[usize], _name: &
                         product_so_far *= 1;
                     }
                     if let Some(&last_pos) = remaining_zeros.last() {
-                        if product_so_far > 0 && remaining_after_batch.is_multiple_of(product_so_far) {
+                        if product_so_far > 0
+                            && remaining_after_batch.is_multiple_of(product_so_far)
+                        {
                             resolved[last_pos] = remaining_after_batch / product_so_far;
                         }
                     }
@@ -948,7 +968,9 @@ fn resolve_reshape_shape(target_shape: &[usize], input_shape: &[usize], _name: &
                          batch_size hint. Assuming batch=1 for first zero dimension. \
                          This may produce incorrect shapes for batch > 1. \
                          Target shape: {:?}, input shape: {:?}, zero positions: {:?}",
-                        target_shape, input_shape, zero_positions
+                        target_shape,
+                        input_shape,
+                        zero_positions
                     );
                     let mut product_so_far = 1usize;
                     for &pos in &zero_positions[..zero_positions.len() - 1] {
@@ -1265,16 +1287,7 @@ pub fn mir_op_to_compat_with_quant(
         }),
 
         // ─── Sprint 54: Previously unsupported ops now have MirOpCompat equivalents ───
-        MirOp::MILConv {
-            name,
-            x,
-            weight,
-            pad_type,
-            groups,
-            strides,
-            pad_amounts,
-            dilations,
-        } => {
+        MirOp::MILConv { name, x, weight, pad_type, groups, strides, pad_amounts, dilations } => {
             // T-116: Validate ANEC attribute shapes before dropping them.
             // The mir_to_compat layer discards strides, pad_amounts, and dilations
             // (they're not carried in MirOpCompat::Conv), so we validate them here
@@ -1290,7 +1303,11 @@ pub fn mir_op_to_compat_with_quant(
                     "T-116: Conv '{}' has invalid ANEC attribute shapes: {}. \
                      Strides={:?}, Pad={:?}, Dilations={:?}. \
                      These attributes will be dropped in the MirOpCompat conversion.",
-                    name, e, strides, pad_amounts, dilations
+                    name,
+                    e,
+                    strides,
+                    pad_amounts,
+                    dilations
                 );
             }
             // T-P5-08: Quantized conv attributes now come from the target annotation
@@ -1302,7 +1319,11 @@ pub fn mir_op_to_compat_with_quant(
                          scale={}, zero_point={}, palettized_lut={}",
                         name, q.kernel_scale, q.kernel_zero_point, q.kernel_palettized_lut
                     );
-                    (Some(q.kernel_scale), Some(q.kernel_zero_point), Some(q.kernel_palettized_lut.clone()))
+                    (
+                        Some(q.kernel_scale),
+                        Some(q.kernel_zero_point),
+                        Some(q.kernel_palettized_lut.clone()),
+                    )
                 }
                 None => (None, None, None),
             };
@@ -1316,7 +1337,7 @@ pub fn mir_op_to_compat_with_quant(
                 kernel_zero_point,
                 kernel_palettized_lut,
             })
-        },
+        }
         MirOp::MILSplit { name, x, axis, num_splits } => Ok(MirOpCompat::Split {
             name: name.clone(),
             x: x.0.clone(),
@@ -1468,12 +1489,20 @@ pub fn mir_op_to_compat_with_quant(
         MirOp::MILMaxPool { name, x, kernel_sizes, strides, pad_types, pad_amounts } => {
             // T-116: Validate ANEC attribute shapes for pool ops
             if let Err(e) = ane_passes::op_constraints::validate_anec_attribute_shapes(
-                "max_pool", kernel_sizes, strides, pad_amounts, &[],
+                "max_pool",
+                kernel_sizes,
+                strides,
+                pad_amounts,
+                &[],
             ) {
                 log::warn!(
                     "T-116: MaxPool '{}' has invalid ANEC attribute shapes: {}. \
                      kernel_sizes={:?}, strides={:?}, pad_amounts={:?}",
-                    name, e, kernel_sizes, strides, pad_amounts
+                    name,
+                    e,
+                    kernel_sizes,
+                    strides,
+                    pad_amounts
                 );
             }
             Ok(MirOpCompat::MaxPool {
@@ -1496,12 +1525,20 @@ pub fn mir_op_to_compat_with_quant(
         } => {
             // T-116: Validate ANEC attribute shapes for pool ops
             if let Err(e) = ane_passes::op_constraints::validate_anec_attribute_shapes(
-                "avg_pool", kernel_sizes, strides, pad_amounts, &[],
+                "avg_pool",
+                kernel_sizes,
+                strides,
+                pad_amounts,
+                &[],
             ) {
                 log::warn!(
                     "T-116: AvgPool '{}' has invalid ANEC attribute shapes: {}. \
                      kernel_sizes={:?}, strides={:?}, pad_amounts={:?}",
-                    name, e, kernel_sizes, strides, pad_amounts
+                    name,
+                    e,
+                    kernel_sizes,
+                    strides,
+                    pad_amounts
                 );
             }
             Ok(MirOpCompat::AvgPool {
@@ -1517,12 +1554,20 @@ pub fn mir_op_to_compat_with_quant(
         MirOp::MILL2Pool { name, x, kernel_sizes, strides, pad_types, pad_amounts } => {
             // T-116: Validate ANEC attribute shapes for pool ops
             if let Err(e) = ane_passes::op_constraints::validate_anec_attribute_shapes(
-                "l2_pool", kernel_sizes, strides, pad_amounts, &[],
+                "l2_pool",
+                kernel_sizes,
+                strides,
+                pad_amounts,
+                &[],
             ) {
                 log::warn!(
                     "T-116: L2Pool '{}' has invalid ANEC attribute shapes: {}. \
                      kernel_sizes={:?}, strides={:?}, pad_amounts={:?}",
-                    name, e, kernel_sizes, strides, pad_amounts
+                    name,
+                    e,
+                    kernel_sizes,
+                    strides,
+                    pad_amounts
                 );
             }
             Ok(MirOpCompat::L2Pool {
@@ -2017,7 +2062,7 @@ mod tests {
                     shape: vec![32, 64],
                     compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 },
                 MirNode {
                     id: MirNodeId("bias".to_string()),
@@ -2030,7 +2075,7 @@ mod tests {
                     shape: vec![32],
                     compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 },
                 MirNode {
                     id: MirNodeId("output".to_string()),
@@ -2044,7 +2089,7 @@ mod tests {
                     shape: vec![32],
                     compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
                     air_source: None,
-                target_annotation: Default::default(),
+                    target_annotation: Default::default(),
                 },
             ],
             inputs: vec![MirNodeId("input".to_string())],
@@ -2064,7 +2109,14 @@ mod tests {
         let graph = make_test_graph();
         let resolver = EmptyWeightResolver;
         // EmptyWeightResolver returns None for all weights, so allow_missing_weights=true
-        let compat = mir_graph_to_compat_with_arch(&graph, &resolver, &ane_ir::common::ModelArchitecture::Qwen3, 32768, true).unwrap();
+        let compat = mir_graph_to_compat_with_arch(
+            &graph,
+            &resolver,
+            &ane_ir::common::ModelArchitecture::Qwen3,
+            32768,
+            true,
+        )
+        .unwrap();
 
         // 3 original ops + 1 auto-materialized weight (Linear references "weight"
         // but the existing Const was renamed to "x" via rename_compat_output,
@@ -2085,7 +2137,14 @@ mod tests {
 
         // The resolver has "weights/weight.bin" but the graph references "weight"
         // (auto-materialized), so allow_missing_weights=true for the auto-materialized weight.
-        let compat = mir_graph_to_compat_with_arch(&graph, &resolver, &ane_ir::common::ModelArchitecture::Qwen3, 32768, true).unwrap();
+        let compat = mir_graph_to_compat_with_arch(
+            &graph,
+            &resolver,
+            &ane_ir::common::ModelArchitecture::Qwen3,
+            32768,
+            true,
+        )
+        .unwrap();
 
         // Check that Const ops have proper data.
         // Note: The ops list is [auto-materialized "weight", renamed "x", "bias", Linear].
@@ -2204,7 +2263,14 @@ mod tests {
             MilDtypeCompat::Int32,
         );
 
-        let compat = mir_graph_to_compat_with_arch(&graph, &resolver, &ane_ir::common::ModelArchitecture::Qwen3, 32768, true).unwrap();
+        let compat = mir_graph_to_compat_with_arch(
+            &graph,
+            &resolver,
+            &ane_ir::common::ModelArchitecture::Qwen3,
+            32768,
+            true,
+        )
+        .unwrap();
 
         // Find the Const for "embed_weight" (the node ID — the value_path
         // "model.embed_tokens.weight" is used for weight resolution, not the op name)
@@ -2235,7 +2301,13 @@ mod tests {
         let resolver = EmptyWeightResolver; // returns None for all weights
 
         // Default behavior: should error because weights are missing
-        let result = mir_graph_to_compat_with_arch(&graph, &resolver, &ane_ir::common::ModelArchitecture::Qwen3, 32768, false);
+        let result = mir_graph_to_compat_with_arch(
+            &graph,
+            &resolver,
+            &ane_ir::common::ModelArchitecture::Qwen3,
+            32768,
+            false,
+        );
         assert!(result.is_err(), "Expected hard error for missing weights by default");
         let err_msg = result.unwrap_err().to_string();
         assert!(
@@ -2256,7 +2328,13 @@ mod tests {
         let resolver = EmptyWeightResolver;
 
         // With allow_missing_weights=true, should succeed with zero-filled placeholders
-        let result = mir_graph_to_compat_with_arch(&graph, &resolver, &ane_ir::common::ModelArchitecture::Qwen3, 32768, true);
+        let result = mir_graph_to_compat_with_arch(
+            &graph,
+            &resolver,
+            &ane_ir::common::ModelArchitecture::Qwen3,
+            32768,
+            true,
+        );
         assert!(result.is_ok(), "Should succeed with allow_missing_weights=true");
     }
 
@@ -2649,7 +2727,7 @@ mod tests {
             shape: vec![64, 128],
             compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
             air_source: None,
-        target_annotation: Default::default(),
+            target_annotation: Default::default(),
         };
 
         let compat = mir_node_to_compat(&node, &resolver).unwrap();
@@ -2677,7 +2755,7 @@ mod tests {
             shape: vec![64, 128],
             compute_unit_hint: Some(ComputeUnitHint::CPUAndNE),
             air_source: None,
-        target_annotation: Default::default(),
+            target_annotation: Default::default(),
         };
 
         let compat_fp16 = mir_node_to_compat(&node_fp16, &resolver).unwrap();

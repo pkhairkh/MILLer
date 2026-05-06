@@ -149,10 +149,7 @@ impl MultiAneSystem {
             firmware: AneFirmwareSet::default_for(revision),
             is_primary: true,
         };
-        Self {
-            devices: vec![device],
-            sub_types: vec![],
-        }
+        Self { devices: vec![device], sub_types: vec![] }
     }
 
     /// Create a multi-ANE system for Apple Silicon Macs.
@@ -167,10 +164,7 @@ impl MultiAneSystem {
                 is_primary: id == 0,
             })
             .collect();
-        Self {
-            devices,
-            sub_types: vec![],
-        }
+        Self { devices, sub_types: vec![] }
     }
 
     /// Get the primary ANE device.
@@ -192,9 +186,7 @@ impl MultiAneSystem {
     pub fn validate_chain(&self, chain: &ChainedProgram) -> Result<(), ChainValidationError> {
         for segment in &chain.segments {
             if self.device_by_id(segment.device_id).is_none() {
-                return Err(ChainValidationError::UnknownDevice {
-                    device_id: segment.device_id,
-                });
+                return Err(ChainValidationError::UnknownDevice { device_id: segment.device_id });
             }
         }
         for transfer in &chain.transfers {
@@ -284,11 +276,7 @@ impl fmt::Display for FirmwareImage {
             self.path,
             self.version,
             self.size_bytes,
-            if self.compatible_sub_type.is_empty() {
-                "*"
-            } else {
-                &self.compatible_sub_type
-            }
+            if self.compatible_sub_type.is_empty() { "*" } else { &self.compatible_sub_type }
         )
     }
 }
@@ -317,10 +305,7 @@ impl fmt::Display for ChainedProgram {
             writeln!(
                 f,
                 "  Transfer: {} -> {} '{}' via {}",
-                xfer.source_device_id,
-                xfer.dest_device_id,
-                xfer.tensor_name,
-                xfer.method
+                xfer.source_device_id, xfer.dest_device_id, xfer.tensor_name, xfer.method
             )?;
         }
         Ok(())
@@ -640,10 +625,7 @@ mod tests {
     fn test_transfer_method_equality() {
         assert_eq!(TransferMethod::DirectDma, TransferMethod::DirectDma);
         assert_eq!(TransferMethod::SharedMemory, TransferMethod::SharedMemory);
-        assert_eq!(
-            TransferMethod::OnChipInterconnect,
-            TransferMethod::OnChipInterconnect
-        );
+        assert_eq!(TransferMethod::OnChipInterconnect, TransferMethod::OnChipInterconnect);
         assert_ne!(TransferMethod::DirectDma, TransferMethod::SharedMemory);
     }
 
@@ -723,10 +705,7 @@ mod tests {
     fn test_display_transfer_method() {
         assert_eq!(format!("{}", TransferMethod::DirectDma), "DirectDMA");
         assert_eq!(format!("{}", TransferMethod::SharedMemory), "SharedMemory");
-        assert_eq!(
-            format!("{}", TransferMethod::OnChipInterconnect),
-            "OnChipInterconnect"
-        );
+        assert_eq!(format!("{}", TransferMethod::OnChipInterconnect), "OnChipInterconnect");
     }
 
     #[test]
@@ -786,9 +765,6 @@ mod tests {
         assert_eq!(deserialized.chain_id, "test");
         assert_eq!(deserialized.segments.len(), 1);
         assert_eq!(deserialized.transfers.len(), 1);
-        assert_eq!(
-            deserialized.transfers[0].method,
-            TransferMethod::DirectDma
-        );
+        assert_eq!(deserialized.transfers[0].method, TransferMethod::DirectDma);
     }
 }

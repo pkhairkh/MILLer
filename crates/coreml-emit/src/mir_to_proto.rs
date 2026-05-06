@@ -461,7 +461,8 @@ pub fn convert_mir_to_proto_multifunction_with_policy(
                     kind: "input".to_string(),
                     name: input_name.clone(),
                     function: graph.function_name.clone(),
-                }.into());
+                }
+                .into());
             }
         }
         for output_name in &graph.outputs {
@@ -479,7 +480,8 @@ pub fn convert_mir_to_proto_multifunction_with_policy(
                     kind: "output".to_string(),
                     name: output_name.clone(),
                     function: graph.function_name.clone(),
-                }.into());
+                }
+                .into());
             }
         }
 
@@ -566,12 +568,10 @@ pub fn convert_mir_to_proto_multifunction_with_policy(
                     .collect(),
             })
             .collect();
-        if let Err(violation) =
-            ane_passes::placement_validate::validate_surface_constraints(
-                &surface_infos,
-                &validation_policy,
-            )
-        {
+        if let Err(violation) = ane_passes::placement_validate::validate_surface_constraints(
+            &surface_infos,
+            &validation_policy,
+        ) {
             // M-028: Convert SurfaceConstraintViolation to EmissionError
             // for programmatic error matching by callers.
             return Err(match violation {
@@ -599,16 +599,9 @@ pub fn convert_mir_to_proto_multifunction_with_policy(
                     expected_bytes,
                 }
                 .into(),
-                SurfaceConstraintViolation::InvalidFlatBufferLayout {
-                    name,
-                    function,
-                    shape,
-                } => crate::EmissionError::InvalidFlatBufferLayout {
-                    name,
-                    function,
-                    shape,
+                SurfaceConstraintViolation::InvalidFlatBufferLayout { name, function, shape } => {
+                    crate::EmissionError::InvalidFlatBufferLayout { name, function, shape }.into()
                 }
-                .into(),
             });
         }
     }
@@ -842,7 +835,9 @@ mod tests {
 
     /// M-028: Helper to convert CoreMlFunction slice to FunctionSurfaceInfo
     /// for calling the placement_validate surface constraint functions.
-    fn to_surface_infos(functions: &[ane_coreml_proto::CoreMlFunction]) -> Vec<FunctionSurfaceInfo> {
+    fn to_surface_infos(
+        functions: &[ane_coreml_proto::CoreMlFunction],
+    ) -> Vec<FunctionSurfaceInfo> {
         functions
             .iter()
             .map(|f| FunctionSurfaceInfo {
@@ -875,8 +870,8 @@ mod tests {
         policy: &ValidationPolicy,
     ) -> Result<()> {
         let surface_infos = to_surface_infos(functions);
-        ane_passes::placement_validate::validate_iosurface_sizes(&surface_infos, policy)
-            .map_err(|violation| match violation {
+        ane_passes::placement_validate::validate_iosurface_sizes(&surface_infos, policy).map_err(
+            |violation| match violation {
                 SurfaceConstraintViolation::UndersizedIOSurface {
                     name,
                     function,
@@ -890,7 +885,8 @@ mod tests {
                 }
                 .into(),
                 other => anyhow::anyhow!("{}", other),
-            })
+            },
+        )
     }
 
     /// M-028: Helper to validate surface uniformity via placement_validate.
@@ -899,8 +895,8 @@ mod tests {
         policy: &ValidationPolicy,
     ) -> Result<()> {
         let surface_infos = to_surface_infos(functions);
-        ane_passes::placement_validate::validate_surface_uniformity(&surface_infos, policy)
-            .map_err(|violation| match violation {
+        ane_passes::placement_validate::validate_surface_uniformity(&surface_infos, policy).map_err(
+            |violation| match violation {
                 SurfaceConstraintViolation::NonUniformSurface {
                     name,
                     function,
@@ -914,7 +910,8 @@ mod tests {
                 }
                 .into(),
                 other => anyhow::anyhow!("{}", other),
-            })
+            },
+        )
     }
 
     /// M-028: Helper to validate flat buffer layout via placement_validate.
@@ -923,34 +920,28 @@ mod tests {
         policy: &ValidationPolicy,
     ) -> Result<()> {
         let surface_infos = to_surface_infos(functions);
-        ane_passes::placement_validate::validate_flat_buffer_layout(&surface_infos, policy)
-            .map_err(|violation| match violation {
-                SurfaceConstraintViolation::InvalidFlatBufferLayout {
-                    name,
-                    function,
-                    shape,
-                } => crate::EmissionError::InvalidFlatBufferLayout {
-                    name,
-                    function,
-                    shape,
+        ane_passes::placement_validate::validate_flat_buffer_layout(&surface_infos, policy).map_err(
+            |violation| match violation {
+                SurfaceConstraintViolation::InvalidFlatBufferLayout { name, function, shape } => {
+                    crate::EmissionError::InvalidFlatBufferLayout { name, function, shape }.into()
                 }
-                .into(),
                 other => anyhow::anyhow!("{}", other),
-            })
+            },
+        )
     }
 
     #[test]
     fn test_convert_single_function() {
         let graph = build_linear_projection_mir("test_linear", 64, 32, 1, MilDtypeCompat::Fp16, 42);
 
-        let model =
-            convert_mir_to_proto_multifunction_with_policy(
-                std::slice::from_ref(&graph),
-                &[],
-                SpecVersion::V10,
-                CoreMlComputeUnit::CpuAndNe,
-                ValidationPolicy::warn_only(),
-            ).unwrap();
+        let model = convert_mir_to_proto_multifunction_with_policy(
+            std::slice::from_ref(&graph),
+            &[],
+            SpecVersion::V10,
+            CoreMlComputeUnit::CpuAndNe,
+            ValidationPolicy::warn_only(),
+        )
+        .unwrap();
 
         assert_eq!(model.functions.len(), 1);
         assert_eq!(model.functions[0].name, "main");
@@ -1007,14 +998,14 @@ mod tests {
     #[test]
     fn test_model_to_protobuf_bytes_linear() {
         let graph = build_linear_projection_mir("test_linear", 64, 32, 1, MilDtypeCompat::Fp16, 42);
-        let model =
-            convert_mir_to_proto_multifunction_with_policy(
-                std::slice::from_ref(&graph),
-                &[],
-                SpecVersion::V10,
-                CoreMlComputeUnit::CpuAndNe,
-                ValidationPolicy::warn_only(),
-            ).unwrap();
+        let model = convert_mir_to_proto_multifunction_with_policy(
+            std::slice::from_ref(&graph),
+            &[],
+            SpecVersion::V10,
+            CoreMlComputeUnit::CpuAndNe,
+            ValidationPolicy::warn_only(),
+        )
+        .unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         assert!(!bytes.is_empty());
@@ -1068,7 +1059,8 @@ mod tests {
             SpecVersion::V7,
             CoreMlComputeUnit::All,
             ValidationPolicy::warn_only(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
@@ -1079,14 +1071,14 @@ mod tests {
     #[test]
     fn test_apple_proto_ops_preserved() {
         let graph = build_linear_projection_mir("test_ops", 16, 8, 1, MilDtypeCompat::Fp16, 7);
-        let model =
-            convert_mir_to_proto_multifunction_with_policy(
-                std::slice::from_ref(&graph),
-                &[],
-                SpecVersion::V10,
-                CoreMlComputeUnit::CpuAndNe,
-                ValidationPolicy::warn_only(),
-            ).unwrap();
+        let model = convert_mir_to_proto_multifunction_with_policy(
+            std::slice::from_ref(&graph),
+            &[],
+            SpecVersion::V10,
+            CoreMlComputeUnit::CpuAndNe,
+            ValidationPolicy::warn_only(),
+        )
+        .unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
@@ -1131,14 +1123,14 @@ mod tests {
     #[test]
     fn test_apple_proto_weight_blob_file_references() {
         let graph = build_linear_projection_mir("test_wref", 16, 8, 1, MilDtypeCompat::Fp16, 7);
-        let model =
-            convert_mir_to_proto_multifunction_with_policy(
-                std::slice::from_ref(&graph),
-                &[],
-                SpecVersion::V10,
-                CoreMlComputeUnit::CpuAndNe,
-                ValidationPolicy::warn_only(),
-            ).unwrap();
+        let model = convert_mir_to_proto_multifunction_with_policy(
+            std::slice::from_ref(&graph),
+            &[],
+            SpecVersion::V10,
+            CoreMlComputeUnit::CpuAndNe,
+            ValidationPolicy::warn_only(),
+        )
+        .unwrap();
 
         // Simulate weight entries with real offsets (as WeightBinBuilder would produce)
         let weight_entries = vec![
@@ -1200,14 +1192,14 @@ mod tests {
         // Single-function model: should use single-function schema pattern
         // (top-level I/O populated, functions empty, MIL program key="main")
         let graph = build_linear_projection_mir("test_desc", 32, 16, 1, MilDtypeCompat::Fp16, 99);
-        let model =
-            convert_mir_to_proto_multifunction_with_policy(
-                std::slice::from_ref(&graph),
-                &[],
-                SpecVersion::V10,
-                CoreMlComputeUnit::CpuAndNe,
-                ValidationPolicy::warn_only(),
-            ).unwrap();
+        let model = convert_mir_to_proto_multifunction_with_policy(
+            std::slice::from_ref(&graph),
+            &[],
+            SpecVersion::V10,
+            CoreMlComputeUnit::CpuAndNe,
+            ValidationPolicy::warn_only(),
+        )
+        .unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
@@ -1294,14 +1286,14 @@ mod tests {
             node_shapes: std::collections::HashMap::new(),
         };
 
-        let model =
-            convert_mir_to_proto_multifunction_with_policy(
-                std::slice::from_ref(&graph),
-                &[],
-                SpecVersion::V10,
-                CoreMlComputeUnit::CpuAndNe,
-                ValidationPolicy::warn_only(),
-            ).unwrap();
+        let model = convert_mir_to_proto_multifunction_with_policy(
+            std::slice::from_ref(&graph),
+            &[],
+            SpecVersion::V10,
+            CoreMlComputeUnit::CpuAndNe,
+            ValidationPolicy::warn_only(),
+        )
+        .unwrap();
 
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
@@ -1696,19 +1688,19 @@ mod tests {
                     shape: vec![16, 16],
                 },
                 MirOpCompat::Linear {
-                    name: "z_output".to_string(),  // 'z' — should be last after sorting
+                    name: "z_output".to_string(), // 'z' — should be last after sorting
                     x: "x".to_string(),
                     weight_name: "weight".to_string(),
                     bias_name: None,
                 },
                 MirOpCompat::Linear {
-                    name: "a_output".to_string(),  // 'a' — should be first after sorting
+                    name: "a_output".to_string(), // 'a' — should be first after sorting
                     x: "x".to_string(),
                     weight_name: "weight".to_string(),
                     bias_name: None,
                 },
                 MirOpCompat::Linear {
-                    name: "m_output".to_string(),  // 'm' — should be middle after sorting
+                    name: "m_output".to_string(), // 'm' — should be middle after sorting
                     x: "x".to_string(),
                     weight_name: "weight".to_string(),
                     bias_name: None,
@@ -1743,19 +1735,23 @@ mod tests {
             node_shapes: std::collections::HashMap::new(),
         };
 
-        let model =
-            convert_mir_to_proto_multifunction_with_policy(
-                std::slice::from_ref(&graph),
-                &[],
-                SpecVersion::V10,
-                CoreMlComputeUnit::CpuAndNe,
-                ValidationPolicy::warn_only(),
-            ).unwrap();
+        let model = convert_mir_to_proto_multifunction_with_policy(
+            std::slice::from_ref(&graph),
+            &[],
+            SpecVersion::V10,
+            CoreMlComputeUnit::CpuAndNe,
+            ValidationPolicy::warn_only(),
+        )
+        .unwrap();
 
         // Verify outputs are sorted alphabetically
-        let output_names: Vec<&str> = model.functions[0].outputs.iter().map(|o| o.name.as_str()).collect();
-        assert_eq!(output_names, vec!["a_output", "m_output", "z_output"],
-            "T-95: Output surfaces must be sorted alphabetically (Orion #3)");
+        let output_names: Vec<&str> =
+            model.functions[0].outputs.iter().map(|o| o.name.as_str()).collect();
+        assert_eq!(
+            output_names,
+            vec!["a_output", "m_output", "z_output"],
+            "T-95: Output surfaces must be sorted alphabetically (Orion #3)"
+        );
     }
 
     #[test]
@@ -1771,7 +1767,7 @@ mod tests {
                 },
                 MirOpCompat::Linear {
                     name: "output".to_string(),
-                    x: "z_input".to_string(),  // 'z' — last after sorting
+                    x: "z_input".to_string(), // 'z' — last after sorting
                     weight_name: "weight".to_string(),
                     bias_name: None,
                 },
@@ -1800,33 +1796,37 @@ mod tests {
             node_shapes: std::collections::HashMap::new(),
         };
 
-        let model =
-            convert_mir_to_proto_multifunction_with_policy(
-                std::slice::from_ref(&graph),
-                &[],
-                SpecVersion::V10,
-                CoreMlComputeUnit::CpuAndNe,
-                ValidationPolicy::warn_only(),
-            ).unwrap();
+        let model = convert_mir_to_proto_multifunction_with_policy(
+            std::slice::from_ref(&graph),
+            &[],
+            SpecVersion::V10,
+            CoreMlComputeUnit::CpuAndNe,
+            ValidationPolicy::warn_only(),
+        )
+        .unwrap();
 
         // Verify inputs are sorted alphabetically
-        let input_names: Vec<&str> = model.functions[0].inputs.iter().map(|i| i.name.as_str()).collect();
-        assert_eq!(input_names, vec!["a_input", "z_input"],
-            "T-95: Input surfaces must be sorted alphabetically (Orion #19)");
+        let input_names: Vec<&str> =
+            model.functions[0].inputs.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(
+            input_names,
+            vec!["a_input", "z_input"],
+            "T-95: Input surfaces must be sorted alphabetically (Orion #19)"
+        );
     }
 
     #[test]
     fn test_t95_single_output_no_sort_needed() {
         // T-95: Single output — sorting is a no-op but should not cause errors
         let graph = build_linear_projection_mir("test_single", 64, 32, 1, MilDtypeCompat::Fp16, 42);
-        let model =
-            convert_mir_to_proto_multifunction_with_policy(
-                std::slice::from_ref(&graph),
-                &[],
-                SpecVersion::V10,
-                CoreMlComputeUnit::CpuAndNe,
-                ValidationPolicy::warn_only(),
-            ).unwrap();
+        let model = convert_mir_to_proto_multifunction_with_policy(
+            std::slice::from_ref(&graph),
+            &[],
+            SpecVersion::V10,
+            CoreMlComputeUnit::CpuAndNe,
+            ValidationPolicy::warn_only(),
+        )
+        .unwrap();
 
         assert_eq!(model.functions[0].outputs.len(), 1);
         assert_eq!(model.functions[0].outputs[0].name, "output");
@@ -1872,7 +1872,7 @@ mod tests {
             outputs: vec![
                 ane_coreml_proto::TensorDesc {
                     name: "a".to_string(),
-                    shape: vec![1, 512],  // 512 * 2 = 1024 bytes
+                    shape: vec![1, 512], // 512 * 2 = 1024 bytes
                     dtype: ane_coreml_proto::CoreMlDataType::Float16,
                     is_state: false,
                 },
@@ -1981,7 +1981,10 @@ mod tests {
     // ─── T-P3-01: ValidationPolicy strict-mode tests ────────────────────
 
     /// Helper: create a CoreMlFunction with given outputs.
-    fn make_func_with_outputs(name: &str, outputs: Vec<TensorDesc>) -> ane_coreml_proto::CoreMlFunction {
+    fn make_func_with_outputs(
+        name: &str,
+        outputs: Vec<TensorDesc>,
+    ) -> ane_coreml_proto::CoreMlFunction {
         ane_coreml_proto::CoreMlFunction {
             name: name.to_string(),
             inputs: vec![],
@@ -2013,26 +2016,35 @@ mod tests {
     #[test]
     fn test_iosurface_sizes_strict_rejects_undersized() {
         // A tiny output (1 element × 2 bytes = 2 bytes) is far below MIN_IOSURFACE_BYTES.
-        let functions = vec![make_func_with_outputs("main", vec![TensorDesc {
-            name: "tiny_out".to_string(),
-            shape: vec![1],  // 1 element
-            dtype: CoreMlDataType::Float16,  // 2 bytes per element → 2 bytes total
-            is_state: false,
-        }])];
+        let functions = vec![make_func_with_outputs(
+            "main",
+            vec![TensorDesc {
+                name: "tiny_out".to_string(),
+                shape: vec![1],                 // 1 element
+                dtype: CoreMlDataType::Float16, // 2 bytes per element → 2 bytes total
+                is_state: false,
+            }],
+        )];
         let result = validate_iosurface_sizes(&functions, &ValidationPolicy::strict());
         assert!(result.is_err(), "Strict mode should reject undersized IOSurface buffers");
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("minimum IOSurface"), "Error should mention 'minimum IOSurface': {err}");
+        assert!(
+            err.contains("minimum IOSurface"),
+            "Error should mention 'minimum IOSurface': {err}"
+        );
     }
 
     #[test]
     fn test_iosurface_sizes_warn_only_allows_undersized() {
-        let functions = vec![make_func_with_outputs("main", vec![TensorDesc {
-            name: "tiny_out".to_string(),
-            shape: vec![1],
-            dtype: CoreMlDataType::Float16,
-            is_state: false,
-        }])];
+        let functions = vec![make_func_with_outputs(
+            "main",
+            vec![TensorDesc {
+                name: "tiny_out".to_string(),
+                shape: vec![1],
+                dtype: CoreMlDataType::Float16,
+                is_state: false,
+            }],
+        )];
         let result = validate_iosurface_sizes(&functions, &ValidationPolicy::warn_only());
         assert!(result.is_ok(), "Warn-only mode should not error for undersized buffers");
     }
@@ -2040,20 +2052,23 @@ mod tests {
     #[test]
     fn test_surface_uniformity_strict_rejects_non_uniform() {
         // Two outputs with different sizes: 100 bytes vs 200 bytes
-        let functions = vec![make_func_with_outputs("main", vec![
-            TensorDesc {
-                name: "a".to_string(),
-                shape: vec![50],  // 50 × 2 = 100 bytes
-                dtype: CoreMlDataType::Float16,
-                is_state: false,
-            },
-            TensorDesc {
-                name: "b".to_string(),
-                shape: vec![100],  // 100 × 2 = 200 bytes
-                dtype: CoreMlDataType::Float16,
-                is_state: false,
-            },
-        ])];
+        let functions = vec![make_func_with_outputs(
+            "main",
+            vec![
+                TensorDesc {
+                    name: "a".to_string(),
+                    shape: vec![50], // 50 × 2 = 100 bytes
+                    dtype: CoreMlDataType::Float16,
+                    is_state: false,
+                },
+                TensorDesc {
+                    name: "b".to_string(),
+                    shape: vec![100], // 100 × 2 = 200 bytes
+                    dtype: CoreMlDataType::Float16,
+                    is_state: false,
+                },
+            ],
+        )];
         let result = validate_surface_uniformity(&functions, &ValidationPolicy::strict());
         assert!(result.is_err(), "Strict mode should reject non-uniform output buffers");
         let err = result.unwrap_err().to_string();
@@ -2062,20 +2077,23 @@ mod tests {
 
     #[test]
     fn test_surface_uniformity_warn_only_allows_non_uniform() {
-        let functions = vec![make_func_with_outputs("main", vec![
-            TensorDesc {
-                name: "a".to_string(),
-                shape: vec![50],
-                dtype: CoreMlDataType::Float16,
-                is_state: false,
-            },
-            TensorDesc {
-                name: "b".to_string(),
-                shape: vec![100],
-                dtype: CoreMlDataType::Float16,
-                is_state: false,
-            },
-        ])];
+        let functions = vec![make_func_with_outputs(
+            "main",
+            vec![
+                TensorDesc {
+                    name: "a".to_string(),
+                    shape: vec![50],
+                    dtype: CoreMlDataType::Float16,
+                    is_state: false,
+                },
+                TensorDesc {
+                    name: "b".to_string(),
+                    shape: vec![100],
+                    dtype: CoreMlDataType::Float16,
+                    is_state: false,
+                },
+            ],
+        )];
         let result = validate_surface_uniformity(&functions, &ValidationPolicy::warn_only());
         assert!(result.is_ok(), "Warn-only mode should not error for non-uniform buffers");
     }
@@ -2083,12 +2101,15 @@ mod tests {
     #[test]
     fn test_flat_buffer_layout_strict_rejects_non_canonical() {
         // Rank-4 shape [2,3,4,5] does NOT follow [1,C,1,S] (dims 0 and 2 ≠ 1)
-        let functions = vec![make_func_with_outputs("main", vec![TensorDesc {
-            name: "bad_layout".to_string(),
-            shape: vec![2, 3, 4, 5],
-            dtype: CoreMlDataType::Float16,
-            is_state: false,
-        }])];
+        let functions = vec![make_func_with_outputs(
+            "main",
+            vec![TensorDesc {
+                name: "bad_layout".to_string(),
+                shape: vec![2, 3, 4, 5],
+                dtype: CoreMlDataType::Float16,
+                is_state: false,
+            }],
+        )];
         let result = validate_flat_buffer_layout(&functions, &ValidationPolicy::strict());
         assert!(result.is_err(), "Strict mode should reject non-[1,C,1,S] layout");
         let err = result.unwrap_err().to_string();
@@ -2097,12 +2118,15 @@ mod tests {
 
     #[test]
     fn test_flat_buffer_layout_warn_only_allows_non_canonical() {
-        let functions = vec![make_func_with_outputs("main", vec![TensorDesc {
-            name: "bad_layout".to_string(),
-            shape: vec![2, 3, 4, 5],
-            dtype: CoreMlDataType::Float16,
-            is_state: false,
-        }])];
+        let functions = vec![make_func_with_outputs(
+            "main",
+            vec![TensorDesc {
+                name: "bad_layout".to_string(),
+                shape: vec![2, 3, 4, 5],
+                dtype: CoreMlDataType::Float16,
+                is_state: false,
+            }],
+        )];
         let result = validate_flat_buffer_layout(&functions, &ValidationPolicy::warn_only());
         assert!(result.is_ok(), "Warn-only mode should not error for non-[1,C,1,S] layout");
     }

@@ -9,9 +9,9 @@ Sprint 35 additions:
   - harvest_to_observations(): converts placement data into knowledge store observations
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional
 
-from common import _ensure_coremltools, COMPUTE_MAP
+from common import COMPUTE_MAP, _ensure_coremltools
 
 
 def inspect_compute_plan(

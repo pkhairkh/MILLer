@@ -190,7 +190,7 @@ mod tests {
             op: SirOp::Identity { input: SirNodeId("input_0".to_string()) },
             name: "identity_0".to_string(),
             metadata: test_metadata(),
-        target_annotation: SirTargetAnnotation::default(),
+            target_annotation: SirTargetAnnotation::default(),
         }];
         let graph = make_graph(nodes);
         let node_count = graph.nodes.len();
@@ -213,7 +213,7 @@ mod tests {
                 },
                 name: "state_read_0".to_string(),
                 metadata: test_metadata(),
-            target_annotation: SirTargetAnnotation::default(),
+                target_annotation: SirTargetAnnotation::default(),
             },
             SirNode {
                 id: SirNodeId("state_write_0".to_string()),
@@ -224,7 +224,7 @@ mod tests {
                 },
                 name: "state_write_0".to_string(),
                 metadata: test_metadata(),
-            target_annotation: SirTargetAnnotation::default(),
+                target_annotation: SirTargetAnnotation::default(),
             },
         ];
         let graph = make_graph(nodes);
@@ -247,7 +247,7 @@ mod tests {
             },
             name: "state_read_0".to_string(),
             metadata: test_metadata(),
-        target_annotation: SirTargetAnnotation::default(),
+            target_annotation: SirTargetAnnotation::default(),
         }];
         let graph = make_graph(nodes);
 
@@ -285,7 +285,7 @@ mod tests {
             },
             name: "state_read_0".to_string(),
             metadata: test_metadata(),
-        target_annotation: SirTargetAnnotation::default(),
+            target_annotation: SirTargetAnnotation::default(),
         }];
         let graph = make_graph(nodes);
 
@@ -310,7 +310,7 @@ mod tests {
             },
             name: "state_write_0".to_string(),
             metadata: test_metadata(),
-        target_annotation: SirTargetAnnotation::default(),
+            target_annotation: SirTargetAnnotation::default(),
         }];
         let graph = make_graph(nodes);
 
@@ -333,14 +333,11 @@ mod tests {
             },
             name: "state_write_0".to_string(),
             metadata: test_metadata(),
-        target_annotation: SirTargetAnnotation::default(),
+            target_annotation: SirTargetAnnotation::default(),
         }];
         let graph2 = make_graph(nodes2);
         let result = validator.run(graph2);
-        assert!(
-            result.is_ok(),
-            "Write without read should be Ok in non-strict mode"
-        );
+        assert!(result.is_ok(), "Write without read should be Ok in non-strict mode");
     }
 
     /// T-109: Test with_strict constructor.

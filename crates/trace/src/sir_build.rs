@@ -47,7 +47,10 @@ use crate::graph::{ModelConfig, TracedGraph, TracedNode, TracedOp};
 use crate::versioned::VersionedCompiler;
 use ane_ir::ane_target::AneFamily;
 use ane_ir::mir::MilDtype;
-use ane_ir::sir::{QualityContract, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
+use ane_ir::sir::{
+    QualityContract, SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation,
+    TaskOrigin,
+};
 
 /// Build a SIR graph from a traced computation graph.
 ///
@@ -192,7 +195,13 @@ impl<'a> SirBuildContext<'a> {
                     }
                 }
 
-                let sir_node = SirNode { id: id.clone(), op, name, metadata, target_annotation: SirTargetAnnotation::default() };
+                let sir_node = SirNode {
+                    id: id.clone(),
+                    op,
+                    name,
+                    metadata,
+                    target_annotation: SirTargetAnnotation::default(),
+                };
 
                 // Track inputs/outputs
                 if matches!(traced_node.op, TracedOp::Placeholder) {
@@ -845,33 +854,21 @@ impl<'a> SirBuildContext<'a> {
         // Step 1-3: Q/K/V projections (flat 3D outputs)
         // Separate Q projection: input → Q (flat [B, S, q_heads*head_dim])
         ops.push((
-            SirOp::LinearProjection {
-                input: input_id.clone(),
-                weight: q_weight,
-                bias: None,
-            },
+            SirOp::LinearProjection { input: input_id.clone(), weight: q_weight, bias: None },
             format!("q_proj_{}", q_proj_dim),
         ));
         let mut q_id = SirNodeId(format!("sir_q_proj_{}", node.id));
 
         // Separate K projection: input → K (flat [B, S, kv_heads*head_dim])
         ops.push((
-            SirOp::LinearProjection {
-                input: input_id.clone(),
-                weight: k_weight,
-                bias: None,
-            },
+            SirOp::LinearProjection { input: input_id.clone(), weight: k_weight, bias: None },
             format!("k_proj_{}", kv_proj_dim),
         ));
         let mut k_id = SirNodeId(format!("sir_k_proj_{}", node.id));
 
         // Separate V projection: input → V (flat [B, S, kv_heads*head_dim])
         ops.push((
-            SirOp::LinearProjection {
-                input: input_id,
-                weight: v_weight,
-                bias: None,
-            },
+            SirOp::LinearProjection { input: input_id, weight: v_weight, bias: None },
             format!("v_proj_{}", kv_proj_dim),
         ));
         let mut v_id = SirNodeId(format!("sir_v_proj_{}", node.id));
@@ -1257,11 +1254,7 @@ impl<'a> SirBuildContext<'a> {
         // Input: [B, S, num_heads*D] = [1, 512, 2048]
         // Output: [B, S, hidden_size] = [1, 512, 1024]
         ops.push((
-            SirOp::LinearProjection {
-                input: attn_flat_id,
-                weight: out_weight,
-                bias: None,
-            },
+            SirOp::LinearProjection { input: attn_flat_id, weight: out_weight, bias: None },
             format!("out_proj_{}", embed_dim),
         ));
 
@@ -1349,11 +1342,7 @@ impl<'a> SirBuildContext<'a> {
 
             // 3. up_proj(x) — NO activation
             ops.push((
-                SirOp::LinearProjection {
-                    input: input_id,
-                    weight: up_weight,
-                    bias: None,
-                },
+                SirOp::LinearProjection { input: input_id, weight: up_weight, bias: None },
                 format!("up_proj_{}_{}", input_dim, hidden_dim),
             ));
             let up_id = SirNodeId(format!("sir_up_proj_{}", node.id));
@@ -1364,11 +1353,7 @@ impl<'a> SirBuildContext<'a> {
 
             // 5. down_proj
             ops.push((
-                SirOp::LinearProjection {
-                    input: swiglu_id,
-                    weight: down_weight,
-                    bias: None,
-                },
+                SirOp::LinearProjection { input: swiglu_id, weight: down_weight, bias: None },
                 format!("down_proj_{}_{}", hidden_dim, output_dim),
             ));
         } else {
@@ -1386,11 +1371,7 @@ impl<'a> SirBuildContext<'a> {
 
             // Up-projection: input → hidden
             ops.push((
-                SirOp::LinearProjection {
-                    input: input_id,
-                    weight: up_weight_resolved,
-                    bias: None,
-                },
+                SirOp::LinearProjection { input: input_id, weight: up_weight_resolved, bias: None },
                 format!("up_proj_{}_{}", input_dim, hidden_dim),
             ));
 
@@ -1421,11 +1402,7 @@ impl<'a> SirBuildContext<'a> {
             // Down-projection: hidden → output
             let act_id = SirNodeId(format!("sir_mlp_act_{}", node.id));
             ops.push((
-                SirOp::LinearProjection {
-                    input: act_id,
-                    weight: down_weight,
-                    bias: None,
-                },
+                SirOp::LinearProjection { input: act_id, weight: down_weight, bias: None },
                 format!("down_proj_{}_{}", hidden_dim, output_dim),
             ));
         }

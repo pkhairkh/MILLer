@@ -92,9 +92,11 @@ pub enum EmissionError {
     /// Previously, missing I/O descriptors silently defaulted to empty shape
     /// and Float16 dtype, producing models that compile but have wrong I/O
     /// types (e.g., Int32 inputs marked as Float16).
-    #[error("Missing {kind} descriptor for '{name}' in function '{function}'. \
+    #[error(
+        "Missing {kind} descriptor for '{name}' in function '{function}'. \
              Cannot determine shape/dtype for Core ML proto emission. \
-             All graph {kind}s must have corresponding {kind}_descs entries.")]
+             All graph {kind}s must have corresponding {kind}_descs entries."
+    )]
     MissingIODescriptor {
         /// Whether this is an "input" or "output" descriptor.
         kind: String,
@@ -107,9 +109,11 @@ pub enum EmissionError {
     /// An output tensor's total byte size is below the ANE's minimum
     /// IOSurface allocation threshold (~49 KB). The ANE silently fails
     /// with a 0x1d runtime error for undersized buffers.
-    #[error("Output '{name}' in function '{function}' is {actual_bytes} bytes, \
+    #[error(
+        "Output '{name}' in function '{function}' is {actual_bytes} bytes, \
              below the ANE minimum IOSurface size of {min_bytes} bytes. \
-             The ANE silently fails with 0x1d for undersized output buffers.")]
+             The ANE silently fails with 0x1d for undersized output buffers."
+    )]
     UndersizedIOSurface {
         /// The output tensor name.
         name: String,
@@ -124,10 +128,12 @@ pub enum EmissionError {
     /// An output tensor in a multi-output function has a different byte size
     /// from other outputs. The ANE requires all outputs in a function to have
     /// the same IOSurface size (Orion constraints #2 and #18).
-    #[error("Non-uniform output IOSurface sizes in function '{function}'. \
+    #[error(
+        "Non-uniform output IOSurface sizes in function '{function}'. \
              Output '{name}' is {actual_bytes} bytes but other outputs are \
              {expected_bytes} bytes. The ANE requires uniform IOSurface sizes \
-             for multi-output functions.")]
+             for multi-output functions."
+    )]
     NonUniformSurface {
         /// The output tensor name with the non-uniform size.
         name: String,
@@ -142,9 +148,11 @@ pub enum EmissionError {
     /// An output tensor does not follow the ANE's canonical [1,C,1,S] flat
     /// buffer layout convention (Orion constraint #20). The ANE expects
     /// 4D tensors with the layout [1,channels,1,spatial].
-    #[error("Output '{name}' in function '{function}' has shape {shape:?} which \
+    #[error(
+        "Output '{name}' in function '{function}' has shape {shape:?} which \
              does not follow the ANE's canonical [1,C,1,S] flat buffer layout \
-             convention (Orion #20). The ANE expects 4D output tensors.")]
+             convention (Orion #20). The ANE expects 4D output tensors."
+    )]
     InvalidFlatBufferLayout {
         /// The output tensor name.
         name: String,

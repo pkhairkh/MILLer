@@ -347,10 +347,27 @@ impl KnowledgeStore {
         // T-112: Extract existing entry data before mutating self, to avoid
         // borrow conflicts with check_conflicts_for_entry(&mut self).
         let existing_data = self.index.get(&id).map(|e| {
-            (e.source.clone(), e.provenance.inserted_at.clone(), e.provenance.source_path.clone(), e.conflict_status.clone(), e.revision, e.unit.knowledge_type, e.unit.evidence_source.to_string())
+            (
+                e.source.clone(),
+                e.provenance.inserted_at.clone(),
+                e.provenance.source_path.clone(),
+                e.conflict_status.clone(),
+                e.revision,
+                e.unit.knowledge_type,
+                e.unit.evidence_source.to_string(),
+            )
         });
 
-        if let Some((source, inserted_at, source_path, conflict_status, revision, old_kt, old_src)) = existing_data {
+        if let Some((
+            source,
+            inserted_at,
+            source_path,
+            conflict_status,
+            revision,
+            old_kt,
+            old_src,
+        )) = existing_data
+        {
             if source == EntrySource::Seed {
                 bail!(
                     "Cannot overwrite seed entry '{}' with an observation. \
@@ -639,7 +656,9 @@ impl KnowledgeStore {
                 if let Some(ids) = self.type_index.get_mut(&entry.unit.knowledge_type) {
                     ids.retain(|x| x != id);
                 }
-                if let Some(ids) = self.source_index.get_mut(&entry.unit.evidence_source.to_string()) {
+                if let Some(ids) =
+                    self.source_index.get_mut(&entry.unit.evidence_source.to_string())
+                {
                     ids.retain(|x| x != id);
                 }
             }
@@ -959,7 +978,10 @@ mod tests {
         // T-112: obs_a should ALSO be marked as conflicted with obs_b (symmetry)
         let entry_a = store.get("obs_a").unwrap();
         if let ConflictStatus::ConflictedWith(ids) = &entry_a.conflict_status {
-            assert!(ids.contains(&"obs_b".to_string()), "obs_a should conflict with obs_b (symmetric)");
+            assert!(
+                ids.contains(&"obs_b".to_string()),
+                "obs_a should conflict with obs_b (symmetric)"
+            );
         } else {
             panic!("Expected ConflictedWith status for obs_a (T-112 symmetry)");
         }
@@ -1008,9 +1030,8 @@ mod tests {
 
         // Manually resolve the conflict on obs_a
         if let Some(entry) = store.get_mut("obs_a") {
-            entry.conflict_status = ConflictStatus::Resolved {
-                note: "Manually resolved".to_string(),
-            };
+            entry.conflict_status =
+                ConflictStatus::Resolved { note: "Manually resolved".to_string() };
         }
 
         // Insert contradictory entry

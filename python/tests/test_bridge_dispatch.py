@@ -10,11 +10,7 @@ All tests work WITHOUT macOS and WITHOUT coremltools by mocking imports.
 
 import json
 import os
-import sys
 from unittest import mock
-
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers

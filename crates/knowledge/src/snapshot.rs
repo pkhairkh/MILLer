@@ -121,7 +121,8 @@ impl SnapshotImport {
             std::fs::write(&seed_path, json)
                 .with_context(|| format!("Failed to write seed: {}", seed_path.display()))?;
             store.type_index.entry(entry.unit.knowledge_type).or_default().push(id.clone());
-            store.source_index
+            store
+                .source_index
                 .entry(entry.unit.evidence_source.to_string())
                 .or_default()
                 .push(id.clone());

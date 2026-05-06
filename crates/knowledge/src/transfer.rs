@@ -11,7 +11,10 @@ use ane_ir::kir::{EvidenceSource, KnowledgeType, KnowledgeUnit};
 use anyhow::{bail, Result};
 
 use crate::store::KnowledgeEntry;
-use crate::util::{payload_ane_legal, payload_ane_placed, payload_fallback_engine, payload_num_partitions, payload_quality_impact, payload_survival_rate};
+use crate::util::{
+    payload_ane_legal, payload_ane_placed, payload_fallback_engine, payload_num_partitions,
+    payload_quality_impact, payload_survival_rate,
+};
 
 /// Synthetic transfer annotation and validation.
 pub struct SyntheticTransfer {
@@ -161,8 +164,9 @@ impl SyntheticTransfer {
                 let a_impact = payload_quality_impact(&a.payload);
                 let b_impact = payload_quality_impact(&b.payload);
                 match (a_impact, b_impact) {
-                    (Some("negligible"), Some("severe"))
-                    | (Some("severe"), Some("negligible")) => false,
+                    (Some("negligible"), Some("severe")) | (Some("severe"), Some("negligible")) => {
+                        false
+                    }
                     _ => true,
                 }
             }

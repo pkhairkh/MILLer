@@ -9,10 +9,8 @@ All tests work WITHOUT macOS and WITHOUT coremltools by mocking
 the coremltools imports.
 """
 
-from unittest import mock
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Test: predict_placement_from_ops
@@ -228,9 +226,11 @@ class TestVerificationResultStructure:
     def test_verification_result_sub_results(self):
         """VerificationResult sub-results should be proper types."""
         from verify import (
-            VerificationResult, OpFidelityResult,
-            PlacementResult, StateConformanceResult,
             MultifunctionResult,
+            OpFidelityResult,
+            PlacementResult,
+            StateConformanceResult,
+            VerificationResult,
         )
         result = VerificationResult()
         assert isinstance(result.op_fidelity, OpFidelityResult)
@@ -308,6 +308,7 @@ class TestSaveVerificationResult:
     def test_saved_artifact_is_valid_json(self, tmp_path):
         """Saved artifact should be valid JSON."""
         import json
+
         from verify import VerificationResult, save_verification_result
 
         result = VerificationResult()
@@ -323,6 +324,7 @@ class TestSaveVerificationResult:
     def test_saved_summary_is_valid_json(self, tmp_path):
         """Saved summary should be valid JSON with key metrics."""
         import json
+
         from verify import VerificationResult, save_verification_result
 
         result = VerificationResult()

@@ -47,36 +47,35 @@ import sys
 os.environ.setdefault("COREMLTOOLS_DISABLE_TELEMETRY", "1")
 
 # Import shared constants and helpers (W-17, W-18, W-19, W-26 fixes)
-from common import _error_result, COMPUTE_MAP
+from common import _error_result
 
 # Import the real emission logic
 from mil_emitter import (
+    emit_attention,
+    emit_decode_step,
     emit_linear_projection,
     emit_lut_projection,
-    emit_decode_step,
-    emit_stateless_decode_step,
-    emit_stateful_decode_step,
-    emit_shard_decode_step,
-    emit_palettized_linear_projection,
     emit_mlp_block,
-    emit_attention,
     emit_mlprogram,
     emit_multifunction,
     emit_multifunction_shared_weights,
-    validate_multifunction_package,
+    emit_palettized_linear_projection,
+    emit_shard_decode_step,
+    emit_stateful_decode_step,
+    emit_stateless_decode_step,
     inspect_mlpackage,
+    validate_multifunction_package,
 )
-
-# Import unified verification harness (Sprint 40)
-from verify import verify_model, save_verification_result, verify_emission_semantics
 
 # Import structural verification (Sprint 34)
 from model_structure import (
+    fallback_file_structure,
     inspect_model_structure,
     inspect_model_structure_with_mir_comparison,
-    compare_mir_vs_structure,
-    fallback_file_structure,
 )
+
+# Import unified verification harness (Sprint 40)
+from verify import save_verification_result, verify_model
 
 
 def handle_convert(command: dict) -> dict:
@@ -173,8 +172,8 @@ def handle_palettize(command: dict) -> dict:
     """
     try:
         import coremltools as ct
-        from palettize import apply_palettization
         from mil_emitter import save_mlpackage
+        from palettize import apply_palettization
     except ImportError as e:
         return _error_result(f"Required module not available: {e}")
 
@@ -449,7 +448,7 @@ def handle_profile(command: dict) -> dict:
     """
     try:
         import coremltools as ct
-        from profiler import profile_model, generate_inputs
+        from profiler import generate_inputs, profile_model
     except ImportError as e:
         return _error_result(f"Required module not available for profiling: {e}")
 

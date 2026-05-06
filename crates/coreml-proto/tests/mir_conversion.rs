@@ -724,8 +724,11 @@ fn test_unsupported_input_names_from_mir_op() {
     let compat: MirOpCompat = op.into();
     if let MirOpCompat::Unsupported { inputs, op_kind, .. } = &compat {
         assert_eq!(op_kind, "conv_transpose");
-        assert_eq!(*inputs, vec!["input_x", "weight_w"],
-            "Unsupported from MILConvTranspose should carry input names");
+        assert_eq!(
+            *inputs,
+            vec!["input_x", "weight_w"],
+            "Unsupported from MILConvTranspose should carry input names"
+        );
     } else {
         panic!("Expected MirOpCompat::Unsupported from MILConvTranspose");
     }
@@ -763,8 +766,10 @@ fn test_unsupported_input_names_no_input_op() {
     };
     let compat: MirOpCompat = op.into();
     if let MirOpCompat::Unsupported { inputs, .. } = &compat {
-        assert!(inputs.is_empty(),
-            "RandomNormal has no SSA inputs — Unsupported inputs should be empty");
+        assert!(
+            inputs.is_empty(),
+            "RandomNormal has no SSA inputs — Unsupported inputs should be empty"
+        );
     } else {
         panic!("Expected MirOpCompat::Unsupported from MILRandomNormal");
     }
@@ -775,12 +780,12 @@ fn test_unsupported_input_names_no_input_op() {
 #[test]
 fn test_unsupported_input_names_matches_proto_input_refs() {
     // MILPrelu has x (MirNodeId) and alpha (String weight name)
-    let op = MirOp::MILPrelu { name: "prelu".into(), x: nid("input_x"), alpha: "alpha_weight".into() };
+    let op =
+        MirOp::MILPrelu { name: "prelu".into(), x: nid("input_x"), alpha: "alpha_weight".into() };
     let expected_inputs = op.proto_input_refs();
     let compat: MirOpCompat = op.into();
     if let MirOpCompat::Unsupported { inputs, .. } = &compat {
-        assert_eq!(*inputs, expected_inputs,
-            "Unsupported inputs should match proto_input_refs()");
+        assert_eq!(*inputs, expected_inputs, "Unsupported inputs should match proto_input_refs()");
     } else {
         panic!("Expected MirOpCompat::Unsupported from MILPrelu");
     }
@@ -834,8 +839,7 @@ fn test_unsupported_rename_output_preserves_inputs() {
     if let MirOpCompat::Unsupported { name, inputs, op_kind, .. } = &renamed {
         assert_eq!(*name, "new_output_name");
         assert_eq!(*op_kind, "conv_transpose");
-        assert_eq!(*inputs, vec!["input_x", "weight_w"],
-            "rename_output should preserve inputs");
+        assert_eq!(*inputs, vec!["input_x", "weight_w"], "rename_output should preserve inputs");
     } else {
         panic!("Expected MirOpCompat::Unsupported after rename_output");
     }

@@ -52,8 +52,8 @@
 //!
 //! Reference: `ane-constraints-docs/03-placement-and-compiler/fusion-boundaries-and-resource-allocation.md`
 
-use ane_ir::mir::{MirOp, MirOpTargetAnnotation};
 use ane_ir::ane_engine::AneEngine;
+use ane_ir::mir::{MirOp, MirOpTargetAnnotation};
 
 /// Result of a fusability check between two adjacent MIR operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,9 +125,9 @@ pub fn classify_fusion_atom(op: &MirOp) -> FusionAtom {
         MirOp::MILLinear { .. } | MirOp::MILMatMul { .. } => FusionAtom::MatMul,
 
         // Pooling → PoolAtom
-        MirOp::MILMaxPool { .. }
-        | MirOp::MILAvgPool { .. }
-        | MirOp::MILL2Pool { .. } => FusionAtom::Pool,
+        MirOp::MILMaxPool { .. } | MirOp::MILAvgPool { .. } | MirOp::MILL2Pool { .. } => {
+            FusionAtom::Pool
+        }
 
         // Binary element-wise → ElementWiseAtom
         MirOp::MILAdd { .. }
@@ -155,9 +155,9 @@ pub fn classify_fusion_atom(op: &MirOp) -> FusionAtom {
 
         // Leaky ReLU, Clamped ReLU, SiLU: NOT fusable as activation atoms
         // (known ANEC fusion failures)
-        MirOp::MILLeakyRelu { .. }
-        | MirOp::MILClampedRelu { .. }
-        | MirOp::MILSilu { .. } => FusionAtom::NonFusable,
+        MirOp::MILLeakyRelu { .. } | MirOp::MILClampedRelu { .. } | MirOp::MILSilu { .. } => {
+            FusionAtom::NonFusable
+        }
 
         // Reshape/transpose/permute → TransposeAtom
         MirOp::MILReshape { .. }
@@ -259,12 +259,14 @@ fn check_engine_compatibility(
         (Some(AneEngine::TransposeEngine), Some(AneEngine::NE)) => Ok(()),
 
         // Different engines → not fusable
-        (Some(AneEngine::NE), Some(AneEngine::PE)) => {
-            Err("Cannot fuse NE producer with PE consumer — different engines require DMA round-trip".into())
-        }
-        (Some(AneEngine::PE), Some(AneEngine::NE)) => {
-            Err("Cannot fuse PE producer with NE consumer — different engines require DMA round-trip".into())
-        }
+        (Some(AneEngine::NE), Some(AneEngine::PE)) => Err(
+            "Cannot fuse NE producer with PE consumer — different engines require DMA round-trip"
+                .into(),
+        ),
+        (Some(AneEngine::PE), Some(AneEngine::NE)) => Err(
+            "Cannot fuse PE producer with NE consumer — different engines require DMA round-trip"
+                .into(),
+        ),
 
         // CPU ops cannot be fused
         (None, _) | (_, None) => {
@@ -359,10 +361,7 @@ fn check_atom_compatibility(producer: FusionAtom, consumer: FusionAtom) -> Resul
         (FusionAtom::PerChannelGOC, FusionAtom::ElementWiseBinary) => Ok(()),
 
         // Default: unknown combinations are not fusable
-        (p, c) => Err(format!(
-            "No known fusion pattern for {:?} → {:?}",
-            p, c
-        )),
+        (p, c) => Err(format!("No known fusion pattern for {:?} → {:?}", p, c)),
     }
 }
 
@@ -404,9 +403,7 @@ fn check_failed_patterns(
 /// between groups require a fusion boundary (graph break / DMA).
 ///
 /// This is a simplified model of the ANEC's MirLayerFusion::Group() pass.
-pub fn identify_fusion_groups(
-    ops: &[(MirOp, MirOpTargetAnnotation)],
-) -> Vec<Vec<usize>> {
+pub fn identify_fusion_groups(ops: &[(MirOp, MirOpTargetAnnotation)]) -> Vec<Vec<usize>> {
     if ops.is_empty() {
         return vec![];
     }
@@ -434,9 +431,9 @@ pub fn identify_fusion_groups(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ane_ir::mir::{MirNodeId, MirOpTargetAnnotation};
     use ane_ir::ane_engine::AneEngine;
     use ane_ir::ane_target::AneRevision;
+    use ane_ir::mir::{MirNodeId, MirOpTargetAnnotation};
 
     fn nid(s: &str) -> MirNodeId {
         MirNodeId(s.to_string())
@@ -469,24 +466,26 @@ mod tests {
     #[test]
     fn test_classify_conv_atom() {
         let conv = MirOp::MILConv {
-            name: "conv".into(), x: nid("x"), weight: nid("w"),
-            pad_type: "valid".into(), groups: 1,
-            strides: vec![1], pad_amounts: vec![0], dilations: vec![1],
+            name: "conv".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
         };
         assert_eq!(classify_fusion_atom(&conv), FusionAtom::Conv);
     }
 
     #[test]
     fn test_classify_matmul_atom() {
-        let linear = MirOp::MILLinear {
-            name: "lin".into(), x: nid("x"),
-            weight: "w".into(), bias: None,
-        };
+        let linear =
+            MirOp::MILLinear { name: "lin".into(), x: nid("x"), weight: "w".into(), bias: None };
         assert_eq!(classify_fusion_atom(&linear), FusionAtom::MatMul);
 
-        let mm = MirOp::MILMatMul {
-            name: "mm".into(), x: nid("a"), y: nid("b"), transpose_y: false,
-        };
+        let mm =
+            MirOp::MILMatMul { name: "mm".into(), x: nid("a"), y: nid("b"), transpose_y: false };
         assert_eq!(classify_fusion_atom(&mm), FusionAtom::MatMul);
     }
 
@@ -507,7 +506,8 @@ mod tests {
         let leaky = MirOp::MILLeakyRelu { name: "lr".into(), x: nid("x"), alpha: 0.01 };
         assert_eq!(classify_fusion_atom(&leaky), FusionAtom::NonFusable);
 
-        let clamped = MirOp::MILClampedRelu { name: "cr".into(), x: nid("x"), alpha: 0.0, beta: 6.0 };
+        let clamped =
+            MirOp::MILClampedRelu { name: "cr".into(), x: nid("x"), alpha: 0.0, beta: 6.0 };
         assert_eq!(classify_fusion_atom(&clamped), FusionAtom::NonFusable);
 
         let silu = MirOp::MILSilu { name: "si".into(), x: nid("x") };
@@ -526,9 +526,11 @@ mod tests {
     #[test]
     fn test_classify_pool_atom() {
         let maxpool = MirOp::MILMaxPool {
-            name: "mp".into(), x: nid("x"),
+            name: "mp".into(),
+            x: nid("x"),
             kernel_sizes: vec![3],
-            strides: vec![1], pad_types: vec!["valid".into()],
+            strides: vec![1],
+            pad_types: vec!["valid".into()],
             pad_amounts: vec![0],
         };
         assert_eq!(classify_fusion_atom(&maxpool), FusionAtom::Pool);
@@ -536,22 +538,18 @@ mod tests {
 
     #[test]
     fn test_classify_transpose_atom() {
-        let reshape = MirOp::MILReshape {
-            name: "rs".into(), x: nid("x"), shape: vec![1, 0],
-        };
+        let reshape = MirOp::MILReshape { name: "rs".into(), x: nid("x"), shape: vec![1, 0] };
         assert_eq!(classify_fusion_atom(&reshape), FusionAtom::Transpose);
 
-        let transpose = MirOp::MILTranspose {
-            name: "tr".into(), x: nid("x"), perm: vec![0, 2, 1, 3],
-        };
+        let transpose =
+            MirOp::MILTranspose { name: "tr".into(), x: nid("x"), perm: vec![0, 2, 1, 3] };
         assert_eq!(classify_fusion_atom(&transpose), FusionAtom::Transpose);
     }
 
     #[test]
     fn test_classify_reduction_as_goc() {
-        let reduce_sum = MirOp::MILReduceSum {
-            name: "rs".into(), x: nid("x"), axes: vec![2], keep_dims: true,
-        };
+        let reduce_sum =
+            MirOp::MILReduceSum { name: "rs".into(), x: nid("x"), axes: vec![2], keep_dims: true };
         assert_eq!(classify_fusion_atom(&reduce_sum), FusionAtom::GOC);
     }
 
@@ -616,7 +614,11 @@ mod tests {
 
     #[test]
     fn test_atom_compat_ew_ew() {
-        assert!(check_atom_compatibility(FusionAtom::ElementWiseBinary, FusionAtom::ElementWiseBinary).is_ok());
+        assert!(check_atom_compatibility(
+            FusionAtom::ElementWiseBinary,
+            FusionAtom::ElementWiseBinary
+        )
+        .is_ok());
     }
 
     // ─── Full Fusability Check Tests ───────────────────────────────────
@@ -624,9 +626,14 @@ mod tests {
     #[test]
     fn test_fusable_conv_relu() {
         let conv = MirOp::MILConv {
-            name: "conv".into(), x: nid("x"), weight: nid("w"),
-            pad_type: "valid".into(), groups: 1,
-            strides: vec![1], pad_amounts: vec![0], dilations: vec![1],
+            name: "conv".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
         };
         let relu = MirOp::MILRelu { name: "relu".into(), x: nid("conv") };
 
@@ -639,9 +646,14 @@ mod tests {
     #[test]
     fn test_fusable_conv_relu_same_engine() {
         let conv = MirOp::MILConv {
-            name: "conv".into(), x: nid("x"), weight: nid("w"),
-            pad_type: "valid".into(), groups: 1,
-            strides: vec![1], pad_amounts: vec![0], dilations: vec![1],
+            name: "conv".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
         };
         let relu = MirOp::MILRelu { name: "relu".into(), x: nid("conv") };
 
@@ -653,9 +665,14 @@ mod tests {
     #[test]
     fn test_not_fusable_conv_leaky_relu() {
         let conv = MirOp::MILConv {
-            name: "conv".into(), x: nid("x"), weight: nid("w"),
-            pad_type: "valid".into(), groups: 1,
-            strides: vec![1], pad_amounts: vec![0], dilations: vec![1],
+            name: "conv".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
         };
         let leaky = MirOp::MILLeakyRelu { name: "lr".into(), x: nid("conv"), alpha: 0.01 };
 
@@ -667,9 +684,14 @@ mod tests {
     #[test]
     fn test_not_fusable_conv_silu() {
         let conv = MirOp::MILConv {
-            name: "conv".into(), x: nid("x"), weight: nid("w"),
-            pad_type: "valid".into(), groups: 1,
-            strides: vec![1], pad_amounts: vec![0], dilations: vec![1],
+            name: "conv".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
         };
         let silu = MirOp::MILSilu { name: "silu".into(), x: nid("conv") };
 
@@ -679,11 +701,13 @@ mod tests {
 
     #[test]
     fn test_not_fusable_goc_goc() {
-        let reduce1 = MirOp::MILReduceSum {
-            name: "rs1".into(), x: nid("x"), axes: vec![2], keep_dims: true,
-        };
+        let reduce1 =
+            MirOp::MILReduceSum { name: "rs1".into(), x: nid("x"), axes: vec![2], keep_dims: true };
         let reduce2 = MirOp::MILReduceMean {
-            name: "rm2".into(), x: nid("rs1"), axes: vec![2], keep_dims: true,
+            name: "rm2".into(),
+            x: nid("rs1"),
+            axes: vec![2],
+            keep_dims: true,
         };
 
         let result = check_fusability(&reduce1, &reduce2, &pe_annotation(), &pe_annotation());
@@ -694,9 +718,14 @@ mod tests {
     #[test]
     fn test_not_fusable_cpu_op() {
         let conv = MirOp::MILConv {
-            name: "conv".into(), x: nid("x"), weight: nid("w"),
-            pad_type: "valid".into(), groups: 1,
-            strides: vec![1], pad_amounts: vec![0], dilations: vec![1],
+            name: "conv".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
         };
         // Conv on NE, but consumer has no engine (CPU)
         let add = MirOp::MILAdd { name: "add".into(), x: nid("conv"), y: nid("y") };
@@ -710,9 +739,14 @@ mod tests {
     #[test]
     fn test_identify_groups_single_op() {
         let conv = MirOp::MILConv {
-            name: "conv".into(), x: nid("x"), weight: nid("w"),
-            pad_type: "valid".into(), groups: 1,
-            strides: vec![1], pad_amounts: vec![0], dilations: vec![1],
+            name: "conv".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
         };
         let ops = vec![(conv, ne_annotation())];
         let groups = identify_fusion_groups(&ops);
@@ -722,16 +756,18 @@ mod tests {
     #[test]
     fn test_identify_groups_fusable_pair() {
         let conv = MirOp::MILConv {
-            name: "conv".into(), x: nid("x"), weight: nid("w"),
-            pad_type: "valid".into(), groups: 1,
-            strides: vec![1], pad_amounts: vec![0], dilations: vec![1],
+            name: "conv".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
         };
         let relu = MirOp::MILRelu { name: "relu".into(), x: nid("conv") };
 
-        let ops = vec![
-            (conv, ne_annotation()),
-            (relu, ne_annotation()),
-        ];
+        let ops = vec![(conv, ne_annotation()), (relu, ne_annotation())];
         let groups = identify_fusion_groups(&ops);
         // Both should be in the same group (Conv + Activation on NE)
         assert_eq!(groups.len(), 1);
@@ -741,16 +777,18 @@ mod tests {
     #[test]
     fn test_identify_groups_boundary_at_engine_change() {
         let conv = MirOp::MILConv {
-            name: "conv".into(), x: nid("x"), weight: nid("w"),
-            pad_type: "valid".into(), groups: 1,
-            strides: vec![1], pad_amounts: vec![0], dilations: vec![1],
+            name: "conv".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
         };
         let add = MirOp::MILAdd { name: "add".into(), x: nid("conv"), y: nid("y") };
 
-        let ops = vec![
-            (conv, ne_annotation()),
-            (add, pe_annotation()),
-        ];
+        let ops = vec![(conv, ne_annotation()), (add, pe_annotation())];
         let groups = identify_fusion_groups(&ops);
         // Different engines → separate groups
         assert_eq!(groups.len(), 2);
@@ -761,16 +799,18 @@ mod tests {
     #[test]
     fn test_identify_groups_leaky_relu_boundary() {
         let conv = MirOp::MILConv {
-            name: "conv".into(), x: nid("x"), weight: nid("w"),
-            pad_type: "valid".into(), groups: 1,
-            strides: vec![1], pad_amounts: vec![0], dilations: vec![1],
+            name: "conv".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
         };
         let leaky = MirOp::MILLeakyRelu { name: "lr".into(), x: nid("conv"), alpha: 0.01 };
 
-        let ops = vec![
-            (conv, ne_annotation()),
-            (leaky, ne_annotation()),
-        ];
+        let ops = vec![(conv, ne_annotation()), (leaky, ne_annotation())];
         let groups = identify_fusion_groups(&ops);
         // LeakyReLU is NonFusable → boundary
         assert_eq!(groups.len(), 2);
@@ -779,17 +819,22 @@ mod tests {
     #[test]
     fn test_identify_groups_three_ops_mixed() {
         let conv = MirOp::MILConv {
-            name: "conv".into(), x: nid("x"), weight: nid("w"),
-            pad_type: "valid".into(), groups: 1,
-            strides: vec![1], pad_amounts: vec![0], dilations: vec![1],
+            name: "conv".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
         };
         let relu = MirOp::MILRelu { name: "relu".into(), x: nid("conv") };
         let add = MirOp::MILAdd { name: "add".into(), x: nid("relu"), y: nid("y") };
 
         let ops = vec![
             (conv, ne_annotation()),
-            (relu, ne_annotation()),  // NE: Conv + Activation → fusable
-            (add, pe_annotation()),    // PE: different engine → boundary
+            (relu, ne_annotation()), // NE: Conv + Activation → fusable
+            (add, pe_annotation()),  // PE: different engine → boundary
         ];
         let groups = identify_fusion_groups(&ops);
         assert_eq!(groups.len(), 2);
@@ -820,9 +865,14 @@ mod tests {
         use ane_ir::mir::AneQuantMetadata;
 
         let conv = MirOp::MILConv {
-            name: "conv".into(), x: nid("x"), weight: nid("w"),
-            pad_type: "valid".into(), groups: 1,
-            strides: vec![1], pad_amounts: vec![0], dilations: vec![1],
+            name: "conv".into(),
+            x: nid("x"),
+            weight: nid("w"),
+            pad_type: "valid".into(),
+            groups: 1,
+            strides: vec![1],
+            pad_amounts: vec![0],
+            dilations: vec![1],
         };
         let relu = MirOp::MILRelu { name: "relu".into(), x: nid("conv") };
 

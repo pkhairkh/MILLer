@@ -31,7 +31,9 @@ use anyhow::Result;
 ///
 /// T-118: Also re-exports `validate_palette_bits_for_family` for
 /// version-conditional palette bit-width validation.
-pub use ane_ir::ane_layout::{validate_palette_bits, validate_palette_bits_for_family, VALID_PALETTE_BITS};
+pub use ane_ir::ane_layout::{
+    validate_palette_bits, validate_palette_bits_for_family, VALID_PALETTE_BITS,
+};
 
 /// T-121: Re-export vector palettization constraint validation from
 /// `op_constraints`.
@@ -373,7 +375,7 @@ mod tests {
                         quality_contract: None,
                         precision_override: None,
                     },
-                target_annotation: SirTargetAnnotation::default(),
+                    target_annotation: SirTargetAnnotation::default(),
                 },
             ],
             inputs: vec![],
@@ -385,7 +387,9 @@ mod tests {
     fn test_palettize_annotates_weights() {
         let mut graph = make_test_graph();
         let config = PalettizeConfig::default();
-        let result = run_palettize_weights_pass_with_arch(&mut graph, &config, &ModelArchitecture::Qwen3).unwrap();
+        let result =
+            run_palettize_weights_pass_with_arch(&mut graph, &config, &ModelArchitecture::Qwen3)
+                .unwrap();
 
         assert!(result.grouped_lut_applied >= 2, "Should annotate at least 2 LinearProjection ops");
         assert!(result.consts_palettized >= 1, "Should palettize at least 1 mask constant");
@@ -422,7 +426,9 @@ mod tests {
         config.conservative_qk = true;
         config.attention_bits = 4;
 
-        let result = run_palettize_weights_pass_with_arch(&mut graph, &config, &ModelArchitecture::Qwen3).unwrap();
+        let result =
+            run_palettize_weights_pass_with_arch(&mut graph, &config, &ModelArchitecture::Qwen3)
+                .unwrap();
         assert!(result.grouped_lut_applied >= 1);
 
         // With conservative_qk and attention_bits=4: Q/K get 4+2=6 bits
@@ -446,14 +452,15 @@ mod tests {
         config.conservative_qk = true;
         config.attention_bits = 3; // 3 + 2 = 5 (invalid!)
 
-        let result = run_palettize_weights_pass_with_arch(&mut graph, &config, &ModelArchitecture::Qwen3).unwrap();
+        let result =
+            run_palettize_weights_pass_with_arch(&mut graph, &config, &ModelArchitecture::Qwen3)
+                .unwrap();
         assert!(result.bits_clamped >= 1, "Should clamp at least 1 invalid bit-width");
 
         // 5-bit should be clamped to 4
         for node in &graph.nodes {
             if let SirOp::LinearProjection { .. } = &node.op {
-                if node.name.contains("q_proj") || node.name.contains("k_proj") {
-                }
+                if node.name.contains("q_proj") || node.name.contains("k_proj") {}
             }
         }
     }
@@ -491,13 +498,14 @@ mod tests {
         config.mlp_bits = 6;
         config.conservative_qk = false;
 
-        let _result = run_palettize_weights_pass_with_arch(&mut graph, &config, &ModelArchitecture::Qwen3).unwrap();
+        let _result =
+            run_palettize_weights_pass_with_arch(&mut graph, &config, &ModelArchitecture::Qwen3)
+                .unwrap();
 
         // down_proj is MLP — should get mlp_bits
         for node in &graph.nodes {
             if let SirOp::LinearProjection { .. } = &node.op {
-                if node.name.contains("down_proj") {
-                }
+                if node.name.contains("down_proj") {}
             }
         }
     }
@@ -510,11 +518,9 @@ mod tests {
         config.conservative_qk = true;
         config.attention_bits = 4;
 
-        let result = run_palettize_weights_pass_with_arch(
-            &mut graph,
-            &config,
-            &ModelArchitecture::Qwen3,
-        ).unwrap();
+        let result =
+            run_palettize_weights_pass_with_arch(&mut graph, &config, &ModelArchitecture::Qwen3)
+                .unwrap();
 
         assert!(result.grouped_lut_applied >= 2);
         // Q projection should get 6 bits (4+2 conservative)
@@ -596,11 +602,9 @@ mod tests {
         // Q projection should be classified as attention (6 bits)
         for node in &graph.nodes {
             if let SirOp::LinearProjection { .. } = &node.op {
-                if node.name.contains(".attn.q_proj.") {
-                }
+                if node.name.contains(".attn.q_proj.") {}
                 // Unrecognized MLP name falls through to default mlp_bits
-                if node.name.contains("mlp.c_fc") {
-                }
+                if node.name.contains("mlp.c_fc") {}
             }
         }
     }
@@ -609,8 +613,8 @@ mod tests {
 
     #[test]
     fn test_t98_populate_conv_quantization_fields() {
-        use ane_ir::mir::{MilDtype, MirNode, MirNodeId, MirOp};
         use ane_ir::common::ComputeUnitHint;
+        use ane_ir::mir::{MilDtype, MirNode, MirNodeId, MirOp};
         use std::collections::HashMap;
 
         let mut nodes = vec![
@@ -630,7 +634,7 @@ mod tests {
                 shape: vec![1, 3, 32, 32],
                 compute_unit_hint: None,
                 air_source: None,
-            target_annotation: Default::default(),
+                target_annotation: Default::default(),
             },
             MirNode {
                 id: MirNodeId("conv2".into()),
@@ -648,7 +652,7 @@ mod tests {
                 shape: vec![1, 64, 16, 16],
                 compute_unit_hint: None,
                 air_source: None,
-            target_annotation: Default::default(),
+                target_annotation: Default::default(),
             },
         ];
 
@@ -666,7 +670,10 @@ mod tests {
         assert_eq!(populated, 1, "Only conv1 should be populated");
 
         // T-P5-08: Verify conv1 has quantization fields set on target_annotation.ane_quant
-        let conv1_quant = nodes[0].target_annotation.ane_quant.as_ref()
+        let conv1_quant = nodes[0]
+            .target_annotation
+            .ane_quant
+            .as_ref()
             .expect("conv1 should have ane_quant populated");
         assert!((conv1_quant.kernel_scale - 0.0078).abs() < f32::EPSILON);
         assert_eq!(conv1_quant.kernel_zero_point, 0);
@@ -681,26 +688,24 @@ mod tests {
         use ane_ir::mir::{MilDtype, MirNode, MirNodeId, MirOp};
         use std::collections::HashMap;
 
-        let mut nodes = vec![
-            MirNode {
-                id: MirNodeId("conv1".into()),
-                op: MirOp::MILConv {
-                    name: "conv1".into(),
-                    x: MirNodeId("x".into()),
-                    weight: MirNodeId("w1".into()),
-                    pad_type: "valid".into(),
-                    groups: 1,
-                    strides: vec![1],
-                    pad_amounts: vec![0],
-                    dilations: vec![1],
-                },
-                dtype: MilDtype::Fp16,
-                shape: vec![1, 3, 32, 32],
-                compute_unit_hint: None,
-                air_source: None,
-            target_annotation: Default::default(),
+        let mut nodes = vec![MirNode {
+            id: MirNodeId("conv1".into()),
+            op: MirOp::MILConv {
+                name: "conv1".into(),
+                x: MirNodeId("x".into()),
+                weight: MirNodeId("w1".into()),
+                pad_type: "valid".into(),
+                groups: 1,
+                strides: vec![1],
+                pad_amounts: vec![0],
+                dilations: vec![1],
             },
-        ];
+            dtype: MilDtype::Fp16,
+            shape: vec![1, 3, 32, 32],
+            compute_unit_hint: None,
+            air_source: None,
+            target_annotation: Default::default(),
+        }];
 
         let palettized: HashMap<String, ConvQuantizationInfo> = HashMap::new();
         let populated = populate_conv_quantization_fields(&mut nodes, &palettized);

@@ -347,11 +347,8 @@ impl RiskAnnotatePass {
             })
             .collect();
 
-        let annotated = AirGraph {
-            nodes: annotated_nodes,
-            inputs: input.inputs,
-            outputs: input.outputs,
-        };
+        let annotated =
+            AirGraph { nodes: annotated_nodes, inputs: input.inputs, outputs: input.outputs };
 
         // M-011: Automatic legality gate. By default, reject any node
         // with LegalityStatus::Unknown. This prevents compilation from
@@ -434,9 +431,8 @@ mod tests {
             a: AirNodeId("a".to_string()),
             b: AirNodeId("b".to_string()),
         });
-        let knowledge = MockKnowledge::new()
-            .with_legality(true, 0.99)
-            .with_compute_plan_not_ane("mb.matmul");
+        let knowledge =
+            MockKnowledge::new().with_legality(true, 0.99).with_compute_plan_not_ane("mb.matmul");
         let result = pass.run(graph, &knowledge).unwrap();
         assert_eq!(
             result.nodes[0].legality_status,
@@ -509,9 +505,7 @@ mod tests {
             a: AirNodeId("a".to_string()),
             b: AirNodeId("b".to_string()),
         });
-        let knowledge = MockKnowledge::new()
-            .with_legality(true, 0.97)
-            .with_risk(0.05, 0.02);
+        let knowledge = MockKnowledge::new().with_legality(true, 0.97).with_risk(0.05, 0.02);
         let result = pass.run(graph, &knowledge).unwrap();
         assert_eq!(
             result.nodes[0].legality_status,
@@ -530,9 +524,7 @@ mod tests {
             a: AirNodeId("a".to_string()),
             b: AirNodeId("b".to_string()),
         });
-        let knowledge = MockKnowledge::new()
-            .with_legality(true, 0.97)
-            .with_risk(0.2, 0.1);
+        let knowledge = MockKnowledge::new().with_legality(true, 0.97).with_risk(0.2, 0.1);
         let result = pass.run(graph, &knowledge).unwrap();
         assert_eq!(
             result.nodes[0].legality_status,
@@ -550,9 +542,8 @@ mod tests {
             a: AirNodeId("a".to_string()),
             b: AirNodeId("b".to_string()),
         });
-        let knowledge = MockKnowledge::new()
-            .with_legality_and_evidence(true, 0.97, 3)
-            .with_risk(0.1, 0.05);
+        let knowledge =
+            MockKnowledge::new().with_legality_and_evidence(true, 0.97, 3).with_risk(0.1, 0.05);
         let result = pass.run(graph, &knowledge).unwrap();
         assert_eq!(
             result.nodes[0].legality_status,
@@ -749,10 +740,7 @@ mod tests {
         });
         let knowledge = NoKnowledge;
         let result = pass.run(graph, &knowledge);
-        assert!(
-            result.is_ok(),
-            "Allow-unknown mode should not reject Unknown nodes"
-        );
+        assert!(result.is_ok(), "Allow-unknown mode should not reject Unknown nodes");
     }
 
     #[test]
@@ -766,14 +754,8 @@ mod tests {
         });
         let knowledge = MockKnowledge::new().with_risk(0.6, 0.2); // LikelyFallback
         let result = pass.run(graph, &knowledge);
-        assert!(
-            result.is_ok(),
-            "Gate should pass when no nodes have Unknown legality"
-        );
-        assert_eq!(
-            result.unwrap().nodes[0].legality_status,
-            LegalityStatus::LikelyFallback
-        );
+        assert!(result.is_ok(), "Gate should pass when no nodes have Unknown legality");
+        assert_eq!(result.unwrap().nodes[0].legality_status, LegalityStatus::LikelyFallback);
     }
 
     #[test]

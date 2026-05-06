@@ -80,25 +80,17 @@ pub enum BoundaryOp {
 }
 
 /// A placement annotation that can be attached to any MIR node.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PlacementAnnotation {
     /// No placement annotation (use default engine assignment).
+    #[default]
     None,
     /// Force placement on ANE.
     ForceAne(ForceAnePlacement),
     /// Force placement on CPU.
-    ForceCpu {
-        op_name: String,
-        reason: String,
-    },
+    ForceCpu { op_name: String, reason: String },
     /// Place in a specific region.
     Region(PlacementRegion),
-}
-
-impl Default for PlacementAnnotation {
-    fn default() -> Self {
-        PlacementAnnotation::None
-    }
 }
 
 /// Validation result for placement annotations.
@@ -112,26 +104,13 @@ pub struct PlacementValidationResult {
 #[derive(Debug, Clone)]
 pub enum PlacementValidationIssue {
     /// ForceAne annotation applied to an op known to be CPU-only.
-    ForceAneOnCpuOnlyOp {
-        op_name: String,
-        reason: String,
-    },
+    ForceAneOnCpuOnlyOp { op_name: String, reason: String },
     /// Two conflicting annotations on the same op.
-    ConflictingAnnotations {
-        op_name: String,
-        annotation1: String,
-        annotation2: String,
-    },
+    ConflictingAnnotations { op_name: String, annotation1: String, annotation2: String },
     /// Missing boundary op between two adjacent regions for a tensor.
-    MissingBoundaryOp {
-        from_region: String,
-        to_region: String,
-        tensor: String,
-    },
+    MissingBoundaryOp { from_region: String, to_region: String, tensor: String },
     /// A region is declared but contains no ops.
-    EmptyRegion {
-        region: String,
-    },
+    EmptyRegion { region: String },
 }
 
 impl fmt::Display for PlacementValidationIssue {
@@ -151,11 +130,7 @@ impl fmt::Display for PlacementValidationIssue {
                     op_name, annotation1, annotation2
                 )
             }
-            PlacementValidationIssue::MissingBoundaryOp {
-                from_region,
-                to_region,
-                tensor,
-            } => {
+            PlacementValidationIssue::MissingBoundaryOp { from_region, to_region, tensor } => {
                 write!(
                     f,
                     "Missing boundary op between '{}' and '{}' for tensor '{}'",
@@ -198,19 +173,13 @@ pub fn validate_placement_annotations(
         seen.insert(op_name, annotation);
     }
 
-    PlacementValidationResult {
-        is_valid: issues.is_empty(),
-        issues,
-    }
+    PlacementValidationResult { is_valid: issues.is_empty(), issues }
 }
 
 impl fmt::Display for PlacementRegion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PlacementRegion::Ane {
-                family,
-                allow_cpu_fallback,
-            } => {
+            PlacementRegion::Ane { family, allow_cpu_fallback } => {
                 write!(f, "ANE({})", family)?;
                 if *allow_cpu_fallback {
                     write!(f, "+fallback")?;
@@ -228,17 +197,10 @@ impl fmt::Display for PlacementRegion {
 impl fmt::Display for BoundaryOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BoundaryOp::CpuToAne {
-                source,
-                destination,
-                ..
-            } => {
+            BoundaryOp::CpuToAne { source, destination, .. } => {
                 write!(f, "CpuToAne({} → {})", source, destination)
             }
-            BoundaryOp::AneToCpu {
-                source,
-                destination,
-            } => {
+            BoundaryOp::AneToCpu { source, destination } => {
                 write!(f, "AneToCpu({} → {})", source, destination)
             }
             BoundaryOp::Synchronize { wait_for } => {
@@ -254,19 +216,13 @@ mod tests {
 
     #[test]
     fn test_placement_region_ane_display() {
-        let region = PlacementRegion::Ane {
-            family: "A17".to_string(),
-            allow_cpu_fallback: false,
-        };
+        let region = PlacementRegion::Ane { family: "A17".to_string(), allow_cpu_fallback: false };
         assert_eq!(format!("{}", region), "ANE(A17)");
     }
 
     #[test]
     fn test_placement_region_ane_fallback_display() {
-        let region = PlacementRegion::Ane {
-            family: "A17".to_string(),
-            allow_cpu_fallback: true,
-        };
+        let region = PlacementRegion::Ane { family: "A17".to_string(), allow_cpu_fallback: true };
         assert_eq!(format!("{}", region), "ANE(A17)+fallback");
     }
 
@@ -308,9 +264,7 @@ mod tests {
 
     #[test]
     fn test_boundary_op_synchronize_display() {
-        let op = BoundaryOp::Synchronize {
-            wait_for: vec!["t1".to_string(), "t2".to_string()],
-        };
+        let op = BoundaryOp::Synchronize { wait_for: vec!["t1".to_string(), "t2".to_string()] };
         assert_eq!(format!("{}", op), "Synchronize([\"t1\", \"t2\"])");
     }
 
@@ -400,14 +354,8 @@ mod tests {
     #[test]
     fn test_validate_placement_annotations_same_annotation_not_conflict() {
         let annotations: Vec<(String, PlacementAnnotation)> = vec![
-            (
-                "op1".to_string(),
-                PlacementAnnotation::Region(PlacementRegion::Cpu),
-            ),
-            (
-                "op1".to_string(),
-                PlacementAnnotation::Region(PlacementRegion::Cpu),
-            ),
+            ("op1".to_string(), PlacementAnnotation::Region(PlacementRegion::Cpu)),
+            ("op1".to_string(), PlacementAnnotation::Region(PlacementRegion::Cpu)),
         ];
         let result = validate_placement_annotations(&annotations);
         assert!(result.is_valid);
@@ -420,18 +368,9 @@ mod tests {
 
     #[test]
     fn test_placement_region_equality() {
-        let r1 = PlacementRegion::Ane {
-            family: "A17".to_string(),
-            allow_cpu_fallback: true,
-        };
-        let r2 = PlacementRegion::Ane {
-            family: "A17".to_string(),
-            allow_cpu_fallback: true,
-        };
-        let r3 = PlacementRegion::Ane {
-            family: "A18".to_string(),
-            allow_cpu_fallback: true,
-        };
+        let r1 = PlacementRegion::Ane { family: "A17".to_string(), allow_cpu_fallback: true };
+        let r2 = PlacementRegion::Ane { family: "A17".to_string(), allow_cpu_fallback: true };
+        let r3 = PlacementRegion::Ane { family: "A18".to_string(), allow_cpu_fallback: true };
         assert_eq!(r1, r2);
         assert_ne!(r1, r3);
     }
@@ -466,10 +405,7 @@ mod tests {
 
     #[test]
     fn test_serde_roundtrip_placement_region() {
-        let region = PlacementRegion::Ane {
-            family: "A17".to_string(),
-            allow_cpu_fallback: true,
-        };
+        let region = PlacementRegion::Ane { family: "A17".to_string(), allow_cpu_fallback: true };
         let json = serde_json::to_string(&region).unwrap();
         let deserialized: PlacementRegion = serde_json::from_str(&json).unwrap();
         assert_eq!(region, deserialized);
@@ -477,9 +413,7 @@ mod tests {
 
     #[test]
     fn test_serde_roundtrip_boundary_op() {
-        let op = BoundaryOp::Synchronize {
-            wait_for: vec!["t1".to_string(), "t2".to_string()],
-        };
+        let op = BoundaryOp::Synchronize { wait_for: vec!["t1".to_string(), "t2".to_string()] };
         let json = serde_json::to_string(&op).unwrap();
         let deserialized: BoundaryOp = serde_json::from_str(&json).unwrap();
         assert_eq!(op, deserialized);

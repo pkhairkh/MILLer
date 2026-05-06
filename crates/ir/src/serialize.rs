@@ -51,7 +51,9 @@ mod tests {
         FunctionEntry, Handoff, HandoffKind, Package, PackageRole, PirGraph, ShardPartitionEntry,
         ShardRole, ShardTemplate, TensorSpec,
     };
-    use crate::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
+    use crate::sir::{
+        SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin,
+    };
     use std::collections::HashMap;
 
     // ─── Helpers ──────────────────────────────────────────────────────
@@ -64,10 +66,7 @@ mod tests {
             nodes: vec![
                 SirNode {
                     id: weight_id,
-                    op: SirOp::Const {
-                        value_path: "weight.npy".into(),
-                        dtype: MilDtype::Fp16,
-                    },
+                    op: SirOp::Const { value_path: "weight.npy".into(), dtype: MilDtype::Fp16 },
                     name: "weight".into(),
                     metadata: SirMetadata {
                         task_origin: TaskOrigin::Synthetic,

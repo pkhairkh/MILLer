@@ -96,7 +96,10 @@ impl L2BudgetCheckResult {
 ///
 /// For weight constants (MILConst), the footprint is the weight data size.
 /// For compute ops, the footprint is the sum of all input and output tensor sizes.
-pub fn estimate_op_l2_footprint(op: &MirOp, node_shapes: &std::collections::HashMap<String, Vec<usize>>) -> u64 {
+pub fn estimate_op_l2_footprint(
+    op: &MirOp,
+    node_shapes: &std::collections::HashMap<String, Vec<usize>>,
+) -> u64 {
     let bytes_per_element = |dtype: &MilDtype| -> u64 {
         match dtype {
             MilDtype::Fp16 => 2,
@@ -180,12 +183,7 @@ pub fn check_l2_budget(
 
     let exceeded = total_footprint > budget;
 
-    L2BudgetCheckResult {
-        total_footprint,
-        budget,
-        per_op_footprint,
-        exceeded,
-    }
+    L2BudgetCheckResult { total_footprint, budget, per_op_footprint, exceeded }
 }
 
 /// Check the L2 budget for a single op (lightweight check).

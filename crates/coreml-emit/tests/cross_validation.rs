@@ -69,8 +69,7 @@ use std::collections::HashMap;
 
 use ane_coreml_emit::mir_to_proto::{
     build_linear_projection_mir, build_multifunction_shared_weights_mir,
-    convert_mir_to_proto_multifunction_with_policy, model_to_protobuf_bytes,
-    ValidationPolicy,
+    convert_mir_to_proto_multifunction_with_policy, model_to_protobuf_bytes, ValidationPolicy,
 };
 use ane_coreml_proto::mir_compat::{MilDtypeCompat, MirGraphCompat, MirOpCompat, TensorDescCompat};
 use ane_coreml_proto::{CoreMlComputeUnit, SpecVersion};
@@ -105,14 +104,14 @@ fn test_linear_projection_topology_equivalence() {
     // Python bridge produces: const (weight) + const (bias) + linear
     // Rust proto-direct should produce the same topology
     let graph = build_linear_projection_mir("test_linear", 64, 32, 1, MilDtypeCompat::Fp16, 42);
-    let model =
-        convert_mir_to_proto_multifunction_with_policy(
-            std::slice::from_ref(&graph),
-            &[],
-            SpecVersion::V10,
-            CoreMlComputeUnit::CpuAndNe,
-            ValidationPolicy::warn_only(),
-        ).unwrap();
+    let model = convert_mir_to_proto_multifunction_with_policy(
+        std::slice::from_ref(&graph),
+        &[],
+        SpecVersion::V10,
+        CoreMlComputeUnit::CpuAndNe,
+        ValidationPolicy::warn_only(),
+    )
+    .unwrap();
     let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
 
     let op_types = extract_op_types_from_proto(&bytes, "main");
@@ -187,7 +186,8 @@ fn test_spec_version_propagation_equivalence() {
             version,
             CoreMlComputeUnit::CpuAndNe,
             ValidationPolicy::warn_only(),
-        ).unwrap();
+        )
+        .unwrap();
         let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
         let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
         assert_eq!(
@@ -207,14 +207,14 @@ fn test_weight_embedding_equivalence() {
     // Rust proto-direct embeds weights as BlobFileValue references into weight.bin
     // Both should produce const ops that reference the same weight data
     let graph = build_linear_projection_mir("test_weights", 32, 16, 1, MilDtypeCompat::Fp16, 7);
-    let model =
-        convert_mir_to_proto_multifunction_with_policy(
-            std::slice::from_ref(&graph),
-            &[],
-            SpecVersion::V10,
-            CoreMlComputeUnit::CpuAndNe,
-            ValidationPolicy::warn_only(),
-        ).unwrap();
+    let model = convert_mir_to_proto_multifunction_with_policy(
+        std::slice::from_ref(&graph),
+        &[],
+        SpecVersion::V10,
+        CoreMlComputeUnit::CpuAndNe,
+        ValidationPolicy::warn_only(),
+    )
+    .unwrap();
     assert!(!model.weights.is_empty(), "Should have weight entries");
 
     // Verify proto bytes can be parsed and weight references are valid
@@ -244,14 +244,14 @@ fn test_weight_embedding_equivalence() {
 fn test_io_descriptor_equivalence() {
     // Both paths should produce the same I/O structure in the model description
     let graph = build_linear_projection_mir("test_io", 64, 32, 1, MilDtypeCompat::Fp16, 42);
-    let model =
-        convert_mir_to_proto_multifunction_with_policy(
-            std::slice::from_ref(&graph),
-            &[],
-            SpecVersion::V10,
-            CoreMlComputeUnit::CpuAndNe,
-            ValidationPolicy::warn_only(),
-        ).unwrap();
+    let model = convert_mir_to_proto_multifunction_with_policy(
+        std::slice::from_ref(&graph),
+        &[],
+        SpecVersion::V10,
+        CoreMlComputeUnit::CpuAndNe,
+        ValidationPolicy::warn_only(),
+    )
+    .unwrap();
     let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
     let parsed = ane_coreml_proto::apple_proto::Model::decode(bytes.as_slice()).unwrap();
 
@@ -340,14 +340,14 @@ fn build_attention_like_mir() -> MirGraphCompat {
 #[test]
 fn test_attention_like_graph_topology() {
     let graph = build_attention_like_mir();
-    let model =
-        convert_mir_to_proto_multifunction_with_policy(
-            std::slice::from_ref(&graph),
-            &[],
-            SpecVersion::V10,
-            CoreMlComputeUnit::CpuAndNe,
-            ValidationPolicy::warn_only(),
-        ).unwrap();
+    let model = convert_mir_to_proto_multifunction_with_policy(
+        std::slice::from_ref(&graph),
+        &[],
+        SpecVersion::V10,
+        CoreMlComputeUnit::CpuAndNe,
+        ValidationPolicy::warn_only(),
+    )
+    .unwrap();
     let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
 
     let op_types = extract_op_types_from_proto(&bytes, "main");
@@ -677,14 +677,14 @@ fn build_stateful_decode_step_mir() -> MirGraphCompat {
 #[test]
 fn test_stateful_decode_step_topology() {
     let graph = build_stateful_decode_step_mir();
-    let model =
-        convert_mir_to_proto_multifunction_with_policy(
-            std::slice::from_ref(&graph),
-            &[],
-            SpecVersion::V10,
-            CoreMlComputeUnit::CpuAndNe,
-            ValidationPolicy::warn_only(),
-        ).unwrap();
+    let model = convert_mir_to_proto_multifunction_with_policy(
+        std::slice::from_ref(&graph),
+        &[],
+        SpecVersion::V10,
+        CoreMlComputeUnit::CpuAndNe,
+        ValidationPolicy::warn_only(),
+    )
+    .unwrap();
     let bytes = model_to_protobuf_bytes(&model, &model.weights).unwrap();
 
     let op_types = extract_op_types_from_proto(&bytes, "main");

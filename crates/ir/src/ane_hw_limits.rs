@@ -42,7 +42,6 @@ pub enum AneSubVariant {
     // ─── T-P4-07: Chip-level HAL sub-variants ──────────────────────
     // These represent specific chip SKUs within each ANE family.
     // F-HAL-01: Verified sub-variants now have differentiated limits.
-
     /// A13 Bionic — H13g (standard A13 SKU).
     /// Unverified: no reliable compact data for A13 family.
     H13g,
@@ -497,7 +496,13 @@ impl AneHwLimits {
     /// A18 uses A18-family ANE with SDPA, LayerNorm, and E4M3 support.
     /// Has 6 NEs and 262144 max tensor width.
     fn a18() -> Self {
-        Self { revision: AneRevision::V19, max_tensor_width: 262144, num_nes: 6, verified: true, ..Self::a17() }
+        Self {
+            revision: AneRevision::V19,
+            max_tensor_width: 262144,
+            num_nes: 6,
+            verified: true,
+            ..Self::a17()
+        }
     }
 
     fn a18_pro() -> Self {
@@ -621,11 +626,7 @@ impl AneHwLimits {
             "H13g (A13 standard) hardware limits are unverified — using A13 family defaults. \
              Sub-variant constraint differences are not yet modeled."
         );
-        Self {
-            sub_variant: AneSubVariant::H13g,
-            verified: false,
-            ..Self::a13()
-        }
+        Self { sub_variant: AneSubVariant::H13g, verified: false, ..Self::a13() }
     }
 
     /// F-HAL-01 (T-P7-09): A14 Bionic — H14c (compact/budget SKU).
@@ -634,12 +635,7 @@ impl AneHwLimits {
     /// Verified: compact variant has 1 NE (vs standard A14's 2 NEs),
     /// reflecting the reduced ANE configuration in budget devices.
     fn h14c() -> Self {
-        Self {
-            sub_variant: AneSubVariant::H14c,
-            num_nes: 1,
-            verified: true,
-            ..Self::a14()
-        }
+        Self { sub_variant: AneSubVariant::H14c, num_nes: 1, verified: true, ..Self::a14() }
     }
 
     /// T-P4-07: A14 Bionic — H14g (standard SKU).
@@ -661,12 +657,7 @@ impl AneHwLimits {
     /// Verified: compact variant has 1 NE (vs standard A15's 2 NEs),
     /// reflecting the reduced ANE configuration in budget devices.
     fn h15c() -> Self {
-        Self {
-            sub_variant: AneSubVariant::H15c,
-            num_nes: 1,
-            verified: true,
-            ..Self::a15()
-        }
+        Self { sub_variant: AneSubVariant::H15c, num_nes: 1, verified: true, ..Self::a15() }
     }
 
     /// T-P4-07: A15 Bionic — H15g (standard SKU).
@@ -674,10 +665,7 @@ impl AneHwLimits {
     /// H15g is the standard A15 variant (e.g., iPhone 13).
     /// This is the canonical A15 variant — the one tested by a15().
     fn h15g() -> Self {
-        Self {
-            sub_variant: AneSubVariant::H15g,
-            ..Self::a15()
-        }
+        Self { sub_variant: AneSubVariant::H15g, ..Self::a15() }
     }
 
     /// F-HAL-01 (T-P7-09): A16 Bionic — H16c (compact/budget SKU).
@@ -686,12 +674,7 @@ impl AneHwLimits {
     /// Verified: compact variant has 2 NEs (vs standard A16's 4 NEs),
     /// reflecting the reduced ANE configuration in budget devices.
     fn h16c() -> Self {
-        Self {
-            sub_variant: AneSubVariant::H16c,
-            num_nes: 2,
-            verified: true,
-            ..Self::a16()
-        }
+        Self { sub_variant: AneSubVariant::H16c, num_nes: 2, verified: true, ..Self::a16() }
     }
 
     /// T-P4-07: A16 Bionic — H16g (standard SKU).
@@ -699,10 +682,7 @@ impl AneHwLimits {
     /// H16g is the standard A16 variant (e.g., iPhone 14 Pro).
     /// This is the canonical A16 variant — the one tested by a16().
     fn h16g() -> Self {
-        Self {
-            sub_variant: AneSubVariant::H16g,
-            ..Self::a16()
-        }
+        Self { sub_variant: AneSubVariant::H16g, ..Self::a16() }
     }
 
     /// F-HAL-01 (T-P7-09): A16 Bionic — H16s (performance SKU).
@@ -728,10 +708,7 @@ impl AneHwLimits {
     /// H17a is the A17 Pro variant (e.g., iPhone 15 Pro).
     /// This is the canonical A17 variant — the one tested by a17().
     fn h17a() -> Self {
-        Self {
-            sub_variant: AneSubVariant::H17a,
-            ..Self::a17()
-        }
+        Self { sub_variant: AneSubVariant::H17a, ..Self::a17() }
     }
 
     /// T-P4-07: List all recognized HAL sub-variant identifiers.
@@ -748,11 +725,11 @@ impl AneHwLimits {
     /// family contains this sub-variant.
     pub fn revision_for_hal_sub_variant(hal_id: &str) -> Option<AneRevision> {
         match hal_id {
-            "H13g" => Some(AneRevision::V6),  // A13 family
-            "H14c" | "H14g" => Some(AneRevision::V7),  // A14 family
-            "H15c" | "H15g" => Some(AneRevision::V8),  // A15 family
+            "H13g" => Some(AneRevision::V6),                    // A13 family
+            "H14c" | "H14g" => Some(AneRevision::V7),           // A14 family
+            "H15c" | "H15g" => Some(AneRevision::V8),           // A15 family
             "H16c" | "H16g" | "H16s" => Some(AneRevision::V10), // A16 family
-            "H17a" => Some(AneRevision::V11), // A17 family
+            "H17a" => Some(AneRevision::V11),                   // A17 family
             _ => None,
         }
     }
@@ -827,10 +804,16 @@ impl AneHwLimits {
         kernel_y: u64,
         is_8bit: bool,
     ) -> Result<(), HwLimitViolation> {
-        let max_x = if is_8bit { self.max_8b_conv_kernel_dim_x } else { self.max_f16_conv_kernel_dim_x };
+        let max_x =
+            if is_8bit { self.max_8b_conv_kernel_dim_x } else { self.max_f16_conv_kernel_dim_x };
         if kernel_x > max_x {
             return Err(HwLimitViolation {
-                param: if is_8bit { "max_8b_conv_kernel_dim_x" } else { "max_f16_conv_kernel_dim_x" }.into(),
+                param: if is_8bit {
+                    "max_8b_conv_kernel_dim_x"
+                } else {
+                    "max_f16_conv_kernel_dim_x"
+                }
+                .into(),
                 value: kernel_x,
                 limit: max_x,
             });
@@ -868,10 +851,7 @@ impl AneHwLimits {
     /// The LUT size is computed as: num_entries * bytes_per_entry.
     /// For 4-bit palettes: num_entries = 16, for 8-bit: num_entries = 256.
     /// Bytes per entry: 2 for FP16, 4 for FP32.
-    pub fn validate_palette_lut_size(
-        &self,
-        lut_bytes: u64,
-    ) -> Result<(), HwLimitViolation> {
+    pub fn validate_palette_lut_size(&self, lut_bytes: u64) -> Result<(), HwLimitViolation> {
         if lut_bytes > self.ne_palette_lut_size_in_bytes {
             return Err(HwLimitViolation {
                 param: "ne_palette_lut_size_in_bytes".into(),
@@ -884,10 +864,7 @@ impl AneHwLimits {
 
     /// T-P6-01: Validate convolution kernel depth (z-dimension).
     /// ANE convolutions are 2D — kernel depth must be 1.
-    pub fn validate_conv_kernel_depth(
-        &self,
-        kernel_z: u64,
-    ) -> Result<(), HwLimitViolation> {
+    pub fn validate_conv_kernel_depth(&self, kernel_z: u64) -> Result<(), HwLimitViolation> {
         if kernel_z > self.max_conv_kernel_dim_z {
             return Err(HwLimitViolation {
                 param: "max_conv_kernel_dim_z".into(),
@@ -988,11 +965,7 @@ impl AneHwLimits {
     }
 
     /// T-P6-01: Validate PE pooling kernel dimensions.
-    pub fn validate_pooling_kernel_dims(
-        &self,
-        kh: u64,
-        kw: u64,
-    ) -> Result<(), HwLimitViolation> {
+    pub fn validate_pooling_kernel_dims(&self, kh: u64, kw: u64) -> Result<(), HwLimitViolation> {
         if kh > self.pe_max_pooling_kh {
             return Err(HwLimitViolation {
                 param: "pe_max_pooling_kh".into(),
@@ -1140,10 +1113,11 @@ mod tests {
             "T-P6-02: M1 max_conv_kernel_dim_y should match A14"
         );
         // M1 overrides: larger tensor width, more NEs
-        assert!(limits.max_tensor_width > a14_limits.max_tensor_width,
-            "M1 should have larger max_tensor_width than A14 Bionic");
-        assert!(limits.num_nes > a14_limits.num_nes,
-            "M1 should have more NEs than A14 Bionic");
+        assert!(
+            limits.max_tensor_width > a14_limits.max_tensor_width,
+            "M1 should have larger max_tensor_width than A14 Bionic"
+        );
+        assert!(limits.num_nes > a14_limits.num_nes, "M1 should have more NEs than A14 Bionic");
     }
 
     #[test]
@@ -1312,16 +1286,26 @@ mod tests {
         let vu1_limits = AneHwLimits::for_revision(AneRevision::Vu1);
         let a17_limits = AneHwLimits::for_revision(AneRevision::V11);
         // Vu1 inherits from A17 — these fields should match
-        assert_eq!(vu1_limits.max_tensor_height, a17_limits.max_tensor_height,
-            "Vu1 max_tensor_height should match A17");
-        assert_eq!(vu1_limits.max_tensor_depth, a17_limits.max_tensor_depth,
-            "Vu1 max_tensor_depth should match A17");
-        assert_eq!(vu1_limits.max_tensor_channels, a17_limits.max_tensor_channels,
-            "Vu1 max_tensor_channels should match A17");
-        assert_eq!(vu1_limits.max_tensor_rank, a17_limits.max_tensor_rank,
-            "Vu1 max_tensor_rank should match A17");
-        assert_eq!(vu1_limits.large_kernel_threshold, a17_limits.large_kernel_threshold,
-            "Vu1 large_kernel_threshold should match A17");
+        assert_eq!(
+            vu1_limits.max_tensor_height, a17_limits.max_tensor_height,
+            "Vu1 max_tensor_height should match A17"
+        );
+        assert_eq!(
+            vu1_limits.max_tensor_depth, a17_limits.max_tensor_depth,
+            "Vu1 max_tensor_depth should match A17"
+        );
+        assert_eq!(
+            vu1_limits.max_tensor_channels, a17_limits.max_tensor_channels,
+            "Vu1 max_tensor_channels should match A17"
+        );
+        assert_eq!(
+            vu1_limits.max_tensor_rank, a17_limits.max_tensor_rank,
+            "Vu1 max_tensor_rank should match A17"
+        );
+        assert_eq!(
+            vu1_limits.large_kernel_threshold, a17_limits.large_kernel_threshold,
+            "Vu1 large_kernel_threshold should match A17"
+        );
     }
 
     #[test]
@@ -1329,10 +1313,14 @@ mod tests {
         let vu1_limits = AneHwLimits::for_revision(AneRevision::Vu1);
         let a17_limits = AneHwLimits::for_revision(AneRevision::V11);
         // Vu1 has Mac-scale overrides: larger tensor width, more NEs
-        assert!(vu1_limits.max_tensor_width > a17_limits.max_tensor_width,
-            "Vu1 should have larger max_tensor_width than mobile A17");
-        assert!(vu1_limits.num_nes > a17_limits.num_nes,
-            "Vu1 should have more NEs than mobile A17");
+        assert!(
+            vu1_limits.max_tensor_width > a17_limits.max_tensor_width,
+            "Vu1 should have larger max_tensor_width than mobile A17"
+        );
+        assert!(
+            vu1_limits.num_nes > a17_limits.num_nes,
+            "Vu1 should have more NEs than mobile A17"
+        );
         // Specific values: 262144 width, 8 NEs (A17-conservative Mac defaults)
         assert_eq!(vu1_limits.max_tensor_width, 262144);
         assert_eq!(vu1_limits.num_nes, 8);
@@ -1351,10 +1339,17 @@ mod tests {
         assert!(vu1_limits.is_uane, "Vu1 should have is_uane = true");
         // All other revisions should have is_uane = false
         for rev in [
-            AneRevision::V4, AneRevision::V5, AneRevision::V6,
-            AneRevision::V7, AneRevision::V8, AneRevision::V10,
-            AneRevision::V11, AneRevision::V17, AneRevision::V19,
-            AneRevision::V20, AneRevision::V26,
+            AneRevision::V4,
+            AneRevision::V5,
+            AneRevision::V6,
+            AneRevision::V7,
+            AneRevision::V8,
+            AneRevision::V10,
+            AneRevision::V11,
+            AneRevision::V17,
+            AneRevision::V19,
+            AneRevision::V20,
+            AneRevision::V26,
         ] {
             let limits = AneHwLimits::for_revision(rev);
             assert!(!limits.is_uane, "{:?} should have is_uane = false", rev);
@@ -1364,8 +1359,7 @@ mod tests {
     #[test]
     fn test_vu1_sub_variant_mac() {
         let limits = AneHwLimits::for_revision(AneRevision::Vu1);
-        assert_eq!(limits.sub_variant, AneSubVariant::Mac,
-            "Vu1 should use Mac sub-variant");
+        assert_eq!(limits.sub_variant, AneSubVariant::Mac, "Vu1 should use Mac sub-variant");
     }
 
     #[test]
@@ -1430,7 +1424,8 @@ mod tests {
                 limits.revision.family(),
                 parent_rev.family(),
                 "HAL {} family should be {:?}",
-                hal_id, parent_rev.family()
+                hal_id,
+                parent_rev.family()
             );
         }
     }
@@ -1577,13 +1572,22 @@ mod tests {
     fn test_conv_kernel_depth_is_1() {
         // ANE convolutions are 2D — kernel depth must be 1 for all revisions
         for rev in [
-            AneRevision::V4, AneRevision::V5, AneRevision::V6,
-            AneRevision::V7, AneRevision::V8, AneRevision::V10,
-            AneRevision::V11, AneRevision::V17, AneRevision::V19,
+            AneRevision::V4,
+            AneRevision::V5,
+            AneRevision::V6,
+            AneRevision::V7,
+            AneRevision::V8,
+            AneRevision::V10,
+            AneRevision::V11,
+            AneRevision::V17,
+            AneRevision::V19,
         ] {
             let limits = AneHwLimits::for_revision(rev);
-            assert_eq!(limits.max_conv_kernel_dim_z, 1,
-                "{:?}: max_conv_kernel_dim_z should be 1", rev);
+            assert_eq!(
+                limits.max_conv_kernel_dim_z, 1,
+                "{:?}: max_conv_kernel_dim_z should be 1",
+                rev
+            );
         }
     }
 

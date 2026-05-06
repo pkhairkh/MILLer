@@ -18,7 +18,9 @@ pub use super::payload::*;
 pub use super::shard_desc::*;
 
 use crate::mir::{ComputeUnitHint, MilDtype, MirGraph, MirNode, MirNodeId, MirOp};
-use crate::sir::{SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin};
+use crate::sir::{
+    SirGraph, SirMetadata, SirNode, SirNodeId, SirOp, SirTargetAnnotation, TaskOrigin,
+};
 use crate::task_spec::{SyntheticTaskSpec, TaskOp};
 
 /// Build a SIR graph from a synthetic linear projection task spec.

@@ -38,10 +38,8 @@ On non-Apple platforms (Linux), verification is partial:
 """
 
 import json
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -324,8 +322,6 @@ def _verify_op_fidelity(
     """
     from model_structure import (
         inspect_model_structure_with_mir_comparison,
-        compare_mir_vs_structure,
-        fallback_file_structure,
     )
 
     # Step 1: Try MLModelStructure + MIR comparison
@@ -898,11 +894,10 @@ def verify_emission_semantics(
 
     # Check 2: Manifest.json exists and is readable
     manifest_path = pkg_path / "Manifest.json"
-    manifest = None
     if manifest_path.exists():
         try:
             with open(manifest_path) as f:
-                manifest = json.load(f)
+                json.load(f)
             details["manifest_readable"] = True
         except Exception as e:
             errors.append(f"Manifest.json is not valid JSON: {e}")
