@@ -166,6 +166,23 @@ impl<'a> SirBuildContext<'a> {
 
             for (op, name) in sir_ops {
                 let id = self.alloc_node_id(&traced_node.id);
+
+                // Propagate dtype from TracedNode for Placeholder (graph input) ops.
+                // Placeholder nodes like input_ids, attention_mask have int32 dtype
+                // in the traced graph, but this was previously discarded, causing
+                // Core ML gather to reject fp16 indices: "Param 'indices' has
+                // incorrect type for operator 'ios18.gather'".
+                let dtype_override = if matches!(traced_node.op, TracedOp::Placeholder) {
+                    match traced_node.output_shape.dtype.as_str() {
+                        "int32" | "int64" => Some("int32".to_string()),
+                        "uint16" => Some("uint16".to_string()),
+                        "bool" => Some("bool".to_string()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+
                 let metadata = SirMetadata {
                     task_origin: TaskOrigin::TransformersTrace {
                         name: self.trace.model_id.clone(),
@@ -175,7 +192,7 @@ impl<'a> SirBuildContext<'a> {
                         max_perplexity_delta: Some(0.1),
                         max_latency_ms: Some(50.0),
                     }),
-                    precision_override: None,
+                    precision_override: dtype_override,
                 };
 
                 // Register name-based alias: "sir_{name}_{traced_node_id}" → actual ID.

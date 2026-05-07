@@ -677,13 +677,24 @@ impl MilLowerPass {
                         // must be Int32 — if they default to Fp16, Core ML gather
                         // rejects them: "Param 'indices' has incorrect type for
                         // operator 'ios18.gather'. Expected int types; got fp16."
+                        // IMPORTANT: air_node.name is the op name (e.g. "placeholder"),
+                        // while air_node.id.0 is the node ID (e.g. "sir_0_input_ids").
+                        // We must check BOTH because Placeholder ops have name="placeholder"
+                        // but their ID contains the original tensor name.
                         let name_lower = air_node.name.to_lowercase();
+                        let id_lower = air_node.id.0.to_lowercase();
                         if name_lower.contains("input_ids")
+                            || id_lower.contains("input_ids")
                             || name_lower.contains("_ids")
+                            || id_lower.contains("_ids")
                             || name_lower.contains("attention_mask")
+                            || id_lower.contains("attention_mask")
                             || name_lower.contains("mask")
+                            || id_lower.contains("mask")
                             || name_lower.contains("position")
+                            || id_lower.contains("position")
                             || name_lower.contains("pos_ids")
+                            || id_lower.contains("pos_ids")
                         {
                             log::info!(
                                 "M-016: Identity node '{}' has no dtype_hint but name suggests \
