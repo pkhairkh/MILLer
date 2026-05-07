@@ -315,6 +315,18 @@ def save_mlpackage(mlmodel, mlpackage_path: str) -> dict:
     exit_code = -1
     last_stderr = ""
 
+    # Extract protobuf spec ONCE — shared between Strategy 1 and Strategy 2.
+    # This avoids redundant get_spec().SerializeToString() calls and ensures
+    # Strategy 2 can always find the spec file even if Strategy 1 cleaned up.
+    spec_path = tmp_dir / "model_spec.mlmodel"
+    try:
+        spec_bytes = mlmodel.get_spec().SerializeToString()
+        with open(spec_path, "wb") as f:
+            f.write(spec_bytes)
+    except Exception as e:
+        logger.warning(f"save_mlpackage: failed to extract protobuf spec ({e})")
+        spec_path = None
+
     # --- Strategy 1: Spec serialization with skip_model_load (PRIMARY) ---
     # This is tried first because pickle is known to fail with coremltools'
     # Torch lambda closures (make_float.<locals>.double). The spec approach
@@ -346,32 +358,23 @@ except TypeError:
 
 mlmodel.save(mlpackage_path)
 """
-    spec_path = tmp_dir / "model_spec.mlmodel"
-    try:
-        spec_bytes = mlmodel.get_spec().SerializeToString()
-        with open(spec_path, "wb") as f:
-            f.write(spec_bytes)
-
-        result = subprocess.run(
-            [sys.executable, "-c", spec_saver_script, str(mlpackage_path), str(spec_path)],
-            capture_output=True,
-            timeout=120,
-        )
-        exit_code = result.returncode
-        last_stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
-        if exit_code != 0 and last_stderr:
-            logger.debug(
-                f"save_mlpackage: spec strategy exit_code={exit_code}, "
-                f"stderr: {last_stderr[:500]}"
-            )
-    except Exception as e:
-        logger.warning(f"save_mlpackage: spec strategy failed ({e})")
-    finally:
+    if spec_path is not None:
         try:
-            if spec_path.exists():
-                spec_path.unlink()
-        except OSError:
-            pass
+            result = subprocess.run(
+                [sys.executable, "-c", spec_saver_script, str(mlpackage_path), str(spec_path)],
+                capture_output=True,
+                timeout=120,
+            )
+            exit_code = result.returncode
+            last_stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
+            if exit_code != 0 and last_stderr:
+                logger.debug(
+                    f"save_mlpackage: spec strategy exit_code={exit_code}, "
+                    f"stderr: {last_stderr[:500]}"
+                )
+        except Exception as e:
+            logger.warning(f"save_mlpackage: spec strategy failed ({e})")
+        # Don't delete spec_path here — Strategy 2 may need it
 
     # --- Strategy 2: Direct spec-write (no pickle, no MLModel reconstruction) ---
     # Previously used pickle.dump(mlmodel) which fails with:
@@ -379,7 +382,8 @@ mlmodel.save(mlpackage_path)
     # because coremltools' FP16 type system uses unpicklable closures.
     # Now we write the .mlpackage directory directly from the protobuf spec,
     # avoiding both pickle and MLModel reconstruction — no closures, no SIGABRT.
-    if not mlpackage_path.exists():
+    # Also tried if Strategy 1 left a partial/invalid .mlpackage on disk.
+    if not mlpackage_path.exists() or not _validate_mlpackage_on_disk(mlpackage_path):
         direct_spec_writer_script = """
 import sys
 import os
@@ -424,34 +428,34 @@ with open(os.path.join(mlpackage_path, "Manifest.json"), "w") as f:
 
 print("OK")
 """
-        spec_path = tmp_dir / "model_spec_v2.mlmodel"
+        spec_path_s2 = spec_path  # Reuse the shared spec file from the preamble
         try:
-            # Re-extract spec bytes (may not exist from Strategy 1 if it failed early)
-            if not spec_path.exists():
-                spec_bytes = mlmodel.get_spec().SerializeToString()
-                with open(spec_path, "wb") as f:
-                    f.write(spec_bytes)
+            # Clean up any partial/invalid .mlpackage from Strategy 1
+            if mlpackage_path.exists():
+                try:
+                    shutil.rmtree(mlpackage_path)
+                except OSError:
+                    pass
 
-            result = subprocess.run(
-                [sys.executable, "-c", direct_spec_writer_script, str(mlpackage_path), str(spec_path)],
-                capture_output=True,
-                timeout=120,
-            )
-            exit_code = result.returncode
-            last_stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
-            if exit_code != 0 and last_stderr:
-                logger.debug(
-                    f"save_mlpackage: direct-spec-write strategy exit_code={exit_code}, "
-                    f"stderr: {last_stderr[:500]}"
+            # Spec file should already exist from the preamble extraction
+            if spec_path_s2 is None or not spec_path_s2.exists():
+                logger.warning("save_mlpackage: no spec file available for direct-spec-write")
+            else:
+                result = subprocess.run(
+                    [sys.executable, "-c", direct_spec_writer_script, str(mlpackage_path), str(spec_path_s2)],
+                    capture_output=True,
+                    timeout=120,
                 )
+                exit_code = result.returncode
+                last_stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
+                if exit_code != 0 and last_stderr:
+                    logger.debug(
+                        f"save_mlpackage: direct-spec-write strategy exit_code={exit_code}, "
+                        f"stderr: {last_stderr[:500]}"
+                    )
         except Exception as e:
             logger.warning(f"save_mlpackage: direct-spec-write strategy failed ({e})")
-        finally:
-            try:
-                if spec_path.exists():
-                    spec_path.unlink()
-            except OSError:
-                pass
+        # Don't delete spec_path here — clean up happens at the end
 
     # --- Strategy 3: Direct in-process save ---
     # Last resort: try saving directly in the current process.
@@ -476,10 +480,18 @@ print("OK")
             # partially written — the validation check below will handle it.
             # Previously this always set exit_code=1 even when files existed.
 
-    # Clean up temp dir
+    # Clean up temp dir (including shared spec file)
     try:
-        if tmp_dir.exists() and not any(tmp_dir.iterdir()):
-            tmp_dir.rmdir()
+        if tmp_dir.exists():
+            # Remove spec file if it exists
+            if spec_path is not None and spec_path.exists():
+                try:
+                    spec_path.unlink()
+                except OSError:
+                    pass
+            # Remove temp dir if empty
+            if not any(tmp_dir.iterdir()):
+                tmp_dir.rmdir()
     except OSError:
         pass
 
