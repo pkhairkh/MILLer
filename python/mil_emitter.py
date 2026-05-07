@@ -327,14 +327,18 @@ def save_mlpackage(mlmodel, mlpackage_path: str) -> dict:
         logger.warning(f"save_mlpackage: failed to extract protobuf spec ({e})")
         spec_path = None
 
-    # --- Strategy 1: Spec serialization with skip_model_load (PRIMARY) ---
-    # This is tried first because pickle is known to fail with coremltools'
-    # Torch lambda closures (make_float.<locals>.double). The spec approach
-    # serializes only the protobuf spec (no Python closures), so it always
-    # works for serialization. skip_model_load=True avoids the macOS
-    # compilation step that can SIGABRT.
+    # --- Strategy 1: Direct spec-write in subprocess (PRIMARY) ---
+    # Writes the .mlpackage directory directly from the extracted protobuf
+    # spec, without calling mlmodel.save() (which triggers C++ model
+    # compilation on macOS and can SIGABRT or fail with exit code 1).
+    # Running in a subprocess provides isolation — if the subprocess crashes,
+    # the parent process survives and can try Strategy 2/3.
     spec_saver_script = """
 import sys
+import os
+import json
+import shutil
+import uuid
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -344,26 +348,40 @@ logging.disable(logging.CRITICAL)
 mlpackage_path = sys.argv[1]
 spec_path = sys.argv[2]
 
-import coremltools as ct
-spec = ct.models.utils.load_spec(spec_path)
+# Write .mlpackage directory structure directly from the protobuf spec.
+# This avoids ct.models.MLModel() entirely (which can SIGABRT on macOS)
+# and mlmodel.save() (which triggers C++ compilation on macOS).
+data_dir = os.path.join(mlpackage_path, "Data", "com.apple.CoreML")
+os.makedirs(data_dir, exist_ok=True)
 
-# Try skip_model_load to avoid compilation SIGABRT (coremltools 8.0+).
-# This creates the MLModel without triggering the macOS compilation step
-# that can crash with "coremldata.bin is not a valid .mlmodelc file".
-try:
-    mlmodel = ct.models.MLModel(spec, skip_model_load=True)
-except TypeError:
-    # Older coremltools without skip_model_load parameter
-    mlmodel = ct.models.MLModel(spec)
+# Copy the protobuf spec as model.mlmodel
+shutil.copy2(spec_path, os.path.join(data_dir, "model.mlmodel"))
 
-mlmodel.save(mlpackage_path)
+# Write Manifest.json (Apple .mlpackage schema)
+namespace = uuid.UUID('6ba7b811-9dad-11d1-80b4-00c04fd430c8')
+model_uuid = str(uuid.uuid5(namespace, os.path.basename(mlpackage_path) + "/model")).upper()
+manifest = {
+    "fileFormatVersion": "1.0.0",
+    "itemInfoEntries": {
+        model_uuid: {
+            "path": "com.apple.CoreML/model.mlmodel",
+            "name": "model.mlmodel",
+            "author": "com.apple.CoreML",
+            "description": "CoreML Model Specification"
+        }
+    },
+    "rootModelIdentifier": model_uuid
+}
+with open(os.path.join(mlpackage_path, "Manifest.json"), "w") as f:
+    json.dump(manifest, f, indent=2)
+print("OK")
 """
     if spec_path is not None:
         try:
             result = subprocess.run(
                 [sys.executable, "-c", spec_saver_script, str(mlpackage_path), str(spec_path)],
                 capture_output=True,
-                timeout=120,
+                timeout=30,
             )
             exit_code = result.returncode
             last_stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
