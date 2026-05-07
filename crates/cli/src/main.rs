@@ -461,6 +461,9 @@ enum Commands {
         with_kv_cache: bool,
 
         /// Path to the Python tracing script.
+        /// B-02 fix: default changed from "scripts/python/trace_model.py" to
+        /// "python/trace_model.py" — the file lives alongside bridge.py, not
+        /// in a non-existent scripts/python/ subdirectory.
         #[arg(long, default_value = "python/trace_model.py")]
         trace_script: String,
 
@@ -697,6 +700,67 @@ fn main() {
 /// Delegate to the lab crate's `compute_task_hash`.
 fn compute_task_hash(spec: &ane_ir::task_spec::SyntheticTaskSpec) -> String {
     ane_lab::session::compute_task_hash(spec)
+}
+
+/// Resolve a Python script path (e.g., trace_script, bridge_script) to an
+/// absolute or working path.
+///
+/// B-02 fix: The default "python/trace_model.py" is relative to the MILLer
+/// project root, but the CLI may be invoked from any directory (e.g., from
+/// scripts/test_work/ during test_kit.sh). If the raw path doesn't resolve
+/// to an existing file, try prepending common project root prefixes:
+///   1. Current working directory (original behavior)
+///   2. Parent directory (../)
+///   3. Two levels up (../../)
+///   4. The directory of the running executable
+///
+/// Returns the first path that exists, or the original path if none found
+/// (the subprocess will produce a clear "file not found" error).
+fn resolve_python_script(script_path: &str) -> String {
+    use std::path::PathBuf;
+
+    // If already absolute, use as-is
+    if std::path::Path::new(script_path).is_absolute() {
+        return script_path.to_string();
+    }
+
+    // If the file exists at the raw relative path, use it as-is
+    if std::path::Path::new(script_path).exists() {
+        return script_path.to_string();
+    }
+
+    // Try common project root prefixes
+    let candidates: Vec<PathBuf> = vec![
+        PathBuf::from("..").join(script_path),
+        PathBuf::from("../..").join(script_path),
+        PathBuf::from("../../..").join(script_path),
+    ];
+
+    for candidate in &candidates {
+        if candidate.exists() {
+            return candidate.to_string_lossy().to_string();
+        }
+    }
+
+    // Try relative to the executable's directory
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let from_exe = exe_dir.join(script_path);
+            if from_exe.exists() {
+                return from_exe.to_string_lossy().to_string();
+            }
+            // Also try one level up from the executable (e.g., target/release/ -> project root)
+            if let Some(exe_parent) = exe_dir.parent() {
+                let from_exe_parent = exe_parent.join(script_path);
+                if from_exe_parent.exists() {
+                    return from_exe_parent.to_string_lossy().to_string();
+                }
+            }
+        }
+    }
+
+    // Fallback: return original path (subprocess will report error clearly)
+    script_path.to_string()
 }
 
 /// Resolve the default knowledge seed directory.
@@ -4117,7 +4181,11 @@ fn run_trace_compile(
         with_kv_cache,
         max_seq_len: seq_len * 64, // Allow longer sequences than trace input
         dtype: dtype.to_string(),
-        trace_script: trace_script.to_string(),
+        // B-02 fix: resolve trace_script relative to project root or CWD.
+        // The default "python/trace_model.py" is relative to the MILLer project
+        // root. If the file doesn't exist at the raw path, try prepending
+        // common project root prefixes before giving up.
+        trace_script: resolve_python_script(trace_script),
         python_path: python_path.to_string(),
         ..TraceConfig::default()
     };

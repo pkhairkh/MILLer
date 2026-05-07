@@ -218,6 +218,49 @@ def build_linear_projection_program(command: dict):
     return prog, metadata
 
 
+def _validate_mlpackage_on_disk(mlpackage_path: Path) -> bool:
+    """Validate that a .mlpackage directory on disk is structurally complete.
+
+    Checks:
+      1. Directory exists and is named *.mlpackage
+      2. Manifest.json exists and is parseable JSON
+      3. Data/com.apple.CoreML/model.mlmodel exists and is non-empty
+
+    This is used by save_mlpackage() to distinguish between a valid
+    .mlpackage that was written before a child-process crash (which should
+    be treated as success) and a missing/incomplete save (which is a real
+    failure).
+    """
+    if not mlpackage_path.exists() or not mlpackage_path.is_dir():
+        return False
+
+    # Check Manifest.json
+    manifest_path = mlpackage_path / "Manifest.json"
+    if not manifest_path.exists():
+        return False
+    try:
+        import json
+        with open(manifest_path) as f:
+            json.load(f)
+    except Exception:
+        return False
+
+    # Check model.mlmodel (CoreML spec) exists and is non-empty
+    model_path = mlpackage_path / "Data" / "com.apple.CoreML" / "model.mlmodel"
+    if not model_path.exists():
+        # Fallback: some emission paths use Model/ instead of Data/
+        model_path = mlpackage_path / "Model" / "com.apple.CoreML" / "model.mlmodel"
+    if not model_path.exists():
+        return False
+    try:
+        if model_path.stat().st_size == 0:
+            return False
+    except OSError:
+        return False
+
+    return True
+
+
 def save_mlpackage(mlmodel, mlpackage_path: str) -> dict:
     """Save an MLModel as .mlpackage, compute hash and file inventory.
 
@@ -251,8 +294,12 @@ def save_mlpackage(mlmodel, mlpackage_path: str) -> dict:
         3. Direct in-process save: Try mlmodel.save() directly. May trigger
            SIGABRT on macOS but works on Linux or with compatible versions.
 
-        If the child process crashes (SIGABRT or non-zero exit) but the
-        .mlpackage exists on disk, we treat it as a successful save.
+        If ANY strategy produces a valid .mlpackage on disk (verified by
+        _validate_mlpackage_on_disk), we treat it as a successful save
+        regardless of the child process exit code. This fixes the false-
+        negative bug where Strategy 1 or 3 writes valid files before the
+        child crashes, but the non-zero exit_code causes a RuntimeError.
+        (B-01 fix)
     """
     mlpackage_path = Path(mlpackage_path)
 
@@ -330,10 +377,6 @@ mlmodel.save(mlpackage_path)
     # Used when spec approach fails. Fails with "Can't get local object"
     # when coremltools uses Torch lambda closures in weight data.
     if not mlpackage_path.exists():
-        # Clean up partial output from strategy 1
-        if mlpackage_path.exists():
-            shutil.rmtree(mlpackage_path)
-
         pickle_saver_script = """
 import sys
 import warnings
@@ -382,17 +425,24 @@ mlmodel.save(mlpackage_path)
     # Last resort: try saving directly in the current process.
     # This may trigger SIGABRT on macOS with coremltools 9.x,
     # but works fine on Linux or with compatible versions.
-    if not mlpackage_path.exists():
+    # B-04 fix: Also try this strategy if .mlpackage exists but failed
+    # validation from a partial Strategy 1/2 write — we clean up and retry.
+    if not mlpackage_path.exists() or not _validate_mlpackage_on_disk(mlpackage_path):
+        # Clean up any partial/corrupt write from previous strategies
+        if mlpackage_path.exists():
+            try:
+                shutil.rmtree(mlpackage_path)
+            except OSError:
+                pass
         try:
             mlmodel.save(str(mlpackage_path))
             exit_code = 0
             logger.debug("save_mlpackage: direct in-process save succeeded")
         except Exception as e:
             logger.warning(f"save_mlpackage: direct save failed ({e})")
-            # If the .mlpackage was partially written before the error,
-            # it might still be usable
-            if not mlpackage_path.exists():
-                exit_code = 1
+            # B-04 fix: Don't set exit_code=1 here if the .mlpackage was
+            # partially written — the validation check below will handle it.
+            # Previously this always set exit_code=1 even when files existed.
 
     # Clean up temp dir
     try:
@@ -401,7 +451,19 @@ mlmodel.save(mlpackage_path)
     except OSError:
         pass
 
-    if not mlpackage_path.exists():
+    # B-01 fix: Validate .mlpackage on disk BEFORE deciding success/failure.
+    # If a valid .mlpackage exists (Manifest.json + non-empty model.mlmodel),
+    # treat it as a successful save regardless of child process exit code.
+    # The exit_code is irrelevant if the output is valid — the child may
+    # have crashed during post-save verification while the files are intact.
+    if mlpackage_path.exists() and _validate_mlpackage_on_disk(mlpackage_path):
+        if exit_code != 0:
+            logger.warning(
+                f"save_mlpackage: child process exited with code {exit_code}, "
+                "but valid .mlpackage was written successfully — proceeding"
+            )
+        # Fall through to hash + inventory below
+    elif not mlpackage_path.exists():
         if exit_code < 0:
             # Process was killed by signal (e.g., SIGABRT = -6)
             raise RuntimeError(
@@ -416,12 +478,12 @@ mlmodel.save(mlpackage_path)
             )
         else:
             raise RuntimeError("save_mlpackage: no output created for unknown reason")
-
-    # .mlpackage exists on disk — treat as success even if non-zero exit
-    if exit_code != 0:
-        logger.warning(
-            f"save_mlpackage: child process exited with code {exit_code}, "
-            "but .mlpackage was written successfully — proceeding"
+    else:
+        # .mlpackage exists but failed validation — partial/corrupt write
+        raise RuntimeError(
+            f"save_mlpackage: .mlpackage exists at {mlpackage_path} but failed "
+            "structural validation (missing Manifest.json or empty model.mlmodel). "
+            f"Last exit_code={exit_code}."
         )
 
     content_hash = _hash_directory(mlpackage_path)
@@ -689,23 +751,30 @@ def build_lut_projection_program(command: dict):
             opset_version=target_os,
         )
         def prog(indices):
+            # B-03 fix: LUT projection now uses proper group-aware gathering.
+            # The LUT table is organized as [num_groups * vocab_size, group_dim].
+            # For each group g, the indices need to be shifted by g * vocab_size
+            # so that they point into the correct group's slice of the table.
+            # Previously, each group used mb.const(offset) as the index, which
+            # always gathered from a fixed position instead of the input position.
             lut_values = np.random.randn(num_groups * vocab_size, group_dim).astype(np_dtype)
             lut_table = mb.const(val=lut_values, name="lut_table")
 
-            gathered = mb.gather(x=lut_table, indices=indices, name="gather")
-
-            gathered_parts = [gathered]
-            for g in range(1, num_groups):
+            gathered_parts = []
+            for g in range(num_groups):
                 offset = g * vocab_size
-                offset_indices_val = np.array([offset], dtype=np.int32)
-                offset_const = mb.const(val=offset_indices_val, name=f"offset_{g}")
-                gathered_g = mb.gather(x=lut_table, indices=offset_const, name=f"gather_{g}")
+                offset_val = np.array(offset, dtype=np.int32)
+                offset_const = mb.const(val=offset_val, name=f"offset_{g}")
+                # Add the group offset to the input indices so each group
+                # gathers from its own slice of the LUT table
+                shifted_indices = mb.add(x=indices, y=offset_const, name=f"shifted_idx_{g}")
+                gathered_g = mb.gather(x=lut_table, indices=shifted_indices, name=f"gather_{g}")
                 gathered_parts.append(gathered_g)
 
             if len(gathered_parts) > 1:
                 result = mb.concat(values=gathered_parts, axis=-1, name="output")
             else:
-                result = gathered
+                result = gathered_parts[0]
             return result
 
     metadata = {

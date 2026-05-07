@@ -839,7 +839,7 @@ except Exception as e:
 " 2>/dev/null || echo "parse_error")
             record_result "compute plan: $pkg_name" "pass" "$placement"
         else
-            record_result "compute plan: $pkg_name" "skip" "Harvest requires macOS 14+ with Apple Silicon"
+            record_result "compute plan: $pkg_name" "skip" "Compute plan harvest unavailable — requires Core ML runtime (macOS 14+ with Apple Silicon and compatible coremltools)"
         fi
     done
 
