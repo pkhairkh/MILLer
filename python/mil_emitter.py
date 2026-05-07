@@ -373,12 +373,17 @@ mlmodel.save(mlpackage_path)
         except OSError:
             pass
 
-    # --- Strategy 2: Pickle serialization ---
-    # Used when spec approach fails. Fails with "Can't get local object"
-    # when coremltools uses Torch lambda closures in weight data.
+    # --- Strategy 2: Direct spec-write (no pickle, no MLModel reconstruction) ---
+    # Previously used pickle.dump(mlmodel) which fails with:
+    #   "Can't get local object 'make_float.<locals>.double'"
+    # because coremltools' FP16 type system uses unpicklable closures.
+    # Now we write the .mlpackage directory directly from the protobuf spec,
+    # avoiding both pickle and MLModel reconstruction — no closures, no SIGABRT.
     if not mlpackage_path.exists():
-        pickle_saver_script = """
+        direct_spec_writer_script = """
 import sys
+import os
+import json
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -386,22 +391,49 @@ import logging
 logging.disable(logging.CRITICAL)
 
 mlpackage_path = sys.argv[1]
-model_data_path = sys.argv[2]
+spec_path = sys.argv[2]
 
-import pickle
-with open(model_data_path, "rb") as f:
-    mlmodel = pickle.load(f)
+# Write .mlpackage directory structure directly from the protobuf spec.
+# This avoids ct.models.MLModel() reconstruction (which can SIGABRT)
+# and pickle serialization (which fails with make_float closures).
+data_dir = os.path.join(mlpackage_path, "Data", "com.apple.CoreML")
+os.makedirs(data_dir, exist_ok=True)
 
-mlmodel.save(mlpackage_path)
+# Copy the protobuf spec as model.mlmodel
+import shutil
+shutil.copy2(spec_path, os.path.join(data_dir, "model.mlmodel"))
+
+# Write Manifest.json (Apple .mlpackage schema)
+import uuid
+namespace = uuid.UUID('6ba7b811-9dad-11d1-80b4-00c04fd430c8')  # DNS namespace
+model_uuid = str(uuid.uuid5(namespace, os.path.basename(mlpackage_path) + "/model")).upper()
+manifest = {
+    "fileFormatVersion": "1.0.0",
+    "itemInfoEntries": {
+        model_uuid: {
+            "path": "com.apple.CoreML/model.mlmodel",
+            "name": "model.mlmodel",
+            "author": "com.apple.CoreML",
+            "description": "CoreML Model Specification"
+        }
+    },
+    "rootModelIdentifier": model_uuid
+}
+with open(os.path.join(mlpackage_path, "Manifest.json"), "w") as f:
+    json.dump(manifest, f, indent=2)
+
+print("OK")
 """
-        model_data_path = tmp_dir / "model_data.pkl"
+        spec_path = tmp_dir / "model_spec_v2.mlmodel"
         try:
-            import pickle
-            with open(model_data_path, "wb") as f:
-                pickle.dump(mlmodel, f, protocol=4)
+            # Re-extract spec bytes (may not exist from Strategy 1 if it failed early)
+            if not spec_path.exists():
+                spec_bytes = mlmodel.get_spec().SerializeToString()
+                with open(spec_path, "wb") as f:
+                    f.write(spec_bytes)
 
             result = subprocess.run(
-                [sys.executable, "-c", pickle_saver_script, str(mlpackage_path), str(model_data_path)],
+                [sys.executable, "-c", direct_spec_writer_script, str(mlpackage_path), str(spec_path)],
                 capture_output=True,
                 timeout=120,
             )
@@ -409,15 +441,15 @@ mlmodel.save(mlpackage_path)
             last_stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
             if exit_code != 0 and last_stderr:
                 logger.debug(
-                    f"save_mlpackage: pickle strategy exit_code={exit_code}, "
+                    f"save_mlpackage: direct-spec-write strategy exit_code={exit_code}, "
                     f"stderr: {last_stderr[:500]}"
                 )
         except Exception as e:
-            logger.warning(f"save_mlpackage: pickle strategy failed ({e})")
+            logger.warning(f"save_mlpackage: direct-spec-write strategy failed ({e})")
         finally:
             try:
-                if model_data_path.exists():
-                    model_data_path.unlink()
+                if spec_path.exists():
+                    spec_path.unlink()
             except OSError:
                 pass
 

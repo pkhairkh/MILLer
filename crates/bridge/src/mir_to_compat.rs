@@ -340,7 +340,13 @@ pub fn mir_graph_to_compat_with_arch(
                         Ok(TensorDescCompat {
                             name: id.0.clone(),
                             shape: shape.clone(),
-                            dtype: if id.0.contains("position") || id.0.contains("pos") {
+                            dtype: if id.0.contains("position")
+                                || id.0.contains("pos")
+                                || id.0.contains("input_ids")
+                                || id.0.contains("_ids")
+                                || id.0.contains("attention_mask")
+                                || id.0.contains("mask")
+                            {
                                 MilDtypeCompat::Int32
                             } else {
                                 MilDtypeCompat::Fp16
@@ -1339,6 +1345,12 @@ pub fn mir_op_to_compat_with_quant(
                 weight: weight.0.clone(),
                 pad_type: pad_type.clone(),
                 groups: *groups as i64,
+                // Carry strides/pad_amounts/dilations through to compat.
+                // Previously discarded here, causing "Required param 'dilations'
+                // is missing" at Core ML model parse time.
+                strides: strides.iter().map(|&s| s as i32).collect(),
+                pad_amounts: pad_amounts.iter().map(|&p| p as i32).collect(),
+                dilations: dilations.iter().map(|&d| d as i32).collect(),
                 kernel_scale,
                 kernel_zero_point,
                 kernel_palettized_lut,

@@ -672,13 +672,34 @@ impl MilLowerPass {
                     if let AirOp::Identity { dtype_hint: Some(hint), .. } = &air_node.op {
                         hint.clone()
                     } else if matches!(&air_node.op, AirOp::Identity { .. }) {
-                        log::info!(
-                            "M-016: no dtype_hint for Identity node '{}', defaulting to Fp16. \
-                             Set dtype_hint explicitly on the Identity op in the SIR→AIR builder \
-                             for correct dtype inference.",
-                            air_node.name
-                        );
-                        MilDtype::Fp16
+                        // Name-based fallback for Identity nodes without dtype_hint.
+                        // Input tensors like input_ids, attention_mask, position_ids
+                        // must be Int32 — if they default to Fp16, Core ML gather
+                        // rejects them: "Param 'indices' has incorrect type for
+                        // operator 'ios18.gather'. Expected int types; got fp16."
+                        let name_lower = air_node.name.to_lowercase();
+                        if name_lower.contains("input_ids")
+                            || name_lower.contains("_ids")
+                            || name_lower.contains("attention_mask")
+                            || name_lower.contains("mask")
+                            || name_lower.contains("position")
+                            || name_lower.contains("pos_ids")
+                        {
+                            log::info!(
+                                "M-016: Identity node '{}' has no dtype_hint but name suggests \
+                                 integer input — using Int32 instead of Fp16 default.",
+                                air_node.name
+                            );
+                            MilDtype::Int32
+                        } else {
+                            log::info!(
+                                "M-016: no dtype_hint for Identity node '{}', defaulting to Fp16. \
+                                 Set dtype_hint explicitly on the Identity op in the SIR→AIR builder \
+                                 for correct dtype inference.",
+                                air_node.name
+                            );
+                            MilDtype::Fp16
+                        }
                     } else {
                         MilDtype::Fp16
                     }

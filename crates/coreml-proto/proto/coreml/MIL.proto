@@ -125,6 +125,10 @@ message MilConvOp {
     float kernel_scale = 5;                  // Per-op scale factor (0.0 = not set)
     int32 kernel_zero_point = 6;             // Zero-point offset (0 = symmetric)
     string kernel_palettized_lut = 7;        // Name of palettized LUT weight entry (empty = not palettized)
+    // Conv spatial attributes — required by Core ML conv op.
+    repeated int32 strides = 8;              // Stride values (e.g. [1,1] for conv1x1)
+    repeated int32 pad_amounts = 9;          // Padding amounts (e.g. [0,0,0,0] for no pad)
+    repeated int32 dilations = 10;           // Dilation values (e.g. [1,1] for conv1x1)
 }
 
 // ─── Elementwise ────────────────────────────────────────────────────────────

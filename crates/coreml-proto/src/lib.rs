@@ -536,6 +536,15 @@ pub mod mir_compat {
             weight: String,
             pad_type: String,
             groups: i64,
+            /// Stride values for spatial dimensions (e.g. [1,1] for conv1x1).
+            /// Required by Core ML conv op — previously dropped in mir_to_compat,
+            /// causing "Required param 'dilations' is missing" at model load.
+            strides: Vec<i32>,
+            /// Padding amounts [top, bottom, left, right] or [h, w].
+            pad_amounts: Vec<i32>,
+            /// Dilation values for spatial dimensions (e.g. [1,1] for conv1x1).
+            /// Required by Core ML conv op — missing caused parse failure.
+            dilations: Vec<i32>,
             /// T-98 (V-110): Per-op scale factor for quantized/palettized conv weights.
             kernel_scale: Option<f32>,
             /// T-98 (V-110): Zero-point offset for quantized conv weights.
@@ -1495,6 +1504,9 @@ pub mod mir_compat {
                     weight,
                     pad_type,
                     groups,
+                    strides,
+                    pad_amounts,
+                    dilations,
                     kernel_scale,
                     kernel_zero_point,
                     kernel_palettized_lut,
@@ -1504,6 +1516,9 @@ pub mod mir_compat {
                     weight: f(weight),
                     pad_type,
                     groups,
+                    strides,
+                    pad_amounts,
+                    dilations,
                     kernel_scale,
                     kernel_zero_point,
                     kernel_palettized_lut,
@@ -1905,6 +1920,9 @@ pub mod mir_compat {
                     weight,
                     pad_type,
                     groups,
+                    strides,
+                    pad_amounts,
+                    dilations,
                     kernel_scale,
                     kernel_zero_point,
                     kernel_palettized_lut,
@@ -1914,6 +1932,9 @@ pub mod mir_compat {
                     weight,
                     pad_type,
                     groups,
+                    strides,
+                    pad_amounts,
+                    dilations,
                     kernel_scale,
                     kernel_zero_point,
                     kernel_palettized_lut,
@@ -2350,7 +2371,7 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
             MirOp::MILEinsum { name, .. } => unsupported("einsum", &name, &op_json),
 
             // ─── Convolution ─────────────────────────────────────────
-            MirOp::MILConv { name, x, weight, pad_type, groups, .. } => {
+            MirOp::MILConv { name, x, weight, pad_type, groups, strides, pad_amounts, dilations } => {
                 // T-P5-08: kernel_scale/kernel_zero_point/kernel_palettized_lut
                 // are now on MirOpTargetAnnotation::ane_quant, not on MILConv.
                 // This path creates MirOpCompat::Conv without quant attributes.
@@ -2361,6 +2382,9 @@ impl From<ane_ir::mir::MirOp> for mir_compat::MirOpCompat {
                     weight: nid(weight),
                     pad_type,
                     groups: groups as i64,
+                    strides: strides.iter().map(|&s| s as i32).collect(),
+                    pad_amounts: pad_amounts.iter().map(|&p| p as i32).collect(),
+                    dilations: dilations.iter().map(|&d| d as i32).collect(),
                     kernel_scale: None,
                     kernel_zero_point: None,
                     kernel_palettized_lut: None,
@@ -3440,7 +3464,7 @@ pub fn mir_op_to_proto_op(
         // Sprint 54: Conv proto emission
         // T-98: Now includes quantized weight attributes (kernel_scale, kernel_zero_point,
         // kernel_palettized_lut) for the legacy MIL proto format.
-        mir_compat::MirOpCompat::Conv { name, x, weight, pad_type, groups, kernel_scale, kernel_zero_point, kernel_palettized_lut } => {
+        mir_compat::MirOpCompat::Conv { name, x, weight, pad_type, groups, strides, pad_amounts, dilations, kernel_scale, kernel_zero_point, kernel_palettized_lut } => {
             let weight_data = weight_entries
                 .iter()
                 .find(|w| w.name == *weight)
@@ -3458,6 +3482,9 @@ pub fn mir_op_to_proto_op(
                     weight: Some(weight_data),
                     pad_type: pad_type.clone(),
                     groups: *groups,
+                    strides: strides.clone(),
+                    pad_amounts: pad_amounts.clone(),
+                    dilations: dilations.clone(),
                     kernel_scale: kernel_scale.unwrap_or(0.0),
                     kernel_zero_point: kernel_zero_point.unwrap_or(0),
                     kernel_palettized_lut: kernel_palettized_lut.clone().unwrap_or_default(),
@@ -5203,14 +5230,86 @@ fn mir_op_to_apple_ops(
             weight,
             pad_type,
             groups,
+            strides,
+            pad_amounts,
+            dilations,
             kernel_scale,
             kernel_zero_point,
             kernel_palettized_lut,
         } => {
+            let mut const_ops: Vec<apple_proto::mil_spec::Operation> = Vec::new();
             let mut inputs = HashMap::new();
             inputs.insert("x".to_string(), make_name_arg(x));
             inputs.insert("weight".to_string(), make_name_arg(weight));
 
+            // Emit preceding const ops for stride, pad, dilation — required by Core ML conv.
+            // Mirrors the AnecFusedConvActivate pattern (lines 6698–6782).
+            // Previously these were missing, causing "Required param 'dilations' is missing".
+
+            let stride_const_name = format!("{name}_stride");
+            let stride_shape: Vec<u64> = vec![strides.len() as u64];
+            let mut stride_attrs = HashMap::new();
+            add_name_attribute(&mut stride_attrs, &stride_const_name);
+            stride_attrs.insert(
+                "val".to_string(),
+                make_immediate_int32_value(strides.clone(), &stride_shape),
+            );
+            const_ops.push(apple_proto::mil_spec::Operation {
+                r#type: "const".to_string(),
+                inputs: HashMap::new(),
+                outputs: vec![make_apple_named_value_type(
+                    &stride_const_name,
+                    apple_proto::mil_spec::DataType::Int32 as i32,
+                    &stride_shape,
+                )],
+                blocks: vec![],
+                attributes: stride_attrs,
+            });
+            inputs.insert("stride".to_string(), make_name_arg(&stride_const_name));
+
+            let pad_const_name = format!("{name}_pad");
+            let pad_shape: Vec<u64> = vec![pad_amounts.len() as u64];
+            let mut pad_attrs = HashMap::new();
+            add_name_attribute(&mut pad_attrs, &pad_const_name);
+            pad_attrs.insert(
+                "val".to_string(),
+                make_immediate_int32_value(pad_amounts.clone(), &pad_shape),
+            );
+            const_ops.push(apple_proto::mil_spec::Operation {
+                r#type: "const".to_string(),
+                inputs: HashMap::new(),
+                outputs: vec![make_apple_named_value_type(
+                    &pad_const_name,
+                    apple_proto::mil_spec::DataType::Int32 as i32,
+                    &pad_shape,
+                )],
+                blocks: vec![],
+                attributes: pad_attrs,
+            });
+            inputs.insert("pad".to_string(), make_name_arg(&pad_const_name));
+
+            let dil_const_name = format!("{name}_dilation");
+            let dil_shape: Vec<u64> = vec![dilations.len() as u64];
+            let mut dil_attrs = HashMap::new();
+            add_name_attribute(&mut dil_attrs, &dil_const_name);
+            dil_attrs.insert(
+                "val".to_string(),
+                make_immediate_int32_value(dilations.clone(), &dil_shape),
+            );
+            const_ops.push(apple_proto::mil_spec::Operation {
+                r#type: "const".to_string(),
+                inputs: HashMap::new(),
+                outputs: vec![make_apple_named_value_type(
+                    &dil_const_name,
+                    apple_proto::mil_spec::DataType::Int32 as i32,
+                    &dil_shape,
+                )],
+                blocks: vec![],
+                attributes: dil_attrs,
+            });
+            inputs.insert("dilation".to_string(), make_name_arg(&dil_const_name));
+
+            // pad_type as string value (kept for backward compat)
             inputs.insert(
                 "pad_type".to_string(),
                 make_value_arg(apple_proto::mil_spec::Value {
@@ -5247,13 +5346,6 @@ fn mir_op_to_apple_ops(
             );
 
             // T-98 (V-110): Emit quantized conv weight attributes as named const nodes.
-            // ANEC requires kernel_scale, kernel_zero_point, and kernel_palettized_LUT
-            // for quantized/palettized conv operations. Following the same named-const-node
-            // pattern as Cast dtype and MatMul transpose flags (Orion #12), we emit
-            // preceding const operations for each quantization parameter and reference
-            // them by name in the conv op's inputs map.
-            let mut const_ops: Vec<apple_proto::mil_spec::Operation> = Vec::new();
-
             if let Some(scale) = kernel_scale {
                 let scale_const_name = format!("{name}_kernel_scale_0");
                 let mut scale_attrs = HashMap::new();
@@ -5298,8 +5390,6 @@ fn mir_op_to_apple_ops(
                 let lut_const_name = format!("{name}_kernel_palettized_LUT_0");
                 let mut lut_attrs = HashMap::new();
                 add_name_attribute(&mut lut_attrs, &lut_const_name);
-                // The LUT references a weight entry by name — emit as a named const
-                // that resolves to the palettized LUT weight data.
                 lut_attrs.insert("val".to_string(), make_immediate_string_value(lut_name.clone()));
                 let lut_const_op = apple_proto::mil_spec::Operation {
                     r#type: "const".to_string(),
