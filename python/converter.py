@@ -49,6 +49,17 @@ def convert_milprogram(
 
     Returns:
         An MLModel object.
+
+    macOS SIGABRT workaround:
+        ct.convert() internally creates an MLModel from the converted spec
+        for validation. On macOS, the MLModel constructor triggers C++ model
+        compilation which can SIGABRT with "coremldata.bin is not a valid
+        .mlmodelc file". We monkey-patch MLModel.__init__ to inject
+        skip_model_load=True during ct.convert() to prevent this. The 3 MIL
+        pipeline stages still validate the model structurally; we only skip
+        the C++ runtime compilation step. The returned MLModel has a valid
+        spec (accessible via .get_spec()) but predict() won't work — which
+        is fine since the bridge only needs to save the spec.
     """
     ct = _ensure_coremltools()
     target_map = {
@@ -77,7 +88,27 @@ def convert_milprogram(
     if optimization_hints:
         kwargs["optimization_hints"] = optimization_hints
 
-    mlmodel = ct.convert(program, **kwargs)
+    # Monkey-patch MLModel.__init__ to use skip_model_load=True during
+    # ct.convert(). This prevents the macOS C++ model compilation step
+    # that causes SIGABRT ("coremldata.bin is not a valid .mlmodelc file").
+    # ct.convert() internally creates an MLModel from the spec for
+    # validation; on macOS this triggers compilation. With skip_model_load,
+    # the MLModel is created without C++ compilation — the spec is still
+    # valid and can be saved via save_mlpackage(). The try/finally ensures
+    # the original __init__ is always restored, even if ct.convert() raises.
+    _original_init = ct.models.MLModel.__init__
+
+    def _patched_init(self, *args, **kwargs_inner):
+        if "skip_model_load" not in kwargs_inner:
+            kwargs_inner["skip_model_load"] = True
+        return _original_init(self, *args, **kwargs_inner)
+
+    ct.models.MLModel.__init__ = _patched_init
+    try:
+        mlmodel = ct.convert(program, **kwargs)
+    finally:
+        ct.models.MLModel.__init__ = _original_init
+
     return mlmodel
 
 

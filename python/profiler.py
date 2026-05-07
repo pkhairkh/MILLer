@@ -31,7 +31,13 @@ def generate_inputs(
     """
     ct = _ensure_coremltools()
     compute_unit = COMPUTE_MAP.get(compute_units, ct.ComputeUnit.CPU_AND_NE)
-    model = ct.models.MLModel(mlpackage_path, compute_units=compute_unit)
+    # skip_model_load=True avoids macOS SIGABRT from C++ model compilation.
+    # We only need the spec for input generation, not runtime prediction.
+    try:
+        model = ct.models.MLModel(mlpackage_path, compute_units=compute_unit,
+                                  skip_model_load=True)
+    except TypeError:
+        model = ct.models.MLModel(mlpackage_path, compute_units=compute_unit)
 
     np.random.seed(seed)
     spec = model.get_spec()

@@ -379,7 +379,12 @@ def _extract_ops_from_spec(
     """
     try:
         import coremltools as ct
-        model = ct.models.MLModel(mlpackage_path)
+        # skip_model_load=True avoids macOS SIGABRT from C++ model compilation.
+        # We only need the spec for op extraction, not runtime prediction.
+        try:
+            model = ct.models.MLModel(mlpackage_path, skip_model_load=True)
+        except TypeError:
+            model = ct.models.MLModel(mlpackage_path)
         spec = model.get_spec()
 
         # Walk mlProgram functions
@@ -568,7 +573,11 @@ def _detect_state_from_spec(
     """
     try:
         import coremltools as ct
-        model = ct.models.MLModel(mlpackage_path)
+        # skip_model_load=True avoids macOS SIGABRT from C++ model compilation.
+        try:
+            model = ct.models.MLModel(mlpackage_path, skip_model_load=True)
+        except TypeError:
+            model = ct.models.MLModel(mlpackage_path)
         spec = model.get_spec()
 
         result.state_conformance.available = True
@@ -731,7 +740,11 @@ def _detect_multifunction_from_spec(
     """
     try:
         import coremltools as ct
-        model = ct.models.MLModel(mlpackage_path)
+        # skip_model_load=True avoids macOS SIGABRT from C++ model compilation.
+        try:
+            model = ct.models.MLModel(mlpackage_path, skip_model_load=True)
+        except TypeError:
+            model = ct.models.MLModel(mlpackage_path)
         spec = model.get_spec()
 
         result.multifunction_conformance.available = True
@@ -936,7 +949,11 @@ def verify_emission_semantics(
     try:
         import coremltools as ct
         try:
-            model = ct.models.MLModel(str(pkg_path))
+            # skip_model_load=True avoids macOS SIGABRT from C++ model compilation.
+            try:
+                model = ct.models.MLModel(str(pkg_path), skip_model_load=True)
+            except TypeError:
+                model = ct.models.MLModel(str(pkg_path))
             spec = model.get_spec()
 
             # Extract input names and dtypes

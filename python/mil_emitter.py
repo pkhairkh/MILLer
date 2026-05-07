@@ -1787,7 +1787,11 @@ def inspect_mlpackage(mlpackage_path: str) -> dict:
 
         load_result = None
         try:
-            model = ct.models.MLModel(str(mlpackage_path))
+            # skip_model_load=True avoids macOS SIGABRT from C++ compilation
+            try:
+                model = ct.models.MLModel(str(mlpackage_path), skip_model_load=True)
+            except TypeError:
+                model = ct.models.MLModel(str(mlpackage_path))
             load_result = {
                 "loaded": True,
                 "input_names": list(model.input_description.keys()) if hasattr(model, 'input_description') else [],
@@ -2095,7 +2099,11 @@ def validate_multifunction_package(mlpackage_path: str, expected_functions: list
     expected_set = set(expected_functions)
 
     try:
-        model = ct.models.MLModel(mlpackage_path)
+        # skip_model_load=True avoids macOS SIGABRT from C++ compilation
+        try:
+            model = ct.models.MLModel(mlpackage_path, skip_model_load=True)
+        except TypeError:
+            model = ct.models.MLModel(mlpackage_path)
         spec = model.get_spec()
 
         if not hasattr(spec, 'mlProgram') or not hasattr(spec.mlProgram, 'functions'):

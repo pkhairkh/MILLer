@@ -5265,7 +5265,7 @@ fn mir_op_to_apple_ops(
                 blocks: vec![],
                 attributes: stride_attrs,
             });
-            inputs.insert("stride".to_string(), make_name_arg(&stride_const_name));
+            inputs.insert("strides".to_string(), make_name_arg(&stride_const_name));
 
             let pad_const_name = format!("{name}_pad");
             let pad_shape: Vec<u64> = vec![pad_amounts.len() as u64];
@@ -5307,7 +5307,7 @@ fn mir_op_to_apple_ops(
                 blocks: vec![],
                 attributes: dil_attrs,
             });
-            inputs.insert("dilation".to_string(), make_name_arg(&dil_const_name));
+            inputs.insert("dilations".to_string(), make_name_arg(&dil_const_name));
 
             // pad_type as string value (kept for backward compat)
             inputs.insert(
@@ -6867,9 +6867,9 @@ fn mir_op_to_apple_ops(
             let mut conv_inputs = HashMap::new();
             conv_inputs.insert("x".to_string(), make_name_arg(x));
             conv_inputs.insert("weight".to_string(), make_name_arg(weight));
-            conv_inputs.insert("stride".to_string(), make_name_arg(&stride_const_name));
+            conv_inputs.insert("strides".to_string(), make_name_arg(&stride_const_name));
             conv_inputs.insert("pad".to_string(), make_name_arg(&pad_const_name));
-            conv_inputs.insert("dilation".to_string(), make_name_arg(&dil_const_name));
+            conv_inputs.insert("dilations".to_string(), make_name_arg(&dil_const_name));
             conv_inputs.insert("groups".to_string(), make_name_arg(&groups_const_name));
 
             let mut conv_attrs = HashMap::new();

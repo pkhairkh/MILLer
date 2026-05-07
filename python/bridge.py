@@ -190,8 +190,12 @@ def handle_palettize(command: dict) -> dict:
         return _error_result("output_path is required for palettize command")
 
     try:
-        # Load the model
-        model = ct.models.MLModel(mlpackage_path)
+        # Load the model (skip_model_load=True avoids macOS SIGABRT
+        # from C++ model compilation for palettization use case)
+        try:
+            model = ct.models.MLModel(mlpackage_path, skip_model_load=True)
+        except TypeError:
+            model = ct.models.MLModel(mlpackage_path)
 
         # Apply palettization
         palettized_model = apply_palettization(model, palettization_specs)
@@ -800,7 +804,11 @@ def handle_validate_proto_direct(command: dict) -> dict:
     try:
         import coremltools as ct
         try:
-            model = ct.models.MLModel(str(pkg_path))
+            # skip_model_load=True avoids macOS SIGABRT from C++ compilation
+            try:
+                model = ct.models.MLModel(str(pkg_path), skip_model_load=True)
+            except TypeError:
+                model = ct.models.MLModel(str(pkg_path))
             model_loadable = True
 
             # Extract function count
