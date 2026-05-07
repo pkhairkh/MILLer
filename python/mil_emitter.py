@@ -235,22 +235,21 @@ def save_mlpackage(mlmodel, mlpackage_path: str) -> dict:
         causing SIGABRT. However, the .mlpackage files are written to disk
         BEFORE the crash.
 
-        We use a subprocess to isolate the save. Two serialization strategies
-        are tried in order:
+        We use multiple strategies in order:
 
-        1. Pickle: The MLModel is pickled to a temp file and restored in the
-           child process. This works for models without Torch lambda closures
-           in their weight data. However, coremltools internally references
-           Torch lambdas (e.g., make_float.<locals>.double) for some dtype
-           conversions, which causes pickle to fail.
+        1. Spec subprocess: Serialize the protobuf spec to a temp file, then
+           in a child process load it with ct.models.utils.load_spec() and
+           reconstruct with ct.models.MLModel(spec, skip_model_load=True).
+           The skip_model_load=True avoids the compilation that triggers
+           SIGABRT. This is tried FIRST because pickle is known to fail with
+           coremltools' Torch lambda closures (make_float.<locals>.double).
 
-        2. Spec serialization: The protobuf spec is extracted via
-           mlmodel.get_spec().SerializeToString() and written to a temp file.
-           In the subprocess, the spec is loaded with ct.models.utils.load_spec()
-           and reconstructed with ct.models.MLModel(spec, skip_model_load=True).
-           The skip_model_load=True parameter (coremltools 8.0+) avoids the
-           compilation step that triggers SIGABRT. For older coremltools, it
-           falls back to full compilation.
+        2. Pickle subprocess: The MLModel is pickled and restored in the
+           child process. Fails when coremltools internally references
+           unpicklable Torch lambdas, but works for simple models.
+
+        3. Direct in-process save: Try mlmodel.save() directly. May trigger
+           SIGABRT on macOS but works on Linux or with compatible versions.
 
         If the child process crashes (SIGABRT or non-zero exit) but the
         .mlpackage exists on disk, we treat it as a successful save.
@@ -267,51 +266,15 @@ def save_mlpackage(mlmodel, mlpackage_path: str) -> dict:
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
     exit_code = -1
+    last_stderr = ""
 
-    # --- Strategy 1: Pickle serialization (fast path) ---
-    pickle_saver_script = """
-import sys
-import warnings
-warnings.filterwarnings("ignore")
-
-import logging
-logging.disable(logging.CRITICAL)
-
-mlpackage_path = sys.argv[1]
-model_data_path = sys.argv[2]
-
-import pickle
-with open(model_data_path, "rb") as f:
-    mlmodel = pickle.load(f)
-
-mlmodel.save(mlpackage_path)
-"""
-    model_data_path = tmp_dir / "model_data.pkl"
-    try:
-        import pickle
-        with open(model_data_path, "wb") as f:
-            pickle.dump(mlmodel, f, protocol=4)
-
-        result = subprocess.run(
-            [sys.executable, "-c", pickle_saver_script, str(mlpackage_path), str(model_data_path)],
-            capture_output=True,
-            timeout=120,
-        )
-        exit_code = result.returncode
-        logger.debug(f"save_mlpackage: pickle strategy exit_code={exit_code}")
-    except Exception as e:
-        logger.warning(f"save_mlpackage: pickle strategy failed ({e})")
-    finally:
-        try:
-            if model_data_path.exists():
-                model_data_path.unlink()
-        except OSError:
-            pass
-
-    # --- Strategy 2: Spec serialization with skip_model_load ---
-    # Used when pickle fails (Torch lambda closures) or didn't produce .mlpackage.
-    if not mlpackage_path.exists():
-        spec_saver_script = """
+    # --- Strategy 1: Spec serialization with skip_model_load (PRIMARY) ---
+    # This is tried first because pickle is known to fail with coremltools'
+    # Torch lambda closures (make_float.<locals>.double). The spec approach
+    # serializes only the protobuf spec (no Python closures), so it always
+    # works for serialization. skip_model_load=True avoids the macOS
+    # compilation step that can SIGABRT.
+    spec_saver_script = """
 import sys
 import warnings
 warnings.filterwarnings("ignore")
@@ -336,27 +299,100 @@ except TypeError:
 
 mlmodel.save(mlpackage_path)
 """
-        spec_path = tmp_dir / "model_spec.pb"
+    spec_path = tmp_dir / "model_spec.mlmodel"
+    try:
+        spec_bytes = mlmodel.get_spec().SerializeToString()
+        with open(spec_path, "wb") as f:
+            f.write(spec_bytes)
+
+        result = subprocess.run(
+            [sys.executable, "-c", spec_saver_script, str(mlpackage_path), str(spec_path)],
+            capture_output=True,
+            timeout=120,
+        )
+        exit_code = result.returncode
+        last_stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
+        if exit_code != 0 and last_stderr:
+            logger.debug(
+                f"save_mlpackage: spec strategy exit_code={exit_code}, "
+                f"stderr: {last_stderr[:500]}"
+            )
+    except Exception as e:
+        logger.warning(f"save_mlpackage: spec strategy failed ({e})")
+    finally:
         try:
-            spec_bytes = mlmodel.get_spec().SerializeToString()
-            with open(spec_path, "wb") as f:
-                f.write(spec_bytes)
+            if spec_path.exists():
+                spec_path.unlink()
+        except OSError:
+            pass
+
+    # --- Strategy 2: Pickle serialization ---
+    # Used when spec approach fails. Fails with "Can't get local object"
+    # when coremltools uses Torch lambda closures in weight data.
+    if not mlpackage_path.exists():
+        # Clean up partial output from strategy 1
+        if mlpackage_path.exists():
+            shutil.rmtree(mlpackage_path)
+
+        pickle_saver_script = """
+import sys
+import warnings
+warnings.filterwarnings("ignore")
+
+import logging
+logging.disable(logging.CRITICAL)
+
+mlpackage_path = sys.argv[1]
+model_data_path = sys.argv[2]
+
+import pickle
+with open(model_data_path, "rb") as f:
+    mlmodel = pickle.load(f)
+
+mlmodel.save(mlpackage_path)
+"""
+        model_data_path = tmp_dir / "model_data.pkl"
+        try:
+            import pickle
+            with open(model_data_path, "wb") as f:
+                pickle.dump(mlmodel, f, protocol=4)
 
             result = subprocess.run(
-                [sys.executable, "-c", spec_saver_script, str(mlpackage_path), str(spec_path)],
+                [sys.executable, "-c", pickle_saver_script, str(mlpackage_path), str(model_data_path)],
                 capture_output=True,
                 timeout=120,
             )
             exit_code = result.returncode
-            logger.debug(f"save_mlpackage: spec strategy exit_code={exit_code}")
+            last_stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
+            if exit_code != 0 and last_stderr:
+                logger.debug(
+                    f"save_mlpackage: pickle strategy exit_code={exit_code}, "
+                    f"stderr: {last_stderr[:500]}"
+                )
         except Exception as e:
-            logger.warning(f"save_mlpackage: spec strategy failed ({e})")
+            logger.warning(f"save_mlpackage: pickle strategy failed ({e})")
         finally:
             try:
-                if spec_path.exists():
-                    spec_path.unlink()
+                if model_data_path.exists():
+                    model_data_path.unlink()
             except OSError:
                 pass
+
+    # --- Strategy 3: Direct in-process save ---
+    # Last resort: try saving directly in the current process.
+    # This may trigger SIGABRT on macOS with coremltools 9.x,
+    # but works fine on Linux or with compatible versions.
+    if not mlpackage_path.exists():
+        try:
+            mlmodel.save(str(mlpackage_path))
+            exit_code = 0
+            logger.debug("save_mlpackage: direct in-process save succeeded")
+        except Exception as e:
+            logger.warning(f"save_mlpackage: direct save failed ({e})")
+            # If the .mlpackage was partially written before the error,
+            # it might still be usable
+            if not mlpackage_path.exists():
+                exit_code = 1
 
     # Clean up temp dir
     try:
@@ -374,7 +410,10 @@ mlmodel.save(mlpackage_path)
                 "on macOS with incompatible PyTorch versions."
             )
         elif exit_code != 0:
-            raise RuntimeError(f"save_mlpackage: child exited with code {exit_code}")
+            err_detail = f" Last stderr: {last_stderr[:200]}" if last_stderr else ""
+            raise RuntimeError(
+                f"save_mlpackage: child exited with code {exit_code}.{err_detail}"
+            )
         else:
             raise RuntimeError("save_mlpackage: no output created for unknown reason")
 

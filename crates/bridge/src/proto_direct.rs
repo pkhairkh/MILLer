@@ -290,6 +290,28 @@ pub fn emit_mir_graph_proto_direct_with_resolver(
     architecture: &ane_ir::common::ModelArchitecture,
     max_seq_len: usize,
 ) -> Result<ProtoDirectResult> {
+    emit_mir_graph_proto_direct_with_resolver_and_policy(
+        graph,
+        output_path,
+        resolver,
+        architecture,
+        max_seq_len,
+        ValidationPolicy::default(),
+    )
+}
+
+/// Emit a single-function MIR graph with resolver and custom validation policy.
+///
+/// Use `ValidationPolicy::warn_only()` for development/testing where
+/// small test tensors don't meet the 49KB IOSurface minimum.
+pub fn emit_mir_graph_proto_direct_with_resolver_and_policy(
+    graph: &MirGraph,
+    output_path: &str,
+    resolver: &dyn crate::mir_to_compat::WeightResolver,
+    architecture: &ane_ir::common::ModelArchitecture,
+    max_seq_len: usize,
+    validation_policy: ValidationPolicy,
+) -> Result<ProtoDirectResult> {
     // T-P2-09: Only allow missing weights when the resolver is empty.
     // When a non-empty resolver is provided but a weight is missing, that's
     // a production error — zero-filled weights produce silently broken models.
@@ -298,7 +320,7 @@ pub fn emit_mir_graph_proto_direct_with_resolver(
     let allow_missing = resolver.is_empty();
     let compat =
         mir_graph_to_compat_with_arch(graph, resolver, architecture, max_seq_len, allow_missing)?;
-    emit_proto_direct(&compat, output_path)
+    emit_proto_direct_with_policy(&compat, output_path, validation_policy)
 }
 
 /// Validate that a proto-direct emitted mlpackage has the correct structure.
